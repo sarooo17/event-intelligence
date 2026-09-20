@@ -6,7 +6,11 @@ on:
       - ".github/workflows/clean-room-smoke.yml"
       - "README.md"
       - "package.json"
+      - "package-lock.json"
       - "server.json"
+      - "src/**"
+      - "scripts/**"
+      - "bin/**"
   workflow_dispatch:
 
 permissions:
@@ -17,24 +21,35 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  published-package:
+  packed-package:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - uses: actions/checkout@v5
+
       - name: Set up Node.js
         uses: actions/setup-node@v5
         with:
           node-version: 24
-          registry-url: https://registry.npmjs.org/
 
-      - name: Install published package in an empty project
+      - name: Build candidate package
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm run check
+          TARBALL="$(npm pack --silent)"
+          echo "TARBALL=$PWD/$TARBALL" >> "$GITHUB_ENV"
+          echo "EXPECTED_VERSION=$(node -p "require('./package.json').version")" >> "$GITHUB_ENV"
+
+      - name: Install candidate package in an empty project
         shell: bash
         run: |
           set -euo pipefail
           WORKDIR="$(mktemp -d)"
           cd "$WORKDIR"
           npm init -y >/dev/null
-          npm install --ignore-scripts --no-audit --no-fund mcp-event-intelligence@0.1.0
+          npm install --ignore-scripts --no-audit --no-fund "$TARBALL"
 
           node --input-type=module <<'EOF'
           import assert from 'node:assert/strict';
@@ -42,23 +57,39 @@ jobs:
           const host = await import('mcp-event-intelligence/host');
 
           assert.ok(Object.keys(protocol).length > 0, 'root package export is empty');
+          assert.equal(typeof protocol.TriggerPlanInputSchema, 'object');
+          assert.equal(typeof protocol.ActivationEnvelopeSchema, 'object');
           assert.equal(typeof host.createEventIntelligenceHost, 'function');
           assert.equal(typeof host.createMcpRegistryAdapter, 'function');
 
-          console.log('package imports OK');
+          const dataDir = './ei-data';
+          const ei = await host.createEventIntelligenceHost({
+            dataDir,
+            env: {
+              TYPESAFE_API_KEY: '',
+              RUNTIME_WAKE_TARGETS_JSON: '{}',
+              TEMPORAL_TICK_MS: '100000',
+              WAKE_RETRY_TICK_MS: '100000',
+            },
+          });
+          assert.equal(typeof ei.planTrigger, 'function');
+          assert.equal(typeof ei.hydrateWake, 'function');
+          await ei.close();
+
+          console.log('candidate package imports and host APIs OK');
           EOF
 
-          test "$(npx --no-install mcp-event-intelligence --version)" = "0.1.0"
+          test "$(npx --no-install mcp-event-intelligence --version)" = "$EXPECTED_VERSION"
           npx --no-install mcp-event-intelligence --help | grep -qi "standard MCP stdio control plane"
 
-      - name: Confirm MCP stdio entrypoint starts
+      - name: Confirm candidate MCP stdio entrypoint starts
         shell: bash
         run: |
           set -euo pipefail
           WORKDIR="$(mktemp -d)"
           cd "$WORKDIR"
           npm init -y >/dev/null
-          npm install --ignore-scripts --no-audit --no-fund mcp-event-intelligence@0.1.0
+          npm install --ignore-scripts --no-audit --no-fund "$TARBALL"
 
           node --input-type=module <<'EOF'
           import assert from 'node:assert/strict';
@@ -103,12 +134,5 @@ jobs:
           assert.equal(child.exitCode, null, 'MCP stdio exited while stdin remained open');
           child.kill('SIGTERM');
           await new Promise((resolve) => child.once('exit', resolve));
-          console.log('MCP stdio entrypoint stayed alive with an open host connection');
+          console.log('candidate MCP stdio entrypoint stayed alive with an open host connection');
           EOF
-
-      - name: Verify published metadata
-        shell: bash
-        run: |
-          set -euo pipefail
-          test "$(npm view mcp-event-intelligence@0.1.0 version)" = "0.1.0"
-          test "$(npm view mcp-event-intelligence@0.1.0 repository.url)" = "git+https://github.com/sarooo17/event-intelligence.git"
