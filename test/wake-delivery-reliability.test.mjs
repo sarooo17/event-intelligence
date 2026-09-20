@@ -5,6 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { CompositeTriggerEngine } from '../dist/src/composite/engine.js';
 import { CompositeWakeCoordinator } from '../scripts/lib/composite-wake-coordinator.mjs';
+import { EventProcessor } from '../scripts/lib/event-processor.mjs';
 import { PersistentEventStore } from '../scripts/lib/persistent-event-store.mjs';
 import { WakeRetryScheduler } from '../scripts/lib/wake-retry-scheduler.mjs';
 
@@ -225,6 +226,86 @@ test('wake reaches dead-letter only after configured retry budget is exhausted',
     assert.equal(store.getWakeDelivery(second.wake.wakeId).attemptCount, 2);
     assert.equal(store.getWakeDelivery(second.wake.wakeId).status, 'dead_letter');
     assert.equal(store.listDueWakeDeliveries(new Date(now.getTime() + 60000).toISOString()).length, 0);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+
+test('direct event wake uses the same durable retry model across restart', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'ei-direct-wake-retry-'));
+  const firstNow = new Date('2026-09-20T17:00:00.000Z');
+  const input = {
+    event: {
+      eventId: 'direct-event-1',
+      name: 'provider.alert',
+      timestamp: '2026-09-20T16:59:59.000Z',
+      data: { severity: 'high' },
+      cursor: null,
+    },
+    context: {
+      environmentId: 'env-test',
+      subscriptionId: 'sub-test',
+      serverId: 'provider-test',
+      transport: 'poll',
+      provider: 'test',
+      target: {
+        runtime: 'runtime-probe',
+        kind: 'task',
+        id: 'direct-task',
+      },
+    },
+  };
+
+  try {
+    const firstStore = new PersistentEventStore(dir);
+    await firstStore.init();
+    const firstProcessor = new EventProcessor({
+      store: firstStore,
+      now: () => firstNow,
+      workerId: 'direct-worker-1',
+      retryBaseDelayMs: 1000,
+      retryMaxDelayMs: 1000,
+      maxAttempts: 3,
+      wakeDeliverer: async () => {
+        throw new Error('runtime offline');
+      },
+    });
+
+    const first = await firstProcessor.ingest(input);
+    assert.equal(first.status, 'retry_scheduled');
+    assert.equal(firstStore.getWakeDelivery(first.wake.wakeId).sourceType, 'event');
+    assert.equal(firstStore.getWakeDelivery(first.wake.wakeId).attemptCount, 1);
+
+    const secondNow = new Date(firstNow.getTime() + 1100);
+    const restoredStore = new PersistentEventStore(dir);
+    await restoredStore.init();
+    let delivered = 0;
+    const restoredProcessor = new EventProcessor({
+      store: restoredStore,
+      now: () => secondNow,
+      workerId: 'direct-worker-2',
+      retryBaseDelayMs: 1000,
+      retryMaxDelayMs: 1000,
+      maxAttempts: 3,
+      wakeDeliverer: async ({ wake }) => {
+        delivered += 1;
+        return { runtimeReceiptId: `receipt:${wake.wakeId}` };
+      },
+    });
+    const scheduler = new WakeRetryScheduler({
+      store: restoredStore,
+      now: () => secondNow,
+      eventProcessor: restoredProcessor,
+      resolveCoordinator: () => null,
+    });
+
+    const outcomes = await scheduler.runDue();
+    assert.deepEqual(outcomes.map((entry) => entry.status), ['wake_delivered']);
+    assert.equal(delivered, 1);
+    assert.equal(restoredStore.getWakeDelivery(first.wake.wakeId).status, 'delivered');
+    assert.equal(restoredStore.latestWake(first.wake.wakeId).status, 'delivered');
+    assert.equal(await restoredStore.verifyAudit(), true);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
