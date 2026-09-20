@@ -310,3 +310,79 @@ test('direct event wake uses the same durable retry model across restart', async
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+
+test('a persisted runtime receipt is reconciled after restart without redelivery', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'ei-wake-reconcile-'));
+  let now = new Date('2026-09-20T18:00:00.000Z');
+
+  try {
+    const firstStore = new PersistentEventStore(dir);
+    await firstStore.init();
+    const firstEngine = new CompositeTriggerEngine(firstStore, null, () => now);
+    const match = await matchedTrigger(firstStore, firstEngine, 'reconcile-trigger');
+    const failing = new CompositeWakeCoordinator({
+      store: firstStore,
+      triggerEngine: firstEngine,
+      now: () => now,
+      workerId: 'worker-initial',
+      retryBaseDelayMs: 1000,
+      retryMaxDelayMs: 1000,
+      maxAttempts: 3,
+      deliverer: async () => {
+        throw new Error('first attempt fails');
+      },
+    });
+
+    const first = await failing.deliverMatched(match);
+    assert.equal(first.status, 'retry_scheduled');
+    const wakeId = first.wake.wakeId;
+
+    now = new Date(now.getTime() + 1100);
+    const claim = await firstStore.claimWakeDelivery(wakeId, {
+      workerId: 'worker-crashed-after-receipt',
+      now: now.toISOString(),
+      leaseMs: 30000,
+    });
+    assert.ok(claim);
+    await firstStore.completeWakeDelivery(wakeId, {
+      workerId: 'worker-crashed-after-receipt',
+      runtimeReceiptId: 'receipt-already-returned',
+      now: now.toISOString(),
+    });
+
+    assert.equal(firstStore.latestWake(wakeId).status, 'queued');
+    assert.equal(firstStore.listTriggerMatches('reconcile-trigger')[0].status, 'matched');
+
+    const restoredStore = new PersistentEventStore(dir);
+    await restoredStore.init();
+    const restoredEngine = new CompositeTriggerEngine(restoredStore, null, () => now);
+    let redeliveries = 0;
+    const restoredCoordinator = new CompositeWakeCoordinator({
+      store: restoredStore,
+      triggerEngine: restoredEngine,
+      now: () => now,
+      workerId: 'worker-reconciler',
+      deliverer: async () => {
+        redeliveries += 1;
+        return { runtimeReceiptId: 'must-not-run' };
+      },
+    });
+    const scheduler = new WakeRetryScheduler({
+      store: restoredStore,
+      now: () => now,
+      resolveCoordinator: (runtime) =>
+        runtime === 'runtime-probe' ? restoredCoordinator : null,
+    });
+
+    const outcomes = await scheduler.runDue();
+    assert.deepEqual(outcomes.map((entry) => entry.status), ['wake_delivered']);
+    assert.equal(redeliveries, 0);
+    assert.equal(restoredStore.latestWake(wakeId).status, 'delivered');
+    assert.equal(restoredStore.latestWake(wakeId).runtimeReceiptId, 'receipt-already-returned');
+    assert.equal(restoredStore.listTriggerMatches('reconcile-trigger')[0].status, 'fired');
+    assert.equal(await restoredStore.verifyAudit(), true);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
