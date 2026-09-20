@@ -4,7 +4,7 @@ const args = process.argv.slice(2);
 const flags = new Set(args);
 
 if (flags.has('--version') || flags.has('-v')) {
-  console.log('0.3.0');
+  console.log('0.3.1');
   process.exit(0);
 }
 
