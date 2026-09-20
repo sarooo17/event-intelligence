@@ -1,3 +1,8 @@
+import type {
+  ActivationEnvelope,
+  TriggerPlanInput,
+} from '../dist/src/intelligenceProtocol/index.js';
+
 export interface HostMcpClientLike {
   request(
     request: { method: string; params?: unknown },
@@ -38,6 +43,7 @@ export interface HostWakeReceipt {
 
 export type HostWakeHandler = (
   packet: Record<string, unknown>,
+  activation?: ActivationEnvelope,
 ) => Promise<HostWakeReceipt | string> | HostWakeReceipt | string;
 
 export interface EventIntelligenceStore {
@@ -69,7 +75,18 @@ export interface EventIntelligenceScopedHost {
   readonly store: EventIntelligenceStore;
   readonly triggerControl: any;
   readonly triggerInspector: any;
+  readonly triggerPlanner: any;
+  readonly activationHydrator: any;
   readonly eventSources: any[];
+  planTrigger(input: TriggerPlanInput): Promise<{
+    planVersion: '1';
+    definition: any;
+    connectionIds: string[];
+    resolvedSources: any[];
+    warnings: any[];
+    explanation: any;
+  }>;
+  hydrateWake(wakeId: string): ActivationEnvelope;
   attachMcpClient(connection: HostMcpConnectionOptions): Promise<{
     connectionId: string;
     events: any[];
