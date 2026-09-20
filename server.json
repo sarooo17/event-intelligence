@@ -3,7 +3,7 @@
   "name": "io.github.sarooo17/event-intelligence",
   "title": "MCP Event Intelligence",
   "description": "Durable temporal event intelligence: composite triggers, derived events, and runtime wakeups.",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "repository": {
     "url": "https://github.com/sarooo17/event-intelligence",
     "source": "github"
@@ -13,7 +13,7 @@
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "mcp-event-intelligence",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "transport": {
         "type": "stdio"
       },

@@ -104,8 +104,18 @@ export class TemporalDeadlineScheduler {
   }
 
   stop() {
-    if (!this.timer) return;
-    clearInterval(this.timer);
+    if (this.timer) clearInterval(this.timer);
     this.timer = null;
+  }
+
+  async drain() {
+    while (this.running) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+  }
+
+  async close() {
+    this.stop();
+    await this.drain();
   }
 }

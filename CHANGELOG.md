@@ -2,6 +2,21 @@
 
 All notable public changes are documented here.
 
+## [0.2.1] - 2026-09-20
+
+Patch hardening for shutdown determinism and multi-tenant verification.
+
+### Fixed
+
+- host shutdown now drains in-flight MCP polling, temporal/wake schedulers and persistent JSONL writes before returning;
+- prevents background writes from racing temporary-directory cleanup and causing intermittent `ENOTEMPTY` failures;
+- scoped isolation regression coverage now includes event source discovery, MCP client state/cursors, occurrences, audit records and wake visibility.
+
+### Clarified
+
+- the exported ERPNext helper is a typed MCP Events provider factory, not a credential-owning ERP connector;
+- the production authenticated ERPNext implementation remains in `world-capability-mcp`, where real data access, tenant/company filtering, pagination, cursors and timezone handling are implemented.
+
 ## [0.2.0] - 2026-09-20
 
 Production-hardening release for shared Event Intelligence hosts.
