@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/sarooo17/event-intelligence/actions/workflows/ci.yml/badge.svg)](https://github.com/sarooo17/event-intelligence/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/mcp-event-intelligence.svg)](https://www.npmjs.com/package/mcp-event-intelligence)
-[![MCP Registry](https://img.shields.io/badge/MCP%20Registry-v0.1.0-5b5bd6)](https://registry.modelcontextprotocol.io/?q=io.github.sarooo17%2Fevent-intelligence)
+[![MCP Registry](https://img.shields.io/badge/MCP%20Registry-v0.1.1-5b5bd6)](https://registry.modelcontextprotocol.io/?q=io.github.sarooo17%2Fevent-intelligence)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 MCP Event Intelligence is an experimental event runtime for agents that need to react to **future conditions over multiple event sources** without keeping an LLM or agent loop alive.
@@ -53,6 +53,44 @@ const ei = await createEventIntelligenceHost({
 ```
 
 Event Intelligence enumerates the host registry automatically. GitHub, Gmail, private/company MCPs and future connections do not need to be configured again inside EI. Tools-only MCPs remain available to the agent and are ignored by the Events layer; Events-capable MCPs are attached automatically.
+
+
+## Add Events to an MCP provider
+
+Providers can expose the experimental Events boundary without reimplementing the generic JSON-RPC glue:
+
+```js
+import { createMcpEventsProvider } from 'mcp-event-intelligence/provider';
+
+const events = createMcpEventsProvider({
+  events: [
+    {
+      descriptor: {
+        name: 'erpnext.sales_invoice.submitted',
+        description: 'A submitted Sales Invoice was observed.',
+        delivery: ['poll'],
+        inputSchema: { type: 'object' },
+        payloadSchema: {
+          type: 'object',
+          required: ['name', 'company', 'grand_total'],
+          properties: {
+            name: { type: 'string' },
+            company: { type: 'string' },
+            grand_total: { type: 'number' },
+          },
+        },
+      },
+      poll: async ({ cursor, maxEvents, context }) => {
+        return providerRuntime.pollInvoices({ cursor, maxEvents, context });
+      },
+    },
+  ],
+});
+```
+
+The package owns capability advertisement, `server/discover`, `events/list`, `events/poll`, common validation and response shapes. The provider owns domain event definitions, authentication, data queries, occurrence IDs and opaque cursor semantics.
+
+This adapter remains experimental compatibility work around MCP Events; it is not a claim of finalized MCP Events conformance.
 
 ## What v0.1 implements
 

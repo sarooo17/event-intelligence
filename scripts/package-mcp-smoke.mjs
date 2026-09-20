@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -25,6 +25,8 @@ try {
     'package/scripts/mcp-stdio-server.mjs',
     'package/scripts/host-integration.mjs',
     'package/scripts/host-integration.d.mts',
+    'package/dist/src/mcpEvents/provider.js',
+    'package/dist/src/mcpEvents/provider.d.ts',
     'package/scripts/lib/local-event-intelligence-runtime.mjs',
     'package/server.json',
   ]) {
@@ -41,6 +43,38 @@ try {
   assert.equal(
     manifest.exports?.['./host']?.types,
     './scripts/host-integration.d.mts',
+  );
+  assert.equal(
+    manifest.exports?.['./provider']?.import,
+    './dist/src/mcpEvents/provider.js',
+  );
+  assert.equal(
+    manifest.exports?.['./provider']?.types,
+    './dist/src/mcpEvents/provider.d.ts',
+  );
+
+  const consumerDir = path.join(dir, 'consumer');
+  await mkdir(consumerDir);
+  await execFileAsync('npm', ['init', '-y'], { cwd: consumerDir });
+  await execFileAsync(
+    'npm',
+    [
+      'install',
+      '--ignore-scripts',
+      '--no-audit',
+      '--no-fund',
+      path.join(root, filename),
+    ],
+    { cwd: consumerDir },
+  );
+  await execFileAsync(
+    process.execPath,
+    [
+      '--input-type=module',
+      '-e',
+      "import { createMcpEventsProvider } from 'mcp-event-intelligence/provider'; if (typeof createMcpEventsProvider !== 'function') process.exit(1);",
+    ],
+    { cwd: consumerDir },
   );
 
   const help = await execFileAsync(

@@ -4,7 +4,7 @@ const args = process.argv.slice(2);
 const flags = new Set(args);
 
 if (flags.has('--version') || flags.has('-v')) {
-  console.log('0.1.0');
+  console.log('0.1.1');
   process.exit(0);
 }
 
@@ -38,6 +38,10 @@ Optional integrations:
 Embedded hosts:
   import { createEventIntelligenceHost } from 'mcp-event-intelligence/host'
   Pass the harness MCP registry once; EI discovers Events-capable clients automatically.
+
+Provider runtimes:
+  import { createMcpEventsProvider } from 'mcp-event-intelligence/provider'
+  Keep domain events, auth, data access and opaque cursors provider-owned.
 
 Important:
   stdout is reserved for MCP JSON-RPC in stdio mode.

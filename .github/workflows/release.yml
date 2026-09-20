@@ -1,0 +1,86 @@
+name: Release
+
+on:
+  workflow_run:
+    workflows: ["Publish npm"]
+    types: [completed]
+
+permissions:
+  contents: write
+  id-token: write
+
+concurrency:
+  group: release-${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout published commit
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Resolve and verify version
+        id: version
+        shell: bash
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          SERVER_VERSION="$(node -p "require('./server.json').version")"
+          PACKAGE_VERSION="$(node -p "require('./server.json').packages[0].version")"
+          test "$VERSION" = "$SERVER_VERSION"
+          test "$VERSION" = "$PACKAGE_VERSION"
+          test "$(npm view "mcp-event-intelligence@$VERSION" version)" = "$VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Install mcp-publisher
+        run: |
+          curl -L "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" | tar xz mcp-publisher
+
+      - name: Validate server metadata
+        run: ./mcp-publisher validate server.json
+
+      - name: Check MCP Registry
+        id: registry
+        shell: bash
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          URL="https://registry.modelcontextprotocol.io/v0.1/servers/io.github.sarooo17%2Fevent-intelligence/versions/$VERSION"
+          if curl -fsS "$URL" > /tmp/mcp-registry-entry.json; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Authenticate to MCP Registry
+        if: steps.registry.outputs.exists != 'true'
+        run: ./mcp-publisher login github-oidc
+
+      - name: Publish to MCP Registry
+        if: steps.registry.outputs.exists != 'true'
+        run: ./mcp-publisher publish server.json
+
+      - name: Verify MCP Registry publication
+        shell: bash
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          curl -fsS "https://registry.modelcontextprotocol.io/v0.1/servers/io.github.sarooo17%2Fevent-intelligence/versions/$VERSION"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          TAG="v$VERSION"
+          NOTES="docs/releases/$TAG.md"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "GitHub Release $TAG already exists"
+          elif [ -f "$NOTES" ]; then
+            gh release create "$TAG" --title "MCP Event Intelligence $TAG" --notes-file "$NOTES"
+          else
+            gh release create "$TAG" --title "MCP Event Intelligence $TAG" --generate-notes
+          fi

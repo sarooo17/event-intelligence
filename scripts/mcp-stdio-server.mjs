@@ -341,7 +341,7 @@ export async function buildEventIntelligenceMcpServer({
   const server = new McpServer(
     {
       name: 'mcp-event-intelligence',
-      version: '0.1.0',
+      version: '0.1.1',
     },
     {
       instructions:
