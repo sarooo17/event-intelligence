@@ -40,7 +40,8 @@ jobs:
           npm run check
           TARBALL="$(npm pack --silent)"
           echo "TARBALL=$PWD/$TARBALL" >> "$GITHUB_ENV"
-          echo "EXPECTED_VERSION=$(node -p "require('./package.json').version")" >> "$GITHUB_ENV"
+          VERSION="$(node -p "require('./package.json').version")"
+          echo "EXPECTED_VERSION=$VERSION" >> "$GITHUB_ENV"
 
       - name: Install candidate package in an empty project
         shell: bash
