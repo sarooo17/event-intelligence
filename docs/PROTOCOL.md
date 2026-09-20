@@ -1,5 +1,7 @@
 # Event Intelligence Protocol v0.1
 
+This document describes the current **internal persisted protocol/schema compatibility line**. Package releases are versioned independently; the 0.3.x package still emits the v0.1 internal protocol identifiers for backward compatibility.
+
 Event Intelligence defines a small internal protocol above event transport and below agent execution. It is **not** an MCP specification.
 
 ## Layers
@@ -37,7 +39,10 @@ A trigger contains:
 - optional semantic correlation;
 - temporal conditions;
 - lifecycle policy;
+- optional continuation metadata for the runtime activation;
 - a runtime target, a derived-event output, or both.
+
+Agent-facing trigger plans are a package-level convenience API. They compile deterministically into this canonical trigger protocol and do not introduce a second persisted protocol.
 
 Unbounded joins and arbitrary code predicates are intentionally excluded.
 
@@ -63,11 +68,13 @@ Every derived-event producer declares `eventName@contractVersion`.
 
 Within one version, producers must have the same canonical payload schema. The contract registry stores the schema fingerprint and producers. Ambiguous unversioned consumers fail closed.
 
-## Runtime wake
+## Runtime wake and Activation Envelope
 
 Runtime targets are operator-configured.
 
-Wake packets use stable IDs, refs-first evidence, HMAC signatures and runtime receipts. The implementation claims effectively-once activation only for the validated reference scenarios; it does not claim theoretical distributed exactly-once delivery.
+Wire wake packets use stable IDs, refs-first evidence, HMAC signatures where applicable, and runtime receipts. A composite wake may be hydrated locally into an Activation Envelope containing the persisted continuation and matched event evidence. The envelope is a runtime convenience contract; it does not grant authority and labels matched event data as untrusted external evidence.
+
+The implementation claims effectively-once activation only for the validated reference scenarios; it does not claim theoretical distributed exactly-once delivery.
 
 ## Governance and security invariants
 
@@ -76,6 +83,6 @@ Wake packets use stable IDs, refs-first evidence, HMAC signatures and runtime re
 - event receipt grants no new downstream authorization;
 - semantic correlation is optional and probabilistic;
 - replay must not produce a second logical wake for an already-fired match;
-- current v0.1 persistence is single-writer reference infrastructure, not HA storage.
+- the bundled JSONL persistence backend is single-process reference infrastructure, not HA storage;
 
 Executable schemas and invariants live under `src/intelligenceProtocol/`; end-to-end behavior is verified by the test suite.

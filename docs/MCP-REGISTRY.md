@@ -1,6 +1,6 @@
 # MCP Registry
 
-## v0.3 role
+## v0.3.x role
 
 MCP Event Intelligence exposes an optional standard **MCP stdio control plane** through the official TypeScript SDK v2, targeting MCP protocol revision **2026-07-28**.
 
@@ -43,7 +43,7 @@ The npm package declares the same identity through `package.json#mcpName`.
 
 `server.json` declares:
 
-- npm package: `mcp-event-intelligence@0.3.0`;
+- npm package: `mcp-event-intelligence@0.3.1`;
 - transport: `stdio`;
 - positional package argument: `mcp`;
 - only Event Intelligence control-plane/runtime settings, including optional Jev semantic-evaluator configuration.
@@ -58,6 +58,6 @@ CI installs the official `mcp-publisher` binary and runs:
 mcp-publisher validate server.json
 ```
 
-Actual Registry publication remains deferred until the sanitized public GitHub repository and npm artifact exist.
+The package is published to npm and registered under `io.github.sarooo17/event-intelligence` in the official MCP Registry. Release automation validates `server.json`, publishes missing Registry versions idempotently, verifies propagation, and creates the matching GitHub Release.
 
 The Registry is a discovery/distribution channel for the optional control plane, not an integration hub for the host's other MCP servers.

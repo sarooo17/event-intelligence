@@ -2,6 +2,24 @@
 
 All notable public changes are documented here.
 
+## [0.3.1] - 2026-09-20
+
+Public-polish and reliability patch before wider distribution.
+
+### Reliability
+
+- fixed the lease-claim test cleanup race that could surface intermittent `ENOTEMPTY` errors while an in-flight worker was still writing;
+- added repeated direct lease-claim contention coverage and full coordinator contention stress coverage.
+
+### Documentation and public surface
+
+- refreshed Security Policy and Security Model for scoped multi-tenant hosts, Activation Envelopes and the v0.3 agent-friendly planning flow;
+- clarified the distinction between package version 0.3.x and the intentionally compatible internal protocol/schema v0.1 identifiers;
+- refreshed Architecture and Protocol docs for `planTrigger()`, continuation contracts and wake hydration;
+- updated MCP Registry docs to reflect the package and Registry as live, not deferred;
+- updated the CLI help banner;
+- removed the obsolete one-shot v0.1.0 release workflow.
+
 ## [0.3.0] - 2026-09-20
 
 Agent-integration release focused on making Event Intelligence usable as a plug-and-play future-condition primitive.

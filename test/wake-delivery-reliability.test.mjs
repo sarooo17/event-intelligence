@@ -246,9 +246,14 @@ test('coordinator lease contention is stable across repeated delivery races', as
       const gate = new Promise((resolve) => {
         release = resolve;
       });
+      let enteredDeliverer;
+      const delivererEntered = new Promise((resolve) => {
+        enteredDeliverer = resolve;
+      });
       let deliveries = 0;
       const deliverer = async (packet) => {
         deliveries += 1;
+        enteredDeliverer();
         await gate;
         return { runtimeReceiptId: `receipt:${packet.wake_id}` };
       };
@@ -270,8 +275,24 @@ test('coordinator lease contention is stable across repeated delivery races', as
 
       const firstRun = first.deliverMatched(match);
       try {
-        for (let attempt = 0; attempt < 100 && deliveries === 0; attempt += 1) {
-          await new Promise((resolve) => setImmediate(resolve));
+        let timeout;
+        try {
+          await Promise.race([
+            delivererEntered,
+            firstRun.then((result) => {
+              throw new Error(
+                `first worker completed before entering deliverer: ${result.status}`,
+              );
+            }),
+            new Promise((_, reject) => {
+              timeout = setTimeout(
+                () => reject(new Error('first worker did not enter deliverer within 5s')),
+                5000,
+              );
+            }),
+          ]);
+        } finally {
+          clearTimeout(timeout);
         }
         assert.equal(deliveries, 1);
 
