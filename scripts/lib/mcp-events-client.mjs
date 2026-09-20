@@ -599,6 +599,17 @@ export class McpEventsClientManager {
     this.intervals.clear();
   }
 
+  async drain() {
+    while (this.pollInFlight.size > 0) {
+      await Promise.allSettled([...this.pollInFlight.values()]);
+    }
+  }
+
+  async close() {
+    this.stop();
+    await this.drain();
+  }
+
   status() {
     return [...this.connections.values()].map((connection) => {
       const context = this.scopeContexts.get(
