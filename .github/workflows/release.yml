@@ -77,10 +77,11 @@ jobs:
           VERSION="${{ steps.version.outputs.version }}"
           TAG="v$VERSION"
           NOTES="docs/releases/$TAG.md"
+          TARGET="${{ github.event.workflow_run.head_sha }}"
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "GitHub Release $TAG already exists"
           elif [ -f "$NOTES" ]; then
-            gh release create "$TAG" --title "MCP Event Intelligence $TAG" --notes-file "$NOTES"
+            gh release create "$TAG" --target "$TARGET" --title "MCP Event Intelligence $TAG" --notes-file "$NOTES"
           else
-            gh release create "$TAG" --title "MCP Event Intelligence $TAG" --generate-notes
+            gh release create "$TAG" --target "$TARGET" --title "MCP Event Intelligence $TAG" --generate-notes
           fi
