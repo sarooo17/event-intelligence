@@ -9,7 +9,7 @@ if (flags.has('--version') || flags.has('-v')) {
 }
 
 if (flags.has('--help') || flags.has('-h')) {
-  console.log(`MCP Event Intelligence v0.1
+  console.log(`MCP Event Intelligence v0.3
 
 Durable temporal event intelligence for sleeping agents.
 
