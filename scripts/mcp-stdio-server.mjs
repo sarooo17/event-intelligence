@@ -57,6 +57,59 @@ function ownerFromEnv(env) {
   };
 }
 
+const predicateInputSchema = z.object({
+  path: z.string().min(1),
+  op: z.enum(['eq', 'neq', 'contains', 'in', 'exists', 'gt', 'gte', 'lt', 'lte']),
+  value: z.unknown().optional(),
+});
+
+const triggerPlanInputSchema = z.object({
+  triggerId: z.string().min(1).optional(),
+  version: z.string().min(1).optional(),
+  description: z.string().max(500).optional(),
+  events: z.array(z.object({
+    id: z.string().min(1).optional(),
+    event: z.string().min(1),
+    serverId: z.string().min(1).optional(),
+    where: z.array(predicateInputSchema).optional(),
+  })).min(1),
+  match: z.union([
+    z.enum(['all', 'any', 'sequence']),
+    z.object({
+      kind: z.literal('count'),
+      eventId: z.string().min(1),
+      atLeast: z.number().int().min(1),
+    }),
+  ]).optional(),
+  withinMs: z.number().int().positive().optional(),
+  lifecycle: z.object({
+    oneShot: z.boolean().optional(),
+    maxFirings: z.number().int().min(1).optional(),
+    cooldownMs: z.number().int().nonnegative().optional(),
+    expiresAt: z.string().optional(),
+    leaseUntil: z.string().optional(),
+    completeOnGoal: z.boolean().optional(),
+  }).optional(),
+  target: z.object({
+    runtime: z.string().min(1),
+    kind: z.enum(['goal', 'session', 'conversation', 'task', 'spawn_template']),
+    id: z.string().min(1),
+  }),
+  continuation: z.object({
+    instruction: z.string().min(1).max(4000),
+    contextPolicy: z.object({
+      evidence: z.enum(['matched_events', 'refs_only']).optional(),
+      maxEvents: z.number().int().min(1).max(50).optional(),
+      includeData: z.boolean().optional(),
+    }).optional(),
+  }),
+  correlateBy: z.array(z.object({
+    eventId: z.string().min(1),
+    path: z.string().min(1),
+  })).min(2).optional(),
+  semanticCorrelation: z.record(z.string(), z.unknown()).optional(),
+});
+
 function registerReadTools(server, runtime) {
   server.registerTool(
     'event_sources_list',
@@ -74,6 +127,22 @@ function registerReadTools(server, runtime) {
             ...(connectionIds ? { connectionIds } : {}),
           }),
         });
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'trigger_plan',
+    {
+      description:
+        'Compile an agent-friendly trigger plan into a validated durable trigger definition using the event sources currently available. This does not mutate state and does not call another model.',
+      inputSchema: triggerPlanInputSchema,
+    },
+    async (input) => {
+      try {
+        return jsonResult(await runtime.triggerPlanner.plan(input));
       } catch (error) {
         return errorResult(error);
       }
@@ -164,6 +233,24 @@ function registerReadTools(server, runtime) {
   );
 
   server.registerTool(
+    'wake_hydrate',
+    {
+      description:
+        'Hydrate a composite wake into an Activation Envelope containing the configured continuation and matched event evidence. Evidence data is included only according to the trigger context policy.',
+      inputSchema: z.object({
+        wakeId: z.string().min(1),
+      }),
+    },
+    async ({ wakeId }) => {
+      try {
+        return jsonResult(runtime.activationHydrator.hydrateWake(wakeId));
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
     'runtime_status',
     {
       description:
@@ -198,22 +285,45 @@ function registerWriteTools(server, runtime) {
       description:
         'Create a durable trigger. Persistent MCP mutations require explicit confirmationId and MCP_WRITE_ENABLED=true.',
       inputSchema: z.object({
-        definition: z.record(z.string(), z.unknown()),
-        connectionIds: z.array(z.string()).min(1),
+        definition: z.record(z.string(), z.unknown()).optional(),
+        plan: triggerPlanInputSchema.optional(),
+        connectionIds: z.array(z.string()).min(1).optional(),
         confirmationId: z.string().min(1),
       }),
     },
-    async ({ definition, connectionIds, confirmationId }) => {
+    async ({ definition, plan, connectionIds, confirmationId }) => {
       try {
-        return jsonResult(
-          await runtime.triggerControl.createTrigger({
-            definition,
-            connectionIds,
-            actor: actor(),
-            owner: owner(),
-            confirmationId,
-          }),
-        );
+        if ((definition ? 1 : 0) + (plan ? 1 : 0) !== 1) {
+          const error = new Error('trigger_create requires exactly one of definition or plan');
+          error.code = 'TRIGGER_CREATE_INPUT_INVALID';
+          throw error;
+        }
+
+        let resolvedDefinition = definition;
+        let resolvedConnectionIds = connectionIds;
+        let planning = null;
+        if (plan) {
+          planning = await runtime.triggerPlanner.plan(plan);
+          resolvedDefinition = planning.definition;
+          resolvedConnectionIds = planning.connectionIds;
+        }
+        if (!Array.isArray(resolvedConnectionIds) || resolvedConnectionIds.length === 0) {
+          const error = new Error('connectionIds are required when trigger_create uses a raw definition');
+          error.code = 'TRIGGER_CONNECTION_REQUIRED';
+          throw error;
+        }
+
+        const receipt = await runtime.triggerControl.createTrigger({
+          definition: resolvedDefinition,
+          connectionIds: resolvedConnectionIds,
+          actor: actor(),
+          owner: owner(),
+          confirmationId,
+        });
+        return jsonResult({
+          ...receipt,
+          ...(planning ? { planning } : {}),
+        });
       } catch (error) {
         return errorResult(error);
       }
@@ -341,7 +451,7 @@ export async function buildEventIntelligenceMcpServer({
   const server = new McpServer(
     {
       name: 'mcp-event-intelligence',
-      version: '0.2.1',
+      version: '0.3.0',
     },
     {
       instructions:

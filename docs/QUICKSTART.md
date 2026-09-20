@@ -1,6 +1,6 @@
 # Quickstart
 
-The primary v0.1 integration is to embed Event Intelligence once at the **harness level** and let it discover the MCP clients that harness already owns.
+The primary v0.3 integration is to embed Event Intelligence once at the **harness level** and let it discover the MCP clients that harness already owns.
 
 ## 1. Embed the package and point it at the host registry
 
@@ -22,8 +22,11 @@ const ei = await createEventIntelligenceHost({
     listConnections: () => harness.mcp.listConnections(),
     subscribe: (refresh) => harness.mcp.onConnectionsChanged(refresh),
   }),
-  wake: async (packet) => {
-    const receipt = await harness.resume(packet.target, packet);
+  wake: async (packet, activation) => {
+    const receipt = await harness.resume(packet.target, {
+      packet,
+      activation,
+    });
     return { runtimeReceiptId: receipt.id };
   },
 });
@@ -33,50 +36,90 @@ That is the only MCP integration point. If the harness has 5, 50 or 1,000 MCP co
 
 The host keeps transports, OAuth/API keys and ordinary tool calls. EI never needs the provider credentials.
 
-## 2. Create a trigger
+## 2. Let the agent compile a trigger plan
 
-Once sources have been discovered, create a structured trigger through `triggerControl`:
+For common agent-authored triggers, use the deterministic planner instead of asking
+the model to produce the internal DSL directly:
+
+```js
+const plan = await ei.planTrigger({
+  events: [{
+    id: 'invoice',
+    event: 'erpnext.sales_invoice.submitted',
+    where: [
+      { path: 'grand_total', op: 'gt', value: 10000 },
+    ],
+  }],
+  match: 'all',
+  withinMs: 60 * 60 * 1000,
+  target: {
+    runtime: 'agent',
+    kind: 'conversation',
+    id: 'chat-42',
+  },
+  continuation: {
+    instruction:
+      'Check the submitted invoice for anomalies and report back in this conversation.',
+  },
+});
+```
+
+The planner resolves the event against live discovered sources, fills the
+`serverId`, validates predicate fields against the advertised payload schema,
+compiles the expression and returns both the canonical definition and the
+connection IDs needed by the control plane.
+
+It does **not** call another model.
+
+## 3. Persist the planned trigger
 
 ```js
 await ei.triggerControl.createTrigger({
-  definition: {
-    triggerId: 'release-ready',
-    version: '1',
-    clauses: [
-      {
-        id: 'pr',
-        event: 'pr.merged',
-        serverId: 'github-mcp',
-        where: [],
-      },
-    ],
-    expression: { kind: 'anyOf', refs: ['pr'] },
-    withinMs: 60 * 60 * 1000,
-    target: {
-      runtime: 'agent',
-      kind: 'task',
-      id: 'release-review',
-    },
-  },
-  connectionIds: ['github'],
+  definition: plan.definition,
+  connectionIds: plan.connectionIds,
   actor: { type: 'user', principal_id: 'user-1' },
   owner: { type: 'user', principal_id: 'user-1' },
 });
 ```
 
-When `pr.merged` arrives, the harness-level `wake` dispatcher is invoked with the trigger target, so it can resume the correct task/session/agent. The agent does not need to remain alive while waiting.
+The same low-level `triggerControl.createTrigger` remains available for
+advanced/fully structured definitions. The planner is a convenience boundary,
+not a second execution model.
 
-## 3. Let the existing agent author the trigger
+## 4. What happens when it fires
 
-No second LLM is needed. The agent already running in the harness can:
+No second LLM is needed. The surrounding agent understands the user's intent;
+EI compiles and validates the event program.
 
-1. inspect EI's discovered event sources and payload schemas;
-2. construct the structured trigger definition;
-3. call the governed trigger-create surface.
+When the condition becomes true, the normal wire wake stays reference-only. In
+embedded mode the host callback also receives a hydrated Activation Envelope:
 
-The control plane validates the trigger schema, source scope, referenced predicate/correlation fields and derived-event projections before persistence. Agent-authored persistent mutations still require the host's confirmation policy.
+```js
+wake: async (packet, activation) => {
+  console.log(activation.continuation.instruction);
+  console.log(activation.evidence);
 
-## 4. Semantic correlation is optional
+  const receipt = await agent.resume({
+    target: activation.target,
+    instruction: activation.continuation.instruction,
+    context: activation.evidence,
+  });
+
+  return { runtimeReceiptId: receipt.id };
+}
+```
+
+The envelope can also be reconstructed later with:
+
+```js
+const activation = ei.hydrateWake(packet.wake_id);
+```
+
+Matched event payloads in the envelope are explicitly marked as untrusted
+external evidence. `continuation.contextPolicy` controls whether payload data
+is included or only refs are returned.
+
+## 5. Semantic correlation is optional
 
 No TypeSafe/Jev key is required for deterministic Event Intelligence behavior.
 
@@ -84,7 +127,7 @@ No TypeSafe/Jev key is required for deterministic Event Intelligence behavior.
 
 There is no OpenAI dependency in EI. The surrounding agent/harness does the reasoning; EI owns durable event semantics.
 
-## 5. Optional MCP stdio control plane
+## 6. Optional MCP stdio control plane
 
 The same package can expose Event Intelligence management tools as a standard MCP server:
 
@@ -97,14 +140,18 @@ The default surface is non-mutating and includes:
 
 ```text
 event_sources_list
+trigger_plan
 trigger_list
 trigger_inspect
 trigger_simulate
+wake_hydrate
 derived_contracts_list
 runtime_status
 ```
 
-With writes enabled, the existing agent can author a structured trigger and call `trigger_create`; EI does not invoke another model to reinterpret the request.
+With writes enabled, `trigger_create` accepts either a raw canonical `definition`
+or an agent-friendly `plan`. In the latter case EI compiles the plan before
+running the same source-scope, owner, version and confirmation checks.
 
 Persistent mutations are only exposed with:
 
@@ -116,7 +163,7 @@ and each mutation requires a `confirmationId`.
 
 This MCP server is an optional **control-plane adapter**. It does not own or duplicate the host's provider MCP connections.
 
-## 6. Standalone reference service
+## 7. Standalone reference service
 
 For protocol testing, provider-native adapters and manual event ingress:
 

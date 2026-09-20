@@ -38,6 +38,12 @@ import {
 import {
   WakeRetryScheduler,
 } from './wake-retry-scheduler.mjs';
+import {
+  TriggerPlanner,
+} from './trigger-planner.mjs';
+import {
+  ActivationHydrator,
+} from './activation-hydrator.mjs';
 
 const REQUIRED_STORE_METHODS = [
   'putTrigger',
@@ -155,6 +161,8 @@ export async function createLocalEventIntelligenceRuntime({
     }
 
     const triggerEngine = new CompositeTriggerEngine(store, evaluator);
+    const triggerPlanner = new TriggerPlanner({ store });
+    const activationHydrator = new ActivationHydrator({ store });
     const wakeCoordinators = new Map();
     const packetBuilder = scopedPacketBuilder(scopeId);
     const deliveryOptions = {
@@ -186,7 +194,8 @@ export async function createLocalEventIntelligenceRuntime({
           packetBuilder,
           ...deliveryOptions,
           deliverer: async (packet) => {
-            const result = await handler(packet);
+            const activation = activationHydrator.hydrateWake(packet.wake_id);
+            const result = await handler(packet, activation);
             if (typeof result === 'string' && result) {
               return { runtimeReceiptId: result };
             }
@@ -214,7 +223,8 @@ export async function createLocalEventIntelligenceRuntime({
         packetBuilder,
         ...deliveryOptions,
         deliverer: async (packet) => {
-          const result = await wake(packet);
+          const activation = activationHydrator.hydrateWake(packet.wake_id);
+          const result = await wake(packet, activation);
           if (typeof result === 'string' && result) {
             return { runtimeReceiptId: result };
           }
@@ -270,6 +280,8 @@ export async function createLocalEventIntelligenceRuntime({
       triggerEngine,
       triggerControl,
       triggerInspector,
+      triggerPlanner,
+      activationHydrator,
       compositeEventConsumer,
       temporalScheduler,
       wakeRetryScheduler,
@@ -322,6 +334,8 @@ export async function createLocalEventIntelligenceRuntime({
     triggerEngine: defaultContext.triggerEngine,
     triggerControl: defaultContext.triggerControl,
     triggerInspector: defaultContext.triggerInspector,
+    triggerPlanner: defaultContext.triggerPlanner,
+    activationHydrator: defaultContext.activationHydrator,
     compositeEventConsumer: defaultContext.compositeEventConsumer,
     temporalScheduler: defaultContext.temporalScheduler,
     mcpEventsClient,

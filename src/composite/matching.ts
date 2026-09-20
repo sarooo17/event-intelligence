@@ -47,6 +47,14 @@ function predicateMatches(
       return predicate.value.includes(value as string | number | boolean);
     case 'exists':
       return predicate.value ? value !== undefined : value === undefined;
+    case 'gt':
+      return typeof value === 'number' && value > predicate.value;
+    case 'gte':
+      return typeof value === 'number' && value >= predicate.value;
+    case 'lt':
+      return typeof value === 'number' && value < predicate.value;
+    case 'lte':
+      return typeof value === 'number' && value <= predicate.value;
   }
 }
 

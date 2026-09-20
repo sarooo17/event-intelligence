@@ -2,6 +2,52 @@
 
 All notable public changes are documented here.
 
+## [0.3.0] - 2026-09-20
+
+Agent-integration release focused on making Event Intelligence usable as a plug-and-play future-condition primitive.
+
+### Agent-friendly trigger planning
+
+- added deterministic `TriggerPlanInput` contracts;
+- added `host.planTrigger()` / scoped `planTrigger()`;
+- planner resolves live event sources and server IDs;
+- planner validates predicate paths against advertised payload schemas;
+- planner compiles `all`, `any`, `sequence` and `count` into the canonical trigger DSL;
+- added numeric predicates `gt`, `gte`, `lt` and `lte`.
+
+### Continuations and activation
+
+- trigger definitions may now persist a first-class `continuation` contract;
+- continuation instructions are separated from the condition that wakes the runtime;
+- added Activation Envelope contracts;
+- added `host.hydrateWake(wakeId)` / scoped `hydrateWake(wakeId)`;
+- hydrated evidence can include matched event payloads according to the trigger context policy;
+- activation evidence is explicitly labeled as untrusted external signal data;
+- the wire wake remains reference-only by default.
+
+### Embedded host ergonomics
+
+- embedded wake callbacks may now receive `(packet, activation)`;
+- existing one-argument callbacks remain compatible;
+- trigger inspection now includes the persisted continuation contract.
+
+### MCP control plane
+
+- added non-mutating `trigger_plan`;
+- added non-mutating `wake_hydrate`;
+- `trigger_create` now accepts either a raw canonical definition or an agent-friendly plan;
+- plan-based creation still uses the same confirmation, source-scope, owner and version checks.
+
+### Verification
+
+- end-to-end coverage verifies plan -> canonical trigger -> numeric predicate match -> reference-only wake -> hydrated activation -> runtime receipt;
+- context-policy coverage verifies refs-only activation evidence;
+- clean-room smoke now installs the candidate packed artifact rather than an old hard-coded npm version.
+
+### Compatibility
+
+Persisted protocol and trigger schema version identifiers remain at the v0.1 compatibility line. The new continuation field is optional, so existing stored triggers remain readable. Existing wake packets remain reference-only and unchanged on the wire.
+
 ## [0.2.1] - 2026-09-20
 
 Patch hardening for shutdown determinism and multi-tenant verification.
