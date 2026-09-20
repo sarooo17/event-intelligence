@@ -1,1 +1,298 @@
-# event-intelligence
+# MCP Event Intelligence
+
+> Durable temporal event intelligence for sleeping agents.
+
+[![CI](https://github.com/sarooo17/event-intelligence/actions/workflows/ci.yml/badge.svg)](https://github.com/sarooo17/event-intelligence/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+
+MCP Event Intelligence is an experimental event runtime for agents that need to react to **future conditions over multiple event sources** without keeping an LLM or agent loop alive.
+
+The primary integration model is **embedded and host-owned**: the agent host keeps its existing MCP clients, transports, OAuth sessions and provider credentials. Event Intelligence receives a reference to the host's MCP registry, discovers the already-connected clients automatically, and uses only the Events-capable ones.
+
+<p align="center">
+  <img src="docs/assets/hero-architecture.svg" alt="MCP Event Intelligence architecture: event sources flow into durable composite and temporal reasoning, derived versioned events, and runtime wakeups." width="100%" />
+</p>
+
+An agent can express an intent such as:
+
+> When this PR is merged, the production deploy succeeds, and no error is observed for 10 minutes, wake this task and review the release.
+
+Event Intelligence persists that continuation independently of the model, waits for the world to satisfy it, and wakes the host only when necessary.
+
+## Embed it in an existing agent host
+
+After publication:
+
+```bash
+npm install mcp-event-intelligence
+```
+
+Pass the harness-level MCP registry once — not every MCP one by one:
+
+```js
+import {
+  createEventIntelligenceHost,
+  createMcpRegistryAdapter,
+} from 'mcp-event-intelligence/host';
+
+const ei = await createEventIntelligenceHost({
+  dataDir: './data',
+  mcpRegistry: createMcpRegistryAdapter({
+    listConnections: () => host.mcp.listConnections(),
+    subscribe: (refresh) => host.mcp.onConnectionsChanged(refresh),
+  }),
+  wake: async (packet) => {
+    const receipt = await host.resume(packet.target, packet);
+    return { runtimeReceiptId: receipt.id };
+  },
+});
+```
+
+Event Intelligence enumerates the host registry automatically. GitHub, Gmail, private/company MCPs and future connections do not need to be configured again inside EI. Tools-only MCPs remain available to the agent and are ignored by the Events layer; Events-capable MCPs are attached automatically.
+
+## What v0.1 implements
+
+### Host-owned event sources
+
+- automatic discovery from the host's existing MCP registry;
+- reuse of already-connected MCP clients without duplicate credentials;
+- experimental MCP Events capability discovery;
+- `events/list` and `events/poll`;
+- persistent opaque cursors;
+- automatic event-source registration;
+- dynamic attach/detach of host MCP clients;
+- provider-native compatibility adapters such as GitHub webhooks.
+
+### Composite and temporal triggers
+
+- `allOf`, `anyOf`, `sequence`, `count`;
+- deterministic same-value correlation;
+- optional semantic correlation;
+- `absence`, `not`, `unless`, `after`, `until`;
+- `debounce`, `threshold`, `rate`, `distinct`;
+- calendar-aware conditions with IANA timezones;
+- durable deadlines that continue even when no new provider event arrives.
+
+### Agent-authored continuations
+
+- event-source discovery;
+- agent-authored structured trigger definitions;
+- deterministic validation against real source schemas and advertised fields;
+- approval-gated persistent mutations;
+- one-shot, cooldown, max-firings, expiry, leases, update and delete.
+
+### Derived events and composition
+
+Triggers can emit immutable higher-level events instead of waking an agent:
+
+```text
+pr.merged + deploy.succeeded
+              ↓
+        release.ready@1
+              +
+       manager.approved
+              ↓
+       rollout.allowed@1
+              ↓
+          runtime wake
+```
+
+Derived events preserve refs-only lineage to their direct parents and flattened root evidence.
+
+<p align="center">
+  <img src="docs/assets/provenance-inspector.svg" alt="Rendered Trigger Inspector and flattened provenance example." width="100%" />
+</p>
+
+### Versioned contracts
+
+Derived event names are versioned contracts such as `release.ready@1`.
+
+- first producer establishes the canonical schema;
+- compatible producers may join the same contract version;
+- incompatible schemas fail before trigger persistence;
+- multiple versions may coexist;
+- ambiguous unversioned consumers fail closed;
+- every occurrence carries a schema fingerprint.
+
+### Host or callback wake
+
+An embedded harness can provide one in-process wake dispatcher that routes by `target.runtime`, `target.kind` and `target.id`; runtime-specific handlers remain available as a lower-level option. A standalone deployment can instead use signed HMAC callbacks. Both paths return a stable `runtimeReceiptId`.
+
+## Why this exists
+
+MCP Events is concerned with the event transport/subscription boundary. Event Intelligence explores the layer **above transport**:
+
+- how an agent declares a future condition;
+- how multi-event state survives while the agent sleeps;
+- how absence/time becomes an event;
+- how higher-level facts are derived without invoking a model;
+- how those facts can be safely composed;
+- how a host resumes an agent effectively once in the validated scenarios.
+
+This project does **not** propose a replacement for MCP Events and does not claim to be an official MCP extension.
+
+## AI and API keys
+
+Event Intelligence has one optional AI boundary: **semantic correlation**.
+
+- `TYPESAFE_API_KEY` enables the bundled TypeSafe Jev evaluator when a trigger explicitly requests semantic correlation.
+- embedded hosts may inject a compatible `semanticEvaluator` instead.
+- there is no bundled OpenAI planner and no OpenAI API dependency.
+
+The agent/harness is already responsible for reasoning and can author a structured trigger directly from `event_sources_list` / the discovered schemas. Deterministic correlation, temporal logic, persistence, derived events and wake delivery require no model API.
+
+## Full-system acceptance
+
+The v0.1 acceptance suite verifies:
+
+- host-owned MCP client → event discovery/poll → composite match → in-process wake;
+- provider-neutral events → composite match → derived event → derived composition → signed runtime wake;
+- contract schema evolution and ambiguity rejection;
+- refs-only root provenance;
+- replay without duplicate derived events or wakes;
+- process shutdown while a temporal deadline is pending;
+- restart on the same datastore after the deadline;
+- wake recovery **without a new provider event**;
+- hash-linked audit verification.
+
+A separate live regression also verified real GitHub webhook ingress into the MCP EventOccurrence / composite fan-in path.
+
+## Standalone reference service
+
+### Requirements
+
+- Node.js 22+
+- no external database for the reference setup
+
+```bash
+git clone https://github.com/sarooo17/event-intelligence.git
+cd mcp-event-intelligence
+npm ci
+npm run check
+
+export SERVICE_AUTH_TOKEN="$(openssl rand -hex 32)"
+npm start
+```
+
+Then:
+
+```bash
+curl http://127.0.0.1:3000/readyz
+```
+
+The standalone service supports manual/provider-native event ingress. It does not own arbitrary MCP connections; host-owned MCP reuse belongs to the package integration above.
+
+### Docker
+
+```bash
+docker build -t mcp-event-intelligence:0.1.0 .
+
+docker run --rm \
+  -p 3000:3000 \
+  -v mcp-event-intelligence-data:/data \
+  -e SERVICE_AUTH_TOKEN="$(openssl rand -hex 32)" \
+  mcp-event-intelligence:0.1.0
+```
+
+## Optional MCP control plane
+
+The package also exposes a standard **MCP stdio** control plane through the official TypeScript SDK v2:
+
+```bash
+npx mcp-event-intelligence mcp
+```
+
+Read/non-mutating tools are exposed by default, including `event_sources_list`, inspection, simulation, contracts and runtime status. An agent uses those discovered source schemas to author the structured definition passed to `trigger_create`.
+
+Persistent trigger mutations are only registered when the operator explicitly enables `MCP_WRITE_ENABLED=true`, and each mutation still requires a `confirmationId`. The MCP server is a control-plane adapter; it is **not** a gateway through which the host's other MCP servers must be reconnected.
+
+See [docs/QUICKSTART.md](docs/QUICKSTART.md) and [docs/MCP-REGISTRY.md](docs/MCP-REGISTRY.md).
+
+## Configuration
+
+Standalone/core environment variables:
+
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `SERVICE_AUTH_TOKEN` | yes for protected HTTP APIs | bearer token for control-plane endpoints |
+| `DATA_DIR` | no | persistent JSONL directory, default `./data` |
+| `PORT` | no | HTTP port, default `3000` |
+| `ENVIRONMENT_ID` | no | environment boundary |
+| `RUNTIME_WAKE_TARGETS_JSON` | no | signed standalone runtime callbacks |
+| `GITHUB_WEBHOOK_SECRET` | no | verify GitHub webhook ingress |
+| `TYPESAFE_API_KEY` | no | bundled TypeSafe Jev semantic evaluator |
+
+Embedded hosts pass one MCP registry adapter. Event Intelligence discovers already-connected clients from that registry; provider MCP connection settings are not duplicated inside EI.
+
+## Architecture
+
+The detailed execution model, clocks, lifecycle, persistence and trust boundaries are documented in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+## Important semantics
+
+### Event-time vs processing-time
+
+Normal event windows use event `occurredAt`.
+
+Absence/deadline progression uses Event Intelligence processing time. This separation is explicit and tested.
+
+<p align="center">
+  <img src="docs/assets/durable-time-restart.svg" alt="Rendered durable-time timeline showing a deadline surviving process shutdown and firing after restart." width="100%" />
+</p>
+
+### Effectively-once runtime activation
+
+The implementation does not claim theoretical distributed exactly-once delivery.
+
+It uses stable wake IDs, persistence, deduplication, runtime receipts and replay handling to provide effectively-once runtime activation in the validated reference scenarios.
+
+### Derived event vs current state
+
+A derived event says **what became true at a point in history**.
+
+v0.1 intentionally does not implement a mutable current-state/facts database.
+
+## Security
+
+Read [SECURITY.md](SECURITY.md) and [docs/SECURITY-MODEL.md](docs/SECURITY-MODEL.md).
+
+In embedded mode, the host retains MCP authorization and credentials; Event Intelligence discovers only the client objects exposed through the host-provided MCP registry. The v0.1 reference store is JSONL and single-writer.
+
+## MCP compatibility status
+
+There are two separate MCP boundaries:
+
+- **event ingress**: host-owned, already-connected MCP clients exposing experimental Events, plus provider-native adapters;
+- **control plane**: optional standard MCP **stdio** server built on the official TypeScript SDK v2 and targeting protocol revision 2026-07-28.
+
+Registry identity:
+
+```text
+io.github.sarooo17/event-intelligence
+```
+
+`server.json` is validated with the official `mcp-publisher validate` command in CI. MCP Events itself remains experimental and may change as the Triggers & Events work evolves.
+
+## Project status
+
+**v0.1 reference implementation / experimental.**
+
+The architecture is implemented and exercised end-to-end. Remaining work is primarily production storage/HA, broader host/provider evidence, scale benchmarks and upstream feedback.
+
+## Example
+
+See the [release-gate example](docs/examples/release-gate.md) for a composed future-condition flow using durable time, derived events and targeted wake.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+Contributions are especially useful around host adapters, MCP Events compatibility, temporal semantics, production persistence, security review and reproducible provider integrations.
+
+## License
+
+Apache License 2.0. See [LICENSE](LICENSE).
+
+## Disclaimer
+
+This is an independent open-source project. It is not an official Model Context Protocol specification and is not affiliated with or endorsed by the MCP maintainers.

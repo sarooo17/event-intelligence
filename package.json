@@ -1,0 +1,85 @@
+{
+  "name": "mcp-event-intelligence",
+  "version": "0.1.0",
+  "description": "Durable temporal event intelligence for agent hosts: host-owned MCP event discovery, composite triggers, derived events, and targeted wakeups.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/src/intelligenceProtocol/index.js",
+  "types": "./dist/src/intelligenceProtocol/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/src/intelligenceProtocol/index.d.ts",
+      "import": "./dist/src/intelligenceProtocol/index.js"
+    },
+    "./host": {
+      "types": "./scripts/host-integration.d.mts",
+      "import": "./scripts/host-integration.mjs"
+    }
+  },
+  "bin": {
+    "mcp-event-intelligence": "./bin/mcp-event-intelligence.mjs"
+  },
+  "files": [
+    "bin/",
+    "dist/",
+    "scripts/service.mjs",
+    "scripts/lib/",
+    "README.md",
+    "LICENSE",
+    "SECURITY.md",
+    "CHANGELOG.md",
+    "server.json",
+    "scripts/mcp-stdio.mjs",
+    "scripts/mcp-stdio-server.mjs",
+    "scripts/host-integration.mjs",
+    "scripts/host-integration.d.mts",
+    "scripts/run-tests.mjs"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node scripts/run-tests.mjs",
+    "check": "npm run test",
+    "pack:check": "npm pack --dry-run",
+    "prepack": "npm run build",
+    "start": "node scripts/service.mjs",
+    "protocol:check": "npm run check",
+    "mcp": "npm run build && node scripts/mcp-stdio.mjs",
+    "mcp:inspect": "npm run build && npx @modelcontextprotocol/inspector node scripts/mcp-stdio.mjs",
+    "registry:validate": "mcp-publisher validate server.json",
+    "pack:mcp-smoke": "node scripts/package-mcp-smoke.mjs"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "ai-agents",
+    "event-driven",
+    "temporal",
+    "durable-execution",
+    "triggers",
+    "derived-events",
+    "agent-runtime"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sarooo17/event-intelligence.git"
+  },
+  "bugs": {
+    "url": "https://github.com/sarooo17/event-intelligence/issues"
+  },
+  "homepage": "https://github.com/sarooo17/event-intelligence#readme",
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "zod": "4.6.5",
+    "@modelcontextprotocol/server": "2.0.0"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "typescript": "6.0.3",
+    "@modelcontextprotocol/client": "2.0.0"
+  },
+  "mcpName": "io.github.sarooo17/event-intelligence"
+}

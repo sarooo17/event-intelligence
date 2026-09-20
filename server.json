@@ -1,0 +1,68 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.sarooo17/event-intelligence",
+  "title": "MCP Event Intelligence",
+  "description": "Durable temporal event intelligence: composite triggers, derived events, and runtime wakeups.",
+  "version": "0.1.0",
+  "repository": {
+    "url": "https://github.com/sarooo17/event-intelligence",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "npm",
+      "registryBaseUrl": "https://registry.npmjs.org",
+      "identifier": "mcp-event-intelligence",
+      "version": "0.1.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "packageArguments": [
+        {
+          "type": "positional",
+          "value": "mcp"
+        }
+      ],
+      "environmentVariables": [
+        {
+          "name": "DATA_DIR",
+          "description": "Persistent Event Intelligence state directory.",
+          "isRequired": false,
+          "isSecret": false,
+          "format": "string",
+          "valueHint": "./data"
+        },
+        {
+          "name": "MCP_WRITE_ENABLED",
+          "description": "Set to true to expose persistent trigger mutation tools. Read-only by default.",
+          "isRequired": false,
+          "isSecret": false,
+          "format": "string",
+          "valueHint": "false"
+        },
+        {
+          "name": "RUNTIME_WAKE_TARGETS_JSON",
+          "description": "Optional operator-configured signed runtime wake targets.",
+          "isRequired": false,
+          "isSecret": true,
+          "format": "string"
+        },
+        {
+          "name": "TYPESAFE_API_KEY",
+          "description": "Optional TypeSafe Jev API key for semantic-correlation triggers.",
+          "isRequired": false,
+          "isSecret": true,
+          "format": "string"
+        },
+        {
+          "name": "TYPESAFE_MODEL",
+          "description": "Optional TypeSafe Jev model override. Defaults to jev-latest.",
+          "isRequired": false,
+          "isSecret": false,
+          "format": "string",
+          "valueHint": "jev-latest"
+        }
+      ]
+    }
+  ]
+}

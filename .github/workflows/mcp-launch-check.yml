@@ -1,0 +1,55 @@
+name: MCP Launch Check
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: mcp-launch-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  mcp-and-registry:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Build and test standard MCP stdio adapter
+        run: |
+          npm run build
+          node --test test/mcp-stdio-server.test.mjs
+
+      - name: Verify packed npm artifact can expose MCP mode
+        run: npm run pack:mcp-smoke
+
+      - name: Install official MCP Registry publisher
+        run: |
+          curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" | tar xz mcp-publisher
+          ./mcp-publisher --help >/dev/null
+
+      - name: Validate server.json
+        run: ./mcp-publisher validate server.json
+
+      - name: Verify npm package carries Registry ownership metadata
+        run: |
+          node -e '
+            const p=require("./package.json");
+            const s=require("./server.json");
+            if (p.mcpName !== s.name) process.exit(1);
+            if (s.packages?.[0]?.identifier !== p.name) process.exit(2);
+            if (s.packages?.[0]?.version !== p.version) process.exit(3);
+            if (s.packages?.[0]?.transport?.type !== "stdio") process.exit(4);
+          '

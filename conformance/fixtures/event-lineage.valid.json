@@ -1,0 +1,26 @@
+{
+  "protocol": "mcp-event-intelligence",
+  "protocolVersion": "0.1.0",
+  "schemaVersion": "ei.v0.1",
+  "traceId": "trace_fixture_001",
+  "environmentId": "env_test",
+  "subscriptionId": "sub_fixture",
+  "sourceEventId": "evt_fixture",
+  "observedAt": "2026-09-18T06:30:00.000Z",
+  "source": {
+    "serverId": "github-mcp",
+    "transport": "webhook",
+    "provider": "github",
+    "cursor": null
+  },
+  "target": {
+    "runtime": "openai-agents",
+    "kind": "session",
+    "id": "session_fixture"
+  },
+  "event": {
+    "name": "issue.opened",
+    "occurredAt": "2026-09-18T06:29:59.000Z",
+    "payloadHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  }
+}

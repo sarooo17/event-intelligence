@@ -1,0 +1,57 @@
+{
+  "protocolVersion": "0.1.0",
+  "schemaVersion": "trigger.v0.1",
+  "triggerId": "issue-and-pippo-mail",
+  "version": "1",
+  "description": "Wake only when an issue exists and Pippo sends a related email.",
+  "clauses": [
+    {
+      "id": "issue",
+      "event": "github.issue.opened",
+      "where": [
+        {
+          "path": "repository",
+          "op": "eq",
+          "value": "acme/app"
+        }
+      ]
+    },
+    {
+      "id": "mail",
+      "event": "email.received",
+      "where": [
+        {
+          "path": "from",
+          "op": "eq",
+          "value": "pippo@example.com"
+        }
+      ]
+    }
+  ],
+  "expression": {
+    "kind": "allOf",
+    "refs": [
+      "issue",
+      "mail"
+    ]
+  },
+  "withinMs": 86400000,
+  "correlation": {
+    "semantic": {
+      "instruction": "The email concerns the GitHub issue.",
+      "input": [
+        "issue.title",
+        "mail.subject",
+        "mail.bodyPreview"
+      ],
+      "matchThreshold": 0.8,
+      "rejectThreshold": 0.2,
+      "uncertain": "escalate"
+    }
+  },
+  "target": {
+    "runtime": "runtime-probe",
+    "kind": "task",
+    "id": "issue-report"
+  }
+}
