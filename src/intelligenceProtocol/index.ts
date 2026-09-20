@@ -74,6 +74,8 @@ export {
   COMPOSITE_TRIGGER_SCHEMA_VERSION,
   StructuredPredicateSchema,
   TriggerClauseSchema,
+  ContinuationContextPolicySchema,
+  ContinuationContractSchema,
   DerivedEventProjectionSchema,
   DerivedEventDefinitionSchema,
   DerivedEventEvidenceRefSchema,
@@ -95,6 +97,8 @@ export {
 export type {
   StructuredPredicate,
   TriggerClause,
+  ContinuationContextPolicy,
+  ContinuationContract,
   DerivedEventDefinition,
   DerivedEventRecord,
   CompositeTriggerDefinition,
@@ -103,3 +107,17 @@ export type {
   TriggerMatchRecord,
   CompositeCorrelationDecision,
 } from './triggerSchemas.js';
+
+
+export {
+  TriggerPlanEventSchema,
+  TriggerPlanMatchSchema,
+  TriggerPlanInputSchema,
+  parseTriggerPlanInput,
+} from './triggerPlanSchemas.js';
+
+export type {
+  TriggerPlanEvent,
+  TriggerPlanMatch,
+  TriggerPlanInput,
+} from './triggerPlanSchemas.js';
