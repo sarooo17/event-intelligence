@@ -58,6 +58,13 @@ function normalizeConnection(connection) {
       500,
       'maxEvents',
     ),
+    maxPollBatches: normalizePositiveInteger(
+      connection.maxPollBatches,
+      4,
+      1,
+      32,
+      'maxPollBatches',
+    ),
   };
 }
 
@@ -75,6 +82,7 @@ export function createHostMcpEventsConnection({
   enabled = true,
   pollIntervalMs = 5000,
   maxEvents = 100,
+  maxPollBatches = 4,
   scopeId = DEFAULT_EVENT_SCOPE_ID,
 } = {}) {
   const directRequest =
@@ -112,6 +120,7 @@ export function createHostMcpEventsConnection({
     enabled,
     pollIntervalMs,
     maxEvents,
+    maxPollBatches,
     scopeId,
   });
 }
@@ -424,62 +433,77 @@ export class McpEventsClientManager {
       descriptor.name,
     );
 
+    let cursor = current?.cursor ?? null;
+    let lastEventAt = current?.lastEventAt;
+    let accepted = 0;
+    let batches = 0;
+    let hasMore = false;
+
     try {
-      const result = await this.rpc(connection, 'events/poll', {
-        name: descriptor.name,
-        arguments: {},
-        cursor: current?.cursor ?? null,
-        maxEvents: connection.maxEvents,
-      });
+      do {
+        const result = await this.rpc(connection, 'events/poll', {
+          name: descriptor.name,
+          arguments: {},
+          cursor,
+          maxEvents: connection.maxEvents,
+        });
 
-      if (typeof result?.cursor !== 'string' || !Array.isArray(result.events)) {
-        throw new Error(
-          `MCP server ${connection.connectionId} returned invalid events/poll`,
-        );
-      }
-
-      let accepted = 0;
-      let lastEventAt = current?.lastEventAt;
-      for (const raw of result.events) {
-        const occurrence = McpEventOccurrenceSchema.parse(raw);
-        if (occurrence.name !== descriptor.name) {
+        if (typeof result?.cursor !== 'string' || !Array.isArray(result.events)) {
           throw new Error(
-            `MCP event name mismatch: expected ${descriptor.name}, got ${occurrence.name}`,
+            `MCP server ${connection.connectionId} returned invalid events/poll`,
           );
         }
-        assertJsonSchemaValue(descriptor.payloadSchema, occurrence.data);
 
-        const receipt = await store.appendMcpOccurrence(
-          connection.serverId,
-          occurrence,
-        );
-        if (!receipt.accepted) continue;
+        for (const raw of result.events) {
+          const occurrence = McpEventOccurrenceSchema.parse(raw);
+          if (occurrence.name !== descriptor.name) {
+            throw new Error(
+              `MCP event name mismatch: expected ${descriptor.name}, got ${occurrence.name}`,
+            );
+          }
+          assertJsonSchemaValue(descriptor.payloadSchema, occurrence.data);
 
-        accepted += 1;
-        lastEventAt = occurrence.timestamp;
-        await consumer.ingestMcpOccurrence({
-          event: occurrence,
+          const receipt = await store.appendMcpOccurrence(
+            connection.serverId,
+            occurrence,
+          );
+          if (!receipt.accepted) continue;
+
+          accepted += 1;
+          lastEventAt = occurrence.timestamp;
+          await consumer.ingestMcpOccurrence({
+            event: occurrence,
+            serverId: connection.serverId,
+            provider: 'mcp',
+            traceId: `mcp:${connection.serverId}:${occurrence.eventId}`,
+          });
+        }
+
+        cursor = result.cursor;
+        hasMore = result.hasMore === true;
+        batches += 1;
+
+        // Persist the cursor after every page so a crash cannot force the host
+        // to replay the entire drained batch. Occurrence idempotency remains
+        // the second line of defense.
+        await store.putMcpClientState({
+          connectionId: connection.connectionId,
           serverId: connection.serverId,
-          provider: 'mcp',
-          traceId: `mcp:${connection.serverId}:${occurrence.eventId}`,
+          eventName: descriptor.name,
+          cursor,
+          ...(lastEventAt ? { lastEventAt } : {}),
         });
-      }
+      } while (hasMore && batches < connection.maxPollBatches);
 
-      await store.putMcpClientState({
-        connectionId: connection.connectionId,
-        serverId: connection.serverId,
-        eventName: descriptor.name,
-        cursor: result.cursor,
-        ...(lastEventAt ? { lastEventAt } : {}),
-      });
       this.lastErrors.delete(connection.connectionId);
-
       return {
         eventName: descriptor.name,
         status: 'ok',
         accepted,
-        cursor: result.cursor,
-        hasMore: result.hasMore === true,
+        cursor,
+        hasMore,
+        batches,
+        batchLimitReached: hasMore && batches >= connection.maxPollBatches,
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -488,7 +512,7 @@ export class McpEventsClientManager {
         connectionId: connection.connectionId,
         serverId: connection.serverId,
         eventName: descriptor.name,
-        cursor: current?.cursor ?? null,
+        cursor,
         lastError: message,
       });
       throw error;
