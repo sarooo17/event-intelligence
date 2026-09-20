@@ -51,6 +51,7 @@ export class PersistentEventStore {
   #events = [];
   #decisions = [];
   #wakes = [];
+  #wakeDeliveries = new Map();
   #triggers = new Map();
   #triggerStates = new Map();
   #eventSources = new Map();
@@ -71,6 +72,7 @@ export class PersistentEventStore {
       events: path.join(dataDir, 'events.jsonl'),
       decisions: path.join(dataDir, 'decisions.jsonl'),
       wakes: path.join(dataDir, 'wakes.jsonl'),
+      wakeDeliveries: path.join(dataDir, 'wake-deliveries.jsonl'),
       triggers: path.join(dataDir, 'triggers.jsonl'),
       triggerStates: path.join(dataDir, 'trigger-states.jsonl'),
       eventSources: path.join(dataDir, 'event-sources.jsonl'),
@@ -126,6 +128,7 @@ export class PersistentEventStore {
       events,
       decisions,
       wakes,
+      wakeDeliveries,
       triggers,
       triggerStates,
       eventSources,
@@ -140,6 +143,7 @@ export class PersistentEventStore {
       readJsonLines(this.files.events),
       readJsonLines(this.files.decisions),
       readJsonLines(this.files.wakes),
+      readJsonLines(this.files.wakeDeliveries),
       readJsonLines(this.files.triggers),
       readJsonLines(this.files.triggerStates),
       readJsonLines(this.files.eventSources),
@@ -155,6 +159,40 @@ export class PersistentEventStore {
     this.#events = events;
     this.#decisions = decisions;
     this.#wakes = wakes;
+
+    this.#wakeDeliveries = new Map();
+    for (const raw of wakeDeliveries) {
+      if (!raw?.wakeId || !raw?.matchId || !raw?.runtime) continue;
+      const status = [
+        'pending',
+        'claimed',
+        'retry_pending',
+        'delivered',
+        'dead_letter',
+      ].includes(raw.status)
+        ? raw.status
+        : 'pending';
+      const record = {
+        wakeId: String(raw.wakeId),
+        matchId: String(raw.matchId),
+        triggerId: String(raw.triggerId || ''),
+        triggerVersion: String(raw.triggerVersion || '1'),
+        runtime: String(raw.runtime),
+        status,
+        attemptCount:
+          Number.isInteger(raw.attemptCount) && raw.attemptCount >= 0
+            ? raw.attemptCount
+            : 0,
+        nextAttemptAt: String(raw.nextAttemptAt || raw.updatedAt || new Date(0).toISOString()),
+        leaseOwner: raw.leaseOwner ? String(raw.leaseOwner) : null,
+        leaseUntil: raw.leaseUntil ? String(raw.leaseUntil) : null,
+        runtimeReceiptId: raw.runtimeReceiptId ? String(raw.runtimeReceiptId) : null,
+        lastError: raw.lastError ? String(raw.lastError) : null,
+        createdAt: String(raw.createdAt || new Date(0).toISOString()),
+        updatedAt: String(raw.updatedAt || new Date(0).toISOString()),
+      };
+      this.#wakeDeliveries.set(record.wakeId, record);
+    }
 
     this.#triggers = new Map();
     for (const raw of triggers) {
@@ -324,6 +362,7 @@ export class PersistentEventStore {
       events: events.length,
       decisions: decisions.length,
       wakes: wakes.length,
+      wakeDeliveries: this.#wakeDeliveries.size,
       triggers: this.#triggers.size,
       triggerStates: this.#triggerStates.size,
       eventSources: this.#eventSources.size,
@@ -362,6 +401,195 @@ export class PersistentEventStore {
     return this.#serialized(async () => {
       this.#wakes.push(record);
       await appendFile(this.files.wakes, `${JSON.stringify(record)}\n`, 'utf8');
+      return record;
+    });
+  }
+
+  getWakeDelivery(wakeId) {
+    return this.#wakeDeliveries.get(String(wakeId)) ?? null;
+  }
+
+  listDueWakeDeliveries(nowIso = new Date().toISOString()) {
+    const now = Date.parse(nowIso);
+    return [...this.#wakeDeliveries.values()]
+      .filter((record) => {
+        if (record.status === 'pending' || record.status === 'retry_pending') {
+          return Date.parse(record.nextAttemptAt) <= now;
+        }
+        if (record.status === 'claimed' && record.leaseUntil) {
+          return Date.parse(record.leaseUntil) <= now;
+        }
+        return false;
+      })
+      .sort((a, b) =>
+        Date.parse(a.nextAttemptAt) - Date.parse(b.nextAttemptAt) ||
+        a.wakeId.localeCompare(b.wakeId)
+      );
+  }
+
+  async ensureWakeDelivery(input) {
+    return this.#serialized(async () => {
+      const wakeId = String(input.wakeId || '');
+      const matchId = String(input.matchId || '');
+      const runtime = String(input.runtime || '');
+      if (!wakeId || !matchId || !runtime) {
+        throw new Error('Wake delivery requires wakeId, matchId and runtime');
+      }
+      const existing = this.#wakeDeliveries.get(wakeId);
+      if (existing) return existing;
+
+      const now = String(input.now ?? new Date().toISOString());
+      const record = {
+        wakeId,
+        matchId,
+        triggerId: String(input.triggerId || ''),
+        triggerVersion: String(input.triggerVersion || '1'),
+        runtime,
+        status: 'pending',
+        attemptCount: 0,
+        nextAttemptAt: now,
+        leaseOwner: null,
+        leaseUntil: null,
+        runtimeReceiptId: null,
+        lastError: null,
+        createdAt: now,
+        updatedAt: now,
+      };
+      this.#wakeDeliveries.set(wakeId, record);
+      await appendFile(
+        this.files.wakeDeliveries,
+        `${JSON.stringify(record)}\n`,
+        'utf8',
+      );
+      return record;
+    });
+  }
+
+  async claimWakeDelivery(wakeIdInput, {
+    workerId,
+    now = new Date().toISOString(),
+    leaseMs = 30000,
+  } = {}) {
+    return this.#serialized(async () => {
+      const wakeId = String(wakeIdInput || '');
+      const owner = String(workerId || '');
+      if (!wakeId || !owner) {
+        throw new Error('Wake delivery claim requires wakeId and workerId');
+      }
+      const current = this.#wakeDeliveries.get(wakeId);
+      if (!current) return null;
+      if (current.status === 'delivered' || current.status === 'dead_letter') {
+        return null;
+      }
+
+      const nowMs = Date.parse(now);
+      const ready =
+        (
+          (current.status === 'pending' || current.status === 'retry_pending') &&
+          Date.parse(current.nextAttemptAt) <= nowMs
+        ) ||
+        (
+          current.status === 'claimed' &&
+          current.leaseUntil &&
+          Date.parse(current.leaseUntil) <= nowMs
+        );
+      if (!ready) return null;
+
+      const record = {
+        ...current,
+        status: 'claimed',
+        attemptCount: current.attemptCount + 1,
+        leaseOwner: owner,
+        leaseUntil: new Date(nowMs + Math.max(1000, Number(leaseMs) || 30000)).toISOString(),
+        updatedAt: now,
+      };
+      this.#wakeDeliveries.set(wakeId, record);
+      await appendFile(
+        this.files.wakeDeliveries,
+        `${JSON.stringify(record)}\n`,
+        'utf8',
+      );
+      return record;
+    });
+  }
+
+  async completeWakeDelivery(wakeIdInput, {
+    workerId,
+    runtimeReceiptId,
+    now = new Date().toISOString(),
+  } = {}) {
+    return this.#serialized(async () => {
+      const wakeId = String(wakeIdInput || '');
+      const current = this.#wakeDeliveries.get(wakeId);
+      if (!current) return null;
+      if (current.status === 'delivered') return current;
+      if (
+        current.status !== 'claimed' ||
+        current.leaseOwner !== String(workerId || '')
+      ) {
+        const error = new Error(`Wake delivery ${wakeId} is not owned by this worker`);
+        error.code = 'WAKE_DELIVERY_CLAIM_LOST';
+        throw error;
+      }
+
+      const record = {
+        ...current,
+        status: 'delivered',
+        runtimeReceiptId: String(runtimeReceiptId || ''),
+        leaseOwner: null,
+        leaseUntil: null,
+        nextAttemptAt: now,
+        lastError: null,
+        updatedAt: now,
+      };
+      this.#wakeDeliveries.set(wakeId, record);
+      await appendFile(
+        this.files.wakeDeliveries,
+        `${JSON.stringify(record)}\n`,
+        'utf8',
+      );
+      return record;
+    });
+  }
+
+  async failWakeDelivery(wakeIdInput, {
+    workerId,
+    error,
+    now = new Date().toISOString(),
+    maxAttempts = 5,
+    nextAttemptAt = now,
+  } = {}) {
+    return this.#serialized(async () => {
+      const wakeId = String(wakeIdInput || '');
+      const current = this.#wakeDeliveries.get(wakeId);
+      if (!current) return null;
+      if (
+        current.status !== 'claimed' ||
+        current.leaseOwner !== String(workerId || '')
+      ) {
+        const claimError = new Error(
+          `Wake delivery ${wakeId} is not owned by this worker`,
+        );
+        claimError.code = 'WAKE_DELIVERY_CLAIM_LOST';
+        throw claimError;
+      }
+
+      const terminal = current.attemptCount >= Math.max(1, Number(maxAttempts) || 5);
+      const record = {
+        ...current,
+        status: terminal ? 'dead_letter' : 'retry_pending',
+        leaseOwner: null,
+        leaseUntil: null,
+        nextAttemptAt: terminal ? now : String(nextAttemptAt),
+        lastError: error instanceof Error ? error.message : String(error || 'wake delivery failed'),
+        updatedAt: now,
+      };
+      this.#wakeDeliveries.set(wakeId, record);
+      await appendFile(
+        this.files.wakeDeliveries,
+        `${JSON.stringify(record)}\n`,
+        'utf8',
+      );
       return record;
     });
   }
