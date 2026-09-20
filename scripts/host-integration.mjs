@@ -74,6 +74,14 @@ function scopedHostView(runtime, context) {
     store: context.store,
     triggerControl: context.triggerControl,
     triggerInspector: context.triggerInspector,
+    triggerPlanner: context.triggerPlanner,
+    activationHydrator: context.activationHydrator,
+    planTrigger(input) {
+      return context.triggerPlanner.plan(input);
+    },
+    hydrateWake(wakeId) {
+      return context.activationHydrator.hydrateWake(wakeId);
+    },
     get eventSources() {
       return context.triggerControl.listEventSources();
     },
@@ -222,6 +230,18 @@ export async function createEventIntelligenceHost({
     },
     get triggerInspector() {
       return runtime.triggerInspector;
+    },
+    get triggerPlanner() {
+      return runtime.triggerPlanner;
+    },
+    get activationHydrator() {
+      return runtime.activationHydrator;
+    },
+    planTrigger(input) {
+      return runtime.triggerPlanner.plan(input);
+    },
+    hydrateWake(wakeId) {
+      return runtime.activationHydrator.hydrateWake(wakeId);
     },
     get eventSources() {
       return runtime.triggerControl.listEventSources();
