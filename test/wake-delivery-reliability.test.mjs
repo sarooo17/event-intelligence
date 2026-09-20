@@ -150,8 +150,13 @@ test('lease claim prevents two workers from delivering the same wake concurrentl
     const engine = new CompositeTriggerEngine(store, null, () => now);
     const match = await matchedTrigger(store, engine, 'claim-trigger');
 
+    let markEntered;
+    const entered = new Promise((resolve) => {
+      markEntered = resolve;
+    });
     const deliverer = async (packet) => {
       deliveries += 1;
+      markEntered();
       await gate;
       return { runtimeReceiptId: `receipt:${packet.wake_id}` };
     };
@@ -172,8 +177,24 @@ test('lease claim prevents two workers from delivering the same wake concurrentl
     });
 
     firstRun = first.deliverMatched(match);
-    for (let attempt = 0; attempt < 100 && deliveries === 0; attempt += 1) {
-      await new Promise((resolve) => setImmediate(resolve));
+    let timeout;
+    try {
+      await Promise.race([
+        entered,
+        firstRun.then((result) => {
+          throw new Error(
+            `first worker completed before entering deliverer: ${result.status}`,
+          );
+        }),
+        new Promise((_, reject) => {
+          timeout = setTimeout(
+            () => reject(new Error('first worker did not enter deliverer within 5s')),
+            5000,
+          );
+        }),
+      ]);
+    } finally {
+      clearTimeout(timeout);
     }
     assert.equal(deliveries, 1);
 
