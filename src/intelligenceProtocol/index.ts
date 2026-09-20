@@ -121,3 +121,15 @@ export type {
   TriggerPlanMatch,
   TriggerPlanInput,
 } from './triggerPlanSchemas.js';
+
+
+export {
+  ActivationEvidenceSchema,
+  ActivationEnvelopeSchema,
+  parseActivationEnvelope,
+} from './activationSchemas.js';
+
+export type {
+  ActivationEvidence,
+  ActivationEnvelope,
+} from './activationSchemas.js';
