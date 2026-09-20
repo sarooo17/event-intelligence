@@ -18,6 +18,8 @@ export interface HostMcpConnectionOptions {
   scopeId?: string;
   pollIntervalMs?: number;
   maxEvents?: number;
+  /** Maximum number of immediately drained pages when the provider reports hasMore. */
+  maxPollBatches?: number;
 }
 
 export interface HostMcpRegistry {
