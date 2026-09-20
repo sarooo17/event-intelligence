@@ -2,6 +2,22 @@
 
 All notable public changes are documented here.
 
+## [0.1.1] - 2026-09-20
+
+Provider integration patch.
+
+### Provider-facing MCP Events adapter
+
+- public `mcp-event-intelligence/provider` package export;
+- callback-backed `createMcpEventsProvider()` for stateless provider runtimes;
+- generic experimental Events capability advertisement plus `server/discover`, `events/list`, and `events/poll` dispatch;
+- provider-owned opaque cursors, authentication context, data queries and domain event semantics;
+- fail-closed EventOccurrence and payload-schema validation;
+- lower-level store-backed `ExperimentalMcpEventsServer` remains available through the provider export;
+- packed-artifact smoke coverage for the new subpath.
+
+The Event Intelligence and composite-trigger protocol/schema versions remain `0.1.0` / `v0.1`; this patch adds a package integration surface without changing persisted protocol contracts.
+
 ## [0.1.0] - 2026-09-20
 
 Initial public reference release.

@@ -1,6 +1,12 @@
 name: Publish npm
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - "package.json"
+    tags:
+      - "v*"
   workflow_dispatch:
     inputs:
       confirm:
@@ -14,7 +20,7 @@ permissions:
 
 jobs:
   publish:
-    if: ${{ inputs.confirm == 'publish' }}
+    if: ${{ github.event_name == 'push' || inputs.confirm == 'publish' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -31,9 +37,27 @@ jobs:
         run: npm ci --ignore-scripts --no-audit --no-fund
 
       - name: Verify release
+        shell: bash
         run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            TAG_VERSION="${GITHUB_REF_NAME#v}"
+            test "$VERSION" = "$TAG_VERSION"
+          fi
           npm run check
           npm run pack:check
 
+      - name: Check npm
+        id: npm
+        shell: bash
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          if npm view "mcp-event-intelligence@$VERSION" version >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Publish
+        if: steps.npm.outputs.exists != 'true'
         run: npm publish --access public
