@@ -4,6 +4,11 @@ import {
 import {
   createHostMcpEventsConnection,
 } from './lib/mcp-events-client.mjs';
+import {
+  DEFAULT_EVENT_SCOPE_ID,
+  PersistentEventStore,
+  normalizeEventScopeId,
+} from './lib/persistent-event-store.mjs';
 
 function normalizeMcpConnection(input) {
   const connectionId = String(
@@ -61,6 +66,31 @@ export function createMcpRegistryAdapter({
   };
 }
 
+function scopedHostView(runtime, context) {
+  const scopeId = context.scopeId;
+  return {
+    scopeId,
+    runtime: context,
+    store: context.store,
+    triggerControl: context.triggerControl,
+    triggerInspector: context.triggerInspector,
+    get eventSources() {
+      return context.triggerControl.listEventSources();
+    },
+    async attachMcpClient(connection) {
+      const normalized = normalizeMcpConnection({
+        ...connection,
+        scopeId,
+      });
+      return runtime.mcpEventsClient.attachConnection(normalized);
+    },
+    mcpStatus() {
+      return runtime.mcpEventsClient.status()
+        .filter((entry) => entry.scopeId === scopeId);
+    },
+  };
+}
+
 /**
  * Embed Event Intelligence once at the harness/host level.
  *
@@ -70,6 +100,7 @@ export function createMcpRegistryAdapter({
  */
 export async function createEventIntelligenceHost({
   dataDir,
+  store,
   env = {},
   mcpRegistry,
   mcpClients = [],
@@ -88,6 +119,7 @@ export async function createEventIntelligenceHost({
     wake,
     wakeHandlers,
     semanticEvaluator,
+    store,
   });
 
   const registryManaged = new Set();
@@ -204,6 +236,14 @@ export async function createEventIntelligenceHost({
     mcpStatus() {
       return runtime.mcpEventsClient.status();
     },
+    loadedScopes() {
+      return runtime.loadedScopes();
+    },
+    async scope(scopeIdInput = DEFAULT_EVENT_SCOPE_ID) {
+      const scopeId = normalizeEventScopeId(scopeIdInput);
+      const context = await runtime.scope(scopeId);
+      return scopedHostView(runtime, context);
+    },
     async close() {
       unsubscribe?.();
       await runtime.close();
@@ -213,4 +253,5 @@ export async function createEventIntelligenceHost({
 
 export {
   createHostMcpEventsConnection,
+  PersistentEventStore,
 };
