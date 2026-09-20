@@ -275,9 +275,11 @@ export async function createLocalEventIntelligenceRuntime({
       wakeRetryScheduler,
       wakeCoordinator,
       wakeCoordinators,
-      close() {
-        temporalScheduler.stop();
-        wakeRetryScheduler.stop();
+      async close() {
+        await Promise.all([
+          temporalScheduler.close(),
+          wakeRetryScheduler.close(),
+        ]);
       },
     };
     scopeContexts.set(scopeId, context);
@@ -329,9 +331,17 @@ export async function createLocalEventIntelligenceRuntime({
       return [...scopeContexts.keys()].sort();
     },
     async close() {
-      mcpEventsClient.stop();
-      for (const context of scopeContexts.values()) {
-        context.close();
+      await mcpEventsClient.close();
+      const contexts = [...scopeContexts.values()];
+      await Promise.all(contexts.map((context) => context.close()));
+
+      const stores = new Set(contexts.map((context) => context.store));
+      for (const store of stores) {
+        if (typeof store.close === 'function') {
+          await store.close();
+        } else if (typeof store.drain === 'function') {
+          await store.drain();
+        }
       }
     },
   };
