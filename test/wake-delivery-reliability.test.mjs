@@ -140,10 +140,12 @@ test('lease claim prevents two workers from delivering the same wake concurrentl
     release = resolve;
   });
   let deliveries = 0;
+  let store = null;
+  let firstRun = null;
   const now = new Date('2026-09-20T15:00:00.000Z');
 
   try {
-    const store = new PersistentEventStore(dir);
+    store = new PersistentEventStore(dir);
     await store.init();
     const engine = new CompositeTriggerEngine(store, null, () => now);
     const match = await matchedTrigger(store, engine, 'claim-trigger');
@@ -169,7 +171,7 @@ test('lease claim prevents two workers from delivering the same wake concurrentl
       deliverer,
     });
 
-    const firstRun = first.deliverMatched(match);
+    firstRun = first.deliverMatched(match);
     for (let attempt = 0; attempt < 100 && deliveries === 0; attempt += 1) {
       await new Promise((resolve) => setImmediate(resolve));
     }
@@ -190,6 +192,155 @@ test('lease claim prevents two workers from delivering the same wake concurrentl
     );
   } finally {
     release?.();
+    if (firstRun) {
+      await Promise.allSettled([firstRun]);
+    }
+    await store?.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('coordinator lease contention is stable across repeated delivery races', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'ei-wake-coordinator-stress-'));
+  const store = new PersistentEventStore(dir);
+  const now = new Date('2026-09-20T15:15:00.000Z');
+
+  try {
+    await store.init();
+    const engine = new CompositeTriggerEngine(store, null, () => now);
+
+    for (let index = 0; index < 25; index += 1) {
+      const triggerId = `claim-stress-trigger-${index}`;
+      await engine.register({
+        triggerId,
+        version: '1',
+        clauses: [{
+          id: 'event',
+          event: 'build.completed',
+          where: [],
+        }],
+        expression: { kind: 'anyOf', refs: ['event'] },
+        withinMs: 60000,
+        target: {
+          runtime: 'runtime-probe',
+          kind: 'task',
+          id: `retry-task-${index}`,
+        },
+      });
+
+      const ingested = await engine.ingest({
+        traceId: `stress-trace-${index}`,
+        sourceEventId: `stress-event-${index}`,
+        name: 'build.completed',
+        occurredAt: now.toISOString(),
+        serverId: 'test-server',
+        provider: 'test',
+        data: { index },
+      });
+      const match = ingested.find(
+        (entry) => entry.match.triggerId === triggerId,
+      )?.match;
+      assert.ok(match, `stress iteration ${index} must produce a match`);
+
+      let release;
+      const gate = new Promise((resolve) => {
+        release = resolve;
+      });
+      let deliveries = 0;
+      const deliverer = async (packet) => {
+        deliveries += 1;
+        await gate;
+        return { runtimeReceiptId: `receipt:${packet.wake_id}` };
+      };
+
+      const first = new CompositeWakeCoordinator({
+        store,
+        triggerEngine: engine,
+        now: () => now,
+        workerId: `stress-worker-a-${index}`,
+        deliverer,
+      });
+      const second = new CompositeWakeCoordinator({
+        store,
+        triggerEngine: engine,
+        now: () => now,
+        workerId: `stress-worker-b-${index}`,
+        deliverer,
+      });
+
+      const firstRun = first.deliverMatched(match);
+      try {
+        for (let attempt = 0; attempt < 100 && deliveries === 0; attempt += 1) {
+          await new Promise((resolve) => setImmediate(resolve));
+        }
+        assert.equal(deliveries, 1);
+
+        const secondRun = await second.deliverMatched(match);
+        assert.equal(secondRun.status, 'delivery_in_progress');
+        assert.equal(deliveries, 1);
+
+        release();
+        const completed = await firstRun;
+        assert.equal(completed.status, 'wake_delivered');
+        assert.equal(deliveries, 1);
+      } finally {
+        release?.();
+        await Promise.allSettled([firstRun]);
+      }
+    }
+  } finally {
+    await store.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('wake delivery claims stay exclusive under repeated concurrent contention', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'ei-wake-claim-stress-'));
+  const store = new PersistentEventStore(dir);
+  const now = '2026-09-20T15:30:00.000Z';
+
+  try {
+    await store.init();
+
+    for (let index = 0; index < 100; index += 1) {
+      const wakeId = `stress-wake-${index}`;
+      await store.ensureWakeDelivery({
+        wakeId,
+        matchId: `stress-match-${index}`,
+        triggerId: 'stress-trigger',
+        triggerVersion: '1',
+        runtime: 'runtime-probe',
+        now,
+      });
+
+      const [claimA, claimB] = await Promise.all([
+        store.claimWakeDelivery(wakeId, {
+          workerId: `worker-a-${index}`,
+          now,
+          leaseMs: 30000,
+        }),
+        store.claimWakeDelivery(wakeId, {
+          workerId: `worker-b-${index}`,
+          now,
+          leaseMs: 30000,
+        }),
+      ]);
+
+      const winners = [claimA, claimB].filter(Boolean);
+      assert.equal(
+        winners.length,
+        1,
+        `wake ${wakeId} must have exactly one lease owner`,
+      );
+      assert.equal(winners[0].status, 'claimed');
+      assert.equal(winners[0].attemptCount, 1);
+
+      const persisted = store.getWakeDelivery(wakeId);
+      assert.equal(persisted.status, 'claimed');
+      assert.equal(persisted.leaseOwner, winners[0].leaseOwner);
+    }
+  } finally {
+    await store.close();
     await rm(dir, { recursive: true, force: true });
   }
 });
