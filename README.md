@@ -125,7 +125,7 @@ The package owns capability advertisement, `server/discover`, `events/list`, `ev
 This adapter remains experimental compatibility work around MCP Events; it is not a claim of finalized MCP Events conformance.
 
 
-A concrete ERP-shaped adapter is also exported, so the provider abstraction is exercised against a source structurally different from GitHub:
+An ERPNext-shaped **provider factory** is also exported:
 
 ```js
 import {
@@ -140,7 +140,19 @@ const events = createErpNextEventsProvider({
 });
 ```
 
-It exposes `erpnext.sales_invoice.submitted` and `erpnext.sales_order.created` while leaving ERP authentication/query ownership with the provider.
+This helper owns the MCP Events descriptors, schemas and response validation for
+`erpnext.sales_invoice.submitted` and `erpnext.sales_order.created`. It is
+**not** a credential-owning ERPNext connector: the host/provider must supply the
+actual data-access functions. That separation is intentional so Event
+Intelligence never duplicates provider authentication.
+
+The production proof that the abstraction works against a real ERP data layer
+lives in `sarooo17/world-capability-mcp`: its ERP Events implementation uses
+`createMcpEventsProvider` with authenticated ERPNext/Frappe record queries,
+tenant/company filters, opaque replay-safe cursors, pagination/`hasMore`,
+timezone normalization and deterministic occurrence IDs. The local factory in
+this package should therefore be read as a typed convenience API, not as the
+production ERP connector itself.
 
 ## What v0.1 implements
 
