@@ -1,4 +1,4 @@
-import { appendFile, mkdir, readFile } from 'node:fs/promises';
+import { appendFile, mkdir, readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import {
   AuditChain,
@@ -8,6 +8,29 @@ import {
   parseDerivedEventRecord,
   McpEventOccurrenceSchema,
 } from '../../dist/src/intelligenceProtocol/index.js';
+
+export const DEFAULT_EVENT_SCOPE_ID = 'default';
+
+export function normalizeEventScopeId(input = DEFAULT_EVENT_SCOPE_ID) {
+  const scopeId = String(input ?? DEFAULT_EVENT_SCOPE_ID).trim();
+  if (!scopeId) throw new Error('Event Intelligence scopeId must not be empty');
+  if (scopeId.length > 240) {
+    throw new Error('Event Intelligence scopeId must be at most 240 characters');
+  }
+  return scopeId;
+}
+
+function scopeDirectoryName(scopeId) {
+  return Buffer.from(scopeId, 'utf8').toString('base64url');
+}
+
+function scopeIdFromDirectoryName(name) {
+  try {
+    return Buffer.from(name, 'base64url').toString('utf8');
+  } catch {
+    return null;
+  }
+}
 
 async function readJsonLines(filePath) {
   try {
@@ -40,6 +63,7 @@ export class PersistentEventStore {
   #derivedEvents = new Map();
   #derivedContracts = new Map();
   #auditChain = new AuditChain();
+  #scopeStores = new Map();
 
   constructor(dataDir) {
     this.dataDir = dataDir;
@@ -58,6 +82,41 @@ export class PersistentEventStore {
       derivedContracts: path.join(dataDir, 'derived-contracts.jsonl'),
       audit: path.join(dataDir, 'audit.jsonl'),
     };
+  }
+
+  async forScope(scopeIdInput = DEFAULT_EVENT_SCOPE_ID) {
+    const scopeId = normalizeEventScopeId(scopeIdInput);
+    if (scopeId === DEFAULT_EVENT_SCOPE_ID) return this;
+
+    const existing = this.#scopeStores.get(scopeId);
+    if (existing) return existing;
+
+    const scoped = new PersistentEventStore(
+      path.join(this.dataDir, 'scopes', scopeDirectoryName(scopeId)),
+    );
+    await scoped.init();
+    this.#scopeStores.set(scopeId, scoped);
+    return scoped;
+  }
+
+  async listScopeIds() {
+    const scopes = new Set([
+      DEFAULT_EVENT_SCOPE_ID,
+      ...this.#scopeStores.keys(),
+    ]);
+    try {
+      const entries = await readdir(path.join(this.dataDir, 'scopes'), {
+        withFileTypes: true,
+      });
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        const scopeId = scopeIdFromDirectoryName(entry.name);
+        if (scopeId) scopes.add(scopeId);
+      }
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error;
+    }
+    return [...scopes].sort();
   }
 
   async init() {
