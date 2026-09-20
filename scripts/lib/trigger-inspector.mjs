@@ -307,6 +307,7 @@ export class TriggerInspector {
         triggerId: definition.triggerId,
         version: definition.version,
         description: definition.description ?? null,
+        continuation: definition.continuation ?? null,
         target: definition.target ?? null,
         derivedEvent: definition.derivedEvent ?? null,
         expression: definition.expression,
