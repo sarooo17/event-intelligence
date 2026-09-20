@@ -11,10 +11,11 @@ Event Intelligence is designed to run **inside the agent host**, next to the hos
 │      ↑ wake/resume                                  │
 │ Event Intelligence                                  │
 │   ├─ source discovery + cursor persistence          │
+│   ├─ trigger planning + schema validation           │
 │   ├─ composite correlation                          │
 │   ├─ temporal state + durable deadlines             │
 │   ├─ derived events + contract registry             │
-│   └─ inspector + simulation                         │
+│   └─ activation hydration + inspector/simulation    │
 │      ↑ events only                                  │
 │ Host-owned MCP clients                              │
 │   ├─ GitHub MCP  ── tools + optional Events         │
@@ -62,14 +63,17 @@ A trigger is a versioned typed program containing:
 - optional semantic correlation;
 - temporal conditions;
 - lifecycle policy;
+- optional continuation contract describing what the runtime should do after activation;
 - zero or one runtime target;
 - zero or one derived-event output.
+
+For common agent-authored cases, `planTrigger()` compiles a simpler plan into this canonical program. Planning is deterministic: it resolves live scoped event sources, fills server IDs, validates predicate paths against advertised payload schemas, and returns the canonical definition plus required connection IDs.
 
 A trigger must produce at least one effect: runtime wake, derived event, or both.
 
 ## 3. Temporal state
 
-Supported v0.1 temporal operators include calendar windows, absence, not/unless, after/until, debounce, threshold, rate and distinct.
+Supported temporal operators include calendar windows, absence, not/unless, after/until, debounce, threshold, rate and distinct.
 
 ### Two clocks
 
@@ -99,13 +103,15 @@ Every derived-event producer declares a `contractVersion`.
 
 The registry stores event name, contract version, canonical payload schema, SHA-256 schema fingerprint and registered producers. Within one version compatibility is strict structural equality after canonicalization. Multiple versions may coexist; ambiguous unversioned consumers fail closed.
 
-## 6. Runtime wake
+## 6. Runtime wake and activation
 
 Embedded harnesses can provide one in-process wake dispatcher for all agents, or runtime-specific handlers. The wake packet carries `target.runtime`, `target.kind` and `target.id`; the harness uses those fields to resume the correct task/session/agent. One Event Intelligence runtime can therefore serve a multi-agent harness.
 
-Standalone deployments may instead configure signed HMAC callback targets.
+The wire wake stays small and reference-only. For composite-trigger wakes, Event Intelligence can hydrate the stable wake ID into an Activation Envelope containing the target, persisted continuation, trigger/match state, and matched evidence according to the continuation context policy. Embedded wake callbacks receive this envelope as an optional second argument.
 
-The runtime remains responsible for mapping the wake to its own task/session/turn and re-reading authoritative state before performing writes.
+Matched event payloads are explicitly untrusted external evidence. Hydration supplies context, not authority; the runtime remains responsible for re-reading authoritative state through its normal authenticated capabilities before performing writes.
+
+Standalone deployments may instead configure signed HMAC callback targets.
 
 ## 7. Lifecycle
 
@@ -121,11 +127,13 @@ Policies include one-shot, maximum firings, cooldown, explicit expiry, lease and
 
 ## 8. Persistence
 
-v0.1 uses append-oriented JSONL streams and in-memory indexes rebuilt at startup.
+The bundled reference backend uses append-oriented JSONL streams and in-memory indexes rebuilt at startup. Non-default scopes are physically partitioned under separate store directories, and writes/claims are serialized inside one process.
 
-Validated properties include restart/cursor/match/deadline recovery, derived-event and contract recovery, stable replay decisions and hash-linked audit verification.
+Validated properties include scoped restart/cursor/match/deadline recovery, derived-event and contract recovery, durable wake retry/lease recovery, stable replay decisions and hash-linked audit verification.
 
-Not provided: cross-stream ACID transactions, horizontal multi-writer safety, HA failover or external immutable audit retention.
+Storage is injectable. Horizontally scaled custom backends must preserve scope isolation and implement wake claim/lease operations atomically across processes.
+
+Not provided by the bundled JSONL backend: cross-stream ACID transactions, horizontal multi-writer safety, HA failover or external immutable audit retention.
 
 ## 9. AI boundary
 
@@ -133,7 +141,7 @@ The deterministic runtime is model-free. Event Intelligence does not run a secon
 
 The bundled TypeSafe Jev evaluator is used only when a trigger explicitly requests semantic correlation and `TYPESAFE_API_KEY` is configured. Embedded hosts may inject their own compatible semantic evaluator.
 
-Trigger authoring belongs to the surrounding agent/harness: it reads the discovered event schemas and submits a structured trigger to EI's deterministic control plane.
+Natural-language interpretation belongs to the surrounding agent/harness. For common cases it can submit an agent-friendly plan to EI's deterministic planner; advanced integrations may submit the canonical trigger definition directly.
 
 ## 10. Observability
 
@@ -151,7 +159,8 @@ The design minimizes authority propagation:
 - trigger creation is source-scoped;
 - agent persistent mutations require confirmation;
 - event receipt grants no new tool authorization;
-- wake evidence is refs-first;
-- large/sensitive provider data should be re-read through the host's authorized tools.
+- wire wake evidence is refs-first;
+- hydrated matched evidence remains explicitly untrusted;
+- large/sensitive or authoritative provider state should be re-read through the host's authorized tools.
 
 See [SECURITY-MODEL.md](SECURITY-MODEL.md).
