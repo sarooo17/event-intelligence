@@ -82,6 +82,25 @@ export class CompositeWakeCoordinator {
         runtimeReceiptId: delivery.runtimeReceiptId,
       });
       await this.store.appendWake(delivered);
+      await this.store.appendAudit({
+        auditId: await stableId(
+          'audit',
+          `${wakeId}:delivered-recovered:${this.store.auditLength()}`,
+        ),
+        traceId: delivered.traceId,
+        timestamp: this.now().toISOString(),
+        kind: 'wake.delivered',
+        entityType: 'wake',
+        entityId: wakeId,
+        fromState: 'wake_queued',
+        toState: 'wake_delivered',
+        details: {
+          triggerMatchId: match.matchId,
+          runtimeReceiptId: delivered.runtimeReceiptId ?? null,
+          recoveredFromDeliveryState: true,
+          composite: true,
+        },
+      });
     }
 
     if (match.status !== 'fired') {
