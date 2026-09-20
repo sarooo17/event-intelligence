@@ -2,6 +2,10 @@ import * as z from 'zod/v4';
 import {
   McpEventOccurrenceSchema,
 } from '../../dist/src/intelligenceProtocol/index.js';
+import {
+  DEFAULT_EVENT_SCOPE_ID,
+  normalizeEventScopeId,
+} from './persistent-event-store.mjs';
 
 const EVENTS_CAPABILITY = 'io.modelcontextprotocol.experimental/events';
 const UnknownResultSchema = z.unknown();
@@ -35,6 +39,7 @@ function normalizeConnection(connection) {
 
   return {
     connectionId,
+    scopeId: normalizeEventScopeId(connection.scopeId ?? DEFAULT_EVENT_SCOPE_ID),
     serverId: String(connection.serverId || `host-mcp:${connectionId}`),
     request: connection.request,
     identity: connection.identity ?? connection.request,
@@ -70,6 +75,7 @@ export function createHostMcpEventsConnection({
   enabled = true,
   pollIntervalMs = 5000,
   maxEvents = 100,
+  scopeId = DEFAULT_EVENT_SCOPE_ID,
 } = {}) {
   const directRequest =
     typeof request === 'function'
@@ -106,6 +112,7 @@ export function createHostMcpEventsConnection({
     enabled,
     pollIntervalMs,
     maxEvents,
+    scopeId,
   });
 }
 
@@ -170,22 +177,54 @@ export class McpEventsClientManager {
     store,
     compositeEventConsumer,
     registerEventSource,
+    resolveScope = null,
     connections = [],
     now = () => new Date(),
   }) {
     this.store = store;
     this.compositeEventConsumer = compositeEventConsumer;
     this.registerEventSource = registerEventSource;
+    this.resolveScope = resolveScope;
     this.connections = new Map();
     this.now = now;
     this.descriptors = new Map();
     this.intervals = new Map();
     this.lastErrors = new Map();
+    this.scopeContexts = new Map();
+    this.pollInFlight = new Map();
     this.started = false;
 
     for (const connection of connections) {
       this.addConnection(connection);
     }
+  }
+
+  async scopeContext(connection) {
+    const cacheKey = `${connection.connectionId}::${connection.scopeId}`;
+    const cached = this.scopeContexts.get(cacheKey);
+    if (cached) return cached;
+
+    const context =
+      typeof this.resolveScope === 'function'
+        ? await this.resolveScope(connection.scopeId)
+        : {
+            store: this.store,
+            compositeEventConsumer: this.compositeEventConsumer,
+            triggerControl: null,
+          };
+
+    if (
+      !context ||
+      !context.store ||
+      !context.compositeEventConsumer
+    ) {
+      throw new Error(
+        `Invalid Event Intelligence scope context for ${connection.scopeId}`,
+      );
+    }
+
+    this.scopeContexts.set(cacheKey, context);
+    return context;
   }
 
   addConnection(input) {
@@ -221,15 +260,27 @@ export class McpEventsClientManager {
     this.intervals.delete(connectionId);
     this.descriptors.delete(connectionId);
     this.lastErrors.delete(connectionId);
+    this.pollInFlight.delete(connectionId);
 
+    const connection = this.connections.get(connectionId);
+    const context = connection ? await this.scopeContext(connection) : null;
+    if (connection) {
+      this.scopeContexts.delete(`${connection.connectionId}::${connection.scopeId}`);
+    }
     const removed = this.connections.delete(connectionId);
-    if (removed) {
-      const sources = this.store.listEventSources({ connectionIds: [connectionId] });
+    if (removed && context) {
+      const sources = context.store.listEventSources({ connectionIds: [connectionId] });
       for (const source of sources) {
         if (source.enabled === false) continue;
-        await this.registerEventSource({
+        const register = context.triggerControl?.registerEventSource
+          ? (input, actor) => context.triggerControl.registerEventSource(input, actor)
+          : async (input) => this.registerEventSource(input);
+        await register({
           ...source,
           enabled: false,
+        }, {
+          type: 'system',
+          principal_id: 'event-intelligence:host-mcp-client',
         });
       }
     }
@@ -252,6 +303,7 @@ export class McpEventsClientManager {
       throw new Error(`Unknown host-managed MCP Events connection: ${connectionId}`);
     }
 
+    const context = await this.scopeContext(connection);
     const discover = await this.rpc(connection, 'server/discover');
     const capabilities = discover?.capabilities ?? {};
     const experimental = capabilities?.experimental?.[EVENTS_CAPABILITY];
@@ -294,7 +346,7 @@ export class McpEventsClientManager {
       descriptors.push(normalized);
 
       const sourceId = `mcp:${connection.connectionId}:${name}`;
-      const existing = this.store.listEventSources()
+      const existing = context.store.listEventSources()
         .find((source) => source.sourceId === sourceId);
       const same =
         existing &&
@@ -307,7 +359,10 @@ export class McpEventsClientManager {
         JSON.stringify(existing.payloadSchema || {}) === JSON.stringify(normalized.payloadSchema);
 
       if (!same) {
-        await this.registerEventSource({
+        const register = context.triggerControl?.registerEventSource
+          ? (input, actor) => context.triggerControl.registerEventSource(input, actor)
+          : async (input) => this.registerEventSource(input);
+        await register({
           sourceId,
           connectionId: connection.connectionId,
           serverId: connection.serverId,
@@ -322,6 +377,9 @@ export class McpEventsClientManager {
             transport: 'host-managed-mcp',
             hostManaged: true,
           },
+        }, {
+          type: 'system',
+          principal_id: 'event-intelligence:host-mcp-client',
         });
       }
     }
@@ -354,12 +412,14 @@ export class McpEventsClientManager {
     return results;
   }
 
-  async pollSource(connection, descriptor) {
+  async pollSource(connection, descriptor, context) {
     if (!descriptor.delivery.includes('poll')) {
       return { eventName: descriptor.name, status: 'delivery_not_supported', accepted: 0 };
     }
 
-    const current = this.store.getMcpClientState(
+    const store = context.store;
+    const consumer = context.compositeEventConsumer;
+    const current = store.getMcpClientState(
       connection.connectionId,
       descriptor.name,
     );
@@ -389,7 +449,7 @@ export class McpEventsClientManager {
         }
         assertJsonSchemaValue(descriptor.payloadSchema, occurrence.data);
 
-        const receipt = await this.store.appendMcpOccurrence(
+        const receipt = await store.appendMcpOccurrence(
           connection.serverId,
           occurrence,
         );
@@ -397,7 +457,7 @@ export class McpEventsClientManager {
 
         accepted += 1;
         lastEventAt = occurrence.timestamp;
-        await this.compositeEventConsumer.ingestMcpOccurrence({
+        await consumer.ingestMcpOccurrence({
           event: occurrence,
           serverId: connection.serverId,
           provider: 'mcp',
@@ -405,7 +465,7 @@ export class McpEventsClientManager {
         });
       }
 
-      await this.store.putMcpClientState({
+      await store.putMcpClientState({
         connectionId: connection.connectionId,
         serverId: connection.serverId,
         eventName: descriptor.name,
@@ -424,7 +484,7 @@ export class McpEventsClientManager {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.lastErrors.set(connection.connectionId, message);
-      await this.store.putMcpClientState({
+      await store.putMcpClientState({
         connectionId: connection.connectionId,
         serverId: connection.serverId,
         eventName: descriptor.name,
@@ -436,11 +496,27 @@ export class McpEventsClientManager {
   }
 
   async pollConnection(connectionId) {
+    const existing = this.pollInFlight.get(connectionId);
+    if (existing) return existing;
+
+    const task = this.pollConnectionOnce(connectionId);
+    this.pollInFlight.set(connectionId, task);
+    try {
+      return await task;
+    } finally {
+      if (this.pollInFlight.get(connectionId) === task) {
+        this.pollInFlight.delete(connectionId);
+      }
+    }
+  }
+
+  async pollConnectionOnce(connectionId) {
     const connection = this.connections.get(connectionId);
     if (!connection) {
       throw new Error(`Unknown host-managed MCP Events connection: ${connectionId}`);
     }
 
+    const context = await this.scopeContext(connection);
     let descriptors = this.descriptors.get(connectionId);
     if (!descriptors) {
       descriptors = await this.discoverConnection(connectionId);
@@ -448,7 +524,7 @@ export class McpEventsClientManager {
 
     const results = [];
     for (const descriptor of descriptors) {
-      results.push(await this.pollSource(connection, descriptor));
+      results.push(await this.pollSource(connection, descriptor, context));
     }
     return results;
   }
@@ -500,20 +576,27 @@ export class McpEventsClientManager {
   }
 
   status() {
-    return [...this.connections.values()].map((connection) => ({
-      connectionId: connection.connectionId,
-      serverId: connection.serverId,
-      hostManaged: true,
-      events: (this.descriptors.get(connection.connectionId) || [])
-        .map((event) => ({
-          name: event.name,
-          delivery: event.delivery,
-          cursor: this.store.getMcpClientState(
-            connection.connectionId,
-            event.name,
-          )?.cursor ?? null,
-        })),
-      error: this.lastErrors.get(connection.connectionId) ?? null,
-    }));
+    return [...this.connections.values()].map((connection) => {
+      const context = this.scopeContexts.get(
+        `${connection.connectionId}::${connection.scopeId}`,
+      );
+      const store = context?.store ?? this.store;
+      return {
+        connectionId: connection.connectionId,
+        scopeId: connection.scopeId,
+        serverId: connection.serverId,
+        hostManaged: true,
+        events: (this.descriptors.get(connection.connectionId) || [])
+          .map((event) => ({
+            name: event.name,
+            delivery: event.delivery,
+            cursor: store.getMcpClientState(
+              connection.connectionId,
+              event.name,
+            )?.cursor ?? null,
+          })),
+        error: this.lastErrors.get(connection.connectionId) ?? null,
+      };
+    });
   }
 }
