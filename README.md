@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/sarooo17/event-intelligence/actions/workflows/ci.yml/badge.svg)](https://github.com/sarooo17/event-intelligence/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/mcp-event-intelligence.svg)](https://www.npmjs.com/package/mcp-event-intelligence)
-[![MCP Registry](https://img.shields.io/badge/MCP%20Registry-v0.1.1-5b5bd6)](https://registry.modelcontextprotocol.io/?q=io.github.sarooo17%2Fevent-intelligence)
+[![MCP Registry](https://img.shields.io/badge/MCP%20Registry-v0.2.0-5b5bd6)](https://registry.modelcontextprotocol.io/?q=io.github.sarooo17%2Fevent-intelligence)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 MCP Event Intelligence is an experimental event runtime for agents that need to react to **future conditions over multiple event sources** without keeping an LLM or agent loop alive.
