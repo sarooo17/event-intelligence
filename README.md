@@ -55,6 +55,38 @@ const ei = await createEventIntelligenceHost({
 Event Intelligence enumerates the host registry automatically. GitHub, Gmail, private/company MCPs and future connections do not need to be configured again inside EI. Tools-only MCPs remain available to the agent and are ignored by the Events layer; Events-capable MCPs are attached automatically.
 
 
+### Shared hosts, tenant isolation and storage
+
+One EI host can serve many tenants/workspaces without sharing trigger state. Give each host-owned MCP connection a `scopeId` and give tenant-facing code only the corresponding scoped view:
+
+```js
+const tenant = await ei.scope('tenant-acme');
+
+await tenant.triggerControl.createTrigger({
+  definition,
+  connectionIds: ['acme-erp'],
+  actor,
+  owner,
+});
+
+const acmeConnections = tenant.mcpStatus();
+```
+
+The default reference store physically namespaces non-default scopes under separate persistent store partitions. Trigger IDs, match IDs, cursors, event sources, deadlines, derived events and wake delivery state are therefore resolved inside a scope rather than filtered out of a global result after the fact. The root host object is the trusted operator/control-plane capability; tenant code should receive a scoped view.
+
+Storage is injectable:
+
+```js
+const ei = await createEventIntelligenceHost({
+  store: myEventIntelligenceStore,
+  mcpRegistry,
+  wake,
+});
+```
+
+`PersistentEventStore` remains the zero-dependency default. A custom backend can implement `forScope(scopeId)` to return an isolated tenant view. For horizontally scaled workers, its wake-delivery claim/lease operations must be atomic across processes; the bundled JSONL store provides serialized atomicity inside one process and is a reference backend, not a distributed database.
+
+
 ## Add Events to an MCP provider
 
 Providers can expose the experimental Events boundary without reimplementing the generic JSON-RPC glue:
@@ -92,6 +124,24 @@ The package owns capability advertisement, `server/discover`, `events/list`, `ev
 
 This adapter remains experimental compatibility work around MCP Events; it is not a claim of finalized MCP Events conformance.
 
+
+A concrete ERP-shaped adapter is also exported, so the provider abstraction is exercised against a source structurally different from GitHub:
+
+```js
+import {
+  createErpNextEventsProvider,
+} from 'mcp-event-intelligence/provider/erpnext';
+
+const events = createErpNextEventsProvider({
+  pollSalesInvoices: ({ cursor, maxEvents }) =>
+    erp.pollSubmittedInvoices({ cursor, maxEvents }),
+  pollSalesOrders: ({ cursor, maxEvents }) =>
+    erp.pollCreatedSalesOrders({ cursor, maxEvents }),
+});
+```
+
+It exposes `erpnext.sales_invoice.submitted` and `erpnext.sales_order.created` while leaving ERP authentication/query ownership with the provider.
+
 ## What v0.1 implements
 
 ### Host-owned event sources
@@ -101,6 +151,8 @@ This adapter remains experimental compatibility work around MCP Events; it is no
 - experimental MCP Events capability discovery;
 - `events/list` and `events/poll`;
 - persistent opaque cursors;
+- per-scope source/cursor isolation for shared hosts;
+- single-flight polling per connection plus bounded `hasMore` batch draining;
 - automatic event-source registration;
 - dynamic attach/detach of host MCP clients;
 - provider-native compatibility adapters such as GitHub webhooks.
@@ -160,6 +212,8 @@ Derived event names are versioned contracts such as `release.ready@1`.
 
 An embedded harness can provide one in-process wake dispatcher that routes by `target.runtime`, `target.kind` and `target.id`; runtime-specific handlers remain available as a lower-level option. A standalone deployment can instead use signed HMAC callbacks. Both paths return a stable `runtimeReceiptId`.
 
+Runtime delivery is durable: a stable wake ID gets a persisted delivery record, a worker claims it with a lease, transient failures are retried with bounded exponential backoff, expired claims can be recovered after restart, and only an exhausted retry budget enters dead-letter. This prevents two workers sharing an atomic store from intentionally owning the same delivery at the same time. The runtime should still treat the stable wake ID as an idempotency key because no system can make an arbitrary external side effect transactionally exactly-once without cooperation from the receiver.
+
 ## Why this exists
 
 MCP Events is concerned with the event transport/subscription boundary. Event Intelligence explores the layer **above transport**:
@@ -195,6 +249,10 @@ The v0.1 acceptance suite verifies:
 - process shutdown while a temporal deadline is pending;
 - restart on the same datastore after the deadline;
 - wake recovery **without a new provider event**;
+- retry-state recovery after process restart and lease-based concurrent-worker exclusion;
+- shared-host tenant isolation with identical trigger IDs in different scopes;
+- bounded/single-flight provider polling;
+- provider-generalization coverage with ERPNext-shaped invoice/order events;
 - hash-linked audit verification.
 
 A separate live regression also verified real GitHub webhook ingress into the MCP EventOccurrence / composite fan-in path.
@@ -263,6 +321,11 @@ Standalone/core environment variables:
 | `RUNTIME_WAKE_TARGETS_JSON` | no | signed standalone runtime callbacks |
 | `GITHUB_WEBHOOK_SECRET` | no | verify GitHub webhook ingress |
 | `TYPESAFE_API_KEY` | no | bundled TypeSafe Jev semantic evaluator |
+| `WAKE_DELIVERY_MAX_ATTEMPTS` | no | maximum wake delivery attempts, default `5` |
+| `WAKE_DELIVERY_LEASE_MS` | no | claim lease duration, default `30000` |
+| `WAKE_RETRY_BASE_DELAY_MS` | no | first retry delay, default `1000` |
+| `WAKE_RETRY_MAX_DELAY_MS` | no | retry backoff cap, default `60000` |
+| `WAKE_RETRY_TICK_MS` | no | retry scheduler tick, default `1000` |
 
 Embedded hosts pass one MCP registry adapter. Event Intelligence discovers already-connected clients from that registry; provider MCP connection settings are not duplicated inside EI.
 
@@ -286,7 +349,7 @@ Absence/deadline progression uses Event Intelligence processing time. This separ
 
 The implementation does not claim theoretical distributed exactly-once delivery.
 
-It uses stable wake IDs, persistence, deduplication, runtime receipts and replay handling to provide effectively-once runtime activation in the validated reference scenarios.
+It uses stable wake IDs, persisted delivery state, atomic claim leases, bounded retries, runtime receipts and replay handling to provide effectively-once runtime activation in the validated reference scenarios.
 
 ### Derived event vs current state
 
@@ -298,7 +361,7 @@ v0.1 intentionally does not implement a mutable current-state/facts database.
 
 Read [SECURITY.md](SECURITY.md) and [docs/SECURITY-MODEL.md](docs/SECURITY-MODEL.md).
 
-In embedded mode, the host retains MCP authorization and credentials; Event Intelligence discovers only the client objects exposed through the host-provided MCP registry. The v0.1 reference store is JSONL and single-writer.
+In embedded mode, the host retains MCP authorization and credentials; Event Intelligence discovers only the client objects exposed through the host-provided MCP registry. Tenant-facing callers should receive only `host.scope(scopeId)`. The reference JSONL store is scope-partitioned and single-process; distributed custom stores must preserve scope isolation and atomic wake claims.
 
 ## MCP compatibility status
 
@@ -319,7 +382,7 @@ io.github.sarooo17/event-intelligence
 
 **v0.1 reference implementation / experimental.**
 
-The architecture is implemented and exercised end-to-end. Remaining work is primarily production storage/HA, broader host/provider evidence, scale benchmarks and upstream feedback.
+The architecture is implemented and exercised end-to-end. Storage is now injectable and scoped, while the bundled JSONL backend remains a single-process reference implementation. Remaining work is primarily production database adapters/HA validation, scale benchmarks and upstream feedback.
 
 ## Example
 
