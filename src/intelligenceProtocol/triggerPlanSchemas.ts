@@ -4,7 +4,6 @@ import {
   ContinuationContractSchema,
   SemanticCorrelationSchema,
   StructuredPredicateSchema,
-  TriggerLifecyclePolicySchema,
 } from './triggerSchemas.js';
 
 const Id = z.string().min(1).max(200);
@@ -33,7 +32,14 @@ export const TriggerPlanInputSchema = z.object({
   match: TriggerPlanMatchSchema.default('all'),
   withinMs: z.number().int().positive().max(1000 * 60 * 60 * 24 * 30)
     .default(60 * 60 * 1000),
-  lifecycle: TriggerLifecyclePolicySchema.partial().optional(),
+  lifecycle: z.object({
+    oneShot: z.boolean().optional(),
+    maxFirings: z.number().int().min(1).optional(),
+    cooldownMs: z.number().int().nonnegative().optional(),
+    expiresAt: z.string().datetime({ offset: true }).optional(),
+    leaseUntil: z.string().datetime({ offset: true }).optional(),
+    completeOnGoal: z.boolean().optional(),
+  }).strict().optional(),
   target: RuntimeTargetSchema,
   continuation: ContinuationContractSchema,
   correlateBy: z.array(z.object({
