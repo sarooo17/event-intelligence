@@ -421,6 +421,17 @@ export class PersistentEventStore {
         if (record.status === 'claimed' && record.leaseUntil) {
           return Date.parse(record.leaseUntil) <= now;
         }
+        if (record.status === 'delivered') {
+          const latestWake = this.latestWake(record.wakeId);
+          const wakeFinalized =
+            latestWake?.status === 'delivered' ||
+            latestWake?.status === 'handled';
+          if (record.sourceType === 'event') {
+            return !wakeFinalized;
+          }
+          const match = this.#triggerMatches.get(record.matchId);
+          return !wakeFinalized || match?.status !== 'fired';
+        }
         return false;
       })
       .sort((a, b) =>
