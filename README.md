@@ -300,7 +300,7 @@ Event Intelligence has one optional AI boundary: **semantic correlation**.
 - embedded hosts may inject a compatible `semanticEvaluator` instead.
 - there is no bundled OpenAI planner and no OpenAI API dependency.
 
-The agent/harness is already responsible for reasoning and can author a structured trigger directly from `event_sources_list` / the discovered schemas. Deterministic correlation, temporal logic, persistence, derived events and wake delivery require no model API.
+The agent/harness is already responsible for natural-language reasoning. It can use `trigger_plan` / `planTrigger()` to compile common requests deterministically against discovered source schemas, or submit a canonical trigger definition directly for advanced cases. Deterministic correlation, temporal logic, persistence, derived events and wake delivery require no model API.
 
 ## Full-system acceptance
 
@@ -445,7 +445,7 @@ io.github.sarooo17/event-intelligence
 
 ## Project status
 
-**v0.3 reference implementation / experimental.**
+**v0.3.x reference implementation / experimental.**
 
 The architecture is implemented and exercised end-to-end. Storage is now injectable and scoped, while the bundled JSONL backend remains a single-process reference implementation. Remaining work is primarily production database adapters/HA validation, scale benchmarks and upstream feedback.
 
