@@ -60,18 +60,51 @@ jobs:
           npm init -y >/dev/null
           npm install --ignore-scripts --no-audit --no-fund mcp-event-intelligence@0.1.0
 
-          npx --no-install mcp-event-intelligence mcp >/tmp/ei-mcp.out 2>/tmp/ei-mcp.err &
-          PID=$!
-          sleep 2
+          node --input-type=module <<'EOF'
+          import assert from 'node:assert/strict';
+          import { spawn } from 'node:child_process';
 
-          if ! kill -0 "$PID" 2>/dev/null; then
-            cat /tmp/ei-mcp.err
-            exit 1
-          fi
+          const child = spawn(
+            process.platform === 'win32' ? 'npx.cmd' : 'npx',
+            ['--no-install', 'mcp-event-intelligence', 'mcp'],
+            { stdio: ['pipe', 'pipe', 'pipe'] },
+          );
 
-          kill "$PID"
-          wait "$PID" || true
-          echo "MCP stdio entrypoint started successfully"
+          let stderr = '';
+          child.stderr.setEncoding('utf8');
+          child.stderr.on('data', (chunk) => {
+            stderr += chunk;
+          });
+
+          await new Promise((resolve, reject) => {
+            const timeout = setTimeout(
+              () => reject(new Error(`MCP stdio did not become ready: ${stderr}`)),
+              5000,
+            );
+
+            const check = () => {
+              if (stderr.includes('mcp_event_intelligence_stdio_ready')) {
+                clearTimeout(timeout);
+                resolve();
+              }
+            };
+
+            child.stderr.on('data', check);
+            child.once('exit', (code, signal) => {
+              clearTimeout(timeout);
+              reject(
+                new Error(
+                  `MCP stdio exited before readiness (code=${code}, signal=${signal}): ${stderr}`,
+                ),
+              );
+            });
+          });
+
+          assert.equal(child.exitCode, null, 'MCP stdio exited while stdin remained open');
+          child.kill('SIGTERM');
+          await new Promise((resolve) => child.once('exit', resolve));
+          console.log('MCP stdio entrypoint stayed alive with an open host connection');
+          EOF
 
       - name: Verify published metadata
         shell: bash
