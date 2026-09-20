@@ -3,6 +3,8 @@
 > Durable temporal event intelligence for sleeping agents.
 
 [![CI](https://github.com/sarooo17/event-intelligence/actions/workflows/ci.yml/badge.svg)](https://github.com/sarooo17/event-intelligence/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/mcp-event-intelligence.svg)](https://www.npmjs.com/package/mcp-event-intelligence)
+[![MCP Registry](https://img.shields.io/badge/MCP%20Registry-v0.1.0-5b5bd6)](https://registry.modelcontextprotocol.io/?q=io.github.sarooo17%2Fevent-intelligence)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 MCP Event Intelligence is an experimental event runtime for agents that need to react to **future conditions over multiple event sources** without keeping an LLM or agent loop alive.
@@ -21,11 +23,13 @@ Event Intelligence persists that continuation independently of the model, waits 
 
 ## Embed it in an existing agent host
 
-After publication:
+Install from npm:
 
 ```bash
 npm install mcp-event-intelligence
 ```
+
+Published package: [npm](https://www.npmjs.com/package/mcp-event-intelligence) · [Official MCP Registry](https://registry.modelcontextprotocol.io/?q=io.github.sarooo17%2Fevent-intelligence)
 
 Pass the harness-level MCP registry once — not every MCP one by one:
 
@@ -166,7 +170,7 @@ A separate live regression also verified real GitHub webhook ingress into the MC
 
 ```bash
 git clone https://github.com/sarooo17/event-intelligence.git
-cd mcp-event-intelligence
+cd event-intelligence
 npm ci
 npm run check
 
