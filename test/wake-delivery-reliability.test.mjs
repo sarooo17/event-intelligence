@@ -169,7 +169,11 @@ test('lease claim prevents two workers from delivering the same wake concurrentl
     });
 
     const firstRun = first.deliverMatched(match);
-    await new Promise((resolve) => setImmediate(resolve));
+    for (let attempt = 0; attempt < 100 && deliveries === 0; attempt += 1) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    assert.equal(deliveries, 1);
+
     const secondRun = await second.deliverMatched(match);
 
     assert.equal(deliveries, 1);
