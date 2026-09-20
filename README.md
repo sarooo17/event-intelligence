@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/sarooo17/event-intelligence/actions/workflows/ci.yml/badge.svg)](https://github.com/sarooo17/event-intelligence/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/mcp-event-intelligence.svg)](https://www.npmjs.com/package/mcp-event-intelligence)
-[![MCP Registry](https://img.shields.io/badge/MCP%20Registry-v0.2.1-5b5bd6)](https://registry.modelcontextprotocol.io/?q=io.github.sarooo17%2Fevent-intelligence)
+[![MCP Registry](https://img.shields.io/badge/MCP%20Registry-v0.3.0-5b5bd6)](https://registry.modelcontextprotocol.io/?q=io.github.sarooo17%2Fevent-intelligence)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 MCP Event Intelligence is an experimental event runtime for agents that need to react to **future conditions over multiple event sources** without keeping an LLM or agent loop alive.
@@ -45,14 +45,63 @@ const ei = await createEventIntelligenceHost({
     listConnections: () => host.mcp.listConnections(),
     subscribe: (refresh) => host.mcp.onConnectionsChanged(refresh),
   }),
-  wake: async (packet) => {
-    const receipt = await host.resume(packet.target, packet);
+  wake: async (packet, activation) => {
+    const receipt = await host.resume(packet.target, {
+      packet,
+      activation,
+    });
     return { runtimeReceiptId: receipt.id };
   },
 });
 ```
 
 Event Intelligence enumerates the host registry automatically. GitHub, Gmail, private/company MCPs and future connections do not need to be configured again inside EI. Tools-only MCPs remain available to the agent and are ignored by the Events layer; Events-capable MCPs are attached automatically.
+
+### Agent-first trigger flow
+
+Agents no longer need to construct the low-level trigger DSL directly for common cases. Ask EI to compile an agent-friendly plan against the event sources that are actually available:
+
+```js
+const plan = await ei.planTrigger({
+  events: [{
+    id: 'invoice',
+    event: 'erpnext.sales_invoice.submitted',
+    where: [
+      { path: 'grand_total', op: 'gt', value: 10000 },
+    ],
+  }],
+  match: 'all',
+  withinMs: 60 * 60 * 1000,
+  target: {
+    runtime: 'agent',
+    kind: 'conversation',
+    id: 'chat-42',
+  },
+  continuation: {
+    instruction:
+      'Check the submitted invoice for anomalies and report back in this conversation.',
+  },
+});
+
+await ei.triggerControl.createTrigger({
+  definition: plan.definition,
+  connectionIds: plan.connectionIds,
+  actor,
+  owner,
+});
+```
+
+`planTrigger()` is deterministic. It does not call a model. It resolves event names to live source/server IDs, validates predicate paths against advertised payload schemas, compiles `all` / `any` / `sequence` / `count`, and returns the canonical trigger definition plus the required connection IDs.
+
+The persisted `continuation` answers a separate question from the trigger condition: **what should the agent do after the future condition becomes true?**
+
+The wire wake remains deliberately small and reference-only. Embedded hosts also receive an Activation Envelope as the second wake argument. The same envelope can be reconstructed later:
+
+```js
+const activation = ei.hydrateWake(wakeId);
+```
+
+The envelope contains the configured continuation, trigger/match state, and matched evidence. Event payloads are labeled as untrusted external signals and are included only according to the trigger's `continuation.contextPolicy`.
 
 
 ### Shared hosts, tenant isolation and storage
@@ -154,7 +203,7 @@ timezone normalization and deterministic occurrence IDs. The local factory in
 this package should therefore be read as a typed convenience API, not as the
 production ERP connector itself.
 
-## What v0.1 implements
+## What v0.3 implements
 
 ### Host-owned event sources
 
@@ -182,7 +231,11 @@ production ERP connector itself.
 ### Agent-authored continuations
 
 - event-source discovery;
-- agent-authored structured trigger definitions;
+- agent-friendly deterministic trigger planning/compilation;
+- `eq`, `neq`, `contains`, `in`, `exists`, `gt`, `gte`, `lt`, `lte` predicates;
+- persisted continuation contracts separated from trigger conditions;
+- Activation Envelope hydration with matched event evidence;
+- embedded wake callbacks receive `(packet, activation)`;
 - deterministic validation against real source schemas and advertised fields;
 - approval-gated persistent mutations;
 - one-shot, cooldown, max-firings, expiry, leases, update and delete.
@@ -251,7 +304,7 @@ The agent/harness is already responsible for reasoning and can author a structur
 
 ## Full-system acceptance
 
-The v0.1 acceptance suite verifies:
+The v0.3 acceptance suite verifies:
 
 - host-owned MCP client → event discovery/poll → composite match → in-process wake;
 - provider-neutral events → composite match → derived event → derived composition → signed runtime wake;
@@ -297,13 +350,13 @@ The standalone service supports manual/provider-native event ingress. It does no
 ### Docker
 
 ```bash
-docker build -t mcp-event-intelligence:0.1.0 .
+docker build -t mcp-event-intelligence:0.3.0 .
 
 docker run --rm \
   -p 3000:3000 \
   -v mcp-event-intelligence-data:/data \
   -e SERVICE_AUTH_TOKEN="$(openssl rand -hex 32)" \
-  mcp-event-intelligence:0.1.0
+  mcp-event-intelligence:0.3.0
 ```
 
 ## Optional MCP control plane
@@ -314,7 +367,7 @@ The package also exposes a standard **MCP stdio** control plane through the offi
 npx mcp-event-intelligence mcp
 ```
 
-Read/non-mutating tools are exposed by default, including `event_sources_list`, inspection, simulation, contracts and runtime status. An agent uses those discovered source schemas to author the structured definition passed to `trigger_create`.
+Read/non-mutating tools are exposed by default, including `event_sources_list`, `trigger_plan`, inspection, simulation, `wake_hydrate`, contracts and runtime status. `trigger_create` accepts either a raw canonical definition or the same agent-friendly plan shape; EI compiles the latter before applying the normal mutation controls.
 
 Persistent trigger mutations are only registered when the operator explicitly enables `MCP_WRITE_ENABLED=true`, and each mutation still requires a `confirmationId`. The MCP server is a control-plane adapter; it is **not** a gateway through which the host's other MCP servers must be reconnected.
 
@@ -367,7 +420,7 @@ It uses stable wake IDs, persisted delivery state, atomic claim leases, bounded 
 
 A derived event says **what became true at a point in history**.
 
-v0.1 intentionally does not implement a mutable current-state/facts database.
+v0.3 intentionally does not implement a mutable current-state/facts database.
 
 ## Security
 
@@ -392,7 +445,7 @@ io.github.sarooo17/event-intelligence
 
 ## Project status
 
-**v0.1 reference implementation / experimental.**
+**v0.3 reference implementation / experimental.**
 
 The architecture is implemented and exercised end-to-end. Storage is now injectable and scoped, while the bundled JSONL backend remains a single-process reference implementation. Remaining work is primarily production database adapters/HA validation, scale benchmarks and upstream feedback.
 
