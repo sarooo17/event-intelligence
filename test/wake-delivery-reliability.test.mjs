@@ -140,10 +140,12 @@ test('lease claim prevents two workers from delivering the same wake concurrentl
     release = resolve;
   });
   let deliveries = 0;
+  let store = null;
+  let firstRun = null;
   const now = new Date('2026-09-20T15:00:00.000Z');
 
   try {
-    const store = new PersistentEventStore(dir);
+    store = new PersistentEventStore(dir);
     await store.init();
     const engine = new CompositeTriggerEngine(store, null, () => now);
     const match = await matchedTrigger(store, engine, 'claim-trigger');
@@ -169,7 +171,7 @@ test('lease claim prevents two workers from delivering the same wake concurrentl
       deliverer,
     });
 
-    const firstRun = first.deliverMatched(match);
+    firstRun = first.deliverMatched(match);
     for (let attempt = 0; attempt < 100 && deliveries === 0; attempt += 1) {
       await new Promise((resolve) => setImmediate(resolve));
     }
@@ -190,6 +192,10 @@ test('lease claim prevents two workers from delivering the same wake concurrentl
     );
   } finally {
     release?.();
+    if (firstRun) {
+      await Promise.allSettled([firstRun]);
+    }
+    await store?.close();
     await rm(dir, { recursive: true, force: true });
   }
 });
