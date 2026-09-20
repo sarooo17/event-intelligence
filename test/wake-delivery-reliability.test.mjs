@@ -200,6 +200,57 @@ test('lease claim prevents two workers from delivering the same wake concurrentl
   }
 });
 
+test('wake delivery claims stay exclusive under repeated concurrent contention', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'ei-wake-claim-stress-'));
+  const store = new PersistentEventStore(dir);
+  const now = '2026-09-20T15:30:00.000Z';
+
+  try {
+    await store.init();
+
+    for (let index = 0; index < 100; index += 1) {
+      const wakeId = `stress-wake-${index}`;
+      await store.ensureWakeDelivery({
+        wakeId,
+        matchId: `stress-match-${index}`,
+        triggerId: 'stress-trigger',
+        triggerVersion: '1',
+        runtime: 'runtime-probe',
+        now,
+      });
+
+      const [claimA, claimB] = await Promise.all([
+        store.claimWakeDelivery(wakeId, {
+          workerId: `worker-a-${index}`,
+          now,
+          leaseMs: 30000,
+        }),
+        store.claimWakeDelivery(wakeId, {
+          workerId: `worker-b-${index}`,
+          now,
+          leaseMs: 30000,
+        }),
+      ]);
+
+      const winners = [claimA, claimB].filter(Boolean);
+      assert.equal(
+        winners.length,
+        1,
+        `wake ${wakeId} must have exactly one lease owner`,
+      );
+      assert.equal(winners[0].status, 'claimed');
+      assert.equal(winners[0].attemptCount, 1);
+
+      const persisted = store.getWakeDelivery(wakeId);
+      assert.equal(persisted.status, 'claimed');
+      assert.equal(persisted.leaseOwner, winners[0].leaseOwner);
+    }
+  } finally {
+    await store.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('wake reaches dead-letter only after configured retry budget is exhausted', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'ei-wake-dlq-'));
   let now = new Date('2026-09-20T16:00:00.000Z');
