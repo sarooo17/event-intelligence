@@ -1057,6 +1057,18 @@ export class PersistentEventStore {
     return this.#auditChain.verify();
   }
 
+  async drain() {
+    await this.#queue;
+    const scoped = [...this.#scopeStores.values()];
+    await Promise.all(scoped.map((store) =>
+      typeof store.drain === 'function' ? store.drain() : undefined
+    ));
+  }
+
+  async close() {
+    await this.drain();
+  }
+
   #eventKey(lineage) {
     return `${lineage.environmentId}:${lineage.subscriptionId}:${lineage.sourceEventId}`;
   }
