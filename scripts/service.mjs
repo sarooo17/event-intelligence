@@ -69,21 +69,23 @@ const wakeDeliverer = createHttpWakeDeliverer(
   process.env.RUNTIME_WAKE_URL ?? '',
 );
 
-const processor = new EventProcessor({
-  store,
-  evaluator,
-  wakeDeliverer,
-});
-const compositeTriggers = new CompositeTriggerEngine(store, evaluator);
-const runtimeWakeTargets = readRuntimeWakeTargets(
-  process.env.RUNTIME_WAKE_TARGETS_JSON,
-);
 const deliveryOptions = {
   leaseMs: Number(process.env.WAKE_DELIVERY_LEASE_MS ?? 30000),
   maxAttempts: Number(process.env.WAKE_DELIVERY_MAX_ATTEMPTS ?? 5),
   retryBaseDelayMs: Number(process.env.WAKE_RETRY_BASE_DELAY_MS ?? 1000),
   retryMaxDelayMs: Number(process.env.WAKE_RETRY_MAX_DELAY_MS ?? 60000),
 };
+
+const processor = new EventProcessor({
+  store,
+  evaluator,
+  wakeDeliverer,
+  ...deliveryOptions,
+});
+const compositeTriggers = new CompositeTriggerEngine(store, evaluator);
+const runtimeWakeTargets = readRuntimeWakeTargets(
+  process.env.RUNTIME_WAKE_TARGETS_JSON,
+);
 const wakeCoordinators = new Map(
   [...runtimeWakeTargets].map(([runtime, target]) => [
     runtime,
@@ -114,6 +116,7 @@ temporalScheduler.start();
 
 const wakeRetryScheduler = new WakeRetryScheduler({
   store,
+  eventProcessor: processor,
   resolveCoordinator: (runtime) => wakeCoordinators.get(runtime) ?? null,
   intervalMs: Number(process.env.WAKE_RETRY_TICK_MS ?? 1000),
 });
