@@ -49,6 +49,9 @@ import {
 import {
   TemporalDeadlineScheduler,
 } from './lib/temporal-deadline-scheduler.mjs';
+import {
+  WakeRetryScheduler,
+} from './lib/wake-retry-scheduler.mjs';
 
 const port = Number(process.env.PORT ?? 3000);
 const dataDir = process.env.DATA_DIR ?? './data';
@@ -75,6 +78,12 @@ const compositeTriggers = new CompositeTriggerEngine(store, evaluator);
 const runtimeWakeTargets = readRuntimeWakeTargets(
   process.env.RUNTIME_WAKE_TARGETS_JSON,
 );
+const deliveryOptions = {
+  leaseMs: Number(process.env.WAKE_DELIVERY_LEASE_MS ?? 30000),
+  maxAttempts: Number(process.env.WAKE_DELIVERY_MAX_ATTEMPTS ?? 5),
+  retryBaseDelayMs: Number(process.env.WAKE_RETRY_BASE_DELAY_MS ?? 1000),
+  retryMaxDelayMs: Number(process.env.WAKE_RETRY_MAX_DELAY_MS ?? 60000),
+};
 const wakeCoordinators = new Map(
   [...runtimeWakeTargets].map(([runtime, target]) => [
     runtime,
@@ -83,6 +92,7 @@ const wakeCoordinators = new Map(
       triggerEngine: compositeTriggers,
       deliverer: createSignedRuntimeWakeDeliverer(target),
       packetBuilder: buildGenericRuntimeWakePacket,
+      ...deliveryOptions,
     }),
   ]),
 );
@@ -101,6 +111,13 @@ const temporalScheduler = new TemporalDeadlineScheduler({
   intervalMs: Number(process.env.TEMPORAL_TICK_MS ?? 1000),
 });
 temporalScheduler.start();
+
+const wakeRetryScheduler = new WakeRetryScheduler({
+  store,
+  resolveCoordinator: (runtime) => wakeCoordinators.get(runtime) ?? null,
+  intervalMs: Number(process.env.WAKE_RETRY_TICK_MS ?? 1000),
+});
+wakeRetryScheduler.start();
 
 const triggerControl = new TriggerControlPlane({
   store,
