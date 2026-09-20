@@ -2,6 +2,63 @@
 
 All notable public changes are documented here.
 
+## [0.2.0] - 2026-09-20
+
+Production-hardening release for shared Event Intelligence hosts.
+
+### Shared-host isolation
+
+- explicit `scopeId` partitions for tenant/workspace isolation;
+- scoped host views via `host.scope(scopeId)`;
+- isolated triggers, matches, event sources, cursors, deadlines, derived events and wake delivery state;
+- persistent scope restoration after restart;
+- root host documented as a trusted operator/control-plane capability.
+
+### Pluggable persistence
+
+- `createEventIntelligenceHost({ store })` now accepts an external storage backend;
+- `PersistentEventStore` remains the zero-dependency default;
+- scoped custom backends can implement `forScope(scopeId)`;
+- storage contract validates the operations required by Event Intelligence at startup.
+
+### Durable wake delivery
+
+- persisted wake-delivery state with `pending`, `claimed`, `retry_pending`, `delivered` and `dead_letter`;
+- atomic claim/lease API for concurrent workers;
+- bounded exponential retry and retry scheduler;
+- restart recovery without a new provider event;
+- reconciliation of a persisted runtime receipt after a crash without redelivering the wake;
+- the direct `EventProcessor` path now uses the same durable retry semantics.
+
+### Polling and load control
+
+- single-flight polling per MCP connection;
+- bounded `hasMore` page draining;
+- cursor persistence after every drained page;
+- explicit batch-limit reporting.
+
+### Internal modularity
+
+- composite store contracts extracted from `engine.ts`;
+- matching/correlation helpers extracted into a dedicated module;
+- derived-event cycle validation extracted into a graph module;
+- lifecycle, deadline and audit support extracted from the engine.
+
+### Provider coverage
+
+- new `mcp-event-intelligence/provider/erpnext` export;
+- provider-native ERPNext adapter for `erpnext.sales_invoice.submitted` and `erpnext.sales_order.created`;
+- schema-validation and provider-generalization regression coverage.
+
+### Verification
+
+- tenant-isolation tests with identical trigger IDs in separate scopes;
+- custom-store injection and restart persistence tests;
+- polling single-flight and bounded-batching tests;
+- retry, dead-letter, lease-contention and post-receipt crash-reconciliation tests;
+- ERPNext provider adapter tests;
+- CI, Security Scan, MCP Launch Check, Clean-room Smoke and Public Release Check green before release.
+
 ## [0.1.1] - 2026-09-20
 
 Provider integration patch.
