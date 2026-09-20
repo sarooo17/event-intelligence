@@ -1,0 +1,114 @@
+name: Clean-room Smoke
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/clean-room-smoke.yml"
+      - "README.md"
+      - "package.json"
+      - "server.json"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: clean-room-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  published-package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org/
+
+      - name: Install published package in an empty project
+        shell: bash
+        run: |
+          set -euo pipefail
+          WORKDIR="$(mktemp -d)"
+          cd "$WORKDIR"
+          npm init -y >/dev/null
+          npm install --ignore-scripts --no-audit --no-fund mcp-event-intelligence@0.1.0
+
+          node --input-type=module <<'EOF'
+          import assert from 'node:assert/strict';
+          const protocol = await import('mcp-event-intelligence');
+          const host = await import('mcp-event-intelligence/host');
+
+          assert.ok(Object.keys(protocol).length > 0, 'root package export is empty');
+          assert.equal(typeof host.createEventIntelligenceHost, 'function');
+          assert.equal(typeof host.createMcpRegistryAdapter, 'function');
+
+          console.log('package imports OK');
+          EOF
+
+          test "$(npx --no-install mcp-event-intelligence --version)" = "0.1.0"
+          npx --no-install mcp-event-intelligence --help | grep -qi "standard MCP stdio control plane"
+
+      - name: Confirm MCP stdio entrypoint starts
+        shell: bash
+        run: |
+          set -euo pipefail
+          WORKDIR="$(mktemp -d)"
+          cd "$WORKDIR"
+          npm init -y >/dev/null
+          npm install --ignore-scripts --no-audit --no-fund mcp-event-intelligence@0.1.0
+
+          node --input-type=module <<'EOF'
+          import assert from 'node:assert/strict';
+          import { spawn } from 'node:child_process';
+
+          const child = spawn(
+            process.platform === 'win32' ? 'npx.cmd' : 'npx',
+            ['--no-install', 'mcp-event-intelligence', 'mcp'],
+            { stdio: ['pipe', 'pipe', 'pipe'] },
+          );
+
+          let stderr = '';
+          child.stderr.setEncoding('utf8');
+          child.stderr.on('data', (chunk) => {
+            stderr += chunk;
+          });
+
+          await new Promise((resolve, reject) => {
+            const timeout = setTimeout(
+              () => reject(new Error(`MCP stdio did not become ready: ${stderr}`)),
+              5000,
+            );
+
+            const check = () => {
+              if (stderr.includes('mcp_event_intelligence_stdio_ready')) {
+                clearTimeout(timeout);
+                resolve();
+              }
+            };
+
+            child.stderr.on('data', check);
+            child.once('exit', (code, signal) => {
+              clearTimeout(timeout);
+              reject(
+                new Error(
+                  `MCP stdio exited before readiness (code=${code}, signal=${signal}): ${stderr}`,
+                ),
+              );
+            });
+          });
+
+          assert.equal(child.exitCode, null, 'MCP stdio exited while stdin remained open');
+          child.kill('SIGTERM');
+          await new Promise((resolve) => child.once('exit', resolve));
+          console.log('MCP stdio entrypoint stayed alive with an open host connection');
+          EOF
+
+      - name: Verify published metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(npm view mcp-event-intelligence@0.1.0 version)" = "0.1.0"
+          test "$(npm view mcp-event-intelligence@0.1.0 repository.url)" = "git+https://github.com/sarooo17/event-intelligence.git"
