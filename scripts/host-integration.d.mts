@@ -14,8 +14,12 @@ export interface HostMcpConnectionOptions {
   client?: HostMcpClientLike;
   request?: (method: string, params?: unknown) => Promise<unknown>;
   enabled?: boolean;
+  /** Isolation partition used by the shared EI host. Defaults to \"default\". */
+  scopeId?: string;
   pollIntervalMs?: number;
   maxEvents?: number;
+  /** Maximum number of immediately drained pages when the provider reports hasMore. */
+  maxPollBatches?: number;
 }
 
 export interface HostMcpRegistry {
@@ -36,8 +40,18 @@ export type HostWakeHandler = (
   packet: Record<string, unknown>,
 ) => Promise<HostWakeReceipt | string> | HostWakeReceipt | string;
 
+export interface EventIntelligenceStore {
+  init?(): Promise<unknown>;
+  /** Required when non-default scopes are used. Implementations should return an isolated store view. */
+  forScope?(scopeId: string): Promise<EventIntelligenceStore> | EventIntelligenceStore;
+  listScopeIds?(): Promise<string[]> | string[];
+  [key: string]: any;
+}
+
 export interface EventIntelligenceHostOptions {
   dataDir?: string;
+  /** Optional storage backend. PersistentEventStore is used when omitted. */
+  store?: EventIntelligenceStore;
   env?: Record<string, string | undefined>;
   mcpRegistry?: HostMcpRegistry;
   /** Low-level/manual fallback; prefer mcpRegistry for automatic discovery. */
@@ -49,19 +63,25 @@ export interface EventIntelligenceHostOptions {
   semanticEvaluator?: unknown;
 }
 
-export interface EventIntelligenceHost {
+export interface EventIntelligenceScopedHost {
+  readonly scopeId: string;
   readonly runtime: any;
-  readonly store: any;
+  readonly store: EventIntelligenceStore;
   readonly triggerControl: any;
   readonly triggerInspector: any;
   readonly eventSources: any[];
-  refreshMcpRegistry(): Promise<any[]>;
   attachMcpClient(connection: HostMcpConnectionOptions): Promise<{
     connectionId: string;
     events: any[];
   }>;
-  detachMcpClient(connectionId: string): Promise<boolean>;
   mcpStatus(): any[];
+}
+
+export interface EventIntelligenceHost extends EventIntelligenceScopedHost {
+  refreshMcpRegistry(): Promise<any[]>;
+  detachMcpClient(connectionId: string): Promise<boolean>;
+  loadedScopes(): string[];
+  scope(scopeId?: string): Promise<EventIntelligenceScopedHost>;
   close(): Promise<void>;
 }
 
@@ -84,3 +104,13 @@ export function createHostMcpEventsConnection(
 export function createEventIntelligenceHost(
   options?: EventIntelligenceHostOptions,
 ): Promise<EventIntelligenceHost>;
+
+
+export class PersistentEventStore implements EventIntelligenceStore {
+  constructor(dataDir: string);
+  readonly dataDir: string;
+  init(): Promise<unknown>;
+  forScope(scopeId?: string): Promise<PersistentEventStore>;
+  listScopeIds(): Promise<string[]>;
+  [key: string]: any;
+}

@@ -134,6 +134,7 @@ export const AuditKindSchema = z.enum([
   'lifecycle.transition',
   'wake.queued',
   'wake.delivered',
+  'wake.retry_scheduled',
   'wake.handled',
   'wake.dead_letter',
   'trigger.partial',

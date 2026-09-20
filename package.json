@@ -1,6 +1,6 @@
 {
   "name": "mcp-event-intelligence",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Durable temporal event intelligence for agent hosts: host-owned MCP event discovery, composite triggers, derived events, and targeted wakeups.",
   "license": "Apache-2.0",
   "type": "module",
@@ -18,6 +18,10 @@
     "./provider": {
       "types": "./dist/src/mcpEvents/provider.d.ts",
       "import": "./dist/src/mcpEvents/provider.js"
+    },
+    "./provider/erpnext": {
+      "types": "./dist/src/mcpEvents/erpnextProvider.d.ts",
+      "import": "./dist/src/mcpEvents/erpnextProvider.js"
     }
   },
   "bin": {

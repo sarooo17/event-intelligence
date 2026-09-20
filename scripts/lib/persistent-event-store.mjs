@@ -1,4 +1,4 @@
-import { appendFile, mkdir, readFile } from 'node:fs/promises';
+import { appendFile, mkdir, readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import {
   AuditChain,
@@ -8,6 +8,29 @@ import {
   parseDerivedEventRecord,
   McpEventOccurrenceSchema,
 } from '../../dist/src/intelligenceProtocol/index.js';
+
+export const DEFAULT_EVENT_SCOPE_ID = 'default';
+
+export function normalizeEventScopeId(input = DEFAULT_EVENT_SCOPE_ID) {
+  const scopeId = String(input ?? DEFAULT_EVENT_SCOPE_ID).trim();
+  if (!scopeId) throw new Error('Event Intelligence scopeId must not be empty');
+  if (scopeId.length > 240) {
+    throw new Error('Event Intelligence scopeId must be at most 240 characters');
+  }
+  return scopeId;
+}
+
+function scopeDirectoryName(scopeId) {
+  return Buffer.from(scopeId, 'utf8').toString('base64url');
+}
+
+function scopeIdFromDirectoryName(name) {
+  try {
+    return Buffer.from(name, 'base64url').toString('utf8');
+  } catch {
+    return null;
+  }
+}
 
 async function readJsonLines(filePath) {
   try {
@@ -28,6 +51,7 @@ export class PersistentEventStore {
   #events = [];
   #decisions = [];
   #wakes = [];
+  #wakeDeliveries = new Map();
   #triggers = new Map();
   #triggerStates = new Map();
   #eventSources = new Map();
@@ -40,6 +64,7 @@ export class PersistentEventStore {
   #derivedEvents = new Map();
   #derivedContracts = new Map();
   #auditChain = new AuditChain();
+  #scopeStores = new Map();
 
   constructor(dataDir) {
     this.dataDir = dataDir;
@@ -47,6 +72,7 @@ export class PersistentEventStore {
       events: path.join(dataDir, 'events.jsonl'),
       decisions: path.join(dataDir, 'decisions.jsonl'),
       wakes: path.join(dataDir, 'wakes.jsonl'),
+      wakeDeliveries: path.join(dataDir, 'wake-deliveries.jsonl'),
       triggers: path.join(dataDir, 'triggers.jsonl'),
       triggerStates: path.join(dataDir, 'trigger-states.jsonl'),
       eventSources: path.join(dataDir, 'event-sources.jsonl'),
@@ -60,6 +86,41 @@ export class PersistentEventStore {
     };
   }
 
+  async forScope(scopeIdInput = DEFAULT_EVENT_SCOPE_ID) {
+    const scopeId = normalizeEventScopeId(scopeIdInput);
+    if (scopeId === DEFAULT_EVENT_SCOPE_ID) return this;
+
+    const existing = this.#scopeStores.get(scopeId);
+    if (existing) return existing;
+
+    const scoped = new PersistentEventStore(
+      path.join(this.dataDir, 'scopes', scopeDirectoryName(scopeId)),
+    );
+    await scoped.init();
+    this.#scopeStores.set(scopeId, scoped);
+    return scoped;
+  }
+
+  async listScopeIds() {
+    const scopes = new Set([
+      DEFAULT_EVENT_SCOPE_ID,
+      ...this.#scopeStores.keys(),
+    ]);
+    try {
+      const entries = await readdir(path.join(this.dataDir, 'scopes'), {
+        withFileTypes: true,
+      });
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        const scopeId = scopeIdFromDirectoryName(entry.name);
+        if (scopeId) scopes.add(scopeId);
+      }
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error;
+    }
+    return [...scopes].sort();
+  }
+
   async init() {
     await mkdir(this.dataDir, { recursive: true });
 
@@ -67,6 +128,7 @@ export class PersistentEventStore {
       events,
       decisions,
       wakes,
+      wakeDeliveries,
       triggers,
       triggerStates,
       eventSources,
@@ -81,6 +143,7 @@ export class PersistentEventStore {
       readJsonLines(this.files.events),
       readJsonLines(this.files.decisions),
       readJsonLines(this.files.wakes),
+      readJsonLines(this.files.wakeDeliveries),
       readJsonLines(this.files.triggers),
       readJsonLines(this.files.triggerStates),
       readJsonLines(this.files.eventSources),
@@ -96,6 +159,42 @@ export class PersistentEventStore {
     this.#events = events;
     this.#decisions = decisions;
     this.#wakes = wakes;
+
+    this.#wakeDeliveries = new Map();
+    for (const raw of wakeDeliveries) {
+      if (!raw?.wakeId || !raw?.runtime || (!raw?.sourceId && !raw?.matchId)) continue;
+      const status = [
+        'pending',
+        'claimed',
+        'retry_pending',
+        'delivered',
+        'dead_letter',
+      ].includes(raw.status)
+        ? raw.status
+        : 'pending';
+      const record = {
+        wakeId: String(raw.wakeId),
+        sourceType: raw.sourceType === 'event' ? 'event' : 'composite',
+        sourceId: String(raw.sourceId || raw.matchId),
+        matchId: raw.matchId ? String(raw.matchId) : '',
+        triggerId: String(raw.triggerId || ''),
+        triggerVersion: String(raw.triggerVersion || '1'),
+        runtime: String(raw.runtime),
+        status,
+        attemptCount:
+          Number.isInteger(raw.attemptCount) && raw.attemptCount >= 0
+            ? raw.attemptCount
+            : 0,
+        nextAttemptAt: String(raw.nextAttemptAt || raw.updatedAt || new Date(0).toISOString()),
+        leaseOwner: raw.leaseOwner ? String(raw.leaseOwner) : null,
+        leaseUntil: raw.leaseUntil ? String(raw.leaseUntil) : null,
+        runtimeReceiptId: raw.runtimeReceiptId ? String(raw.runtimeReceiptId) : null,
+        lastError: raw.lastError ? String(raw.lastError) : null,
+        createdAt: String(raw.createdAt || new Date(0).toISOString()),
+        updatedAt: String(raw.updatedAt || new Date(0).toISOString()),
+      };
+      this.#wakeDeliveries.set(record.wakeId, record);
+    }
 
     this.#triggers = new Map();
     for (const raw of triggers) {
@@ -265,6 +364,7 @@ export class PersistentEventStore {
       events: events.length,
       decisions: decisions.length,
       wakes: wakes.length,
+      wakeDeliveries: this.#wakeDeliveries.size,
       triggers: this.#triggers.size,
       triggerStates: this.#triggerStates.size,
       eventSources: this.#eventSources.size,
@@ -303,6 +403,213 @@ export class PersistentEventStore {
     return this.#serialized(async () => {
       this.#wakes.push(record);
       await appendFile(this.files.wakes, `${JSON.stringify(record)}\n`, 'utf8');
+      return record;
+    });
+  }
+
+  getWakeDelivery(wakeId) {
+    return this.#wakeDeliveries.get(String(wakeId)) ?? null;
+  }
+
+  listDueWakeDeliveries(nowIso = new Date().toISOString()) {
+    const now = Date.parse(nowIso);
+    return [...this.#wakeDeliveries.values()]
+      .filter((record) => {
+        if (record.status === 'pending' || record.status === 'retry_pending') {
+          return Date.parse(record.nextAttemptAt) <= now;
+        }
+        if (record.status === 'claimed' && record.leaseUntil) {
+          return Date.parse(record.leaseUntil) <= now;
+        }
+        if (record.status === 'delivered') {
+          const latestWake = this.latestWake(record.wakeId);
+          const wakeFinalized =
+            latestWake?.status === 'delivered' ||
+            latestWake?.status === 'handled';
+          if (record.sourceType === 'event') {
+            return !wakeFinalized;
+          }
+          const match = this.#triggerMatches.get(record.matchId);
+          return !wakeFinalized || match?.status !== 'fired';
+        }
+        return false;
+      })
+      .sort((a, b) =>
+        Date.parse(a.nextAttemptAt) - Date.parse(b.nextAttemptAt) ||
+        a.wakeId.localeCompare(b.wakeId)
+      );
+  }
+
+  async ensureWakeDelivery(input) {
+    return this.#serialized(async () => {
+      const wakeId = String(input.wakeId || '');
+      const sourceType = input.sourceType === 'event' ? 'event' : 'composite';
+      const matchId = String(input.matchId || '');
+      const sourceId = String(input.sourceId || matchId || '');
+      const runtime = String(input.runtime || '');
+      if (!wakeId || !sourceId || !runtime) {
+        throw new Error('Wake delivery requires wakeId, sourceId and runtime');
+      }
+      if (sourceType === 'composite' && !matchId) {
+        throw new Error('Composite wake delivery requires matchId');
+      }
+      const existing = this.#wakeDeliveries.get(wakeId);
+      if (existing) return existing;
+
+      const now = String(input.now ?? new Date().toISOString());
+      const record = {
+        wakeId,
+        sourceType,
+        sourceId,
+        matchId,
+        triggerId: String(input.triggerId || ''),
+        triggerVersion: String(input.triggerVersion || '1'),
+        runtime,
+        status: 'pending',
+        attemptCount: 0,
+        nextAttemptAt: now,
+        leaseOwner: null,
+        leaseUntil: null,
+        runtimeReceiptId: null,
+        lastError: null,
+        createdAt: now,
+        updatedAt: now,
+      };
+      this.#wakeDeliveries.set(wakeId, record);
+      await appendFile(
+        this.files.wakeDeliveries,
+        `${JSON.stringify(record)}\n`,
+        'utf8',
+      );
+      return record;
+    });
+  }
+
+  async claimWakeDelivery(wakeIdInput, {
+    workerId,
+    now = new Date().toISOString(),
+    leaseMs = 30000,
+  } = {}) {
+    return this.#serialized(async () => {
+      const wakeId = String(wakeIdInput || '');
+      const owner = String(workerId || '');
+      if (!wakeId || !owner) {
+        throw new Error('Wake delivery claim requires wakeId and workerId');
+      }
+      const current = this.#wakeDeliveries.get(wakeId);
+      if (!current) return null;
+      if (current.status === 'delivered' || current.status === 'dead_letter') {
+        return null;
+      }
+
+      const nowMs = Date.parse(now);
+      const ready =
+        (
+          (current.status === 'pending' || current.status === 'retry_pending') &&
+          Date.parse(current.nextAttemptAt) <= nowMs
+        ) ||
+        (
+          current.status === 'claimed' &&
+          current.leaseUntil &&
+          Date.parse(current.leaseUntil) <= nowMs
+        );
+      if (!ready) return null;
+
+      const record = {
+        ...current,
+        status: 'claimed',
+        attemptCount: current.attemptCount + 1,
+        leaseOwner: owner,
+        leaseUntil: new Date(nowMs + Math.max(1000, Number(leaseMs) || 30000)).toISOString(),
+        updatedAt: now,
+      };
+      this.#wakeDeliveries.set(wakeId, record);
+      await appendFile(
+        this.files.wakeDeliveries,
+        `${JSON.stringify(record)}\n`,
+        'utf8',
+      );
+      return record;
+    });
+  }
+
+  async completeWakeDelivery(wakeIdInput, {
+    workerId,
+    runtimeReceiptId,
+    now = new Date().toISOString(),
+  } = {}) {
+    return this.#serialized(async () => {
+      const wakeId = String(wakeIdInput || '');
+      const current = this.#wakeDeliveries.get(wakeId);
+      if (!current) return null;
+      if (current.status === 'delivered') return current;
+      if (
+        current.status !== 'claimed' ||
+        current.leaseOwner !== String(workerId || '')
+      ) {
+        const error = new Error(`Wake delivery ${wakeId} is not owned by this worker`);
+        error.code = 'WAKE_DELIVERY_CLAIM_LOST';
+        throw error;
+      }
+
+      const record = {
+        ...current,
+        status: 'delivered',
+        runtimeReceiptId: String(runtimeReceiptId || ''),
+        leaseOwner: null,
+        leaseUntil: null,
+        nextAttemptAt: now,
+        lastError: null,
+        updatedAt: now,
+      };
+      this.#wakeDeliveries.set(wakeId, record);
+      await appendFile(
+        this.files.wakeDeliveries,
+        `${JSON.stringify(record)}\n`,
+        'utf8',
+      );
+      return record;
+    });
+  }
+
+  async failWakeDelivery(wakeIdInput, {
+    workerId,
+    error,
+    now = new Date().toISOString(),
+    maxAttempts = 5,
+    nextAttemptAt = now,
+  } = {}) {
+    return this.#serialized(async () => {
+      const wakeId = String(wakeIdInput || '');
+      const current = this.#wakeDeliveries.get(wakeId);
+      if (!current) return null;
+      if (
+        current.status !== 'claimed' ||
+        current.leaseOwner !== String(workerId || '')
+      ) {
+        const claimError = new Error(
+          `Wake delivery ${wakeId} is not owned by this worker`,
+        );
+        claimError.code = 'WAKE_DELIVERY_CLAIM_LOST';
+        throw claimError;
+      }
+
+      const terminal = current.attemptCount >= Math.max(1, Number(maxAttempts) || 5);
+      const record = {
+        ...current,
+        status: terminal ? 'dead_letter' : 'retry_pending',
+        leaseOwner: null,
+        leaseUntil: null,
+        nextAttemptAt: terminal ? now : String(nextAttemptAt),
+        lastError: error instanceof Error ? error.message : String(error || 'wake delivery failed'),
+        updatedAt: now,
+      };
+      this.#wakeDeliveries.set(wakeId, record);
+      await appendFile(
+        this.files.wakeDeliveries,
+        `${JSON.stringify(record)}\n`,
+        'utf8',
+      );
       return record;
     });
   }
