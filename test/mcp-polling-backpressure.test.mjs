@@ -104,3 +104,129 @@ test('concurrent polls for one MCP connection share a single in-flight request',
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+
+test('poll draining is bounded while persisting the cursor after every batch', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'ei-poll-batches-'));
+  let pollCalls = 0;
+
+  const client = {
+    getServerCapabilities() {
+      return {
+        experimental: {
+          'io.modelcontextprotocol.experimental/events': {
+            methods: ['events/list', 'events/poll'],
+          },
+        },
+      };
+    },
+    async request(message) {
+      if (message.method === 'events/list') {
+        return {
+          events: [{
+            name: 'paged.event',
+            delivery: ['poll'],
+            payloadSchema: {
+              type: 'object',
+              required: ['page'],
+              properties: { page: { type: 'number' } },
+            },
+          }],
+        };
+      }
+      if (message.method !== 'events/poll') {
+        throw new Error(`Unexpected method ${message.method}`);
+      }
+
+      pollCalls += 1;
+      const cursor = message.params?.cursor;
+      if (!cursor) {
+        return {
+          events: [{
+            eventId: 'page-1',
+            name: 'paged.event',
+            timestamp: '2026-09-20T14:00:00.000Z',
+            data: { page: 1 },
+          }],
+          cursor: 'c1',
+          hasMore: true,
+        };
+      }
+      if (cursor === 'c1') {
+        return {
+          events: [{
+            eventId: 'page-2',
+            name: 'paged.event',
+            timestamp: '2026-09-20T14:00:01.000Z',
+            data: { page: 2 },
+          }],
+          cursor: 'c2',
+          hasMore: true,
+        };
+      }
+      return {
+        events: [{
+          eventId: 'page-3',
+          name: 'paged.event',
+          timestamp: '2026-09-20T14:00:02.000Z',
+          data: { page: 3 },
+        }],
+        cursor: 'c3',
+        hasMore: false,
+      };
+    },
+  };
+
+  try {
+    const store = new PersistentEventStore(dir);
+    await store.init();
+    const triggerEngine = new CompositeTriggerEngine(store);
+    const consumer = new CompositeEventConsumer({
+      store,
+      triggerEngine,
+      wakeCoordinators: new Map(),
+    });
+    const control = new TriggerControlPlane({
+      store,
+      triggerEngine,
+    });
+    const manager = new McpEventsClientManager({
+      store,
+      compositeEventConsumer: consumer,
+      connections: [createHostMcpEventsConnection({
+        connectionId: 'paged',
+        serverId: 'paged-mcp',
+        client,
+        pollIntervalMs: 300000,
+        maxPollBatches: 2,
+      })],
+      registerEventSource: (source) =>
+        control.registerEventSource(source, {
+          type: 'system',
+          principal_id: 'event-intelligence:test',
+        }),
+    });
+
+    await manager.discoverAll();
+    const first = await manager.pollConnection('paged');
+    assert.equal(first[0].batches, 2);
+    assert.equal(first[0].accepted, 2);
+    assert.equal(first[0].batchLimitReached, true);
+    assert.equal(
+      store.getMcpClientState('paged', 'paged.event').cursor,
+      'c2',
+    );
+
+    const second = await manager.pollConnection('paged');
+    assert.equal(second[0].batches, 1);
+    assert.equal(second[0].accepted, 1);
+    assert.equal(second[0].batchLimitReached, false);
+    assert.equal(
+      store.getMcpClientState('paged', 'paged.event').cursor,
+      'c3',
+    );
+    assert.equal(pollCalls, 3);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
