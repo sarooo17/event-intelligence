@@ -338,8 +338,6 @@ export class CompositeWakeCoordinator {
           kind: 'wake.retry_scheduled',
           entityType: 'wake',
           entityId: wakeId,
-          fromState: 'wake_queued',
-          toState: 'wake_queued',
           details: {
             triggerMatchId: match.matchId,
             attemptCount: delivery?.attemptCount ?? claim.attemptCount,
