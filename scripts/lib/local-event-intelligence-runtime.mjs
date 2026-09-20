@@ -35,6 +35,9 @@ import {
 import {
   McpEventsClientManager,
 } from './mcp-events-client.mjs';
+import {
+  WakeRetryScheduler,
+} from './wake-retry-scheduler.mjs';
 
 const REQUIRED_STORE_METHODS = [
   'putTrigger',
@@ -47,6 +50,12 @@ const REQUIRED_STORE_METHODS = [
   'listEventSources',
   'appendWake',
   'latestWake',
+  'ensureWakeDelivery',
+  'getWakeDelivery',
+  'claimWakeDelivery',
+  'completeWakeDelivery',
+  'failWakeDelivery',
+  'listDueWakeDeliveries',
   'appendAudit',
   'auditLength',
   'getMcpClientState',
@@ -148,6 +157,12 @@ export async function createLocalEventIntelligenceRuntime({
     const triggerEngine = new CompositeTriggerEngine(store, evaluator);
     const wakeCoordinators = new Map();
     const packetBuilder = scopedPacketBuilder(scopeId);
+    const deliveryOptions = {
+      leaseMs: Number(env.WAKE_DELIVERY_LEASE_MS ?? 30000),
+      maxAttempts: Number(env.WAKE_DELIVERY_MAX_ATTEMPTS ?? 5),
+      retryBaseDelayMs: Number(env.WAKE_RETRY_BASE_DELAY_MS ?? 1000),
+      retryMaxDelayMs: Number(env.WAKE_RETRY_MAX_DELAY_MS ?? 60000),
+    };
 
     for (const [runtime, target] of runtimeWakeTargets) {
       wakeCoordinators.set(
@@ -157,6 +172,7 @@ export async function createLocalEventIntelligenceRuntime({
           triggerEngine,
           deliverer: createSignedRuntimeWakeDeliverer(target),
           packetBuilder,
+          ...deliveryOptions,
         }),
       );
     }
@@ -168,6 +184,7 @@ export async function createLocalEventIntelligenceRuntime({
           store,
           triggerEngine,
           packetBuilder,
+          ...deliveryOptions,
           deliverer: async (packet) => {
             const result = await handler(packet);
             if (typeof result === 'string' && result) {
@@ -195,6 +212,7 @@ export async function createLocalEventIntelligenceRuntime({
         store,
         triggerEngine,
         packetBuilder,
+        ...deliveryOptions,
         deliverer: async (packet) => {
           const result = await wake(packet);
           if (typeof result === 'string' && result) {
@@ -236,6 +254,15 @@ export async function createLocalEventIntelligenceRuntime({
     });
     const triggerInspector = new TriggerInspector({ store });
 
+    const coordinatorFor = (runtime) =>
+      wakeCoordinators.get(runtime) ?? wakeCoordinator;
+    const wakeRetryScheduler = new WakeRetryScheduler({
+      store,
+      resolveCoordinator: coordinatorFor,
+      intervalMs: Number(env.WAKE_RETRY_TICK_MS ?? 1000),
+    });
+    wakeRetryScheduler.start();
+
     const context = {
       scopeId,
       store,
@@ -245,10 +272,12 @@ export async function createLocalEventIntelligenceRuntime({
       triggerInspector,
       compositeEventConsumer,
       temporalScheduler,
+      wakeRetryScheduler,
       wakeCoordinator,
       wakeCoordinators,
       close() {
         temporalScheduler.stop();
+        wakeRetryScheduler.stop();
       },
     };
     scopeContexts.set(scopeId, context);
