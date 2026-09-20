@@ -162,7 +162,7 @@ export class PersistentEventStore {
 
     this.#wakeDeliveries = new Map();
     for (const raw of wakeDeliveries) {
-      if (!raw?.wakeId || !raw?.matchId || !raw?.runtime) continue;
+      if (!raw?.wakeId || !raw?.runtime || (!raw?.sourceId && !raw?.matchId)) continue;
       const status = [
         'pending',
         'claimed',
@@ -174,7 +174,9 @@ export class PersistentEventStore {
         : 'pending';
       const record = {
         wakeId: String(raw.wakeId),
-        matchId: String(raw.matchId),
+        sourceType: raw.sourceType === 'event' ? 'event' : 'composite',
+        sourceId: String(raw.sourceId || raw.matchId),
+        matchId: raw.matchId ? String(raw.matchId) : '',
         triggerId: String(raw.triggerId || ''),
         triggerVersion: String(raw.triggerVersion || '1'),
         runtime: String(raw.runtime),
@@ -430,10 +432,15 @@ export class PersistentEventStore {
   async ensureWakeDelivery(input) {
     return this.#serialized(async () => {
       const wakeId = String(input.wakeId || '');
+      const sourceType = input.sourceType === 'event' ? 'event' : 'composite';
       const matchId = String(input.matchId || '');
+      const sourceId = String(input.sourceId || matchId || '');
       const runtime = String(input.runtime || '');
-      if (!wakeId || !matchId || !runtime) {
-        throw new Error('Wake delivery requires wakeId, matchId and runtime');
+      if (!wakeId || !sourceId || !runtime) {
+        throw new Error('Wake delivery requires wakeId, sourceId and runtime');
+      }
+      if (sourceType === 'composite' && !matchId) {
+        throw new Error('Composite wake delivery requires matchId');
       }
       const existing = this.#wakeDeliveries.get(wakeId);
       if (existing) return existing;
@@ -441,6 +448,8 @@ export class PersistentEventStore {
       const now = String(input.now ?? new Date().toISOString());
       const record = {
         wakeId,
+        sourceType,
+        sourceId,
         matchId,
         triggerId: String(input.triggerId || ''),
         triggerVersion: String(input.triggerVersion || '1'),
