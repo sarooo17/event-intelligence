@@ -334,6 +334,8 @@ export async function createLocalEventIntelligenceRuntime({
     triggerEngine: defaultContext.triggerEngine,
     triggerControl: defaultContext.triggerControl,
     triggerInspector: defaultContext.triggerInspector,
+    triggerPlanner: defaultContext.triggerPlanner,
+    activationHydrator: defaultContext.activationHydrator,
     compositeEventConsumer: defaultContext.compositeEventConsumer,
     temporalScheduler: defaultContext.temporalScheduler,
     mcpEventsClient,
