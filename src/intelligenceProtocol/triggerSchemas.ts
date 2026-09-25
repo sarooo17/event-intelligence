@@ -365,6 +365,7 @@ export const CorrelatableEventSchema = z.object({
   occurredAt: Timestamp,
   provider: z.string().min(1).optional(),
   serverId: Id.optional(),
+  subscriptionArguments: z.record(z.string(), z.unknown()).default({}),
   payloadHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   data: z.record(z.string(), z.unknown()),
 });
@@ -387,6 +388,7 @@ export const TriggerSourceEventSchema = z.object({
   occurredAt: Timestamp,
   provider: z.string().min(1).optional(),
   serverId: Id.optional(),
+  subscriptionArguments: z.record(z.string(), z.unknown()).default({}),
   payloadHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   data: z.record(z.string(), z.unknown()),
 });
