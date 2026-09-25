@@ -71,6 +71,26 @@ test('host close drains an in-flight MCP poll before persistent store cleanup', 
   });
 
   try {
+    await host.triggerControl.createTrigger({
+      definition: {
+        triggerId: 'shutdown-trigger',
+        version: '1',
+        clauses: [{
+          id: 'shutdown',
+          event: 'shutdown.event',
+          serverId: 'shutdown-server',
+          arguments: {},
+          where: [],
+        }],
+        expression: { kind: 'anyOf', refs: ['shutdown'] },
+        withinMs: 60000,
+        target: { runtime: 'test', kind: 'task', id: 'shutdown' },
+      },
+      connectionIds: ['shutdown-connection'],
+      actor: { type: 'user', principal_id: 'test-user' },
+      owner: { type: 'user', principal_id: 'test-user' },
+    });
+
     const poll = host.runtime.mcpEventsClient.pollConnection('shutdown-connection');
     await entered;
 
