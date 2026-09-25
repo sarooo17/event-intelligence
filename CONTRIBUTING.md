@@ -63,7 +63,7 @@ Avoid broad refactors mixed with protocol semantics unless they are required for
 
 ## Protocol changes
 
-The current internal Event Intelligence protocol/schema compatibility line is v0.1, while package releases are versioned independently (currently 0.3.x). The contracts are experimental but versioned.
+The current internal Event Intelligence protocol/schema compatibility line is v0.1, while package releases are versioned independently (currently 0.4.x). The contracts are experimental but versioned.
 
 Changes that alter trigger semantics, derived-event contracts, wake lifecycle, or persistence compatibility need:
 
