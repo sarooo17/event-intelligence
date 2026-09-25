@@ -34,6 +34,7 @@ export class CompositeEventConsumer {
     serverId,
     provider,
     traceId,
+    subscriptionArguments,
   }) {
     const correlatable = await mcpOccurrenceToCorrelatableEvent(
       event,
@@ -41,6 +42,7 @@ export class CompositeEventConsumer {
         traceId,
         ...(provider ? { provider } : {}),
         ...(serverId ? { serverId } : {}),
+        subscriptionArguments: subscriptionArguments ?? {},
       },
     );
 
