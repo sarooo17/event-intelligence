@@ -377,6 +377,27 @@ test('subscription arguments create independent durable cursor state', async () 
     );
     assert.equal(calls.filter((call) => call.mailbox === 'sales').length, 2);
     assert.equal(calls.filter((call) => call.mailbox === 'support').length, 2);
+
+    const salesMatches = runtime.store.listTriggerMatches('mail-sales');
+    const supportMatches = runtime.store.listTriggerMatches('mail-support');
+    assert.equal(salesMatches.length, 1);
+    assert.equal(supportMatches.length, 1);
+    assert.equal(
+      salesMatches[0].sourceEvents[0].data.mailbox,
+      'sales',
+    );
+    assert.equal(
+      supportMatches[0].sourceEvents[0].data.mailbox,
+      'support',
+    );
+    assert.deepEqual(
+      salesMatches[0].sourceEvents[0].subscriptionArguments,
+      { mailbox: 'sales' },
+    );
+    assert.deepEqual(
+      supportMatches[0].sourceEvents[0].subscriptionArguments,
+      { mailbox: 'support' },
+    );
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
