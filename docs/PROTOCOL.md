@@ -18,7 +18,7 @@ event source
 
 Two boundaries are intentionally separate:
 
-- **event ingress:** experimental MCP Events-compatible discovery and `events/list` / `events/poll`, plus provider-native adapters;
+- **event ingress:** experimental MCP Events extension negotiation via `capabilities.extensions["io.modelcontextprotocol/events"]`, paginated `events/list`, durable per-argument subscriptions and poll/push/webhook delivery adapters, plus provider-native adapters;
 - **control plane:** standard MCP stdio server using the official TypeScript SDK v2, targeting MCP 2026-07-28.
 
 The project does not define a competing base MCP Events protocol.
@@ -29,11 +29,22 @@ Accepted source events preserve stable identifiers and payload hashes. Decisions
 
 Audit records are append-only and hash-linked. This is tamper-evident, not tamper-proof.
 
+## Event subscriptions
+
+MCP Events discovery and EI trigger semantics remain separate. `events/list` yields source descriptors. For an active trigger clause, EI derives a durable subscription keyed by connection, event name and canonical MCP `arguments`. The subscription owns cursor/delivery state; the trigger clause owns the EI `where` predicate.
+
+This preserves two independent contracts:
+
+- MCP `arguments` are validated against the source `inputSchema` and define the provider-side subscription;
+- EI predicates are validated against `payloadSchema` and evaluate delivered event data.
+
+Poll, push and webhook all normalize into the same EventOccurrence path before composite evaluation. Existing persisted trigger definitions without `arguments` read as `arguments: {}`.
+
 ## Composite programs
 
 A trigger contains:
 
-- event clauses with structured predicates;
+- event clauses with MCP subscription arguments and structured EI predicates;
 - `allOf`, `anyOf`, `sequence` or `count`;
 - optional deterministic same-value correlation;
 - optional semantic correlation;
