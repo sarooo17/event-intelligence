@@ -1,6 +1,6 @@
 # Documentation
 
-Current package documentation for the 0.3.x line:
+Current package documentation:
 
 - [Quickstart](QUICKSTART.md)
 - [Architecture](ARCHITECTURE.md)
@@ -8,10 +8,10 @@ Current package documentation for the 0.3.x line:
 - [Security model](SECURITY-MODEL.md)
 - [MCP Registry](MCP-REGISTRY.md)
 - [Release-gate example](examples/release-gate.md)
-- [Latest release notes](releases/v0.3.1.md)
+- [Latest release notes](releases/v0.4.0.md)
 - [Release history](releases/)
 
-The package release version and the internal persisted protocol version are intentionally separate. The 0.3.x package remains compatible with the current v0.1 internal protocol/schema identifiers unless a release note explicitly says otherwise.
+The package release version and the internal persisted protocol version are intentionally separate. Internal protocol/schema identifiers therefore do not necessarily match the npm package version; release notes call out compatibility changes explicitly.
 
 The executable implementation, schemas and tests are authoritative when prose and code disagree.
 
