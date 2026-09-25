@@ -23,9 +23,9 @@ test('concurrent polls for one MCP connection share a single in-flight request',
   const client = {
     getServerCapabilities() {
       return {
-        experimental: {
-          'io.modelcontextprotocol.experimental/events': {
-            methods: ['events/list', 'events/poll'],
+        extensions: {
+          'io.modelcontextprotocol/events': {
+            listChanged: false,
           },
         },
       };
@@ -113,9 +113,9 @@ test('poll draining is bounded while persisting the cursor after every batch', a
   const client = {
     getServerCapabilities() {
       return {
-        experimental: {
-          'io.modelcontextprotocol.experimental/events': {
-            methods: ['events/list', 'events/poll'],
+        extensions: {
+          'io.modelcontextprotocol/events': {
+            listChanged: false,
           },
         },
       };
