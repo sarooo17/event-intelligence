@@ -1,6 +1,6 @@
 # Quickstart
 
-The primary v0.3 integration is to embed Event Intelligence once at the **harness level** and let it discover the MCP clients that harness already owns.
+The primary integration is to embed Event Intelligence once at the **harness level** and let it discover the MCP clients that harness already owns.
 
 ## 1. Embed the package and point it at the host registry
 
