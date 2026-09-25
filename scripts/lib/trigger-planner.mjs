@@ -4,6 +4,7 @@ import {
   parseTriggerPlanInput,
   sha256Hex,
 } from '../../dist/src/intelligenceProtocol/index.js';
+import { assertJsonSchemaValue } from './json-schema.mjs';
 
 function schemaNodeAtPath(schema, path) {
   if (!schema || typeof schema !== 'object') return null;
@@ -25,7 +26,26 @@ function sourceSummary(source) {
     serverId: source.serverId,
     eventName: source.eventName,
     description: source.description ?? null,
+    delivery: source.delivery ?? [],
+    inputSchema: source.inputSchema ?? {},
+    payloadSchema: source.payloadSchema ?? {},
   };
+}
+
+function validateArgumentsAgainstSource(source, args) {
+  const schema = source.inputSchema;
+  if (!schema || typeof schema !== 'object' || Object.keys(schema).length === 0) {
+    return;
+  }
+  try {
+    assertJsonSchemaValue(schema, args ?? {});
+  } catch (error) {
+    throw sourceError(
+      'TRIGGER_PLAN_ARGUMENTS_INVALID',
+      `Subscription arguments do not match ${source.serverId}/${source.eventName}: ${error instanceof Error ? error.message : String(error)}`,
+      [source],
+    );
+  }
 }
 
 function sourceError(code, message, sources = []) {
@@ -149,6 +169,7 @@ export class TriggerPlanner {
       }
 
       const source = matches[0];
+      validateArgumentsAgainstSource(source, event.arguments);
       for (const predicate of event.where) {
         validatePredicateAgainstSource(source, predicate, warnings);
       }
@@ -158,6 +179,7 @@ export class TriggerPlanner {
         id,
         event: event.event,
         serverId: source.serverId,
+        arguments: event.arguments,
         where: event.where,
       };
     });
@@ -230,6 +252,7 @@ export class TriggerPlanner {
             id: clause.id,
             event: clause.event,
             serverId: clause.serverId,
+            arguments: clause.arguments,
             where: clause.where,
           })),
           withinMs: definition.withinMs,
