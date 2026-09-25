@@ -16,10 +16,9 @@ import { TriggerControlPlane } from '../scripts/lib/trigger-control-plane.mjs';
 function fakeConnectedMcpClient({ eventName, eventId, data }) {
   let cursor = null;
   const capabilities = {
-    experimental: {
-      'io.modelcontextprotocol.experimental/events': {
-        status: 'draft',
-        methods: ['events/list', 'events/poll'],
+    extensions: {
+      'io.modelcontextprotocol/events': {
+        listChanged: false,
       },
     },
   };
