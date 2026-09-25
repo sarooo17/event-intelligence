@@ -610,7 +610,8 @@ export class McpEventsClientManager {
     return desired;
   }
 
-  async ingestOccurrence(connection, context, descriptor, raw) {
+  async ingestOccurrence(connection, context, subscription, raw) {
+    const descriptor = subscription.descriptor;
     const occurrence = McpEventOccurrenceSchema.parse(raw);
     if (occurrence.name !== descriptor.name) {
       throw new Error(
@@ -622,6 +623,7 @@ export class McpEventsClientManager {
     const receipt = await context.store.appendMcpOccurrence(
       connection.serverId,
       occurrence,
+      subscription.subscriptionId,
     );
     if (!receipt.accepted) return { accepted: false, occurrence };
 
@@ -629,7 +631,9 @@ export class McpEventsClientManager {
       event: occurrence,
       serverId: connection.serverId,
       provider: 'mcp',
-      traceId: `mcp:${connection.serverId}:${occurrence.eventId}`,
+      traceId:
+        `mcp:${connection.serverId}:${subscription.subscriptionId}:${occurrence.eventId}`,
+      subscriptionArguments: subscription.arguments,
     });
     return { accepted: true, occurrence };
   }
@@ -720,7 +724,7 @@ export class McpEventsClientManager {
         const receipt = await this.ingestOccurrence(
           connection,
           context,
-          subscription.descriptor,
+          subscription,
           raw,
         );
         if (!receipt.accepted) continue;
