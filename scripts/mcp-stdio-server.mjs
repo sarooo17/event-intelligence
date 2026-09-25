@@ -71,6 +71,7 @@ const triggerPlanInputSchema = z.object({
     id: z.string().min(1).optional(),
     event: z.string().min(1),
     serverId: z.string().min(1).optional(),
+    arguments: z.record(z.string(), z.unknown()).optional(),
     where: z.array(predicateInputSchema).optional(),
   })).min(1),
   match: z.union([
