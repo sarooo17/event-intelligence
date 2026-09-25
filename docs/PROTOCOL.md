@@ -1,6 +1,6 @@
 # Event Intelligence Protocol v0.1
 
-This document describes the current **internal persisted protocol/schema compatibility line**. Package releases are versioned independently; the 0.3.x package still emits the v0.1 internal protocol identifiers for backward compatibility.
+This document describes the current **internal persisted protocol/schema compatibility line**. Package releases are versioned independently; the 0.4.x package still emits the v0.1 internal protocol identifiers for backward compatibility.
 
 Event Intelligence defines a small internal protocol above event transport and below agent execution. It is **not** an MCP specification.
 
