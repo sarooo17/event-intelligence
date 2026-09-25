@@ -482,7 +482,7 @@ export class McpEventsProvider<TContext = unknown> {
         `MCP provider ${params.name} returned invalid poll result`,
       );
     }
-    const result = rawResult as Record<string, unknown>;
+    const result = rawResult as unknown as Record<string, unknown>;
 
     const cursor =
       result.cursor === null
