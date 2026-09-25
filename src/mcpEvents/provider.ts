@@ -473,13 +473,16 @@ export class McpEventsProvider<TContext = unknown> {
       );
     }
 
-    const result = assertRecord(
-      await registered.poll({
-        ...params,
-        context,
-      }),
-      `MCP provider ${params.name} returned invalid poll result`,
-    );
+    const rawResult = await registered.poll({
+      ...params,
+      context,
+    });
+    if (!rawResult || Array.isArray(rawResult) || typeof rawResult !== 'object') {
+      throw new Error(
+        `MCP provider ${params.name} returned invalid poll result`,
+      );
+    }
+    const result = rawResult as Record<string, unknown>;
 
     const cursor =
       result.cursor === null
