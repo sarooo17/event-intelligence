@@ -27,6 +27,7 @@ export const TriggerClauseSchema = z.object({
   event: z.string().min(1),
   serverId: Id.optional(),
   contractVersion: z.string().min(1).max(50).optional(),
+  arguments: z.record(z.string(), z.unknown()).default({}),
   where: z.array(StructuredPredicateSchema).default([]),
 });
 
