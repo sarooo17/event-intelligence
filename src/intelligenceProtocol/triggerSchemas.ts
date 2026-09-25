@@ -27,6 +27,7 @@ export const TriggerClauseSchema = z.object({
   event: z.string().min(1),
   serverId: Id.optional(),
   contractVersion: z.string().min(1).max(50).optional(),
+  arguments: z.record(z.string(), z.unknown()).default({}),
   where: z.array(StructuredPredicateSchema).default([]),
 });
 
@@ -364,6 +365,7 @@ export const CorrelatableEventSchema = z.object({
   occurredAt: Timestamp,
   provider: z.string().min(1).optional(),
   serverId: Id.optional(),
+  subscriptionArguments: z.record(z.string(), z.unknown()).default({}),
   payloadHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   data: z.record(z.string(), z.unknown()),
 });
@@ -386,6 +388,7 @@ export const TriggerSourceEventSchema = z.object({
   occurredAt: Timestamp,
   provider: z.string().min(1).optional(),
   serverId: Id.optional(),
+  subscriptionArguments: z.record(z.string(), z.unknown()).default({}),
   payloadHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   data: z.record(z.string(), z.unknown()),
 });

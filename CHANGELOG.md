@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.4.0] - 2026-09-25
+
+Current MCP Events draft alignment.
+
+### MCP Events boundary
+
+- switched event capability negotiation to `capabilities.extensions["io.modelcontextprotocol/events"]`;
+- removed the legacy `server/discover` / `io.modelcontextprotocol.experimental/events` compatibility surface;
+- added paginated `events/list`, draft error semantics, nullable cursors and `_meta` preservation;
+- validates subscription `arguments` against advertised `inputSchema`;
+- separates EventSource descriptors from durable EventSubscriptions keyed by connection + event name + canonical arguments;
+- stores independent cursor/delivery state per subscription;
+- poll scheduling now follows server `nextPollMs` and keeps `hasMore` distinct from `truncated`;
+- host-owned push and webhook adapters feed the same EventOccurrence pipeline as poll;
+- added current-draft discovery/poll conformance-shaped regression coverage.
+
+### Compatibility
+
+- trigger clauses gain additive `arguments: {}`; existing persisted trigger definitions remain readable because omitted arguments default to an empty object;
+- composite, temporal, derived-event and wake semantics are unchanged;
+- event ingress targets the 2026-09-25 experimental draft direction represented by experimental-ext-triggers-events PR #7 and conformance PR #521, not a finalized MCP specification.
+
 All notable public changes are documented here.
 
 ## [0.3.1] - 2026-09-20

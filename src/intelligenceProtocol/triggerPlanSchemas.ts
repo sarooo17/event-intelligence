@@ -12,6 +12,7 @@ export const TriggerPlanEventSchema = z.object({
   id: Id.optional(),
   event: z.string().min(1),
   serverId: Id.optional(),
+  arguments: z.record(z.string(), z.unknown()).default({}),
   where: z.array(StructuredPredicateSchema).default([]),
 }).strict();
 

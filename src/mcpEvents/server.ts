@@ -8,6 +8,8 @@ import type {
 export interface PersistedMcpOccurrence {
   sequence: number;
   serverId: string;
+  /** Client-side durable subscription identity when this log is used by EI. */
+  subscriptionId?: string | null;
   event: EventOccurrence;
 }
 
@@ -34,7 +36,7 @@ export interface PollEventsParams {
 
 export interface PollEventsResult {
   events: EventOccurrence[];
-  cursor: string;
+  cursor: string | null;
   truncated: boolean;
   hasMore: boolean;
   nextPollMs: number;
@@ -72,33 +74,26 @@ export class ExperimentalMcpEventsServer {
   async handleRequest(request: JsonRpcRequest): Promise<JsonRpcResponse> {
     try {
       switch (request.method) {
-        case 'server/discover':
-          return this.ok(request.id, {
-            supportedVersions: ['2026-07-28'],
-            capabilities: {
-              experimental: {
-                'io.modelcontextprotocol.experimental/events': {
-                  status: 'draft',
-                  designDate: '2026-02-19',
-                  methods: ['events/list', 'events/poll'],
-                  listChanged: false,
-                },
-              },
-            },
-            instructions:
-              'Experimental MCP Events provider. Events follow the Triggers & Events WG design sketch; this is not finalized MCP conformance.',
-          });
-
         case 'events/list':
           return this.ok(request.id, {
             events: [...this.events.values()].map((entry) => entry.descriptor),
           });
 
-        case 'events/poll':
-          return this.ok(
-            request.id,
-            this.poll((request.params ?? {}) as PollEventsParams),
-          );
+        case 'events/poll': {
+          const params = (request.params ?? {}) as PollEventsParams;
+          if (!params.name || typeof params.name !== 'string') {
+            return this.error(request.id, -32602, 'events/poll requires name');
+          }
+          if (!this.events.has(params.name)) {
+            return this.error(
+              request.id,
+              -32011,
+              `Unknown event: ${params.name}`,
+              { kind: 'event' },
+            );
+          }
+          return this.ok(request.id, this.poll(params));
+        }
 
         default:
           return this.error(
@@ -197,7 +192,16 @@ export class ExperimentalMcpEventsServer {
     id: string | number,
     code: number,
     message: string,
+    data?: unknown,
   ): JsonRpcResponse {
-    return { jsonrpc: '2.0', id, error: { code, message } };
+    return {
+      jsonrpc: '2.0',
+      id,
+      error: {
+        code,
+        message,
+        ...(data === undefined ? {} : { data }),
+      },
+    };
   }
 }

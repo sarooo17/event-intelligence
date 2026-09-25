@@ -19,6 +19,29 @@ function getByPath(source: unknown, path: string): unknown {
   return current;
 }
 
+function stableValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stableValue);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.keys(value as Record<string, unknown>)
+        .sort()
+        .map((key) => [
+          key,
+          stableValue((value as Record<string, unknown>)[key]),
+        ]),
+    );
+  }
+  return value;
+}
+
+function sameSubscriptionArguments(
+  left: Record<string, unknown> | undefined,
+  right: Record<string, unknown> | undefined,
+): boolean {
+  return JSON.stringify(stableValue(left ?? {})) ===
+    JSON.stringify(stableValue(right ?? {}));
+}
+
 function scalarKey(value: unknown): string | null {
   if (
     typeof value === 'string' ||
@@ -69,6 +92,10 @@ export function clauseMatches(
   return (
     clause.event === event.name &&
     (!clause.serverId || clause.serverId === event.serverId) &&
+    sameSubscriptionArguments(
+      clause.arguments,
+      event.subscriptionArguments,
+    ) &&
     (
       !clause.contractVersion ||
       String(contractVersion ?? '') === String(clause.contractVersion)
@@ -89,6 +116,7 @@ export function asSourceEvent(
     occurredAt: event.occurredAt,
     ...(event.provider ? { provider: event.provider } : {}),
     ...(event.serverId ? { serverId: event.serverId } : {}),
+    subscriptionArguments: event.subscriptionArguments ?? {},
     ...(event.payloadHash ? { payloadHash: event.payloadHash } : {}),
     data: event.data,
   };
@@ -155,12 +183,22 @@ export function deterministicKeyForClause(
 }
 
 export function sameEventIdentity(
-  source: Pick<TriggerSourceEvent, 'sourceEventId' | 'serverId'>,
-  event: Pick<CorrelatableEvent, 'sourceEventId' | 'serverId'>,
+  source: Pick<
+    TriggerSourceEvent,
+    'sourceEventId' | 'serverId' | 'subscriptionArguments'
+  >,
+  event: Pick<
+    CorrelatableEvent,
+    'sourceEventId' | 'serverId' | 'subscriptionArguments'
+  >,
 ): boolean {
   return (
     source.sourceEventId === event.sourceEventId &&
-    (source.serverId ?? null) === (event.serverId ?? null)
+    (source.serverId ?? null) === (event.serverId ?? null) &&
+    sameSubscriptionArguments(
+      source.subscriptionArguments,
+      event.subscriptionArguments,
+    )
   );
 }
 

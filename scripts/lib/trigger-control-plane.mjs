@@ -5,6 +5,7 @@ import {
 import {
   DerivedContractRegistry,
 } from './derived-contract-registry.mjs';
+import { assertJsonSchemaValue } from './json-schema.mjs';
 
 function actorIdentity(actor) {
   if (!actor || typeof actor !== 'object') {
@@ -64,6 +65,26 @@ function scalarSchemaForConstant(value) {
     return Number.isInteger(value) ? { type: 'integer' } : { type: 'number' };
   }
   return {};
+}
+
+function assertSubscriptionArguments(source, args, purpose) {
+  const inputSchema = source?.inputSchema;
+  if (
+    !inputSchema ||
+    typeof inputSchema !== 'object' ||
+    Object.keys(inputSchema).length === 0
+  ) {
+    return;
+  }
+  try {
+    assertJsonSchemaValue(inputSchema, args ?? {});
+  } catch (error) {
+    const wrapped = new Error(
+      `${purpose} arguments are invalid for ${source.serverId}/${source.eventName}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    wrapped.code = 'TRIGGER_SOURCE_ARGUMENTS_INVALID';
+    throw wrapped;
+  }
 }
 
 function assertAdvertisedPath(source, path, purpose) {
@@ -695,6 +716,11 @@ export class TriggerControlPlane {
 
     for (const clause of definition.clauses) {
       const source = resolveSource(clause);
+      assertSubscriptionArguments(
+        source,
+        clause.arguments ?? {},
+        `Trigger clause ${clause.id}`,
+      );
       for (const predicate of clause.where ?? []) {
         assertAdvertisedPath(
           source,

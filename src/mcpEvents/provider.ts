@@ -8,15 +8,35 @@ import type {
   JsonRpcResponse,
 } from '../protocol/types.js';
 
-export const MCP_EVENTS_CAPABILITY_KEY =
-  'io.modelcontextprotocol.experimental/events' as const;
+export const MCP_EVENTS_EXTENSION_ID = 'io.modelcontextprotocol/events' as const;
+export const MCP_EVENTS_CAPABILITY_KEY = MCP_EVENTS_EXTENSION_ID;
 
 export const MCP_EVENTS_CAPABILITY = Object.freeze({
-  status: 'draft',
-  designDate: '2026-02-19',
-  methods: ['events/list', 'events/poll'] as const,
   listChanged: false,
 });
+
+export const MCP_EVENTS_ERROR = Object.freeze({
+  INVALID_PARAMS: -32602,
+  METHOD_NOT_FOUND: -32601,
+  INTERNAL_ERROR: -32603,
+  NOT_FOUND: -32011,
+  FORBIDDEN: -32012,
+  RESOURCE_EXHAUSTED: -32013,
+  UNSUPPORTED: -32014,
+  CALLBACK_ENDPOINT_ERROR: -32015,
+});
+
+export class McpEventsProtocolError extends Error {
+  readonly code: number;
+  readonly data?: unknown;
+
+  constructor(code: number, message: string, data?: unknown) {
+    super(message);
+    this.name = 'McpEventsProtocolError';
+    this.code = code;
+    this.data = data;
+  }
+}
 
 export interface ProviderPollRequest<TContext = unknown> {
   name: string;
@@ -29,7 +49,7 @@ export interface ProviderPollRequest<TContext = unknown> {
 
 export interface ProviderPollResult {
   events: EventOccurrence[];
-  cursor: string;
+  cursor: string | null;
   truncated?: boolean;
   hasMore?: boolean;
   nextPollMs?: number;
@@ -44,18 +64,26 @@ export interface McpProviderEvent<TContext = unknown> {
 
 export interface CreateMcpEventsProviderOptions<TContext = unknown> {
   events: McpProviderEvent<TContext>[];
-  supportedVersions?: string[];
-  instructions?: string;
+  listPageSize?: number;
 }
 
 const ALLOWED_DELIVERY = new Set(['poll', 'push', 'webhook']);
+const LIST_CURSOR_PREFIX = 'mcp-events-list-v1:';
+
+function invalidParams(message: string, data?: unknown): never {
+  throw new McpEventsProtocolError(
+    MCP_EVENTS_ERROR.INVALID_PARAMS,
+    message,
+    data,
+  );
+}
 
 function assertRecord(
   value: unknown,
   message: string,
 ): Record<string, unknown> {
   if (!value || Array.isArray(value) || typeof value !== 'object') {
-    throw new Error(message);
+    invalidParams(message);
   }
   return value as Record<string, unknown>;
 }
@@ -66,7 +94,7 @@ function optionalFiniteNumber(
 ): number | undefined {
   if (value === undefined) return undefined;
   if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
-    throw new Error(`${name} must be a non-negative finite number`);
+    invalidParams(`${name} must be a non-negative finite number`);
   }
   return value;
 }
@@ -74,7 +102,7 @@ function optionalFiniteNumber(
 function normalizeDescriptor(input: EventDescriptor): EventDescriptor {
   const raw = assertRecord(input, 'MCP event descriptor must be an object');
   const name = String(raw.name ?? '').trim();
-  if (!name) throw new Error('MCP event descriptor requires name');
+  if (!name) invalidParams('MCP event descriptor requires name');
 
   const deliveryRaw = Array.isArray(raw.delivery) ? raw.delivery : ['poll'];
   const delivery = deliveryRaw.map((entry) => String(entry));
@@ -82,11 +110,15 @@ function normalizeDescriptor(input: EventDescriptor): EventDescriptor {
     delivery.length === 0 ||
     delivery.some((entry) => !ALLOWED_DELIVERY.has(entry))
   ) {
-    throw new Error(`MCP event descriptor ${name} has invalid delivery modes`);
+    invalidParams(`MCP event descriptor ${name} has invalid delivery modes`);
   }
+
+  // createMcpEventsProvider is the poll-backed provider adapter. Hosts may
+  // consume push/webhook sources through the host delivery hooks, but a server
+  // using this adapter must expose poll for the check-since-cursor callback.
   if (!delivery.includes('poll')) {
-    throw new Error(
-      `MCP provider event ${name} must advertise poll delivery in v0.1`,
+    invalidParams(
+      `MCP provider event ${name} must advertise poll delivery`,
     );
   }
 
@@ -104,6 +136,13 @@ function normalizeDescriptor(input: EventDescriptor): EventDescriptor {
           raw.payloadSchema,
           `MCP event descriptor ${name} payloadSchema must be an object`,
         );
+  const meta =
+    raw._meta === undefined
+      ? undefined
+      : assertRecord(
+          raw._meta,
+          `MCP event descriptor ${name} _meta must be an object`,
+        );
 
   return {
     name,
@@ -111,6 +150,7 @@ function normalizeDescriptor(input: EventDescriptor): EventDescriptor {
     delivery: delivery as EventDescriptor['delivery'],
     inputSchema,
     payloadSchema,
+    ...(meta ? { _meta: meta } : {}),
   };
 }
 
@@ -133,7 +173,7 @@ export function assertJsonSchemaValue(
     !Object.is(schema.const, value)
   ) {
     throw new Error(
-      `MCP event payload violates schema at ${path}: const mismatch`,
+      `MCP event value violates schema at ${path}: const mismatch`,
     );
   }
 
@@ -142,7 +182,7 @@ export function assertJsonSchemaValue(
     !schema.enum.some((entry) => Object.is(entry, value))
   ) {
     throw new Error(
-      `MCP event payload violates schema at ${path}: value not in enum`,
+      `MCP event value violates schema at ${path}: value not in enum`,
     );
   }
 
@@ -164,7 +204,7 @@ export function assertJsonSchemaValue(
     });
     if (!matches) {
       throw new Error(
-        `MCP event payload violates schema at ${path}: expected ${types.join('|')}`,
+        `MCP event value violates schema at ${path}: expected ${types.join('|')}`,
       );
     }
   }
@@ -172,12 +212,12 @@ export function assertJsonSchemaValue(
   if (typeof value === 'string') {
     if (typeof schema.minLength === 'number' && value.length < schema.minLength) {
       throw new Error(
-        `MCP event payload violates schema at ${path}: string too short`,
+        `MCP event value violates schema at ${path}: string too short`,
       );
     }
     if (typeof schema.maxLength === 'number' && value.length > schema.maxLength) {
       throw new Error(
-        `MCP event payload violates schema at ${path}: string too long`,
+        `MCP event value violates schema at ${path}: string too long`,
       );
     }
   }
@@ -185,12 +225,12 @@ export function assertJsonSchemaValue(
   if (typeof value === 'number' && Number.isFinite(value)) {
     if (typeof schema.minimum === 'number' && value < schema.minimum) {
       throw new Error(
-        `MCP event payload violates schema at ${path}: below minimum`,
+        `MCP event value violates schema at ${path}: below minimum`,
       );
     }
     if (typeof schema.maximum === 'number' && value > schema.maximum) {
       throw new Error(
-        `MCP event payload violates schema at ${path}: above maximum`,
+        `MCP event value violates schema at ${path}: above maximum`,
       );
     }
   }
@@ -203,7 +243,7 @@ export function assertJsonSchemaValue(
     for (const key of required) {
       if (!Object.prototype.hasOwnProperty.call(record, key)) {
         throw new Error(
-          `MCP event payload violates schema at ${path}: missing required property ${key}`,
+          `MCP event value violates schema at ${path}: missing required property ${key}`,
         );
       }
     }
@@ -234,7 +274,7 @@ export function assertJsonSchemaValue(
       for (const key of Object.keys(record)) {
         if (!Object.prototype.hasOwnProperty.call(properties, key)) {
           throw new Error(
-            `MCP event payload violates schema at ${path}: unexpected property ${key}`,
+            `MCP event value violates schema at ${path}: unexpected property ${key}`,
           );
         }
       }
@@ -265,7 +305,7 @@ function normalizePollParams(
     'events/poll params must be an object',
   );
   const name = String(params.name ?? '').trim();
-  if (!name) throw new Error('events/poll requires name');
+  if (!name) invalidParams('events/poll requires name');
 
   const cursor =
     params.cursor === undefined || params.cursor === null
@@ -288,7 +328,7 @@ function normalizePollParams(
     maxEventsRaw < 1 ||
     maxEventsRaw > 500
   ) {
-    throw new Error('maxEvents must be an integer between 1 and 500');
+    invalidParams('maxEvents must be an integer between 1 and 500');
   }
 
   return {
@@ -300,10 +340,24 @@ function normalizePollParams(
   };
 }
 
+function encodeListCursor(offset: number): string {
+  return `${LIST_CURSOR_PREFIX}${offset}`;
+}
+
+function decodeListCursor(value: unknown): number {
+  if (typeof value !== 'string' || !value.startsWith(LIST_CURSOR_PREFIX)) {
+    invalidParams('events/list cursor is invalid');
+  }
+  const offset = Number(value.slice(LIST_CURSOR_PREFIX.length));
+  if (!Number.isInteger(offset) || offset < 0) {
+    invalidParams('events/list cursor is invalid');
+  }
+  return offset;
+}
+
 export class McpEventsProvider<TContext = unknown> {
   private readonly events = new Map<string, McpProviderEvent<TContext>>();
-  readonly supportedVersions: string[];
-  readonly instructions: string;
+  private readonly listPageSize: number;
 
   constructor(options: CreateMcpEventsProviderOptions<TContext>) {
     if (!options || !Array.isArray(options.events)) {
@@ -324,23 +378,39 @@ export class McpEventsProvider<TContext = unknown> {
       });
     }
 
-    this.supportedVersions =
-      options.supportedVersions?.map(String).filter(Boolean) ?? ['2026-07-28'];
-    this.instructions =
-      options.instructions ??
-      'Experimental MCP Events provider compatibility adapter. Events follow the Triggers & Events design sketch; this is not finalized MCP conformance.';
+    const pageSize = options.listPageSize ?? 100;
+    if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 1000) {
+      throw new Error('MCP Events listPageSize must be between 1 and 1000');
+    }
+    this.listPageSize = pageSize;
   }
 
   canHandle(method: string): boolean {
-    return (
-      method === 'server/discover' ||
-      method === 'events/list' ||
-      method === 'events/poll'
-    );
+    return method === 'events/list' || method === 'events/poll';
   }
 
-  listEvents(): EventDescriptor[] {
-    return [...this.events.values()].map(({ descriptor }) => descriptor);
+  listEvents(paramsInput?: unknown): {
+    events: EventDescriptor[];
+    nextCursor?: string;
+  } {
+    const params =
+      paramsInput === undefined
+        ? {}
+        : assertRecord(paramsInput, 'events/list params must be an object');
+    const offset =
+      params.cursor === undefined || params.cursor === null
+        ? 0
+        : decodeListCursor(params.cursor);
+    const all = [...this.events.values()].map(({ descriptor }) => descriptor);
+    if (offset > all.length) invalidParams('events/list cursor is out of range');
+    const events = all.slice(offset, offset + this.listPageSize);
+    const nextOffset = offset + events.length;
+    return {
+      events,
+      ...(nextOffset < all.length
+        ? { nextCursor: encodeListCursor(nextOffset) }
+        : {}),
+    };
   }
 
   async handleRequest(
@@ -349,21 +419,8 @@ export class McpEventsProvider<TContext = unknown> {
   ): Promise<JsonRpcResponse> {
     try {
       switch (request.method) {
-        case 'server/discover':
-          return this.ok(request.id, {
-            supportedVersions: this.supportedVersions,
-            capabilities: {
-              experimental: {
-                [MCP_EVENTS_CAPABILITY_KEY]: MCP_EVENTS_CAPABILITY,
-              },
-            },
-            instructions: this.instructions,
-          });
-
         case 'events/list':
-          return this.ok(request.id, {
-            events: this.listEvents(),
-          });
+          return this.ok(request.id, this.listEvents(request.params));
 
         case 'events/poll':
           return this.ok(
@@ -374,15 +431,18 @@ export class McpEventsProvider<TContext = unknown> {
         default:
           return this.error(
             request.id,
-            -32601,
+            MCP_EVENTS_ERROR.METHOD_NOT_FOUND,
             `Method not found: ${request.method}`,
           );
       }
     } catch (error) {
+      if (error instanceof McpEventsProtocolError) {
+        return this.error(request.id, error.code, error.message, error.data);
+      }
       return this.error(
         request.id,
-        -32602,
-        error instanceof Error ? error.message : 'Invalid params',
+        MCP_EVENTS_ERROR.INTERNAL_ERROR,
+        error instanceof Error ? error.message : 'Internal error',
       );
     }
   }
@@ -394,20 +454,45 @@ export class McpEventsProvider<TContext = unknown> {
     const params = normalizePollParams(paramsInput);
     const registered = this.events.get(params.name);
     if (!registered) {
-      throw new Error(`Unknown event: ${params.name}`);
+      throw new McpEventsProtocolError(
+        MCP_EVENTS_ERROR.NOT_FOUND,
+        `Unknown event: ${params.name}`,
+        { kind: 'event' },
+      );
     }
 
-    const result = assertRecord(
-      await registered.poll({
-        ...params,
-        context,
-      }),
-      `MCP provider ${params.name} returned invalid poll result`,
-    );
+    try {
+      assertJsonSchemaValue(
+        registered.descriptor.inputSchema,
+        params.arguments,
+      );
+    } catch (error) {
+      throw new McpEventsProtocolError(
+        MCP_EVENTS_ERROR.INVALID_PARAMS,
+        error instanceof Error ? error.message : 'Invalid event arguments',
+      );
+    }
 
-    if (typeof result.cursor !== 'string') {
+    const rawResult = await registered.poll({
+      ...params,
+      context,
+    });
+    if (!rawResult || Array.isArray(rawResult) || typeof rawResult !== 'object') {
       throw new Error(
-        `MCP provider ${params.name} returned poll result without string cursor`,
+        `MCP provider ${params.name} returned invalid poll result`,
+      );
+    }
+    const result = rawResult as unknown as Record<string, unknown>;
+
+    const cursor =
+      result.cursor === null
+        ? null
+        : typeof result.cursor === 'string'
+          ? result.cursor
+          : undefined;
+    if (cursor === undefined) {
+      throw new Error(
+        `MCP provider ${params.name} returned poll result without string|null cursor`,
       );
     }
     if (!Array.isArray(result.events)) {
@@ -462,7 +547,7 @@ export class McpEventsProvider<TContext = unknown> {
 
     return {
       events,
-      cursor: result.cursor,
+      cursor,
       truncated,
       hasMore,
       nextPollMs,
@@ -477,8 +562,17 @@ export class McpEventsProvider<TContext = unknown> {
     id: string | number,
     code: number,
     message: string,
+    data?: unknown,
   ): JsonRpcResponse {
-    return { jsonrpc: '2.0', id, error: { code, message } };
+    return {
+      jsonrpc: '2.0',
+      id,
+      error: {
+        code,
+        message,
+        ...(data === undefined ? {} : { data }),
+      },
+    };
   }
 }
 

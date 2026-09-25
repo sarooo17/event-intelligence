@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/sarooo17/event-intelligence/actions/workflows/ci.yml/badge.svg)](https://github.com/sarooo17/event-intelligence/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/mcp-event-intelligence.svg)](https://www.npmjs.com/package/mcp-event-intelligence)
-[![MCP Registry](https://img.shields.io/badge/MCP%20Registry-v0.3.1-5b5bd6)](https://registry.modelcontextprotocol.io/?q=io.github.sarooo17%2Fevent-intelligence)
+[![MCP Registry](https://img.shields.io/badge/MCP%20Registry-v0.4.0-5b5bd6)](https://registry.modelcontextprotocol.io/?q=io.github.sarooo17%2Fevent-intelligence)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 MCP Event Intelligence is an experimental event runtime for agents that need to react to **future conditions over multiple event sources** without keeping an LLM or agent loop alive.
@@ -169,9 +169,9 @@ const events = createMcpEventsProvider({
 });
 ```
 
-The package owns capability advertisement, `server/discover`, `events/list`, `events/poll`, common validation and response shapes. The provider owns domain event definitions, authentication, data queries, occurrence IDs and opaque cursor semantics.
+The package owns the current draft Events extension identifier/settings, `events/list`, `events/poll`, common validation and response shapes. The embedding MCP server advertises `capabilities.extensions["io.modelcontextprotocol/events"]`; the provider owns domain event definitions, authentication, data queries, occurrence IDs and opaque cursor semantics.
 
-This adapter remains experimental compatibility work around MCP Events; it is not a claim of finalized MCP Events conformance.
+This adapter tracks the current experimental MCP Events draft. It is not a claim of finalized MCP Events conformance. The v0.4 compatibility snapshot follows the `io.modelcontextprotocol/events` extension-negotiation direction in experimental-ext-triggers-events PR #7 and the discovery/poll contract exercised by conformance PR #521 as of 2026-09-25.
 
 
 An ERPNext-shaped **provider factory** is also exported:
@@ -203,15 +203,18 @@ timezone normalization and deterministic occurrence IDs. The local factory in
 this package should therefore be read as a typed convenience API, not as the
 production ERP connector itself.
 
-## What v0.3 implements
+## What v0.4 implements
 
 ### Host-owned event sources
 
 - automatic discovery from the host's existing MCP registry;
 - reuse of already-connected MCP clients without duplicate credentials;
-- experimental MCP Events capability discovery;
-- `events/list` and `events/poll`;
-- persistent opaque cursors;
+- direct MCP extension negotiation through `capabilities.extensions["io.modelcontextprotocol/events"]`;
+- paginated `events/list` discovery;
+- durable EventSubscription identity over `(connection, event name, arguments)`;
+- `events/poll` with server-directed `nextPollMs`, nullable cursors and bounded page draining;
+- host-owned push and webhook delivery adapters feeding the same EventOccurrence pipeline;
+- persistent opaque cursors and per-subscription delivery state;
 - per-scope source/cursor isolation for shared hosts;
 - single-flight polling per connection plus bounded `hasMore` batch draining;
 - automatic event-source registration;
@@ -228,10 +231,19 @@ production ERP connector itself.
 - calendar-aware conditions with IANA timezones;
 - durable deadlines that continue even when no new provider event arrives.
 
+### Event sources vs subscriptions
+
+`events/list` discovers an **EventSource** descriptor. A durable **EventSubscription** is a separate runtime object identified by the host connection, event name and canonical subscription `arguments`. Each subscription owns its cursor/delivery state independently.
+
+This keeps MCP-side filtering separate from Event Intelligence conditions: `arguments` are validated against the provider's `inputSchema`; trigger `where` predicates are evaluated by EI against delivered payloads. Two triggers may therefore subscribe to the same event name with different arguments without sharing cursors.
+
+Poll, push and webhook are treated only as delivery mechanisms. All three normalize into the same `EventOccurrence` ingestion path before correlation, temporal reasoning, derived events or wake logic.
+
 ### Agent-authored continuations
 
 - event-source discovery;
 - agent-friendly deterministic trigger planning/compilation;
+- MCP subscription `arguments` validated against each source `inputSchema`, kept distinct from EI payload predicates;
 - `eq`, `neq`, `contains`, `in`, `exists`, `gt`, `gte`, `lt`, `lte` predicates;
 - persisted continuation contracts separated from trigger conditions;
 - Activation Envelope hydration with matched event evidence;
@@ -304,9 +316,9 @@ The agent/harness is already responsible for natural-language reasoning. It can 
 
 ## Full-system acceptance
 
-The v0.3 acceptance suite verifies:
+The v0.4 acceptance suite verifies:
 
-- host-owned MCP client → event discovery/poll → composite match → in-process wake;
+- host-owned MCP client → extension discovery → durable subscription → poll/push/webhook occurrence → composite match → in-process wake;
 - provider-neutral events → composite match → derived event → derived composition → signed runtime wake;
 - contract schema evolution and ambiguity rejection;
 - refs-only root provenance;
@@ -350,13 +362,13 @@ The standalone service supports manual/provider-native event ingress. It does no
 ### Docker
 
 ```bash
-docker build -t mcp-event-intelligence:0.3.1 .
+docker build -t mcp-event-intelligence:0.4.0 .
 
 docker run --rm \
   -p 3000:3000 \
   -v mcp-event-intelligence-data:/data \
   -e SERVICE_AUTH_TOKEN="$(openssl rand -hex 32)" \
-  mcp-event-intelligence:0.3.1
+  mcp-event-intelligence:0.4.0
 ```
 
 ## Optional MCP control plane
@@ -432,7 +444,7 @@ In embedded mode, the host retains MCP authorization and credentials; Event Inte
 
 There are two separate MCP boundaries:
 
-- **event ingress**: host-owned, already-connected MCP clients exposing experimental Events, plus provider-native adapters;
+- **event ingress**: host-owned, already-connected MCP clients exposing the experimental `io.modelcontextprotocol/events` extension, plus provider-native adapters; poll is native in the reference provider adapter, while push/webhook receivers remain host-owned delivery adapters;
 - **control plane**: optional standard MCP **stdio** server built on the official TypeScript SDK v2 and targeting protocol revision 2026-07-28.
 
 Registry identity:
@@ -445,7 +457,7 @@ io.github.sarooo17/event-intelligence
 
 ## Project status
 
-**v0.3.x reference implementation / experimental.**
+**v0.4.x reference implementation / experimental.**
 
 The architecture is implemented and exercised end-to-end. Storage is now injectable and scoped, while the bundled JSONL backend remains a single-process reference implementation. Remaining work is primarily production database adapters/HA validation, scale benchmarks and upstream feedback.
 

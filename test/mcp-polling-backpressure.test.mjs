@@ -23,9 +23,9 @@ test('concurrent polls for one MCP connection share a single in-flight request',
   const client = {
     getServerCapabilities() {
       return {
-        experimental: {
-          'io.modelcontextprotocol.experimental/events': {
-            methods: ['events/list', 'events/poll'],
+        extensions: {
+          'io.modelcontextprotocol/events': {
+            listChanged: false,
           },
         },
       };
@@ -83,6 +83,25 @@ test('concurrent polls for one MCP connection share a single in-flight request',
     });
 
     await manager.discoverAll();
+    await control.createTrigger({
+      definition: {
+        triggerId: 'slow-trigger',
+        version: '1',
+        clauses: [{
+          id: 'slow',
+          event: 'slow.event',
+          serverId: 'slow-mcp',
+          arguments: {},
+          where: [],
+        }],
+        expression: { kind: 'anyOf', refs: ['slow'] },
+        withinMs: 60000,
+        target: { runtime: 'test', kind: 'task', id: 'slow' },
+      },
+      connectionIds: ['slow'],
+      actor: { type: 'user', principal_id: 'test-user' },
+      owner: { type: 'user', principal_id: 'test-user' },
+    });
 
     const first = manager.pollConnection('slow');
     await new Promise((resolve) => setImmediate(resolve));
@@ -113,9 +132,9 @@ test('poll draining is bounded while persisting the cursor after every batch', a
   const client = {
     getServerCapabilities() {
       return {
-        experimental: {
-          'io.modelcontextprotocol.experimental/events': {
-            methods: ['events/list', 'events/poll'],
+        extensions: {
+          'io.modelcontextprotocol/events': {
+            listChanged: false,
           },
         },
       };
@@ -208,6 +227,25 @@ test('poll draining is bounded while persisting the cursor after every batch', a
     });
 
     await manager.discoverAll();
+    await control.createTrigger({
+      definition: {
+        triggerId: 'paged-trigger',
+        version: '1',
+        clauses: [{
+          id: 'paged',
+          event: 'paged.event',
+          serverId: 'paged-mcp',
+          arguments: {},
+          where: [],
+        }],
+        expression: { kind: 'anyOf', refs: ['paged'] },
+        withinMs: 60000,
+        target: { runtime: 'test', kind: 'task', id: 'paged' },
+      },
+      connectionIds: ['paged'],
+      actor: { type: 'user', principal_id: 'test-user' },
+      owner: { type: 'user', principal_id: 'test-user' },
+    });
     const first = await manager.pollConnection('paged');
     assert.equal(first[0].batches, 2);
     assert.equal(first[0].accepted, 2);

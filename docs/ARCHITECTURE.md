@@ -36,15 +36,36 @@ The host passes a registry/manager for its already-connected MCP clients into th
 
 For each discovered client, Event Intelligence:
 
-1. reads/discovers its advertised capabilities;
-2. checks for the experimental Events capability;
-3. loads descriptors through `events/list`;
-4. polls compatible sources through `events/poll`;
-5. persists opaque cursors and event deduplication state.
+1. reads the already-negotiated MCP server capabilities from the host-owned client;
+2. checks `capabilities.extensions["io.modelcontextprotocol/events"]`;
+3. loads all descriptor pages through `events/list`;
+4. materializes only the durable subscriptions required by active triggers;
+5. selects a compatible delivery mode (poll, push or webhook) from the descriptor and host adapters;
+6. persists per-subscription cursor/delivery state plus event deduplication state.
 
 No provider URL, OAuth token or API key is copied into Event Intelligence. A tools-only MCP connection is ignored by the Events layer and remains fully available to the host/agent.
 
-The public adapter accepts the official TypeScript MCP client shape or a custom host request function, so private/custom MCP servers can participate without an Event Intelligence-specific connector.
+The public adapter accepts the official TypeScript MCP client shape or a custom host request/capabilities pair. Poll uses the ordinary MCP request surface. Push and webhook require host-owned delivery adapters because the host remains responsible for long-lived transports, public callback infrastructure, secrets and authorization.
+
+### EventSource vs EventSubscription
+
+An `EventSource` is the descriptor discovered from `events/list`: event name, delivery modes, `inputSchema`, `payloadSchema` and optional `_meta`.
+
+An `EventSubscription` is the durable client-side interest in one source. Its stable identity is derived from the host connection, event name and canonical subscription `arguments`. Cursor, selected delivery mode, truncation/gap state and scheduling metadata belong to the subscription, not to the source.
+
+This distinction is required because two durable intents can consume the same event type with different MCP arguments and therefore have independent cursors. MCP subscription `arguments` are validated against the source `inputSchema`; EI `where` predicates remain a separate application-layer condition over delivered payloads.
+
+All delivery modes converge before trigger evaluation:
+
+```text
+poll | push | webhook
+        ↓
+ EventOccurrence
+        ↓
+ composite / temporal engine
+```
+
+Transport and correlation remain separate.
 
 ### Provider-native adapters
 
@@ -57,6 +78,7 @@ Transport and correlation remain separate.
 A trigger is a versioned typed program containing:
 
 - named event clauses;
+- MCP subscription arguments, separate from EI predicates;
 - structured predicates;
 - expression: `allOf | anyOf | sequence | count`;
 - deterministic correlation keys;
@@ -127,7 +149,7 @@ Policies include one-shot, maximum firings, cooldown, explicit expiry, lease and
 
 ## 8. Persistence
 
-The bundled reference backend uses append-oriented JSONL streams and in-memory indexes rebuilt at startup. Non-default scopes are physically partitioned under separate store directories, and writes/claims are serialized inside one process.
+The bundled reference backend uses append-oriented JSONL streams and in-memory indexes rebuilt at startup. Non-default scopes are physically partitioned under separate store directories, and writes/claims are serialized inside one process. MCP client state is keyed by connection + event name + canonical subscription arguments, so distinct subscriptions do not share cursor state.
 
 Validated properties include scoped restart/cursor/match/deadline recovery, derived-event and contract recovery, durable wake retry/lease recovery, stable replay decisions and hash-linked audit verification.
 

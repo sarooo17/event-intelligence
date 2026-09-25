@@ -31,6 +31,7 @@ export interface EventDescriptor {
   delivery: Array<'poll' | 'push' | 'webhook'>;
   inputSchema: Record<string, unknown>;
   payloadSchema: Record<string, unknown>;
+  _meta?: Record<string, unknown>;
 }
 
 export interface EventOccurrence<

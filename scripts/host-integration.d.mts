@@ -11,6 +11,33 @@ export interface HostMcpClientLike {
   getServerCapabilities?(): unknown;
 }
 
+export interface HostMcpEventDeliveryCallbacks {
+  subscriptionId: string;
+  name: string;
+  arguments: Record<string, unknown>;
+  cursor: string | null;
+  onEvent(event: Record<string, unknown>): Promise<void>;
+  onActive(state?: Record<string, unknown>): Promise<void>;
+  onGap(state?: Record<string, unknown>): Promise<void>;
+  onError(error: unknown): void;
+  onTerminated(detail?: unknown): Promise<void>;
+}
+
+export type HostMcpEventDeliveryHandle =
+  | (() => void | Promise<void>)
+  | {
+      cursor?: string | null;
+      truncated?: boolean;
+      close?(): void | Promise<void>;
+      cancel?(): void | Promise<void>;
+      unsubscribe?(): void | Promise<void>;
+    };
+
+export type HostMcpEventDeliveryOpener = (
+  input: HostMcpEventDeliveryCallbacks,
+) => HostMcpEventDeliveryHandle | Promise<HostMcpEventDeliveryHandle>;
+
+
 export interface HostMcpConnectionOptions {
   connectionId?: string;
   id?: string;
@@ -18,6 +45,8 @@ export interface HostMcpConnectionOptions {
   serverId?: string;
   client?: HostMcpClientLike;
   request?: (method: string, params?: unknown) => Promise<unknown>;
+  getCapabilities?: () => unknown | Promise<unknown>;
+  capabilities?: Record<string, unknown>;
   enabled?: boolean;
   /** Isolation partition used by the shared EI host. Defaults to \"default\". */
   scopeId?: string;
@@ -25,6 +54,12 @@ export interface HostMcpConnectionOptions {
   maxEvents?: number;
   /** Maximum number of immediately drained pages when the provider reports hasMore. */
   maxPollBatches?: number;
+  /** Prefer one advertised delivery mode when the host can provide it. */
+  preferredDelivery?: 'poll' | 'push' | 'webhook';
+  /** Host-owned adapter for events/stream delivery. */
+  openEventStream?: HostMcpEventDeliveryOpener;
+  /** Host-owned adapter for webhook subscription/receiver delivery. */
+  createWebhookSubscription?: HostMcpEventDeliveryOpener;
 }
 
 export interface HostMcpRegistry {
@@ -113,9 +148,14 @@ export function createHostMcpEventsConnection(
   connectionId: string;
   serverId: string;
   request(method: string, params?: unknown): Promise<unknown>;
+  getCapabilities(): unknown | Promise<unknown>;
   enabled: boolean;
   pollIntervalMs: number;
   maxEvents: number;
+  maxPollBatches: number;
+  preferredDelivery: 'poll' | 'push' | 'webhook' | null;
+  openEventStream: HostMcpEventDeliveryOpener | null;
+  createWebhookSubscription: HostMcpEventDeliveryOpener | null;
 };
 
 export function createEventIntelligenceHost(

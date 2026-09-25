@@ -7,6 +7,10 @@ import {
   ExperimentalMcpEventsServer,
 } from '../dist/src/mcpEvents/server.js';
 import {
+  MCP_EVENTS_CAPABILITY,
+  MCP_EVENTS_CAPABILITY_KEY,
+} from '../dist/src/mcpEvents/provider.js';
+import {
   mcpOccurrenceToCorrelatableEvent,
 } from '../dist/src/mcpEvents/consumer.js';
 import {
@@ -43,24 +47,19 @@ function request(id, method, params) {
   };
 }
 
-test('modern discovery advertises experimental Events and list exposes GitHub descriptors', async () => {
+test('current extension negotiation id and events/list expose GitHub descriptors', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'mcp-events-discover-'));
   try {
+    assert.equal(
+      MCP_EVENTS_CAPABILITY_KEY,
+      'io.modelcontextprotocol/events',
+    );
+    assert.deepEqual(MCP_EVENTS_CAPABILITY, { listChanged: false });
+
     const store = new PersistentEventStore(dir);
     await store.init();
     const server = new ExperimentalMcpEventsServer(store);
     registerGitHubMcpEvents(server);
-
-    const discover = await server.handleRequest(
-      request(1, 'server/discover'),
-    );
-    assert.deepEqual(discover.result.supportedVersions, ['2026-07-28']);
-    assert.equal(
-      discover.result.capabilities.experimental[
-        'io.modelcontextprotocol.experimental/events'
-      ].status,
-      'draft',
-    );
 
     const listed = await server.handleRequest(request(2, 'events/list'));
     const opened = listed.result.events.find(
@@ -69,6 +68,9 @@ test('modern discovery advertises experimental Events and list exposes GitHub de
     assert.ok(opened);
     assert.deepEqual(opened.delivery, ['poll']);
     assert.ok(opened.inputSchema.properties.repository);
+
+    const legacy = await server.handleRequest(request(3, 'server/discover'));
+    assert.equal(legacy.error.code, -32601);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

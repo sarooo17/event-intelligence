@@ -119,6 +119,6 @@ test('ERPNext provider adapter still enforces MCP payload schemas', async () => 
     },
   });
 
-  assert.equal(result.error.code, -32602);
+  assert.equal(result.error.code, -32603);
   assert.match(result.error.message, /missing required property name/);
 });

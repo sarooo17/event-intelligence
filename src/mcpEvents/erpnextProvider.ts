@@ -29,8 +29,6 @@ export type ErpNextEventPoller<TContext = unknown> = (
 export interface CreateErpNextEventsProviderOptions<TContext = unknown> {
   pollSalesInvoices: ErpNextEventPoller<TContext>;
   pollSalesOrders: ErpNextEventPoller<TContext>;
-  supportedVersions?: string[];
-  instructions?: string;
 }
 
 function toOccurrences(
@@ -56,10 +54,6 @@ export function createErpNextEventsProvider<TContext = unknown>(
   }
 
   return createMcpEventsProvider<TContext>({
-    supportedVersions: options.supportedVersions,
-    instructions:
-      options.instructions ??
-      'ERPNext MCP Events adapter exposing host-owned Sales Invoice and Sales Order changes.',
     events: [
       {
         descriptor: {

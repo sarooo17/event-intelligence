@@ -32,6 +32,22 @@ function scopeIdFromDirectoryName(name) {
   }
 }
 
+function canonicalStateValue(value) {
+  if (Array.isArray(value)) return value.map(canonicalStateValue);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.keys(value)
+        .sort()
+        .map((key) => [key, canonicalStateValue(value[key])]),
+    );
+  }
+  return value;
+}
+
+function mcpClientStateKey(connectionId, eventName, args = {}) {
+  return `${String(connectionId)}::${String(eventName)}::${JSON.stringify(canonicalStateValue(args ?? {}))}`;
+}
+
 async function readJsonLines(filePath) {
   try {
     const raw = await readFile(filePath, 'utf8');
@@ -263,6 +279,7 @@ export class PersistentEventStore {
       const record = {
         sequence: Number(raw.sequence),
         serverId: String(raw.serverId),
+        subscriptionId: raw.subscriptionId ? String(raw.subscriptionId) : null,
         event: McpEventOccurrenceSchema.parse(raw.event),
       };
       if (!Number.isInteger(record.sequence) || record.sequence < 1) {
@@ -270,7 +287,7 @@ export class PersistentEventStore {
       }
       this.#mcpOccurrences.push(record);
       this.#mcpOccurrenceKeys.add(
-        `${record.serverId}:${record.event.eventId}`,
+        `${record.serverId}:${record.subscriptionId ?? ''}:${record.event.eventId}`,
       );
     }
     this.#mcpOccurrences.sort((a, b) => a.sequence - b.sequence);
@@ -282,15 +299,27 @@ export class PersistentEventStore {
         connectionId: String(raw.connectionId),
         serverId: String(raw.serverId || raw.connectionId),
         eventName: String(raw.eventName),
+        arguments:
+          raw.arguments && !Array.isArray(raw.arguments) && typeof raw.arguments === 'object'
+            ? raw.arguments
+            : {},
+        subscriptionId: raw.subscriptionId ? String(raw.subscriptionId) : null,
+        deliveryMode: raw.deliveryMode ? String(raw.deliveryMode) : 'poll',
         cursor: raw.cursor === null || raw.cursor === undefined
           ? null
           : String(raw.cursor),
         updatedAt: String(raw.updatedAt || new Date(0).toISOString()),
+        ...(raw.nextPollAt ? { nextPollAt: String(raw.nextPollAt) } : {}),
         ...(raw.lastEventAt ? { lastEventAt: String(raw.lastEventAt) } : {}),
         ...(raw.lastError ? { lastError: String(raw.lastError) } : {}),
+        ...(typeof raw.truncated === 'boolean' ? { truncated: raw.truncated } : {}),
       };
       this.#mcpClientStates.set(
-        `${state.connectionId}::${state.eventName}`,
+        mcpClientStateKey(
+          state.connectionId,
+          state.eventName,
+          state.arguments,
+        ),
         state,
       );
     }
@@ -776,13 +805,19 @@ export class PersistentEventStore {
       .filter((record) => !matchId || record.matchId === matchId);
   }
 
-  async appendMcpOccurrence(serverId, eventInput) {
+  async appendMcpOccurrence(serverId, eventInput, subscriptionIdInput = null) {
     return this.#serialized(async () => {
       const event = McpEventOccurrenceSchema.parse(eventInput);
-      const key = `${serverId}:${event.eventId}`;
+      const subscriptionId =
+        subscriptionIdInput === null || subscriptionIdInput === undefined
+          ? null
+          : String(subscriptionIdInput);
+      const key =
+        `${serverId}:${subscriptionId ?? ''}:${event.eventId}`;
       const existing = this.#mcpOccurrences.find(
         (record) =>
           record.serverId === serverId &&
+          (record.subscriptionId ?? null) === subscriptionId &&
           record.event.eventId === event.eventId,
       );
       if (this.#mcpOccurrenceKeys.has(key)) {
@@ -794,7 +829,12 @@ export class PersistentEventStore {
       }
 
       const sequence = this.latestMcpEventSequence() + 1;
-      const record = { sequence, serverId, event };
+      const record = {
+        sequence,
+        serverId,
+        subscriptionId,
+        event,
+      };
       this.#mcpOccurrenceKeys.add(key);
       this.#mcpOccurrences.push(record);
       await appendFile(
@@ -816,6 +856,7 @@ export class PersistentEventStore {
       .map((record) => ({
         sequence: record.sequence,
         serverId: record.serverId,
+        subscriptionId: record.subscriptionId ?? null,
         event: {
           ...record.event,
           data: { ...record.event.data },
@@ -823,9 +864,9 @@ export class PersistentEventStore {
       }));
   }
 
-  getMcpClientState(connectionId, eventName) {
+  getMcpClientState(connectionId, eventName, args = {}) {
     return this.#mcpClientStates.get(
-      `${String(connectionId)}::${String(eventName)}`,
+      mcpClientStateKey(connectionId, eventName, args),
     ) ?? null;
   }
 
@@ -843,24 +884,42 @@ export class PersistentEventStore {
       if (!connectionId || !eventName) {
         throw new Error('MCP client state requires connectionId and eventName');
       }
-      const previous = this.getMcpClientState(connectionId, eventName);
+      const args =
+        input.arguments && !Array.isArray(input.arguments) && typeof input.arguments === 'object'
+          ? input.arguments
+          : {};
+      const previous = this.getMcpClientState(connectionId, eventName, args);
       const state = {
         connectionId,
         serverId: String(input.serverId || previous?.serverId || connectionId),
         eventName,
+        arguments: args,
+        subscriptionId:
+          input.subscriptionId
+            ? String(input.subscriptionId)
+            : previous?.subscriptionId ?? null,
+        deliveryMode: String(input.deliveryMode || previous?.deliveryMode || 'poll'),
         cursor: input.cursor === null || input.cursor === undefined
           ? null
           : String(input.cursor),
         updatedAt: new Date().toISOString(),
+        ...(input.nextPollAt || previous?.nextPollAt
+          ? { nextPollAt: String(input.nextPollAt || previous.nextPollAt) }
+          : {}),
         ...(input.lastEventAt || previous?.lastEventAt
           ? { lastEventAt: String(input.lastEventAt || previous.lastEventAt) }
           : {}),
         ...(input.lastError
           ? { lastError: String(input.lastError) }
           : {}),
+        ...(typeof input.truncated === 'boolean'
+          ? { truncated: input.truncated }
+          : typeof previous?.truncated === 'boolean'
+            ? { truncated: previous.truncated }
+            : {}),
       };
       this.#mcpClientStates.set(
-        `${connectionId}::${eventName}`,
+        mcpClientStateKey(connectionId, eventName, args),
         state,
       );
       await appendFile(

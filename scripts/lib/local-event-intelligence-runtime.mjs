@@ -65,6 +65,7 @@ const REQUIRED_STORE_METHODS = [
   'appendAudit',
   'auditLength',
   'getMcpClientState',
+  'listMcpClientStates',
   'putMcpClientState',
   'appendMcpOccurrence',
 ];
