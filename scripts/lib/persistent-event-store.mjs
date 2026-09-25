@@ -279,6 +279,7 @@ export class PersistentEventStore {
       const record = {
         sequence: Number(raw.sequence),
         serverId: String(raw.serverId),
+        subscriptionId: raw.subscriptionId ? String(raw.subscriptionId) : null,
         event: McpEventOccurrenceSchema.parse(raw.event),
       };
       if (!Number.isInteger(record.sequence) || record.sequence < 1) {
@@ -286,7 +287,7 @@ export class PersistentEventStore {
       }
       this.#mcpOccurrences.push(record);
       this.#mcpOccurrenceKeys.add(
-        `${record.serverId}:${record.event.eventId}`,
+        `${record.serverId}:${record.subscriptionId ?? ''}:${record.event.eventId}`,
       );
     }
     this.#mcpOccurrences.sort((a, b) => a.sequence - b.sequence);
@@ -804,13 +805,19 @@ export class PersistentEventStore {
       .filter((record) => !matchId || record.matchId === matchId);
   }
 
-  async appendMcpOccurrence(serverId, eventInput) {
+  async appendMcpOccurrence(serverId, eventInput, subscriptionIdInput = null) {
     return this.#serialized(async () => {
       const event = McpEventOccurrenceSchema.parse(eventInput);
-      const key = `${serverId}:${event.eventId}`;
+      const subscriptionId =
+        subscriptionIdInput === null || subscriptionIdInput === undefined
+          ? null
+          : String(subscriptionIdInput);
+      const key =
+        `${serverId}:${subscriptionId ?? ''}:${event.eventId}`;
       const existing = this.#mcpOccurrences.find(
         (record) =>
           record.serverId === serverId &&
+          (record.subscriptionId ?? null) === subscriptionId &&
           record.event.eventId === event.eventId,
       );
       if (this.#mcpOccurrenceKeys.has(key)) {
@@ -822,7 +829,12 @@ export class PersistentEventStore {
       }
 
       const sequence = this.latestMcpEventSequence() + 1;
-      const record = { sequence, serverId, event };
+      const record = {
+        sequence,
+        serverId,
+        subscriptionId,
+        event,
+      };
       this.#mcpOccurrenceKeys.add(key);
       this.#mcpOccurrences.push(record);
       await appendFile(
@@ -844,6 +856,7 @@ export class PersistentEventStore {
       .map((record) => ({
         sequence: record.sequence,
         serverId: record.serverId,
+        subscriptionId: record.subscriptionId ?? null,
         event: {
           ...record.event,
           data: { ...record.event.data },
