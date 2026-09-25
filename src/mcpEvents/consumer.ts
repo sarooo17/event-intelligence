@@ -11,6 +11,7 @@ export async function mcpOccurrenceToCorrelatableEvent(
     traceId: string;
     provider?: string;
     serverId?: string;
+    subscriptionArguments?: Record<string, unknown>;
   },
 ): Promise<CorrelatableEvent> {
   return CorrelatableEventSchema.parse({
@@ -20,6 +21,7 @@ export async function mcpOccurrenceToCorrelatableEvent(
     occurredAt: event.timestamp,
     ...(input.provider ? { provider: input.provider } : {}),
     ...(input.serverId ? { serverId: input.serverId } : {}),
+    subscriptionArguments: input.subscriptionArguments ?? {},
     payloadHash: await sha256Hex(event.data),
     data: event.data,
   });
