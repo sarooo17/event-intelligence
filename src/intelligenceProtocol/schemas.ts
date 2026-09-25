@@ -87,6 +87,7 @@ export const McpEventOccurrenceSchema = z.object({
   timestamp: Timestamp,
   data: z.record(z.string(), z.unknown()),
   cursor: z.string().nullable().optional(),
+  _meta: z.record(z.string(), z.unknown()).optional(),
 });
 
 export const SemanticConditionWireSchema = z.object({
