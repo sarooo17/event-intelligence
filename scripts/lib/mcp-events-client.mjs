@@ -795,7 +795,7 @@ export class McpEventsClientManager {
       const receipt = await this.ingestOccurrence(
         connection,
         context,
-        subscription.descriptor,
+        subscription,
         raw,
       );
       if (receipt.accepted) accepted += 1;
