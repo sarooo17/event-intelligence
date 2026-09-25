@@ -8,6 +8,8 @@ import type {
 export interface PersistedMcpOccurrence {
   sequence: number;
   serverId: string;
+  /** Client-side durable subscription identity when this log is used by EI. */
+  subscriptionId?: string | null;
   event: EventOccurrence;
 }
 
