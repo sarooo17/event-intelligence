@@ -316,7 +316,7 @@ The agent/harness is already responsible for natural-language reasoning. It can 
 
 ## Full-system acceptance
 
-The v0.3 acceptance suite verifies:
+The v0.4 acceptance suite verifies:
 
 - host-owned MCP client → extension discovery → durable subscription → poll/push/webhook occurrence → composite match → in-process wake;
 - provider-neutral events → composite match → derived event → derived composition → signed runtime wake;
