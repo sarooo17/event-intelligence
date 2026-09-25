@@ -4,12 +4,12 @@ const args = process.argv.slice(2);
 const flags = new Set(args);
 
 if (flags.has('--version') || flags.has('-v')) {
-  console.log('0.3.1');
+  console.log('0.4.0');
   process.exit(0);
 }
 
 if (flags.has('--help') || flags.has('-h')) {
-  console.log(`MCP Event Intelligence v0.3
+  console.log(`MCP Event Intelligence v0.4
 
 Durable temporal event intelligence for sleeping agents.
 
