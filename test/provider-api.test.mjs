@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  MCP_EVENTS_CAPABILITY,
   MCP_EVENTS_CAPABILITY_KEY,
   createMcpEventsProvider,
 } from '../dist/src/mcpEvents/provider.js';
@@ -21,6 +22,10 @@ function invoiceDescriptor() {
     delivery: ['poll'],
     inputSchema: {
       type: 'object',
+      required: ['company'],
+      properties: {
+        company: { type: 'string', minLength: 1 },
+      },
       additionalProperties: false,
     },
     payloadSchema: {
@@ -33,6 +38,7 @@ function invoiceDescriptor() {
       },
       additionalProperties: false,
     },
+    _meta: { owner: 'erp' },
   };
 }
 
@@ -53,104 +59,125 @@ function orderDescriptor() {
   };
 }
 
-test('provider adapter advertises Events and lists domain descriptors', async () => {
+test('provider exports current extension capability and paginates events/list', async () => {
+  assert.equal(MCP_EVENTS_CAPABILITY_KEY, 'io.modelcontextprotocol/events');
+  assert.deepEqual(MCP_EVENTS_CAPABILITY, { listChanged: false });
+
   const provider = createMcpEventsProvider({
+    listPageSize: 1,
     events: [
       {
         descriptor: invoiceDescriptor(),
-        poll: async () => ({ events: [], cursor: 'invoice:0' }),
+        poll: async () => ({ events: [], cursor: null }),
       },
       {
         descriptor: orderDescriptor(),
-        poll: async () => ({ events: [], cursor: 'order:0' }),
+        poll: async () => ({ events: [], cursor: null }),
       },
     ],
   });
 
-  const discover = await provider.handleRequest(request(1, 'server/discover'));
-  assert.equal(
-    discover.result.capabilities.experimental[MCP_EVENTS_CAPABILITY_KEY].status,
-    'draft',
-  );
-  assert.deepEqual(
-    discover.result.capabilities.experimental[MCP_EVENTS_CAPABILITY_KEY].methods,
-    ['events/list', 'events/poll'],
-  );
+  const first = await provider.handleRequest(request(1, 'events/list', {}));
+  assert.equal(first.result.events.length, 1);
+  assert.equal(first.result.events[0].name, 'erpnext.sales_invoice.submitted');
+  assert.deepEqual(first.result.events[0]._meta, { owner: 'erp' });
+  assert.equal(typeof first.result.nextCursor, 'string');
 
-  const listed = await provider.handleRequest(request(2, 'events/list'));
-  assert.deepEqual(
-    listed.result.events.map((event) => event.name),
-    ['erpnext.sales_invoice.submitted', 'erpnext.sales_order.created'],
+  const second = await provider.handleRequest(
+    request(2, 'events/list', { cursor: first.result.nextCursor }),
   );
+  assert.deepEqual(
+    second.result.events.map((event) => event.name),
+    ['erpnext.sales_order.created'],
+  );
+  assert.equal(second.result.nextCursor, undefined);
 });
 
-test('provider adapter passes opaque cursors and request context without owning provider state', async () => {
+test('provider validates subscription arguments and preserves nullable cursor and _meta', async () => {
   const calls = [];
   const provider = createMcpEventsProvider({
-    events: [
-      {
-        descriptor: invoiceDescriptor(),
-        poll: async (input) => {
-          calls.push(input);
-          if (input.cursor === null) {
-            return {
-              events: [],
-              cursor: 'opaque|tenant-a|baseline==',
-              nextPollMs: 12000,
-            };
-          }
-          return {
-            events: [
-              {
-                eventId: 'sales-invoice:SINV-0001:submitted',
+    events: [{
+      descriptor: invoiceDescriptor(),
+      poll: async (input) => {
+        calls.push(input);
+        return {
+          events: input.cursor === null
+            ? []
+            : [{
+                eventId: 'invoice-1',
                 name: 'erpnext.sales_invoice.submitted',
-                timestamp: '2026-09-20T11:30:00.000Z',
+                timestamp: '2026-09-25T10:00:00.000Z',
                 data: {
-                  name: 'SINV-0001',
-                  company: 'ACME',
-                  grand_total: 1200.5,
+                  name: 'SINV-1',
+                  company: input.arguments.company,
+                  grand_total: 1500,
                 },
-              },
-            ],
-            cursor: 'opaque|tenant-a|next==',
-            hasMore: false,
-          };
-        },
+                _meta: { source: 'erpnext' },
+              }],
+          cursor: input.cursor === null ? 'c0' : null,
+          nextPollMs: 12000,
+        };
       },
-    ],
+    }],
   });
 
-  const context = { tenantId: 'tenant-a', company: 'ACME' };
   const baseline = await provider.handleRequest(
     request(1, 'events/poll', {
       name: 'erpnext.sales_invoice.submitted',
+      arguments: { company: 'ACME' },
       cursor: null,
       maxEvents: 25,
     }),
-    context,
+    { tenantId: 'tenant-a' },
   );
-  assert.equal(baseline.result.cursor, 'opaque|tenant-a|baseline==');
+  assert.equal(baseline.result.cursor, 'c0');
   assert.equal(baseline.result.events.length, 0);
-  assert.equal(baseline.result.nextPollMs, 12000);
 
   const next = await provider.handleRequest(
     request(2, 'events/poll', {
       name: 'erpnext.sales_invoice.submitted',
-      cursor: baseline.result.cursor,
       arguments: { company: 'ACME' },
+      cursor: 'c0',
       maxEvents: 25,
     }),
-    context,
+    { tenantId: 'tenant-a' },
   );
-
-  assert.equal(next.result.cursor, 'opaque|tenant-a|next==');
-  assert.equal(next.result.events.length, 1);
-  assert.equal(next.result.events[0].eventId, 'sales-invoice:SINV-0001:submitted');
-  assert.equal(calls[1].context, context);
+  assert.equal(next.result.cursor, null);
+  assert.equal(next.result.events[0].eventId, 'invoice-1');
+  assert.deepEqual(next.result.events[0]._meta, { source: 'erpnext' });
   assert.deepEqual(calls[1].arguments, { company: 'ACME' });
+  assert.deepEqual(calls[1].context, { tenantId: 'tenant-a' });
 });
 
-test('provider adapter fails closed on invalid occurrence or payload', async () => {
+test('provider returns draft error semantics for invalid args and unknown events', async () => {
+  const provider = createMcpEventsProvider({
+    events: [{
+      descriptor: invoiceDescriptor(),
+      poll: async () => ({ events: [], cursor: null }),
+    }],
+  });
+
+  const invalid = await provider.handleRequest(
+    request(1, 'events/poll', {
+      name: 'erpnext.sales_invoice.submitted',
+      arguments: {},
+      cursor: null,
+    }),
+  );
+  assert.equal(invalid.error.code, -32602);
+
+  const missing = await provider.handleRequest(
+    request(2, 'events/poll', {
+      name: 'missing.event',
+      arguments: {},
+      cursor: null,
+    }),
+  );
+  assert.equal(missing.error.code, -32011);
+  assert.deepEqual(missing.error.data, { kind: 'event' });
+});
+
+test('provider fails internally on invalid occurrence or payload emitted by an implementation', async () => {
   const invalidOccurrence = createMcpEventsProvider({
     events: [{
       descriptor: invoiceDescriptor(),
@@ -173,10 +200,11 @@ test('provider adapter fails closed on invalid occurrence or payload', async () 
   const occurrenceResult = await invalidOccurrence.handleRequest(
     request(1, 'events/poll', {
       name: 'erpnext.sales_invoice.submitted',
+      arguments: { company: 'ACME' },
       cursor: 'start',
     }),
   );
-  assert.equal(occurrenceResult.error.code, -32602);
+  assert.equal(occurrenceResult.error.code, -32603);
   assert.match(occurrenceResult.error.message, /invalid EventOccurrence/i);
 
   const invalidPayload = createMcpEventsProvider({
@@ -200,28 +228,26 @@ test('provider adapter fails closed on invalid occurrence or payload', async () 
   const payloadResult = await invalidPayload.handleRequest(
     request(2, 'events/poll', {
       name: 'erpnext.sales_invoice.submitted',
+      arguments: { company: 'ACME' },
       cursor: 'start',
     }),
   );
-  assert.equal(payloadResult.error.code, -32602);
-  assert.match(
-    payloadResult.error.message,
-    /missing required property grand_total/i,
-  );
+  assert.equal(payloadResult.error.code, -32603);
+  assert.match(payloadResult.error.message, /missing required property grand_total/i);
 });
 
-test('provider adapter rejects duplicates and unknown methods deterministically', async () => {
+test('provider rejects duplicates and unknown methods deterministically', async () => {
   assert.throws(
     () =>
       createMcpEventsProvider({
         events: [
           {
-            descriptor: invoiceDescriptor(),
-            poll: async () => ({ events: [], cursor: '1' }),
+            descriptor: orderDescriptor(),
+            poll: async () => ({ events: [], cursor: null }),
           },
           {
-            descriptor: invoiceDescriptor(),
-            poll: async () => ({ events: [], cursor: '2' }),
+            descriptor: orderDescriptor(),
+            poll: async () => ({ events: [], cursor: null }),
           },
         ],
       }),
@@ -229,12 +255,10 @@ test('provider adapter rejects duplicates and unknown methods deterministically'
   );
 
   const provider = createMcpEventsProvider({
-    events: [
-      {
-        descriptor: invoiceDescriptor(),
-        poll: async () => ({ events: [], cursor: '1' }),
-      },
-    ],
+    events: [{
+      descriptor: orderDescriptor(),
+      poll: async () => ({ events: [], cursor: null }),
+    }],
   });
   const unknown = await provider.handleRequest(request(4, 'events/subscribe'));
   assert.equal(unknown.error.code, -32601);
