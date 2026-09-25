@@ -32,6 +32,22 @@ function scopeIdFromDirectoryName(name) {
   }
 }
 
+function canonicalStateValue(value) {
+  if (Array.isArray(value)) return value.map(canonicalStateValue);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.keys(value)
+        .sort()
+        .map((key) => [key, canonicalStateValue(value[key])]),
+    );
+  }
+  return value;
+}
+
+function mcpClientStateKey(connectionId, eventName, args = {}) {
+  return `${String(connectionId)}::${String(eventName)}::${JSON.stringify(canonicalStateValue(args ?? {}))}`;
+}
+
 async function readJsonLines(filePath) {
   try {
     const raw = await readFile(filePath, 'utf8');
@@ -282,15 +298,27 @@ export class PersistentEventStore {
         connectionId: String(raw.connectionId),
         serverId: String(raw.serverId || raw.connectionId),
         eventName: String(raw.eventName),
+        arguments:
+          raw.arguments && !Array.isArray(raw.arguments) && typeof raw.arguments === 'object'
+            ? raw.arguments
+            : {},
+        subscriptionId: raw.subscriptionId ? String(raw.subscriptionId) : null,
+        deliveryMode: raw.deliveryMode ? String(raw.deliveryMode) : 'poll',
         cursor: raw.cursor === null || raw.cursor === undefined
           ? null
           : String(raw.cursor),
         updatedAt: String(raw.updatedAt || new Date(0).toISOString()),
+        ...(raw.nextPollAt ? { nextPollAt: String(raw.nextPollAt) } : {}),
         ...(raw.lastEventAt ? { lastEventAt: String(raw.lastEventAt) } : {}),
         ...(raw.lastError ? { lastError: String(raw.lastError) } : {}),
+        ...(typeof raw.truncated === 'boolean' ? { truncated: raw.truncated } : {}),
       };
       this.#mcpClientStates.set(
-        `${state.connectionId}::${state.eventName}`,
+        mcpClientStateKey(
+          state.connectionId,
+          state.eventName,
+          state.arguments,
+        ),
         state,
       );
     }
@@ -823,9 +851,9 @@ export class PersistentEventStore {
       }));
   }
 
-  getMcpClientState(connectionId, eventName) {
+  getMcpClientState(connectionId, eventName, args = {}) {
     return this.#mcpClientStates.get(
-      `${String(connectionId)}::${String(eventName)}`,
+      mcpClientStateKey(connectionId, eventName, args),
     ) ?? null;
   }
 
@@ -843,24 +871,42 @@ export class PersistentEventStore {
       if (!connectionId || !eventName) {
         throw new Error('MCP client state requires connectionId and eventName');
       }
-      const previous = this.getMcpClientState(connectionId, eventName);
+      const args =
+        input.arguments && !Array.isArray(input.arguments) && typeof input.arguments === 'object'
+          ? input.arguments
+          : {};
+      const previous = this.getMcpClientState(connectionId, eventName, args);
       const state = {
         connectionId,
         serverId: String(input.serverId || previous?.serverId || connectionId),
         eventName,
+        arguments: args,
+        subscriptionId:
+          input.subscriptionId
+            ? String(input.subscriptionId)
+            : previous?.subscriptionId ?? null,
+        deliveryMode: String(input.deliveryMode || previous?.deliveryMode || 'poll'),
         cursor: input.cursor === null || input.cursor === undefined
           ? null
           : String(input.cursor),
         updatedAt: new Date().toISOString(),
+        ...(input.nextPollAt || previous?.nextPollAt
+          ? { nextPollAt: String(input.nextPollAt || previous.nextPollAt) }
+          : {}),
         ...(input.lastEventAt || previous?.lastEventAt
           ? { lastEventAt: String(input.lastEventAt || previous.lastEventAt) }
           : {}),
         ...(input.lastError
           ? { lastError: String(input.lastError) }
           : {}),
+        ...(typeof input.truncated === 'boolean'
+          ? { truncated: input.truncated }
+          : typeof previous?.truncated === 'boolean'
+            ? { truncated: previous.truncated }
+            : {}),
       };
       this.#mcpClientStates.set(
-        `${connectionId}::${eventName}`,
+        mcpClientStateKey(connectionId, eventName, args),
         state,
       );
       await appendFile(
