@@ -566,7 +566,18 @@ export class McpEventsClientManager {
     const triggers =
       typeof context.triggerControl?.listTriggers === 'function'
         ? context.triggerControl.listTriggers()
-        : [];
+        : typeof context.store?.listTriggers === 'function'
+          ? context.store.listTriggers().map((definition) => ({
+              definition,
+              state:
+                typeof context.store.getTriggerState === 'function'
+                  ? context.store.getTriggerState(
+                      definition.triggerId,
+                      definition.version,
+                    )
+                  : null,
+            }))
+          : [];
 
     for (const { definition, state } of triggers) {
       if (state?.status !== 'active') continue;
