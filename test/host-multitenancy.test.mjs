@@ -13,9 +13,9 @@ function scopedEventClient(eventId) {
   return {
     getServerCapabilities() {
       return {
-        experimental: {
-          'io.modelcontextprotocol.experimental/events': {
-            methods: ['events/list', 'events/poll'],
+        extensions: {
+          'io.modelcontextprotocol/events': {
+            listChanged: false,
           },
         },
       };
