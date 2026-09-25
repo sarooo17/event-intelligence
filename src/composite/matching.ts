@@ -183,12 +183,22 @@ export function deterministicKeyForClause(
 }
 
 export function sameEventIdentity(
-  source: Pick<TriggerSourceEvent, 'sourceEventId' | 'serverId'>,
-  event: Pick<CorrelatableEvent, 'sourceEventId' | 'serverId'>,
+  source: Pick<
+    TriggerSourceEvent,
+    'sourceEventId' | 'serverId' | 'subscriptionArguments'
+  >,
+  event: Pick<
+    CorrelatableEvent,
+    'sourceEventId' | 'serverId' | 'subscriptionArguments'
+  >,
 ): boolean {
   return (
     source.sourceEventId === event.sourceEventId &&
-    (source.serverId ?? null) === (event.serverId ?? null)
+    (source.serverId ?? null) === (event.serverId ?? null) &&
+    sameSubscriptionArguments(
+      source.subscriptionArguments,
+      event.subscriptionArguments,
+    )
   );
 }
 
