@@ -15,9 +15,9 @@ test('host close drains an in-flight MCP poll before persistent store cleanup', 
   const client = {
     getServerCapabilities() {
       return {
-        experimental: {
-          'io.modelcontextprotocol.experimental/events': {
-            methods: ['events/list', 'events/poll'],
+        extensions: {
+          'io.modelcontextprotocol/events': {
+            listChanged: false,
           },
         },
       };
