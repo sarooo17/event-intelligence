@@ -1,6 +1,6 @@
 # MCP Registry
 
-## v0.3.x role
+## Current role
 
 MCP Event Intelligence exposes an optional standard **MCP stdio control plane** through the official TypeScript SDK v2, targeting MCP protocol revision **2026-07-28**.
 
@@ -43,7 +43,7 @@ The npm package declares the same identity through `package.json#mcpName`.
 
 `server.json` declares:
 
-- npm package: `mcp-event-intelligence@0.3.1`;
+- npm package: `mcp-event-intelligence@0.4.0`;
 - transport: `stdio`;
 - positional package argument: `mcp`;
 - only Event Intelligence control-plane/runtime settings, including optional Jev semantic-evaluator configuration.

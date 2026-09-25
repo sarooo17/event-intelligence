@@ -432,7 +432,7 @@ It uses stable wake IDs, persisted delivery state, atomic claim leases, bounded 
 
 A derived event says **what became true at a point in history**.
 
-v0.3 intentionally does not implement a mutable current-state/facts database.
+Event Intelligence intentionally does not implement a mutable current-state/facts database.
 
 ## Security
 
