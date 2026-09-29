@@ -202,6 +202,7 @@ export const CompositeTriggerDefinitionSchema = z.object({
   triggerId: Id,
   version: z.string().min(1),
   description: z.string().max(500).optional(),
+  conditionOnly: z.boolean().default(false),
   continuation: ContinuationContractSchema.optional(),
   clauses: z.array(TriggerClauseSchema).min(1),
   expression: TriggerExpressionSchema,
@@ -219,10 +220,19 @@ export const CompositeTriggerDefinitionSchema = z.object({
   target: RuntimeTargetSchema.optional(),
   derivedEvent: DerivedEventDefinitionSchema.optional(),
 }).superRefine((value, ctx) => {
-  if (!value.target && !value.derivedEvent) {
+  if (!value.target && !value.derivedEvent && !value.conditionOnly) {
     ctx.addIssue({
       code: 'custom',
-      message: 'Trigger requires target, derivedEvent, or both',
+      message: 'Trigger requires target, derivedEvent, or conditionOnly=true',
+    });
+  }
+  if (
+    value.conditionOnly &&
+    (value.target || value.derivedEvent || value.continuation)
+  ) {
+    ctx.addIssue({
+      code: 'custom',
+      message: 'conditionOnly triggers cannot declare target, derivedEvent, or continuation',
     });
   }
   if (value.continuation && !value.target) {
