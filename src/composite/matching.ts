@@ -66,10 +66,54 @@ function predicateMatches(
       if (typeof value === 'string') return value.includes(String(predicate.value));
       if (Array.isArray(value)) return value.includes(predicate.value);
       return false;
+    case 'startsWith':
+      return typeof value === 'string' && value.startsWith(predicate.value);
+    case 'endsWith':
+      return typeof value === 'string' && value.endsWith(predicate.value);
+    case 'regex':
+      if (typeof value !== 'string') return false;
+      try {
+        return new RegExp(predicate.value, predicate.flags ?? '').test(value);
+      } catch {
+        return false;
+      }
     case 'in':
       return predicate.value.includes(value as string | number | boolean);
+    case 'notIn':
+      return !predicate.value.includes(value as string | number | boolean);
+    case 'between': {
+      const [lower, upper] = predicate.value;
+      if (typeof value === 'number') {
+        return (
+          typeof lower === 'number' &&
+          typeof upper === 'number' &&
+          value >= lower &&
+          value <= upper
+        );
+      }
+      if (typeof value === 'string') {
+        return (
+          typeof lower === 'string' &&
+          typeof upper === 'string' &&
+          value >= lower &&
+          value <= upper
+        );
+      }
+      return false;
+    }
     case 'exists':
       return predicate.value ? value !== undefined : value === undefined;
+    case 'isNull':
+      return predicate.value
+        ? value === null || value === undefined
+        : value !== null && value !== undefined;
+    case 'type':
+      if (predicate.value === 'null') return value === null;
+      if (predicate.value === 'array') return Array.isArray(value);
+      if (predicate.value === 'object') {
+        return value !== null && typeof value === 'object' && !Array.isArray(value);
+      }
+      return typeof value === predicate.value;
     case 'gt':
       return typeof value === 'number' && value > predicate.value;
     case 'gte':
