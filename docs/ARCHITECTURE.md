@@ -169,7 +169,9 @@ The deterministic runtime is model-free. Event Intelligence does not run a secon
 
 The bundled TypeSafe Jev evaluator is used only when a trigger explicitly requests semantic correlation and `TYPESAFE_API_KEY` is configured. Embedded hosts may inject their own compatible semantic evaluator.
 
-Natural-language interpretation belongs to the surrounding agent/harness. For common cases it can submit an agent-friendly plan to EI's deterministic planner; advanced integrations may submit the canonical trigger definition directly.
+Natural-language interpretation belongs to the surrounding agent/harness. EI exposes a self-describing public authoring language through `describeTriggerLanguage()` and the optional `trigger_language_describe` MCP tool. The agent discovers operators on demand, then submits an agent-friendly plan to EI's deterministic planner.
+
+`TriggerPlanInput` is the normal agent authoring surface and includes predicates, composition, temporal conditions, correlation, timing and lifecycle controls. The canonical `CompositeTriggerDefinition` is the engine IR/advanced API and may still be submitted directly by trusted integrations.
 
 ## 10. Observability
 
