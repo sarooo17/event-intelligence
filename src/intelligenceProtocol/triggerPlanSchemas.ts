@@ -4,6 +4,7 @@ import {
   ContinuationContractSchema,
   SemanticCorrelationSchema,
   StructuredPredicateSchema,
+  TemporalConditionSchema,
 } from './triggerSchemas.js';
 
 const Id = z.string().min(1).max(200);
@@ -37,6 +38,7 @@ export const TriggerPlanInputSchema = z.object({
     allowedLatenessMs: z.number().int().nonnegative()
       .max(1000 * 60 * 60 * 24 * 30),
   }).strict().optional(),
+  temporal: z.array(TemporalConditionSchema).default([]),
   lifecycle: z.object({
     oneShot: z.boolean().optional(),
     maxFirings: z.number().int().min(1).optional(),
