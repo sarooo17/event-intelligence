@@ -235,6 +235,20 @@ export const CompositeTriggerDefinitionSchema = z.object({
       message: 'conditionOnly triggers cannot declare target, derivedEvent, or continuation',
     });
   }
+  if (
+    value.conditionOnly &&
+    (
+      value.lifecycle.oneShot ||
+      value.lifecycle.maxFirings !== undefined ||
+      value.lifecycle.cooldownMs > 0 ||
+      value.lifecycle.completeOnGoal
+    )
+  ) {
+    ctx.addIssue({
+      code: 'custom',
+      message: 'conditionOnly triggers cannot use effect-based lifecycle fields',
+    });
+  }
   if (value.continuation && !value.target) {
     ctx.addIssue({
       code: 'custom',
