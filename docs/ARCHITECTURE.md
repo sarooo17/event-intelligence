@@ -121,7 +121,7 @@ pr.merged + deploy.succeeded
     release.ready@1
 ```
 
-Derived occurrences receive deterministic IDs, project only explicitly configured fields/constants, preserve direct-parent refs and flattened root evidence, persist before fan-out and re-enter the same composite engine.
+Derived occurrences receive deterministic IDs, project only explicitly configured fields/constants, preserve direct-parent refs and flattened root evidence, persist before fan-out and re-enter the same composite engine. Their `occurredAt` is derived from event-time semantics (latest contributing source event or satisfied temporal `dueAt`), while `receivedAt` records when EI materialized the derived occurrence.
 
 Cycles are rejected and runtime recursion has a hard depth guard.
 
