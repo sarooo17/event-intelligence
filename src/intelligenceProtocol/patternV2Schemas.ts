@@ -370,7 +370,7 @@ export const PatternExecutionPolicySchema = z.object({
 
 export const PatternMeasureSchema = z.object({
   key: z.string().regex(/^[A-Za-z_][A-Za-z0-9_-]{0,63}$/),
-  expression: z.discriminatedUnion('kind', [
+  expression: z.union([
     PatternArithmeticValueSchema,
     z.object({
       kind: z.literal('aggregate'),
