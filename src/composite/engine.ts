@@ -282,13 +282,17 @@ export class CompositeTriggerEngine {
     const eventTime = Date.parse(event.occurredAt);
     const key = deterministicKeyForClause(definition, clause.id, event);
 
-    const activeMatches = this.store
+    const relatedMatches = this.store
       .listTriggerMatches(definition.triggerId)
       .filter((record) =>
         record.triggerVersion === definition.version &&
-        (record.status === 'partial' || record.status === 'matched') &&
         matchesCorrelationKey(record, key),
       );
+
+    const activeMatches = relatedMatches.filter(
+      (record) =>
+        record.status === 'partial' || record.status === 'matched',
+    );
 
     const alreadyMatched = activeMatches
       .filter((record) => record.status === 'matched')
@@ -307,12 +311,24 @@ export class CompositeTriggerEngine {
       (record) => record.status === 'partial',
     );
 
-    // A later event-time advances the watermark for old partial matches. Expire
-    // windows that can no longer accept this or any later event, but do not
-    // expire a newer partial merely because an older event arrived late.
+    const observedEventTimes = relatedMatches.flatMap((record) =>
+      record.sourceEvents.map((source) => Date.parse(source.occurredAt))
+    );
+    const maxObservedEventTime = Math.max(
+      eventTime,
+      ...observedEventTimes.filter(Number.isFinite),
+    );
+    const allowedLatenessMs =
+      definition.eventTime?.allowedLatenessMs ?? 0;
+    const watermarkMs = maxObservedEventTime - allowedLatenessMs;
+
+    // The watermark is the point before which new standalone windows are too
+    // late to open. Existing partials are retained until their event-time
+    // expiry falls strictly behind it, allowing a late event to complete a
+    // still-valid in-window pattern.
     const staleIds = new Set<string>();
     for (const candidate of partials) {
-      if (Date.parse(candidate.expiresAt) >= eventTime) continue;
+      if (Date.parse(candidate.expiresAt) >= watermarkMs) continue;
       staleIds.add(candidate.matchId);
       const expired = TriggerMatchRecordSchema.parse({
         ...candidate,
@@ -322,7 +338,9 @@ export class CompositeTriggerEngine {
       await this.store.appendTriggerMatch(expired);
       await this.support.cancelDeadlinesForMatch(expired.matchId);
       await this.support.auditMatch(expired, 'trigger.expired', {
-        reason: 'event_time_window_advanced',
+        reason: 'event_time_watermark_advanced',
+        watermarkAt: new Date(watermarkMs).toISOString(),
+        allowedLatenessMs,
         incomingSourceEventId: event.sourceEventId,
         incomingOccurredAt: event.occurredAt,
       });
@@ -340,9 +358,37 @@ export class CompositeTriggerEngine {
         Date.parse(b.record.updatedAt) - Date.parse(a.record.updatedAt)
       );
 
-    let record =
-      compatible[0]?.record ??
-      await this.newMatch(definition, key, event);
+    let record = compatible[0]?.record;
+    if (!record && eventTime < watermarkMs) {
+      await this.store.appendAudit({
+        auditId: `audit_${(
+          await sha256Hex(
+            `${definition.triggerId}:${definition.version}:late_event_dropped:${event.sourceEventId}:${nowIso}`,
+          )
+        ).slice(0, 24)}`,
+        traceId: event.traceId,
+        timestamp: nowIso,
+        kind: 'event.late_dropped',
+        entityType: 'trigger',
+        entityId: definition.triggerId,
+        details: {
+          triggerVersion: definition.version,
+          sourceEventId: event.sourceEventId,
+          occurredAt: event.occurredAt,
+          receivedAt: event.receivedAt ?? null,
+          watermarkAt: new Date(watermarkMs).toISOString(),
+          allowedLatenessMs,
+        },
+      });
+      return {
+        triggerId: definition.triggerId,
+        match: null,
+        matched: false,
+        fired: false,
+      };
+    }
+
+    record ??= await this.newMatch(definition, key, event);
 
     const duplicate = record.sourceEvents.some(
       (candidate) => sameEventIdentity(candidate, event),
