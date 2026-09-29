@@ -217,26 +217,32 @@ export class TriggerPlanner {
 
     const triggerId = plan.triggerId || `planned_${(
       await sha256Hex(canonicalJson({
-        target: plan.target,
+        target: plan.target ?? null,
         events: plan.events,
         match: plan.match,
-        continuation: plan.continuation.instruction,
+        conditionOnly: plan.conditionOnly,
+        continuation: plan.continuation?.instruction ?? null,
       }))
     ).slice(0, 24)}`;
 
     const definition = parseCompositeTriggerDefinition({
       triggerId,
       version: plan.version,
-      description:
-        plan.description ||
-        plan.continuation.instruction.slice(0, 500),
-      continuation: plan.continuation,
+      ...(plan.description || plan.continuation?.instruction
+        ? {
+            description:
+              plan.description ||
+              plan.continuation.instruction.slice(0, 500),
+          }
+        : {}),
+      conditionOnly: plan.conditionOnly,
+      ...(plan.continuation ? { continuation: plan.continuation } : {}),
       clauses,
       expression: expressionFor(plan.match, refs),
       withinMs: plan.withinMs,
       lifecycle: lifecycleFor(plan.lifecycle),
       ...(Object.keys(correlation).length ? { correlation } : {}),
-      target: plan.target,
+      ...(plan.target ? { target: plan.target } : {}),
     });
 
     return {
@@ -258,9 +264,10 @@ export class TriggerPlanner {
           withinMs: definition.withinMs,
         },
         then: {
-          target: definition.target,
+          conditionOnly: definition.conditionOnly,
+          target: definition.target ?? null,
           instruction: definition.continuation?.instruction ?? null,
-          evidence: definition.continuation?.contextPolicy?.evidence ?? 'matched_events',
+          evidence: definition.continuation?.contextPolicy?.evidence ?? null,
         },
       },
     };
