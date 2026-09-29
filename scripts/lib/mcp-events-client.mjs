@@ -200,7 +200,7 @@ export function createHostMcpEventsConnection({
   });
 }
 
-function sourceDescriptor(raw) {
+function sourceDescriptor(raw, profile) {
   const descriptor = assertObject(raw, 'Invalid MCP event descriptor');
   const name = String(descriptor.name || '').trim();
   if (!name) throw new Error('MCP event descriptor requires name');
@@ -209,7 +209,7 @@ function sourceDescriptor(raw) {
     : [];
   if (
     delivery.length === 0 ||
-    delivery.some((mode) => !['poll', 'push', 'webhook'].includes(mode))
+    delivery.some((mode) => !profile.deliveryModes.includes(mode))
   ) {
     throw new Error(`MCP event descriptor ${name} has invalid delivery modes`);
   }
@@ -468,7 +468,7 @@ export class McpEventsClientManager {
         );
       }
       for (const raw of listed.events) {
-        const descriptor = sourceDescriptor(raw);
+        const descriptor = sourceDescriptor(raw, profile);
         if (names.has(descriptor.name)) {
           throw new Error(
             `MCP server ${connectionId} returned duplicate event descriptor ${descriptor.name}`,
@@ -500,7 +500,9 @@ export class McpEventsClientManager {
         JSON.stringify(existing.inputSchema || {}) ===
           JSON.stringify(normalized.inputSchema) &&
         JSON.stringify(existing.payloadSchema || {}) ===
-          JSON.stringify(normalized.payloadSchema);
+          JSON.stringify(normalized.payloadSchema) &&
+        existing.metadata?.compatibilityProfile === profile.id &&
+        existing.metadata?.extensionId === profile.extensionId;
 
       if (!same) {
         const register = context.triggerControl?.registerEventSource
