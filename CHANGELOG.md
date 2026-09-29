@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased
+
+### Event-time correctness
+
+- preserve host `receivedAt` separately from provider `occurredAt` through correlation evidence, derived lineage and activation hydration;
+- sequence and window evaluation no longer depend on delivery order;
+- partial matches are selected by compatible event-time span and can be re-anchored when an earlier event arrives late;
+- late events outside `withinMs` are isolated instead of creating false composite matches.
+
+### Trigger composition
+
+- add explicit `conditionOnly: true` programs with no runtime target, continuation or derived output;
+- agent-friendly planning can compile condition-only programs;
+- identical active `(connection, event, arguments)` clauses share one upstream MCP EventSubscription with observable local fan-out count.
+
+### MCP Events compatibility
+
+- external draft assumptions are centralized behind a versioned compatibility profile instead of being spread through the runtime;
+- the current default profile remains the 2026-09-25 experimental extension snapshot;
+- host-owned/embedded integration remains the primary architecture; standalone/provider-native paths are compatibility surfaces, not a new deployment requirement.
+
+
 ## [0.4.0] - 2026-09-25
 
 Current MCP Events draft alignment.
