@@ -1,4 +1,45 @@
 export {
+  PATTERN_AST_VERSION,
+  PatternValueSelectorSchema,
+  PatternArithmeticValueSchema,
+  PatternCompareOperatorSchema,
+  AggregateFunctionSchema,
+  PatternWindowSchema,
+  PatternNodeV2Schema,
+  PatternPartitionDimensionSchema,
+  PatternSelectionSchema,
+  PatternExecutionPolicySchema,
+  PatternMeasureSchema,
+  PatternAstV2DefinitionSchema,
+  collectPatternRefs,
+} from './patternV2Schemas.js';
+
+export type {
+  PatternValueSelector,
+  PatternArithmeticValue,
+  PatternWindow,
+  PatternNodeV2,
+  PatternAstV2Definition,
+  PatternMeasure,
+} from './patternV2Schemas.js';
+
+export {
+  compileLegacyTriggerToPatternV2,
+} from '../patternV2/legacyCompiler.js';
+
+export {
+  evaluatePatternV2,
+  evaluatePatternAggregate,
+  patternV2CandidateSignature,
+} from '../patternV2/evaluator.js';
+
+export type {
+  PatternV2Candidate,
+  PatternV2Evaluation,
+  PatternV2SemanticDecision,
+} from '../patternV2/evaluator.js';
+
+export {
   TRIGGER_LANGUAGE_VERSION,
   PREDICATE_OPERATOR,
   COMPOSITION_OPERATOR,
