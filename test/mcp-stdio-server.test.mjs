@@ -59,6 +59,7 @@ test('MCP stdio adapter exposes read-only Event Intelligence tools by default', 
       'event_sources_list',
       'runtime_status',
       'trigger_inspect',
+      'trigger_language_describe',
       'trigger_list',
       'trigger_plan',
       'trigger_simulate',
@@ -71,6 +72,20 @@ test('MCP stdio adapter exposes read-only Event Intelligence tools by default', 
     });
     assert.equal(status.isError, undefined);
     assert.equal(status.structuredContent.writeEnabled, false);
+
+    const language = await session.client.callTool({
+      name: 'trigger_language_describe',
+      arguments: { category: 'temporal' },
+    });
+    assert.equal(language.isError, undefined);
+    assert.equal(language.structuredContent.version, '1');
+    assert.equal(language.structuredContent.temporal.length, 10);
+    assert.equal(
+      language.structuredContent.temporal.some(
+        (entry) => entry.id === 'absence',
+      ),
+      true,
+    );
 
     const planWithoutSources = await session.client.callTool({
       name: 'trigger_plan',
