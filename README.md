@@ -19,7 +19,7 @@ An agent can express an intent such as:
 
 > When this PR is merged, the production deploy succeeds, and no error is observed for 10 minutes, wake this task and review the release.
 
-Event Intelligence persists that continuation independently of the model, waits for the world to satisfy it, and wakes the host only when necessary.
+Event Intelligence persists the future condition independently of the model, waits for the world to satisfy it, and wakes the host only when the condition has an activation target. Conditions may also exist without an agent continuation and feed derived-event composition.
 
 ## Embed it in an existing agent host
 
@@ -93,7 +93,7 @@ await ei.triggerControl.createTrigger({
 
 `planTrigger()` is deterministic. It does not call a model. It resolves event names to live source/server IDs, validates predicate paths against advertised payload schemas, compiles `all` / `any` / `sequence` / `count`, and returns the canonical trigger definition plus the required connection IDs.
 
-The persisted `continuation` answers a separate question from the trigger condition: **what should the agent do after the future condition becomes true?**
+The persisted `continuation` answers a separate question from the trigger condition: **what should the agent do after the future condition becomes true?** A trigger can instead set `conditionOnly: true` and persist only the condition state, with no runtime target or continuation.
 
 The wire wake remains deliberately small and reference-only. Embedded hosts also receive an Activation Envelope as the second wake argument. The same envelope can be reconstructed later:
 
@@ -215,6 +215,7 @@ production ERP connector itself.
 - `events/poll` with server-directed `nextPollMs`, nullable cursors and bounded page draining;
 - host-owned push and webhook delivery adapters feeding the same EventOccurrence pipeline;
 - persistent opaque cursors and per-subscription delivery state;
+- shared upstream subscriptions fan out to every active trigger using the same `(connection, event, arguments)` tuple;
 - per-scope source/cursor isolation for shared hosts;
 - single-flight polling per connection plus bounded `hasMore` batch draining;
 - automatic event-source registration;
@@ -414,7 +415,9 @@ The detailed execution model, clocks, lifecycle, persistence and trust boundarie
 
 ### Event-time vs processing-time
 
-Normal event windows use event `occurredAt`.
+Normal event windows use event `occurredAt`; MCP ingress also preserves host `receivedAt` when available. Delivery order does not define event order.
+
+Out-of-order events are matched against compatible event-time windows. A late event may re-anchor a partial match to an earlier `occurredAt` only when the complete event-time span still fits `withinMs`; otherwise it starts a separate partial window and cannot create a false sequence.
 
 Absence/deadline progression uses Event Intelligence processing time. This separation is explicit and tested.
 
