@@ -73,6 +73,7 @@ Derived events are immutable semantic boundaries. They:
 - re-enter the same event graph;
 - project only explicitly configured scalar fields/constants;
 - carry direct-parent refs and flattened root evidence;
+- propagate semantic event-time: `occurredAt` is the latest contributing source event / satisfied temporal deadline, while `receivedAt` is materialization time;
 - are guarded against cycles and excessive recursion.
 
 ## Versioned contracts
