@@ -93,7 +93,7 @@ A trigger is a versioned typed program containing:
 
 For common agent-authored cases, `planTrigger()` compiles a simpler plan into this canonical program. Planning is deterministic: it resolves live scoped event sources, fills server IDs, validates predicate paths against advertised payload schemas, and returns the canonical definition plus required connection IDs.
 
-A trigger normally produces a runtime wake, a derived event, or both. An explicitly declared `conditionOnly: true` trigger may instead persist only condition state; it cannot carry a target, continuation or derived-event effect.
+A trigger normally produces a runtime wake, a derived event, or both. An explicitly declared `conditionOnly: true` trigger may instead persist only condition state; it cannot carry a target, continuation or derived-event effect. Because it has no effect delivery, effect-count lifecycle controls (`oneShot`, `maxFirings`, `cooldownMs`, `completeOnGoal`) are invalid for condition-only programs; expiry/lease controls remain valid.
 
 ## 3. Temporal state
 
