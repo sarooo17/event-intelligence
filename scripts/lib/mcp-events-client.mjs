@@ -620,6 +620,7 @@ export class McpEventsClientManager {
     }
     assertJsonSchemaValue(descriptor.payloadSchema, occurrence.data);
 
+    const receivedAt = this.now().toISOString();
     const receipt = await context.store.appendMcpOccurrence(
       connection.serverId,
       occurrence,
@@ -634,6 +635,7 @@ export class McpEventsClientManager {
       traceId:
         `mcp:${connection.serverId}:${subscription.subscriptionId}:${occurrence.eventId}`,
       subscriptionArguments: subscription.arguments,
+      receivedAt,
     });
     return { accepted: true, occurrence };
   }
