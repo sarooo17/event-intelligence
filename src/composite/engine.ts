@@ -282,13 +282,30 @@ export class CompositeTriggerEngine {
     const eventTime = Date.parse(event.occurredAt);
     const key = deterministicKeyForClause(definition, clause.id, event);
 
-    const partials = this.store
+    const activeMatches = this.store
       .listTriggerMatches(definition.triggerId)
       .filter((record) =>
         record.triggerVersion === definition.version &&
-        record.status === 'partial' &&
+        (record.status === 'partial' || record.status === 'matched') &&
         matchesCorrelationKey(record, key),
       );
+
+    const alreadyMatched = activeMatches
+      .filter((record) => record.status === 'matched')
+      .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))[0];
+
+    if (alreadyMatched) {
+      return {
+        triggerId: definition.triggerId,
+        match: alreadyMatched,
+        matched: true,
+        fired: false,
+      };
+    }
+
+    const partials = activeMatches.filter(
+      (record) => record.status === 'partial',
+    );
 
     // A later event-time advances the watermark for old partial matches. Expire
     // windows that can no longer accept this or any later event, but do not
