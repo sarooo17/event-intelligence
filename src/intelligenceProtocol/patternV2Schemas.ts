@@ -2,6 +2,8 @@ import { z } from 'zod';
 
 const Id = z.string().min(1).max(200);
 const Scalar = z.union([z.string(), z.number(), z.boolean()]);
+const ClockTime = z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/);
+const CalendarDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 
 export const PATTERN_AST_VERSION = '2' as const;
 
@@ -200,6 +202,97 @@ export const PatternNodeV2Schema: z.ZodType<any> = z.lazy(() => {
       kind: z.literal('window'),
       window: PatternWindowSchema,
       child: PatternNodeV2Schema,
+    }).strict(),
+
+    z.object({
+      kind: z.literal('calendar'),
+      child: PatternNodeV2Schema,
+      ref: Id,
+      timezone: z.string().min(1),
+      before: ClockTime.optional(),
+      after: ClockTime.optional(),
+      weekdays: z.array(z.number().int().min(1).max(7)).min(1).optional(),
+      dates: z.array(CalendarDate).min(1).optional(),
+      dateRange: z.object({
+        start: CalendarDate,
+        end: CalendarDate,
+      }).optional(),
+      dayOfMonth: z.array(z.number().int().min(1).max(31)).min(1).optional(),
+    }).strict(),
+
+    z.object({
+      kind: z.literal('absence'),
+      id: Id,
+      child: PatternNodeV2Schema,
+      ref: Id,
+      afterRef: Id,
+      forMs: z.number().int().positive().optional(),
+      untilLocalTime: ClockTime.optional(),
+      timezone: z.string().min(1).optional(),
+    }).strict().superRefine((value, ctx) => {
+      if (!value.forMs && !value.untilLocalTime) {
+        ctx.addIssue({
+          code: 'custom',
+          message: 'absence requires forMs or untilLocalTime',
+        });
+      }
+      if (value.untilLocalTime && !value.timezone) {
+        ctx.addIssue({
+          code: 'custom',
+          message: 'absence untilLocalTime requires timezone',
+        });
+      }
+    }),
+
+    z.object({
+      kind: z.literal('notPresent'),
+      child: PatternNodeV2Schema,
+      ref: Id,
+    }).strict(),
+
+    z.object({
+      kind: z.literal('after'),
+      child: PatternNodeV2Schema,
+      ref: Id,
+      afterRef: Id,
+    }).strict(),
+
+    z.object({
+      kind: z.literal('until'),
+      child: PatternNodeV2Schema,
+      ref: Id,
+      beforeRef: Id,
+    }).strict(),
+
+    z.object({
+      kind: z.literal('debounce'),
+      id: Id,
+      child: PatternNodeV2Schema,
+      ref: Id,
+      forMs: z.number().int().positive(),
+    }).strict(),
+
+    z.object({
+      kind: z.literal('threshold'),
+      child: PatternNodeV2Schema,
+      ref: Id,
+      atLeast: z.number().int().min(1),
+    }).strict(),
+
+    z.object({
+      kind: z.literal('rate'),
+      child: PatternNodeV2Schema,
+      ref: Id,
+      atLeast: z.number().int().min(1),
+      perMs: z.number().int().positive(),
+    }).strict(),
+
+    z.object({
+      kind: z.literal('distinct'),
+      child: PatternNodeV2Schema,
+      ref: Id,
+      path: z.string().min(1),
+      atLeast: z.number().int().min(1),
     }).strict(),
 
     z.object({
@@ -429,6 +522,33 @@ export function collectPatternRefs(node: PatternNodeV2): string[] {
       case 'optional':
       case 'window':
         visit(current.child);
+        return;
+      case 'calendar':
+      case 'notPresent':
+      case 'threshold':
+      case 'rate':
+      case 'distinct':
+        visit(current.child);
+        refs.add(current.ref);
+        return;
+      case 'absence':
+        visit(current.child);
+        refs.add(current.ref);
+        refs.add(current.afterRef);
+        return;
+      case 'after':
+        visit(current.child);
+        refs.add(current.ref);
+        refs.add(current.afterRef);
+        return;
+      case 'until':
+        visit(current.child);
+        refs.add(current.ref);
+        refs.add(current.beforeRef);
+        return;
+      case 'debounce':
+        visit(current.child);
+        refs.add(current.ref);
         return;
       case 'notNext':
       case 'notFollowedBy':
