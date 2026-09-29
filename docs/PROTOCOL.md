@@ -18,7 +18,7 @@ event source
 
 Two boundaries are intentionally separate:
 
-- **event ingress:** experimental MCP Events extension negotiation via `capabilities.extensions["io.modelcontextprotocol/events"]`, paginated `events/list`, durable per-argument subscriptions and poll/push/webhook delivery adapters, plus provider-native adapters;
+- **event ingress:** versioned compatibility profiles isolate the experimental MCP Events wire assumptions; the current profile covers `capabilities.extensions["io.modelcontextprotocol/events"]`, paginated `events/list`, `events/poll`, durable per-argument subscriptions and host-owned poll/push/webhook delivery adapters;
 - **control plane:** standard MCP stdio server using the official TypeScript SDK v2, targeting MCP 2026-07-28.
 
 The project does not define a competing base MCP Events protocol.
@@ -38,7 +38,7 @@ This preserves two independent contracts:
 - MCP `arguments` are validated against the source `inputSchema` and define the provider-side subscription;
 - EI predicates are validated against `payloadSchema` and evaluate delivered event data.
 
-Poll, push and webhook all normalize into the same EventOccurrence path before composite evaluation. Existing persisted trigger definitions without `arguments` read as `arguments: {}`.
+Poll, push and webhook all normalize into the same EventOccurrence path before composite evaluation. Active clauses with an identical `(connection, event name, arguments)` tuple share one upstream subscription and fan out locally. Existing persisted trigger definitions without `arguments` read as `arguments: {}`.
 
 ## Composite programs
 
@@ -51,7 +51,7 @@ A trigger contains:
 - temporal conditions;
 - lifecycle policy;
 - optional continuation metadata for the runtime activation;
-- a runtime target, a derived-event output, or both.
+- a runtime target, a derived-event output, both, or explicit `conditionOnly: true`.
 
 Agent-facing trigger plans are a package-level convenience API. They compile deterministically into this canonical trigger protocol and do not introduce a second persisted protocol.
 
@@ -59,7 +59,7 @@ Unbounded joins and arbitrary code predicates are intentionally excluded.
 
 ## Temporal semantics
 
-Normal trigger windows use event time.
+Normal trigger windows use event time. Source `occurredAt` and host `receivedAt` are separate fields when receive-time is available; delivery order is never treated as event order. Out-of-order events can re-anchor a compatible partial match to an earlier event-time, while an event outside `withinMs` is isolated into another partial window.
 
 Absence and durable deadline progression use processing time. Pending deadlines are persisted so a process restart does not erase the wait.
 
