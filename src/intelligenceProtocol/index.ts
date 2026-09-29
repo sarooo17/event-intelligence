@@ -87,6 +87,7 @@ export {
   COMPOSITE_TRIGGER_SCHEMA_VERSION,
   StructuredPredicateSchema,
   TriggerClauseSchema,
+  TemporalConditionSchema,
   ContinuationContextPolicySchema,
   ContinuationContractSchema,
   EventTimePolicySchema,
@@ -111,6 +112,7 @@ export {
 export type {
   StructuredPredicate,
   TriggerClause,
+  TemporalCondition,
   ContinuationContextPolicy,
   ContinuationContract,
   EventTimePolicy,
