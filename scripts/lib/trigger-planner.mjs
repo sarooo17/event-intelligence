@@ -220,6 +220,7 @@ export class TriggerPlanner {
         target: plan.target ?? null,
         events: plan.events,
         match: plan.match,
+        eventTime: plan.eventTime ?? null,
         conditionOnly: plan.conditionOnly,
         continuation: plan.continuation?.instruction ?? null,
       }))
@@ -240,6 +241,7 @@ export class TriggerPlanner {
       clauses,
       expression: expressionFor(plan.match, refs),
       withinMs: plan.withinMs,
+      ...(plan.eventTime ? { eventTime: plan.eventTime } : {}),
       lifecycle: lifecycleFor(plan.lifecycle),
       ...(Object.keys(correlation).length ? { correlation } : {}),
       ...(plan.target ? { target: plan.target } : {}),
@@ -262,6 +264,7 @@ export class TriggerPlanner {
             where: clause.where,
           })),
           withinMs: definition.withinMs,
+          eventTime: definition.eventTime ?? { allowedLatenessMs: 0 },
         },
         then: {
           conditionOnly: definition.conditionOnly,
