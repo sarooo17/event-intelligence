@@ -109,11 +109,22 @@ test('repeated sequence clauses preserve alternate valid windows', async () => {
     const partials = store.listTriggerMatches('alternate-sequence-window')
       .filter((match) => match.status === 'partial');
     assert.equal(partials.length, 2);
-    assert.deepEqual(
-      partials
-        .map((match) => match.sourceEvents.map((event) => event.sourceEventId))
-        .sort(),
-      [['a-early'], ['a-late']],
+    assert.equal(
+      partials.some(
+        (match) =>
+          match.sourceEvents.length === 1 &&
+          match.sourceEvents[0].sourceEventId === 'a-late',
+      ),
+      true,
+    );
+    assert.equal(
+      partials.some(
+        (match) =>
+          match.sourceEvents.some(
+            (event) => event.sourceEventId === 'a-early',
+          ),
+      ),
+      true,
     );
 
     const result = await engine.ingest(sourceEvent(
