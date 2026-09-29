@@ -260,6 +260,9 @@ export function describeTriggerLanguage(input: {
 
   const result: Record<string, unknown> = {
     version: TRIGGER_LANGUAGE_VERSION,
+    authoringSurface: 'TriggerPlanInput',
+    planner: 'trigger_plan',
+    canonicalRepresentation: 'CompositeTriggerDefinition',
   };
 
   for (const key of categories) {
