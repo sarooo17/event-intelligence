@@ -1,4 +1,17 @@
 export {
+  TRIGGER_LANGUAGE_VERSION,
+  PREDICATE_OPERATOR,
+  COMPOSITION_OPERATOR,
+  TEMPORAL_OPERATOR,
+  TRIGGER_LANGUAGE_CATALOG,
+  describeTriggerLanguage,
+} from './operatorRegistry.js';
+
+export type {
+  TriggerLanguageCategory,
+} from './operatorRegistry.js';
+
+export {
   EVENT_INTELLIGENCE_PROTOCOL,
   EVENT_INTELLIGENCE_PROTOCOL_VERSION,
   EVENT_INTELLIGENCE_SCHEMA_VERSION,
