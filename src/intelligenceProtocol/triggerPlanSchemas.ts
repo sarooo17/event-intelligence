@@ -33,6 +33,10 @@ export const TriggerPlanInputSchema = z.object({
   match: TriggerPlanMatchSchema.default('all'),
   withinMs: z.number().int().positive().max(1000 * 60 * 60 * 24 * 30)
     .default(60 * 60 * 1000),
+  eventTime: z.object({
+    allowedLatenessMs: z.number().int().nonnegative()
+      .max(1000 * 60 * 60 * 24 * 30),
+  }).strict().optional(),
   lifecycle: z.object({
     oneShot: z.boolean().optional(),
     maxFirings: z.number().int().min(1).optional(),
