@@ -115,6 +115,10 @@ export interface EventIntelligenceScopedHost {
   readonly triggerPlanner: any;
   readonly activationHydrator: any;
   readonly eventSources: any[];
+  describeTriggerLanguage(input?: {
+    category?: 'predicates' | 'composition' | 'temporal' | 'correlation' | 'timing' | 'lifecycle';
+    operator?: string;
+  }): Record<string, unknown>;
   planTrigger(input: TriggerPlanInput): Promise<{
     planVersion: '1';
     definition: any;
