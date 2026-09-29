@@ -11,6 +11,16 @@
 - events older than the watermark may finish retained compatible partials but cannot seed stale windows;
 - late events outside `withinMs` are isolated instead of creating false composite matches.
 
+### Agent authoring language
+
+- add a versioned, self-describing trigger operator registry;
+- add embedded `host.describeTriggerLanguage()` / scoped discovery;
+- add non-mutating MCP `trigger_language_describe` with category/operator filtering;
+- make the MCP `trigger_plan` tool reuse the package's canonical `TriggerPlanInputSchema` instead of maintaining a duplicate input schema;
+- expose all canonical temporal operators through `TriggerPlanInput.temporal`;
+- validate temporal event references and `distinct.path` against live source schemas before compilation;
+- add registry/schema parity tests so supported operators cannot silently drift out of the agent-visible catalog.
+
 ### Trigger composition
 
 - add explicit `conditionOnly: true` programs with no runtime target, continuation or derived output;
