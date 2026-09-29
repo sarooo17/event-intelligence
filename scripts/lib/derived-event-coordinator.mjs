@@ -26,6 +26,7 @@ function evidenceRef(source) {
     sourceEventId: source.sourceEventId,
     traceId: source.traceId,
     occurredAt: source.occurredAt,
+    ...(source.receivedAt ? { receivedAt: source.receivedAt } : {}),
     payloadHash: source.payloadHash ?? null,
     contractVersion:
       source.data?._derived?.contractVersion ?? null,
@@ -177,6 +178,7 @@ export class DerivedEventCoordinator {
       sourceEventId: eventId,
       name: spec.name,
       occurredAt: match.updatedAt,
+      receivedAt: this.now().toISOString(),
       provider: 'event-intelligence',
       serverId: DERIVED_EVENT_SERVER_ID,
       payloadHash,
