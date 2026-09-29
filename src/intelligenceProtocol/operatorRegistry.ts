@@ -41,40 +41,36 @@ export const TEMPORAL_OPERATOR = {
 
 export const TRIGGER_LANGUAGE_CATALOG = Object.freeze({
   version: TRIGGER_LANGUAGE_VERSION,
+
   predicates: Object.freeze([
     {
       id: PREDICATE_OPERATOR.EQ,
       description: 'Field equals a scalar value.',
       fields: ['path', 'value'],
-      valueType: 'scalar',
       example: { path: 'status', op: 'eq', value: 'open' },
     },
     {
       id: PREDICATE_OPERATOR.NEQ,
       description: 'Field does not equal a scalar value.',
       fields: ['path', 'value'],
-      valueType: 'scalar',
       example: { path: 'status', op: 'neq', value: 'cancelled' },
     },
     {
       id: PREDICATE_OPERATOR.CONTAINS,
-      description: 'Field contains a scalar value.',
+      description: 'String/array field contains the supplied scalar value.',
       fields: ['path', 'value'],
-      valueType: 'scalar',
       example: { path: 'subject', op: 'contains', value: 'invoice' },
     },
     {
       id: PREDICATE_OPERATOR.STARTS_WITH,
       description: 'String field starts with the supplied text.',
       fields: ['path', 'value'],
-      valueType: 'string',
       example: { path: 'subject', op: 'startsWith', value: 'URGENT:' },
     },
     {
       id: PREDICATE_OPERATOR.ENDS_WITH,
       description: 'String field ends with the supplied text.',
       fields: ['path', 'value'],
-      valueType: 'string',
       example: { path: 'filename', op: 'endsWith', value: '.pdf' },
     },
     {
@@ -82,228 +78,183 @@ export const TRIGGER_LANGUAGE_CATALOG = Object.freeze({
       description: 'String field matches a regular expression.',
       fields: ['path', 'value'],
       optionalFields: ['flags'],
-      valueType: 'string',
-      example: { path: 'code', op: 'regex', value: '^ERR-[0-9]+
+      example: { path: 'code', op: 'regex', value: '^ERR-[0-9]+$' },
+    },
     {
       id: PREDICATE_OPERATOR.IN,
       description: 'Field equals one of the supplied scalar values.',
       fields: ['path', 'value'],
-      valueType: 'scalar[]',
       example: { path: 'status', op: 'in', value: ['open', 'pending'] },
     },
     {
       id: PREDICATE_OPERATOR.NOT_IN,
       description: 'Field does not equal any supplied scalar value.',
       fields: ['path', 'value'],
-      valueType: 'scalar[]',
       example: { path: 'status', op: 'notIn', value: ['cancelled', 'closed'] },
     },
     {
       id: PREDICATE_OPERATOR.BETWEEN,
-      description: 'Comparable field is inside the inclusive [lower, upper] range.',
+      description: 'Comparable field is inside the inclusive range.',
       fields: ['path', 'value'],
-      valueType: '[scalar, scalar]',
       example: { path: 'amount', op: 'between', value: [1000, 5000] },
     },
     {
       id: PREDICATE_OPERATOR.EXISTS,
       description: 'Field presence must match the supplied boolean.',
       fields: ['path', 'value'],
-      valueType: 'boolean',
       example: { path: 'customerId', op: 'exists', value: true },
     },
     {
       id: PREDICATE_OPERATOR.IS_NULL,
       description: 'Field null/undefined state must match the supplied boolean.',
       fields: ['path', 'value'],
-      valueType: 'boolean',
       example: { path: 'closedAt', op: 'isNull', value: true },
     },
     {
       id: PREDICATE_OPERATOR.TYPE,
       description: 'Field must have the requested JSON type.',
       fields: ['path', 'value'],
-      valueType: 'string|number|boolean|null|object|array',
+      values: ['string', 'number', 'boolean', 'null', 'object', 'array'],
       example: { path: 'total', op: 'type', value: 'number' },
     },
     {
       id: PREDICATE_OPERATOR.GT,
       description: 'Numeric field is greater than the supplied number.',
       fields: ['path', 'value'],
-      valueType: 'number',
       example: { path: 'grand_total', op: 'gt', value: 10000 },
     },
     {
       id: PREDICATE_OPERATOR.GTE,
       description: 'Numeric field is greater than or equal to the supplied number.',
       fields: ['path', 'value'],
-      valueType: 'number',
       example: { path: 'grand_total', op: 'gte', value: 10000 },
     },
     {
       id: PREDICATE_OPERATOR.LT,
       description: 'Numeric field is less than the supplied number.',
       fields: ['path', 'value'],
-      valueType: 'number',
       example: { path: 'stock', op: 'lt', value: 10 },
     },
     {
       id: PREDICATE_OPERATOR.LTE,
       description: 'Numeric field is less than or equal to the supplied number.',
       fields: ['path', 'value'],
-      valueType: 'number',
       example: { path: 'stock', op: 'lte', value: 10 },
     },
   ]),
+
   composition: Object.freeze([
     {
       id: COMPOSITION_OPERATOR.ALL,
       canonicalKind: 'allOf',
-      description: 'All referenced events must satisfy the trigger.',
-      minEvents: 1,
+      description: 'All referenced events must satisfy the legacy trigger.',
       example: { match: 'all' },
     },
     {
       id: COMPOSITION_OPERATOR.ANY,
       canonicalKind: 'anyOf',
-      description: 'Any referenced event may satisfy the trigger.',
-      minEvents: 1,
+      description: 'Any referenced event may satisfy the legacy trigger.',
       example: { match: 'any' },
     },
     {
       id: COMPOSITION_OPERATOR.SEQUENCE,
       canonicalKind: 'sequence',
       description: 'Referenced events must occur in event-time order.',
-      minEvents: 2,
       example: { match: 'sequence' },
     },
     {
       id: COMPOSITION_OPERATOR.COUNT,
       canonicalKind: 'count',
       description: 'One referenced event must occur at least N times.',
-      minEvents: 1,
       example: { match: { kind: 'count', eventId: 'comment', atLeast: 3 } },
     },
   ]),
+
   temporal: Object.freeze([
     {
       id: TEMPORAL_OPERATOR.CALENDAR,
-      description: 'Referenced event must fall inside a calendar/timezone constraint.',
+      description: 'Calendar/timezone constraint.',
       fields: ['id', 'kind', 'ref', 'timezone'],
       optionalFields: ['before', 'after', 'weekdays', 'dates', 'dateRange', 'dayOfMonth'],
-      example: {
-        id: 'business-hours',
-        kind: 'calendar',
-        ref: 'order',
-        timezone: 'Europe/Rome',
-        after: '09:00',
-        before: '18:00',
-        weekdays: [1, 2, 3, 4, 5],
-      },
     },
     {
       id: TEMPORAL_OPERATOR.ABSENCE,
-      description: 'Referenced event must not occur after an anchor during a durable time window.',
+      description: 'Referenced event must remain absent after an anchor for a durable period.',
       fields: ['id', 'kind', 'ref', 'afterRef'],
       oneOf: [['forMs'], ['untilLocalTime', 'timezone']],
-      example: {
-        id: 'no-errors',
-        kind: 'absence',
-        ref: 'error',
-        afterRef: 'deploy',
-        forMs: 600000,
-      },
     },
     {
       id: TEMPORAL_OPERATOR.NOT,
-      description: 'Referenced event must not be present in the current match.',
+      description: 'Referenced event must not be present.',
       fields: ['id', 'kind', 'ref'],
-      example: { id: 'not-cancelled', kind: 'not', ref: 'cancelled' },
     },
     {
       id: TEMPORAL_OPERATOR.UNLESS,
-      description: 'Condition remains valid unless the referenced event is present.',
+      description: 'Condition remains valid unless the referenced event occurs.',
       fields: ['id', 'kind', 'ref'],
-      example: { id: 'unless-blocked', kind: 'unless', ref: 'blocked' },
     },
     {
       id: TEMPORAL_OPERATOR.AFTER,
-      description: 'ref must occur after afterRef in event-time.',
+      description: 'ref must occur after afterRef.',
       fields: ['id', 'kind', 'ref', 'afterRef'],
-      example: { id: 'deploy-after-merge', kind: 'after', ref: 'deploy', afterRef: 'merge' },
     },
     {
       id: TEMPORAL_OPERATOR.UNTIL,
-      description: 'ref must occur no later than beforeRef in event-time.',
+      description: 'ref must occur no later than beforeRef.',
       fields: ['id', 'kind', 'ref', 'beforeRef'],
-      example: { id: 'approve-before-expiry', kind: 'until', ref: 'approval', beforeRef: 'expiry' },
     },
     {
       id: TEMPORAL_OPERATOR.DEBOUNCE,
       description: 'Wait for a quiet period after the latest referenced event.',
       fields: ['id', 'kind', 'ref', 'forMs'],
-      example: { id: 'quiet', kind: 'debounce', ref: 'change', forMs: 300000 },
     },
     {
       id: TEMPORAL_OPERATOR.THRESHOLD,
-      description: 'At least N occurrences of the referenced event must be in the match.',
+      description: 'At least N occurrences are required.',
       fields: ['id', 'kind', 'ref', 'atLeast'],
-      example: { id: 'three-comments', kind: 'threshold', ref: 'comment', atLeast: 3 },
     },
     {
       id: TEMPORAL_OPERATOR.RATE,
-      description: 'At least N referenced events must occur during the configured duration.',
+      description: 'At least N occurrences are required within a duration.',
       fields: ['id', 'kind', 'ref', 'atLeast', 'perMs'],
-      example: { id: 'order-spike', kind: 'rate', ref: 'order', atLeast: 5, perMs: 600000 },
     },
     {
       id: TEMPORAL_OPERATOR.DISTINCT,
-      description: 'At least N distinct values at path must appear across referenced events.',
+      description: 'At least N distinct values are required.',
       fields: ['id', 'kind', 'ref', 'path', 'atLeast'],
-      example: { id: 'three-customers', kind: 'distinct', ref: 'order', path: 'customer', atLeast: 3 },
     },
   ]),
+
   pattern: Object.freeze([
     {
       id: 'event',
-      description: 'Bind one discovered event alias into the pattern.',
+      description: 'Bind one discovered event alias.',
       example: { kind: 'event', ref: 'order' },
     },
     {
       id: 'allOf',
       description: 'Nested conjunction of child patterns.',
-      example: { kind: 'allOf', children: [{ kind: 'event', ref: 'a' }, { kind: 'event', ref: 'b' }] },
     },
     {
       id: 'anyOf',
       description: 'Nested disjunction of child patterns.',
-      example: { kind: 'anyOf', children: [{ kind: 'event', ref: 'a' }, { kind: 'event', ref: 'b' }] },
     },
     {
       id: 'sequence',
       description: 'Ordered child patterns with explicit contiguity.',
       contiguity: ['next', 'followedBy', 'followedByAny'],
-      example: {
-        kind: 'sequence',
-        contiguity: 'followedBy',
-        children: [{ kind: 'event', ref: 'a' }, { kind: 'event', ref: 'b' }],
-      },
     },
     {
       id: 'repeat',
-      description: 'Quantifier with min/max and greedy/lazy mode. Expresses *, +, exactly, ranges and atLeast.',
-      example: {
-        kind: 'repeat',
-        child: { kind: 'event', ref: 'failure' },
-        min: 2,
-        max: 5,
-        mode: 'greedy',
-      },
+      description: 'Quantifier with min/max and greedy/lazy mode; expresses *, +, exactly, ranges and atLeast.',
+      fields: ['child', 'min'],
+      optionalFields: ['max', 'mode'],
     },
     {
       id: 'optional',
-      description: 'Optional child pattern, greedy or lazy.',
-      example: { kind: 'optional', child: { kind: 'event', ref: 'ticket' }, mode: 'greedy' },
+      description: 'Optional child pattern with greedy/lazy preference.',
+      fields: ['child'],
+      optionalFields: ['mode'],
     },
     {
       id: 'notNext',
@@ -311,7 +262,8 @@ export const TRIGGER_LANGUAGE_CATALOG = Object.freeze({
     },
     {
       id: 'notFollowedBy',
-      description: 'Durable negative look-ahead over a bounded event-time interval.',
+      description: 'Durable bounded negative look-ahead.',
+      fields: ['id', 'child', 'forbidden', 'withinMs'],
     },
     {
       id: 'window',
@@ -323,27 +275,27 @@ export const TRIGGER_LANGUAGE_CATALOG = Object.freeze({
     },
     {
       id: 'aggregate',
-      description: 'Filter a nested pattern using an aggregate value.',
+      description: 'Filter a nested pattern using an aggregate.',
     },
     {
       id: 'state',
-      description: 'Detect changes, deltas, threshold crossings and stable periods.',
+      description: 'Detect state changes, deltas, crossings or stable periods.',
     },
     {
       id: 'semantic',
-      description: 'First-class semantic predicate evaluated through SemanticEvaluator; TypeSafe Jev is the bundled optional implementation.',
+      description: 'Vendor-neutral semantic predicate evaluated through SemanticEvaluator; Jev is optional.',
     },
     {
       id: 'calendar',
-      description: 'Calendar/timezone constraint as a v2 pattern node.',
+      description: 'Calendar/timezone filter as a v2 wrapper node.',
     },
     {
       id: 'absence',
-      description: 'Durable absence condition as a v2 pattern node.',
+      description: 'Durable absence condition as a v2 wrapper node.',
     },
     {
       id: 'notPresent',
-      description: 'Require an event alias to be absent from the active partition buffer.',
+      description: 'Require an alias to be absent from the active partition buffer.',
     },
     {
       id: 'after',
@@ -363,29 +315,49 @@ export const TRIGGER_LANGUAGE_CATALOG = Object.freeze({
     },
     {
       id: 'rate',
-      description: 'Require at least N occurrences in a duration.',
+      description: 'Require at least N occurrences within a duration.',
     },
     {
       id: 'distinct',
-      description: 'Require at least N distinct payload values.',
+      description: 'Require at least N distinct values.',
     },
   ]),
+
   windows: Object.freeze([
     { id: 'within', description: 'Maximum event-time span.', fields: ['sizeMs'] },
     { id: 'sliding', description: 'Sliding event-time window.', fields: ['sizeMs'] },
     { id: 'tumbling', description: 'Non-overlapping fixed event-time windows.', fields: ['sizeMs'], optionalFields: ['offsetMs'] },
-    { id: 'hopping', description: 'Overlapping fixed windows.', fields: ['sizeMs', 'hopMs'], optionalFields: ['offsetMs'] },
-    { id: 'session', description: 'Sessionize events by maximum inactivity gap.', fields: ['gapMs'] },
-    { id: 'count', description: 'Bound a candidate by stream position count.', fields: ['size'] },
+    { id: 'hopping', description: 'Overlapping fixed event-time windows.', fields: ['sizeMs', 'hopMs'], optionalFields: ['offsetMs'] },
+    { id: 'session', description: 'Sessionize by maximum inactivity gap.', fields: ['gapMs'] },
+    { id: 'count', description: 'Bound a candidate by stream-position count.', fields: ['size'] },
   ]),
+
   aggregates: Object.freeze([
-    ...['sum', 'avg', 'min', 'max', 'count', 'countDistinct', 'first', 'last', 'nth', 'stddev', 'percentile']
-      .map((id) => ({ id, description: `CEP aggregate ${id}.` })),
+    { id: 'sum', description: 'Sum numeric values.' },
+    { id: 'avg', description: 'Average numeric values.' },
+    { id: 'min', description: 'Minimum numeric value.' },
+    { id: 'max', description: 'Maximum numeric value.' },
+    { id: 'count', description: 'Count occurrences.' },
+    { id: 'countDistinct', description: 'Count distinct values.' },
+    { id: 'first', description: 'First value in event-time order.' },
+    { id: 'last', description: 'Last value in event-time order.' },
+    { id: 'nth', description: 'Nth value in event-time order.' },
+    { id: 'stddev', description: 'Population standard deviation.' },
+    { id: 'percentile', description: 'Interpolated percentile.' },
   ]),
+
   state: Object.freeze([
-    ...['changed', 'changedFrom', 'increasedBy', 'decreasedBy', 'delta', 'percentChange', 'stableFor', 'crossesAbove', 'crossesBelow']
-      .map((id) => ({ id, description: `State transition operator ${id}.` })),
+    { id: 'changed', description: 'Value changed between the latest two occurrences.' },
+    { id: 'changedFrom', description: 'Value changed from one explicit value to another.' },
+    { id: 'increasedBy', description: 'Numeric increase satisfies a comparator.' },
+    { id: 'decreasedBy', description: 'Numeric decrease satisfies a comparator.' },
+    { id: 'delta', description: 'Numeric delta satisfies a comparator.' },
+    { id: 'percentChange', description: 'Percentage change satisfies a comparator.' },
+    { id: 'stableFor', description: 'Value remained stable for a duration.' },
+    { id: 'crossesAbove', description: 'Value crossed upward through a threshold.' },
+    { id: 'crossesBelow', description: 'Value crossed downward through a threshold.' },
   ]),
+
   selection: Object.freeze([
     {
       id: 'overlap',
@@ -403,37 +375,46 @@ export const TRIGGER_LANGUAGE_CATALOG = Object.freeze({
       description: 'Quantifier preference when multiple cardinalities are valid.',
     },
   ]),
+
   semantic: Object.freeze([
     {
       id: 'semantic',
-      description: 'Vendor-neutral semantic predicate. Uses the configured SemanticEvaluator; Jev is optional/default when TYPESAFE_API_KEY is present.',
+      description: 'First-class semantic predicate. The configured SemanticEvaluator executes it; TypeSafe Jev is the bundled optional evaluator.',
       fields: ['id', 'child', 'refs', 'instruction', 'input', 'matchThreshold', 'rejectThreshold'],
       optionalFields: ['uncertain', 'execution'],
     },
   ]),
+
   correlation: Object.freeze([
     {
       id: 'same_value',
-      description: 'Deterministically correlate events by equal values at selected payload paths.',
+      description: 'Legacy deterministic same-value correlation.',
       authoringField: 'correlateBy',
     },
     {
       id: 'semantic',
-      description: 'Use the configured semantic evaluator when deterministic keys are insufficient.',
+      description: 'Legacy semantic-correlation compatibility field.',
       authoringField: 'semanticCorrelation',
     },
+    {
+      id: 'partitionBy',
+      description: 'Pattern AST v2 partitions stream state by one or more named dimensions.',
+      authoringField: 'patternV2.partitionBy',
+    },
   ]),
+
   timing: Object.freeze([
     {
       id: 'withinMs',
-      description: 'Maximum event-time span of one composite match.',
+      description: 'Global bounded retention / maximum pattern horizon.',
     },
     {
       id: 'allowedLatenessMs',
-      description: 'Bounded tolerance for out-of-order event delivery before the event-time watermark advances.',
+      description: 'Bounded tolerance for out-of-order event delivery.',
       authoringPath: 'eventTime.allowedLatenessMs',
     },
   ]),
+
   lifecycle: Object.freeze([
     { id: 'oneShot', description: 'Complete after the first delivered effect.' },
     { id: 'maxFirings', description: 'Complete after N delivered effects.' },
@@ -474,227 +455,6 @@ export function describeTriggerLanguage(input: {
     planner: 'trigger_plan',
     preferredAuthoring: 'TriggerPlanInput.patternV2',
     canonicalRepresentation: 'CompositeTriggerDefinition + PatternAstV2',
-  };
-
-  for (const key of categories) {
-    const entries = TRIGGER_LANGUAGE_CATALOG[key];
-    const filtered = operator
-      ? entries.filter((entry) => entry.id === operator)
-      : entries;
-    result[key] = filtered;
-  }
-
-  return result;
-}
- },
-    },
-    {
-      id: PREDICATE_OPERATOR.IN,
-      description: 'Field equals one of the supplied scalar values.',
-      fields: ['path', 'value'],
-      valueType: 'scalar[]',
-      example: { path: 'status', op: 'in', value: ['open', 'pending'] },
-    },
-    {
-      id: PREDICATE_OPERATOR.EXISTS,
-      description: 'Field presence must match the supplied boolean.',
-      fields: ['path', 'value'],
-      valueType: 'boolean',
-      example: { path: 'customerId', op: 'exists', value: true },
-    },
-    {
-      id: PREDICATE_OPERATOR.GT,
-      description: 'Numeric field is greater than the supplied number.',
-      fields: ['path', 'value'],
-      valueType: 'number',
-      example: { path: 'grand_total', op: 'gt', value: 10000 },
-    },
-    {
-      id: PREDICATE_OPERATOR.GTE,
-      description: 'Numeric field is greater than or equal to the supplied number.',
-      fields: ['path', 'value'],
-      valueType: 'number',
-      example: { path: 'grand_total', op: 'gte', value: 10000 },
-    },
-    {
-      id: PREDICATE_OPERATOR.LT,
-      description: 'Numeric field is less than the supplied number.',
-      fields: ['path', 'value'],
-      valueType: 'number',
-      example: { path: 'stock', op: 'lt', value: 10 },
-    },
-    {
-      id: PREDICATE_OPERATOR.LTE,
-      description: 'Numeric field is less than or equal to the supplied number.',
-      fields: ['path', 'value'],
-      valueType: 'number',
-      example: { path: 'stock', op: 'lte', value: 10 },
-    },
-  ]),
-  composition: Object.freeze([
-    {
-      id: COMPOSITION_OPERATOR.ALL,
-      canonicalKind: 'allOf',
-      description: 'All referenced events must satisfy the trigger.',
-      minEvents: 1,
-      example: { match: 'all' },
-    },
-    {
-      id: COMPOSITION_OPERATOR.ANY,
-      canonicalKind: 'anyOf',
-      description: 'Any referenced event may satisfy the trigger.',
-      minEvents: 1,
-      example: { match: 'any' },
-    },
-    {
-      id: COMPOSITION_OPERATOR.SEQUENCE,
-      canonicalKind: 'sequence',
-      description: 'Referenced events must occur in event-time order.',
-      minEvents: 2,
-      example: { match: 'sequence' },
-    },
-    {
-      id: COMPOSITION_OPERATOR.COUNT,
-      canonicalKind: 'count',
-      description: 'One referenced event must occur at least N times.',
-      minEvents: 1,
-      example: { match: { kind: 'count', eventId: 'comment', atLeast: 3 } },
-    },
-  ]),
-  temporal: Object.freeze([
-    {
-      id: TEMPORAL_OPERATOR.CALENDAR,
-      description: 'Referenced event must fall inside a calendar/timezone constraint.',
-      fields: ['id', 'kind', 'ref', 'timezone'],
-      optionalFields: ['before', 'after', 'weekdays', 'dates', 'dateRange', 'dayOfMonth'],
-      example: {
-        id: 'business-hours',
-        kind: 'calendar',
-        ref: 'order',
-        timezone: 'Europe/Rome',
-        after: '09:00',
-        before: '18:00',
-        weekdays: [1, 2, 3, 4, 5],
-      },
-    },
-    {
-      id: TEMPORAL_OPERATOR.ABSENCE,
-      description: 'Referenced event must not occur after an anchor during a durable time window.',
-      fields: ['id', 'kind', 'ref', 'afterRef'],
-      oneOf: [['forMs'], ['untilLocalTime', 'timezone']],
-      example: {
-        id: 'no-errors',
-        kind: 'absence',
-        ref: 'error',
-        afterRef: 'deploy',
-        forMs: 600000,
-      },
-    },
-    {
-      id: TEMPORAL_OPERATOR.NOT,
-      description: 'Referenced event must not be present in the current match.',
-      fields: ['id', 'kind', 'ref'],
-      example: { id: 'not-cancelled', kind: 'not', ref: 'cancelled' },
-    },
-    {
-      id: TEMPORAL_OPERATOR.UNLESS,
-      description: 'Condition remains valid unless the referenced event is present.',
-      fields: ['id', 'kind', 'ref'],
-      example: { id: 'unless-blocked', kind: 'unless', ref: 'blocked' },
-    },
-    {
-      id: TEMPORAL_OPERATOR.AFTER,
-      description: 'ref must occur after afterRef in event-time.',
-      fields: ['id', 'kind', 'ref', 'afterRef'],
-      example: { id: 'deploy-after-merge', kind: 'after', ref: 'deploy', afterRef: 'merge' },
-    },
-    {
-      id: TEMPORAL_OPERATOR.UNTIL,
-      description: 'ref must occur no later than beforeRef in event-time.',
-      fields: ['id', 'kind', 'ref', 'beforeRef'],
-      example: { id: 'approve-before-expiry', kind: 'until', ref: 'approval', beforeRef: 'expiry' },
-    },
-    {
-      id: TEMPORAL_OPERATOR.DEBOUNCE,
-      description: 'Wait for a quiet period after the latest referenced event.',
-      fields: ['id', 'kind', 'ref', 'forMs'],
-      example: { id: 'quiet', kind: 'debounce', ref: 'change', forMs: 300000 },
-    },
-    {
-      id: TEMPORAL_OPERATOR.THRESHOLD,
-      description: 'At least N occurrences of the referenced event must be in the match.',
-      fields: ['id', 'kind', 'ref', 'atLeast'],
-      example: { id: 'three-comments', kind: 'threshold', ref: 'comment', atLeast: 3 },
-    },
-    {
-      id: TEMPORAL_OPERATOR.RATE,
-      description: 'At least N referenced events must occur during the configured duration.',
-      fields: ['id', 'kind', 'ref', 'atLeast', 'perMs'],
-      example: { id: 'order-spike', kind: 'rate', ref: 'order', atLeast: 5, perMs: 600000 },
-    },
-    {
-      id: TEMPORAL_OPERATOR.DISTINCT,
-      description: 'At least N distinct values at path must appear across referenced events.',
-      fields: ['id', 'kind', 'ref', 'path', 'atLeast'],
-      example: { id: 'three-customers', kind: 'distinct', ref: 'order', path: 'customer', atLeast: 3 },
-    },
-  ]),
-  correlation: Object.freeze([
-    {
-      id: 'same_value',
-      description: 'Deterministically correlate events by equal values at selected payload paths.',
-      authoringField: 'correlateBy',
-    },
-    {
-      id: 'semantic',
-      description: 'Use the configured semantic evaluator when deterministic keys are insufficient.',
-      authoringField: 'semanticCorrelation',
-    },
-  ]),
-  timing: Object.freeze([
-    {
-      id: 'withinMs',
-      description: 'Maximum event-time span of one composite match.',
-    },
-    {
-      id: 'allowedLatenessMs',
-      description: 'Bounded tolerance for out-of-order event delivery before the event-time watermark advances.',
-      authoringPath: 'eventTime.allowedLatenessMs',
-    },
-  ]),
-  lifecycle: Object.freeze([
-    { id: 'oneShot', description: 'Complete after the first delivered effect.' },
-    { id: 'maxFirings', description: 'Complete after N delivered effects.' },
-    { id: 'cooldownMs', description: 'Minimum processing-time delay between effects.' },
-    { id: 'expiresAt', description: 'Absolute trigger expiry timestamp.' },
-    { id: 'leaseUntil', description: 'Absolute trigger lease boundary.' },
-    { id: 'completeOnGoal', description: 'Complete lifecycle after goal delivery.' },
-  ]),
-});
-
-export type TriggerLanguageCategory =
-  | 'predicates'
-  | 'composition'
-  | 'temporal'
-  | 'correlation'
-  | 'timing'
-  | 'lifecycle';
-
-export function describeTriggerLanguage(input: {
-  category?: TriggerLanguageCategory;
-  operator?: string;
-} = {}) {
-  const { category, operator } = input;
-  const categories = category
-    ? [category]
-    : (Object.keys(TRIGGER_LANGUAGE_CATALOG)
-        .filter((key) => key !== 'version') as TriggerLanguageCategory[]);
-
-  const result: Record<string, unknown> = {
-    version: TRIGGER_LANGUAGE_VERSION,
-    authoringSurface: 'TriggerPlanInput',
-    planner: 'trigger_plan',
-    canonicalRepresentation: 'CompositeTriggerDefinition',
   };
 
   for (const key of categories) {
