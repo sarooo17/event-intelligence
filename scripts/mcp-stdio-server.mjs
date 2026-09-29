@@ -2,6 +2,8 @@ import { McpServer } from '@modelcontextprotocol/server';
 import { serveStdio } from '@modelcontextprotocol/server/stdio';
 import * as z from 'zod/v4';
 import {
+  TriggerPlanInputSchema,
+  describeTriggerLanguage,
   parseCompositeTriggerDefinition,
 } from '../dist/src/intelligenceProtocol/index.js';
 import {
@@ -57,63 +59,19 @@ function ownerFromEnv(env) {
   };
 }
 
-const predicateInputSchema = z.object({
-  path: z.string().min(1),
-  op: z.enum(['eq', 'neq', 'contains', 'in', 'exists', 'gt', 'gte', 'lt', 'lte']),
-  value: z.unknown().optional(),
-});
+const triggerPlanInputSchema = TriggerPlanInputSchema;
 
-const triggerPlanInputSchema = z.object({
-  triggerId: z.string().min(1).optional(),
-  version: z.string().min(1).optional(),
-  description: z.string().max(500).optional(),
-  events: z.array(z.object({
-    id: z.string().min(1).optional(),
-    event: z.string().min(1),
-    serverId: z.string().min(1).optional(),
-    arguments: z.record(z.string(), z.unknown()).optional(),
-    where: z.array(predicateInputSchema).optional(),
-  })).min(1),
-  match: z.union([
-    z.enum(['all', 'any', 'sequence']),
-    z.object({
-      kind: z.literal('count'),
-      eventId: z.string().min(1),
-      atLeast: z.number().int().min(1),
-    }),
+const triggerLanguageDescribeInputSchema = z.object({
+  category: z.enum([
+    'predicates',
+    'composition',
+    'temporal',
+    'correlation',
+    'timing',
+    'lifecycle',
   ]).optional(),
-  withinMs: z.number().int().positive().optional(),
-  eventTime: z.object({
-    allowedLatenessMs: z.number().int().nonnegative().optional(),
-  }).optional(),
-  lifecycle: z.object({
-    oneShot: z.boolean().optional(),
-    maxFirings: z.number().int().min(1).optional(),
-    cooldownMs: z.number().int().nonnegative().optional(),
-    expiresAt: z.string().optional(),
-    leaseUntil: z.string().optional(),
-    completeOnGoal: z.boolean().optional(),
-  }).optional(),
-  conditionOnly: z.boolean().optional(),
-  target: z.object({
-    runtime: z.string().min(1),
-    kind: z.enum(['goal', 'session', 'conversation', 'task', 'spawn_template']),
-    id: z.string().min(1),
-  }).optional(),
-  continuation: z.object({
-    instruction: z.string().min(1).max(4000),
-    contextPolicy: z.object({
-      evidence: z.enum(['matched_events', 'refs_only']).optional(),
-      maxEvents: z.number().int().min(1).max(50).optional(),
-      includeData: z.boolean().optional(),
-    }).optional(),
-  }).optional(),
-  correlateBy: z.array(z.object({
-    eventId: z.string().min(1),
-    path: z.string().min(1),
-  })).min(2).optional(),
-  semanticCorrelation: z.record(z.string(), z.unknown()).optional(),
-});
+  operator: z.string().min(1).optional(),
+}).strict();
 
 function registerReadTools(server, runtime) {
   server.registerTool(
@@ -132,6 +90,22 @@ function registerReadTools(server, runtime) {
             ...(connectionIds ? { connectionIds } : {}),
           }),
         });
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'trigger_language_describe',
+    {
+      description:
+        'Describe the public Event Intelligence trigger authoring language. Use this when you need to discover supported predicates, composition, temporal, correlation, timing, or lifecycle operators before planning a trigger.',
+      inputSchema: triggerLanguageDescribeInputSchema,
+    },
+    async (input) => {
+      try {
+        return jsonResult(describeTriggerLanguage(input));
       } catch (error) {
         return errorResult(error);
       }
@@ -460,7 +434,7 @@ export async function buildEventIntelligenceMcpServer({
     },
     {
       instructions:
-        'Use Event Intelligence to discover event sources, inspect/simulate durable trigger programs, and govern continuations. The agent authors structured trigger definitions using the discovered source schemas. Persistent mutations are unavailable unless the operator enables MCP_WRITE_ENABLED=true, and each mutation requires confirmationId.',
+        'Use Event Intelligence to discover event sources and the trigger authoring language, plan/inspect/simulate durable trigger programs, and govern continuations. Prefer event_sources_list plus trigger_language_describe when needed, then author through trigger_plan instead of raw canonical definitions. Persistent mutations are unavailable unless the operator enables MCP_WRITE_ENABLED=true, and each mutation requires confirmationId.',
     },
   );
 
