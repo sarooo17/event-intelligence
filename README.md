@@ -19,7 +19,7 @@ An agent can express an intent such as:
 
 > When this PR is merged, the production deploy succeeds, and no error is observed for 10 minutes, wake this task and review the release.
 
-Event Intelligence persists the future condition independently of the model, waits for the world to satisfy it, and wakes the host only when the condition has an activation target. Conditions may also exist without an agent continuation and feed derived-event composition.
+Event Intelligence persists the future condition independently of the model, waits for the world to satisfy it, and wakes the host only when the condition has an activation target. Conditions may also exist without an agent continuation; higher-level facts are composed separately through derived-event triggers.
 
 ## Embed it in an existing agent host
 
@@ -335,7 +335,9 @@ The v0.4 acceptance suite verifies:
 
 A separate live regression also verified real GitHub webhook ingress into the MCP EventOccurrence / composite fan-in path.
 
-## Standalone reference service
+## Reference/debug service
+
+The HTTP service remains useful for local development, conformance work and provider-native regression tests. It is **not** the primary integration model and does not replace the embedded host-owned package path above.
 
 ### Requirements
 
