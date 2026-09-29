@@ -7,6 +7,8 @@
 - preserve host `receivedAt` separately from provider `occurredAt` through correlation evidence, derived lineage and activation hydration;
 - sequence and window evaluation no longer depend on delivery order;
 - partial matches are selected by compatible event-time span and can be re-anchored when an earlier event arrives late;
+- add explicit `eventTime.allowedLatenessMs` watermarks for bounded late-event tolerance;
+- events older than the watermark may finish retained compatible partials but cannot seed stale windows;
 - late events outside `withinMs` are isolated instead of creating false composite matches.
 
 ### Trigger composition
