@@ -421,6 +421,8 @@ Normal event windows use event `occurredAt`; MCP ingress also preserves host `re
 
 Out-of-order events are matched against compatible event-time windows. A late event may re-anchor a partial match to an earlier `occurredAt` only when the complete event-time span still fits `withinMs`; otherwise it starts a separate partial window and cannot create a false sequence.
 
+Triggers may set `eventTime.allowedLatenessMs` (default `0`). EI maintains an event-time watermark per trigger/correlation stream: old partial windows are retained until their expiry falls behind `maxObservedEventTime - allowedLatenessMs`. An event older than the watermark can still complete a retained compatible partial, but cannot seed a new stale window.
+
 Absence/deadline progression uses Event Intelligence processing time. This separation is explicit and tested.
 
 <p align="center">
