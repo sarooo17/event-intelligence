@@ -246,6 +246,9 @@ export async function createEventIntelligenceHost({
     planTrigger(input) {
       return runtime.triggerPlanner.plan(input);
     },
+    describeTriggerLanguage(input = {}) {
+      return describeTriggerLanguage(input);
+    },
     hydrateWake(wakeId) {
       return runtime.activationHydrator.hydrateWake(wakeId);
     },
