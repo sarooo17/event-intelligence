@@ -258,9 +258,11 @@ function evaluateValue(
     return event ? Date.parse(event.occurredAt) : undefined;
   }
 
-  const args = value.args.map((arg) => evaluateValue(arg, candidate));
+  const args = value.args.map(
+    (arg: PatternArithmeticValue) => evaluateValue(arg, candidate),
+  );
   const numbers = args.map(numeric);
-  if (numbers.some((item) => item === null)) return undefined;
+  if (numbers.some((item: number | null) => item === null)) return undefined;
   const resolved = numbers as number[];
 
   if (value.op === 'abs') return Math.abs(resolved[0]!);
@@ -311,7 +313,9 @@ function compareValue(
   }
 
   if (node.op === 'in' || node.op === 'notIn') {
-    const present = (node.values ?? []).some((value) => value === actual);
+    const present = (node.values ?? []).some(
+      (value: unknown) => value === actual,
+    );
     return node.op === 'in' ? present : !present;
   }
 
