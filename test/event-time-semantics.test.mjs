@@ -125,7 +125,7 @@ test('allowed lateness keeps a compatible older partial behind a newer event', a
   }
 });
 
-test('an event outside the event-time window cannot create a false sequence', async () => {
+test('zero lateness drops stale events instead of creating a false sequence', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'ei-event-time-window-'));
   try {
     const store = new PersistentEventStore(dir);
@@ -159,12 +159,13 @@ test('an event outside the event-time window cannot create a false sequence', as
       '2026-09-30T10:03:00.000Z',
       '2026-09-30T10:12:00.000Z',
     ));
-    assert.equal(compatibleB[0].matched, true);
-    assert.equal(compatibleB[0].match.openedAt, '2026-09-30T10:00:00.000Z');
-    assert.equal(compatibleB[0].match.expiresAt, '2026-09-30T10:05:00.000Z');
-    assert.deepEqual(
-      compatibleB[0].match.sourceEvents.map((event) => event.sourceEventId).sort(),
-      ['a-old', 'b-compatible'],
+    assert.equal(tooOld[0].match, null);
+    assert.equal(compatibleB[0].matched, false);
+    assert.equal(compatibleB[0].match, null);
+    assert.equal(
+      store.listTriggerMatches('window-isolation')
+        .filter((match) => match.status === 'matched').length,
+      0,
     );
   } finally {
     await rm(dir, { recursive: true, force: true });
