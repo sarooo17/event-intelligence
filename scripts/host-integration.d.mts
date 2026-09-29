@@ -56,6 +56,8 @@ export interface HostMcpConnectionOptions {
   maxPollBatches?: number;
   /** Prefer one advertised delivery mode when the host can provide it. */
   preferredDelivery?: 'poll' | 'push' | 'webhook';
+  /** Versioned MCP Events wire profile. Defaults to auto/current experimental snapshot. */
+  compatibilityProfile?: 'auto' | 'experimental-extension-2026-09-25' | string;
   /** Host-owned adapter for events/stream delivery. */
   openEventStream?: HostMcpEventDeliveryOpener;
   /** Host-owned adapter for webhook subscription/receiver delivery. */
@@ -154,6 +156,7 @@ export function createHostMcpEventsConnection(
   maxEvents: number;
   maxPollBatches: number;
   preferredDelivery: 'poll' | 'push' | 'webhook' | null;
+  compatibilityProfile: string;
   openEventStream: HostMcpEventDeliveryOpener | null;
   createWebhookSubscription: HostMcpEventDeliveryOpener | null;
 };
