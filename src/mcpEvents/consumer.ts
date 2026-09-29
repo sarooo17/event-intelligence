@@ -12,6 +12,7 @@ export async function mcpOccurrenceToCorrelatableEvent(
     provider?: string;
     serverId?: string;
     subscriptionArguments?: Record<string, unknown>;
+    receivedAt?: string;
   },
 ): Promise<CorrelatableEvent> {
   return CorrelatableEventSchema.parse({
@@ -19,6 +20,7 @@ export async function mcpOccurrenceToCorrelatableEvent(
     sourceEventId: event.eventId,
     name: event.name,
     occurredAt: event.timestamp,
+    ...(input.receivedAt ? { receivedAt: input.receivedAt } : {}),
     ...(input.provider ? { provider: input.provider } : {}),
     ...(input.serverId ? { serverId: input.serverId } : {}),
     subscriptionArguments: input.subscriptionArguments ?? {},
