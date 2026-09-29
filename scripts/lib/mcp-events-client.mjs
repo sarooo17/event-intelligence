@@ -596,12 +596,18 @@ export class McpEventsClientManager {
           clause.event,
           args,
         );
-        if (!desired.has(subscriptionId)) {
+        const consumerRef =
+          `${definition.triggerId}@${definition.version}:${clause.id}`;
+        const existing = desired.get(subscriptionId);
+        if (existing) {
+          existing.consumerRefs.push(consumerRef);
+        } else {
           desired.set(subscriptionId, {
             subscriptionId,
             eventName: clause.event,
             arguments: args,
             descriptor,
+            consumerRefs: [consumerRef],
           });
         }
       }
@@ -685,6 +691,7 @@ export class McpEventsClientManager {
         delivery: 'poll',
         status: 'scheduled',
         accepted: 0,
+        consumerCount: subscription.consumerRefs.length,
         cursor: current.cursor,
         nextPollAt: current.nextPollAt,
       };
@@ -759,6 +766,7 @@ export class McpEventsClientManager {
       delivery: 'poll',
       status: 'ok',
       accepted,
+      consumerCount: subscription.consumerRefs.length,
       cursor,
       truncated,
       hasMore,
@@ -782,6 +790,7 @@ export class McpEventsClientManager {
         delivery,
         status: 'active',
         accepted: existing.accepted,
+        consumerCount: subscription.consumerRefs.length,
       };
     }
     if (existing) await this.closeSession(subscription.subscriptionId);
@@ -924,6 +933,7 @@ export class McpEventsClientManager {
       delivery,
       status: 'active',
       accepted,
+      consumerCount: subscription.consumerRefs.length,
     };
   }
 
@@ -983,6 +993,7 @@ export class McpEventsClientManager {
           status: 'delivery_not_supported',
           delivery: null,
           accepted: 0,
+          consumerCount: subscription.consumerRefs.length,
         });
         continue;
       }
