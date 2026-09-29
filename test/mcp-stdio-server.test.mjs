@@ -66,6 +66,28 @@ test('MCP stdio adapter exposes read-only Event Intelligence tools by default', 
       'wake_hydrate',
     ]);
 
+    const triggerPlanTool = tools.find((tool) => tool.name === 'trigger_plan');
+    assert.ok(triggerPlanTool);
+    const triggerPlanSchema = JSON.stringify(triggerPlanTool.inputSchema);
+    for (const operator of [
+      'calendar',
+      'absence',
+      'not',
+      'unless',
+      'after',
+      'until',
+      'debounce',
+      'threshold',
+      'rate',
+      'distinct',
+    ]) {
+      assert.match(
+        triggerPlanSchema,
+        new RegExp(`"${operator}"`),
+        `trigger_plan schema does not advertise temporal operator ${operator}`,
+      );
+    }
+
     const status = await session.client.callTool({
       name: 'runtime_status',
       arguments: {},
