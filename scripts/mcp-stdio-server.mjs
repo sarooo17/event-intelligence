@@ -83,6 +83,9 @@ const triggerPlanInputSchema = z.object({
     }),
   ]).optional(),
   withinMs: z.number().int().positive().optional(),
+  eventTime: z.object({
+    allowedLatenessMs: z.number().int().nonnegative().optional(),
+  }).optional(),
   lifecycle: z.object({
     oneShot: z.boolean().optional(),
     maxFirings: z.number().int().min(1).optional(),
