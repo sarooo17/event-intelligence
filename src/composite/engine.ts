@@ -45,6 +45,31 @@ export interface CompositeIngestResult {
   fired: boolean;
 }
 
+function prospectiveEventWindow(
+  record: Pick<TriggerMatchRecord, 'sourceEvents'>,
+  event: CorrelatableEvent,
+  withinMs: number,
+): {
+  openedAt: string;
+  expiresAt: string;
+  spanMs: number;
+  fits: boolean;
+} {
+  const eventTimes = [
+    ...record.sourceEvents.map((source) => Date.parse(source.occurredAt)),
+    Date.parse(event.occurredAt),
+  ];
+  const openedMs = Math.min(...eventTimes);
+  const latestMs = Math.max(...eventTimes);
+  const spanMs = latestMs - openedMs;
+  return {
+    openedAt: new Date(openedMs).toISOString(),
+    expiresAt: new Date(openedMs + withinMs).toISOString(),
+    spanMs,
+    fits: spanMs <= withinMs,
+  };
+}
+
 export class CompositeTriggerEngine {
   private readonly support: CompositeTriggerRuntimeSupport;
 
@@ -257,48 +282,76 @@ export class CompositeTriggerEngine {
     const eventTime = Date.parse(event.occurredAt);
     const key = deterministicKeyForClause(definition, clause.id, event);
 
-    const existing = this.store
+    const partials = this.store
       .listTriggerMatches(definition.triggerId)
       .filter((record) =>
         record.triggerVersion === definition.version &&
-        (record.status === 'partial' || record.status === 'matched') &&
+        record.status === 'partial' &&
         matchesCorrelationKey(record, key),
-      )
-      .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))[0];
+      );
 
-    if (existing?.status === 'matched') {
-      return {
-        triggerId: definition.triggerId,
-        match: existing,
-        matched: true,
-        fired: false,
-      };
-    }
-
-    let record = existing ?? await this.newMatch(definition, key, event);
-
-    if (Date.parse(record.expiresAt) < eventTime) {
+    // A later event-time advances the watermark for old partial matches. Expire
+    // windows that can no longer accept this or any later event, but do not
+    // expire a newer partial merely because an older event arrived late.
+    const staleIds = new Set<string>();
+    for (const candidate of partials) {
+      if (Date.parse(candidate.expiresAt) >= eventTime) continue;
+      staleIds.add(candidate.matchId);
       const expired = TriggerMatchRecordSchema.parse({
-        ...record,
+        ...candidate,
         status: 'expired',
         updatedAt: nowIso,
       });
       await this.store.appendTriggerMatch(expired);
       await this.support.cancelDeadlinesForMatch(expired.matchId);
       await this.support.auditMatch(expired, 'trigger.expired', {
-        reason: 'window_expired_before_event',
+        reason: 'event_time_window_advanced',
+        incomingSourceEventId: event.sourceEventId,
+        incomingOccurredAt: event.occurredAt,
       });
-      record = await this.newMatch(definition, key, event);
     }
+
+    const compatible = partials
+      .filter((record) => !staleIds.has(record.matchId))
+      .map((record) => ({
+        record,
+        window: prospectiveEventWindow(record, event, definition.withinMs),
+      }))
+      .filter(({ window }) => window.fits)
+      .sort((a, b) =>
+        a.window.spanMs - b.window.spanMs ||
+        Date.parse(b.record.updatedAt) - Date.parse(a.record.updatedAt)
+      );
+
+    let record =
+      compatible[0]?.record ??
+      await this.newMatch(definition, key, event);
 
     const duplicate = record.sourceEvents.some(
       (candidate) => sameEventIdentity(candidate, event),
     );
 
     if (!duplicate) {
+      const window = prospectiveEventWindow(
+        record,
+        event,
+        definition.withinMs,
+      );
+      if (!window.fits) {
+        // This can only happen for a newly-created incompatible candidate race.
+        // Keep the existing partial intact and seed a fresh event-time window.
+        record = await this.newMatch(definition, key, event);
+      }
+      const selectedWindow = prospectiveEventWindow(
+        record,
+        event,
+        definition.withinMs,
+      );
       record = TriggerMatchRecordSchema.parse({
         ...record,
         correlationKey: record.correlationKey ?? key,
+        openedAt: selectedWindow.openedAt,
+        expiresAt: selectedWindow.expiresAt,
         updatedAt: nowIso,
         sourceEvents: [
           ...record.sourceEvents,
@@ -312,6 +365,12 @@ export class CompositeTriggerEngine {
       await this.support.auditMatch(record, 'trigger.partial', {
         clauseId: clause.id,
         sourceEventId: event.sourceEventId,
+        occurredAt: event.occurredAt,
+        receivedAt: event.receivedAt ?? null,
+        eventTimeWindow: {
+          openedAt: record.openedAt,
+          expiresAt: record.expiresAt,
+        },
       });
       return {
         triggerId: definition.triggerId,
