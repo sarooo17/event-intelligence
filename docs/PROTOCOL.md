@@ -59,7 +59,9 @@ Unbounded joins and arbitrary code predicates are intentionally excluded.
 
 ## Temporal semantics
 
-Normal trigger windows use event time. Source `occurredAt` and host `receivedAt` are separate fields when receive-time is available; delivery order is never treated as event order. Out-of-order events can re-anchor a compatible partial match to an earlier event-time, while an event outside `withinMs` is isolated into another partial window.
+Normal trigger windows use event time. Source `occurredAt` and host `receivedAt` are separate fields when receive-time is available; delivery order is never treated as event order. Out-of-order events can re-anchor a compatible partial match to an earlier event-time.
+
+`eventTime.allowedLatenessMs` defaults to zero and controls the event-time watermark. Partial windows remain eligible until their expiry is behind `maxObservedEventTime - allowedLatenessMs`. Events older than that watermark can complete a retained compatible partial but cannot seed a new stale window.
 
 Absence and durable deadline progression use processing time. Pending deadlines are persisted so a process restart does not erase the wait.
 
