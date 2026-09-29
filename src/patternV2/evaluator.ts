@@ -17,6 +17,7 @@ import type {
   PatternAstV2Definition,
   PatternNodeV2,
   PatternWindow,
+  PatternMeasure,
 } from '../intelligenceProtocol/patternV2Schemas.js';
 
 export interface PatternV2SemanticDecision {
@@ -1088,6 +1089,23 @@ async function evaluateNode(
   }
 
   return output;
+}
+
+export function evaluatePatternMeasure(
+  candidate: PatternV2Candidate,
+  measure: PatternMeasure,
+): unknown {
+  const expression = measure.expression;
+  if (expression.kind === 'aggregate') {
+    return evaluatePatternAggregate(candidate, {
+      function: expression.function,
+      ref: expression.ref,
+      path: expression.path,
+      nth: expression.nth,
+      percentile: expression.percentile,
+    });
+  }
+  return evaluateValue(expression, candidate);
 }
 
 export async function evaluatePatternV2({
