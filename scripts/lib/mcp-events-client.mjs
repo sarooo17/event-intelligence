@@ -8,10 +8,14 @@ import {
   normalizeEventScopeId,
 } from './persistent-event-store.mjs';
 import { assertJsonSchemaValue } from './json-schema.mjs';
+import {
+  MCP_EVENTS_EXTENSION_ID,
+  getMcpEventsCompatibilityProfile,
+  resolveMcpEventsCompatibilityProfile,
+} from './mcp-events-compatibility.mjs';
 
 export { assertJsonSchemaValue } from './json-schema.mjs';
-
-export const MCP_EVENTS_EXTENSION_ID = 'io.modelcontextprotocol/events';
+export { MCP_EVENTS_EXTENSION_ID } from './mcp-events-compatibility.mjs';
 const UnknownResultSchema = z.unknown();
 
 function assertObject(value, message) {
@@ -116,6 +120,10 @@ function normalizeConnection(connection) {
       'maxPollBatches',
     ),
     preferredDelivery,
+    compatibilityProfile:
+      connection.compatibilityProfile === undefined
+        ? 'auto'
+        : String(connection.compatibilityProfile),
     openEventStream:
       typeof connection.openEventStream === 'function'
         ? connection.openEventStream
@@ -148,6 +156,7 @@ export function createHostMcpEventsConnection({
   maxPollBatches = 4,
   scopeId = DEFAULT_EVENT_SCOPE_ID,
   preferredDelivery,
+  compatibilityProfile = 'auto',
   openEventStream,
   createWebhookSubscription,
 } = {}) {
@@ -185,6 +194,7 @@ export function createHostMcpEventsConnection({
     maxPollBatches,
     scopeId,
     preferredDelivery,
+    compatibilityProfile,
     openEventStream,
     createWebhookSubscription,
   });
@@ -284,6 +294,7 @@ export class McpEventsClientManager {
     this.connections = new Map();
     this.now = now;
     this.descriptors = new Map();
+    this.profiles = new Map();
     this.timers = new Map();
     this.lastErrors = new Map();
     this.scopeContexts = new Map();
@@ -364,6 +375,7 @@ export class McpEventsClientManager {
     if (timer) clearTimeout(timer);
     this.timers.delete(connectionId);
     this.descriptors.delete(connectionId);
+    this.profiles.delete(connectionId);
     this.lastErrors.delete(connectionId);
     this.pollInFlight.delete(connectionId);
 
@@ -426,20 +438,16 @@ export class McpEventsClientManager {
 
     const context = await this.scopeContext(connection);
     const capabilities = (await connection.getCapabilities()) ?? {};
-    const extensions =
-      capabilities.extensions &&
-      !Array.isArray(capabilities.extensions) &&
-      typeof capabilities.extensions === 'object'
-        ? capabilities.extensions
-        : {};
-    if (
-      !Object.prototype.hasOwnProperty.call(
-        extensions,
-        MCP_EVENTS_EXTENSION_ID,
-      )
-    ) {
+    const profile = resolveMcpEventsCompatibilityProfile({
+      capabilities,
+      requested: connection.compatibilityProfile,
+    });
+    if (!profile) {
+      const expected = getMcpEventsCompatibilityProfile(
+        connection.compatibilityProfile,
+      );
       const error = new Error(
-        `MCP server ${connectionId} does not advertise ${MCP_EVENTS_EXTENSION_ID}`,
+        `MCP server ${connectionId} does not advertise the ${expected.id} Events profile`,
       );
       error.code = 'MCP_EVENTS_CAPABILITY_UNAVAILABLE';
       throw error;
@@ -451,7 +459,7 @@ export class McpEventsClientManager {
     do {
       const listed = await this.rpc(
         connection,
-        'events/list',
+        profile.listMethod,
         cursor ? { cursor } : {},
       );
       if (!Array.isArray(listed?.events)) {
@@ -514,7 +522,8 @@ export class McpEventsClientManager {
             metadata: {
               transport: 'host-managed-mcp',
               hostManaged: true,
-              extensionId: MCP_EVENTS_EXTENSION_ID,
+              extensionId: profile.extensionId,
+              compatibilityProfile: profile.id,
               ...(normalized._meta ? { descriptorMeta: normalized._meta } : {}),
             },
           },
@@ -527,6 +536,7 @@ export class McpEventsClientManager {
     }
 
     this.descriptors.set(connection.connectionId, descriptors);
+    this.profiles.set(connection.connectionId, profile);
     this.lastErrors.delete(connection.connectionId);
     return descriptors;
   }
@@ -706,7 +716,10 @@ export class McpEventsClientManager {
     let nextPollMs = connection.pollIntervalMs;
 
     do {
-      const result = await this.rpc(connection, 'events/poll', {
+      const profile =
+        this.profiles.get(connection.connectionId) ??
+        getMcpEventsCompatibilityProfile(connection.compatibilityProfile);
+      const result = await this.rpc(connection, profile.pollMethod, {
         name: subscription.eventName,
         arguments: subscription.arguments,
         cursor,
@@ -1133,7 +1146,12 @@ export class McpEventsClientManager {
         scopeId: connection.scopeId,
         serverId: connection.serverId,
         hostManaged: true,
-        extensionId: MCP_EVENTS_EXTENSION_ID,
+        extensionId:
+          this.profiles.get(connection.connectionId)?.extensionId ??
+          MCP_EVENTS_EXTENSION_ID,
+        compatibilityProfile:
+          this.profiles.get(connection.connectionId)?.id ??
+          connection.compatibilityProfile,
         events: (this.descriptors.get(connection.connectionId) || []).map(
           (event) => ({
             name: event.name,
