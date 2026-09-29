@@ -81,6 +81,50 @@ test('out-of-order delivery uses event time and can satisfy a sequence', async (
   }
 });
 
+test('allowed lateness keeps a compatible older partial behind a newer event', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'ei-event-time-lateness-'));
+  try {
+    const store = new PersistentEventStore(dir);
+    await store.init();
+    const engine = new CompositeTriggerEngine(store);
+    await engine.register({
+      ...sequenceCondition('lateness-aware-sequence', 10 * 60 * 1000),
+      eventTime: { allowedLatenessMs: 10 * 60 * 1000 },
+    });
+
+    await engine.ingest(sourceEvent(
+      'b-old',
+      'event.b',
+      '2026-09-30T10:05:00.000Z',
+      '2026-09-30T10:05:01.000Z',
+    ));
+
+    await engine.ingest(sourceEvent(
+      'b-new',
+      'event.b',
+      '2026-09-30T10:20:00.000Z',
+      '2026-09-30T10:20:01.000Z',
+    ));
+
+    const lateA = await engine.ingest(sourceEvent(
+      'a-late',
+      'event.a',
+      '2026-09-30T10:00:00.000Z',
+      '2026-09-30T10:21:00.000Z',
+    ));
+
+    assert.equal(lateA[0].matched, true);
+    assert.deepEqual(
+      lateA[0].match.sourceEvents.map((event) => event.sourceEventId).sort(),
+      ['a-late', 'b-old'],
+    );
+    assert.equal(lateA[0].match.openedAt, '2026-09-30T10:00:00.000Z');
+    assert.equal(lateA[0].match.expiresAt, '2026-09-30T10:10:00.000Z');
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('an event outside the event-time window cannot create a false sequence', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'ei-event-time-window-'));
   try {
