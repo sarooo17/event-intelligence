@@ -8,6 +8,10 @@ import type {
 import type {
   TriggerSourceEvent,
 } from '../intelligenceProtocol/triggerSchemas.js';
+import {
+  localDateTimeToUtc,
+  zonedParts,
+} from '../composite/temporal.js';
 import type {
   PatternArithmeticValue,
   PatternAstV2Definition,
@@ -499,6 +503,94 @@ function windowMatches(
   return false;
 }
 
+function eventsForRef(
+  context: EvaluationContext,
+  ref: string,
+): TriggerSourceEvent[] {
+  return context.events
+    .filter((event) => event.clauseId === ref)
+    .sort(eventOrder);
+}
+
+function latestBoundEvent(
+  candidate: PatternV2Candidate,
+  ref: string,
+): TriggerSourceEvent | null {
+  return [...(candidate.bindings[ref] ?? [])].sort(eventOrder).at(-1) ?? null;
+}
+
+function withBindingEvents(
+  candidate: PatternV2Candidate,
+  ref: string,
+  events: TriggerSourceEvent[],
+  all: TriggerSourceEvent[],
+): PatternV2Candidate {
+  const bindings = cloneBindings(candidate.bindings);
+  const merged = new Map<string, TriggerSourceEvent>();
+  for (const event of [...(bindings[ref] ?? []), ...events]) {
+    merged.set(eventIdentity(event), event);
+  }
+  bindings[ref] = [...merged.values()].sort(eventOrder);
+  return candidateFromBindings(bindings, all, {
+    ...(candidate.pendingUntil
+      ? { pendingUntil: candidate.pendingUntil }
+      : {}),
+    semanticDecisions: [...candidate.semanticDecisions],
+  });
+}
+
+function calendarNodeMatches(
+  node: Extract<PatternNodeV2, { kind: 'calendar' }>,
+  event: TriggerSourceEvent,
+): boolean {
+  const parts = zonedParts(event.occurredAt, node.timezone);
+  const minutes = parts.hour * 60 + parts.minute;
+  const parseClock = (value: string) => {
+    const [hour, minute] = value.split(':').map(Number);
+    return hour! * 60 + minute!;
+  };
+
+  if (node.weekdays && !node.weekdays.includes(parts.weekday)) return false;
+  if (node.dates && !node.dates.includes(parts.date)) return false;
+  if (
+    node.dateRange &&
+    (parts.date < node.dateRange.start || parts.date > node.dateRange.end)
+  ) {
+    return false;
+  }
+  if (node.dayOfMonth && !node.dayOfMonth.includes(parts.day)) return false;
+
+  if (node.before && node.after) {
+    const before = parseClock(node.before);
+    const after = parseClock(node.after);
+    if (after <= before) {
+      return minutes >= after && minutes <= before;
+    }
+    return minutes >= after || minutes <= before;
+  }
+  if (node.before && minutes > parseClock(node.before)) return false;
+  if (node.after && minutes < parseClock(node.after)) return false;
+  return true;
+}
+
+function absenceNodeDueAt(
+  node: Extract<PatternNodeV2, { kind: 'absence' }>,
+  anchor: TriggerSourceEvent,
+): Date {
+  if (node.forMs) {
+    return new Date(Date.parse(anchor.occurredAt) + node.forMs);
+  }
+  const parts = zonedParts(anchor.occurredAt, node.timezone!);
+  const due = localDateTimeToUtc(
+    parts,
+    node.untilLocalTime!,
+    node.timezone!,
+  );
+  return due.getTime() < Date.parse(anchor.occurredAt)
+    ? new Date(anchor.occurredAt)
+    : due;
+}
+
 function stateMatches(
   candidate: PatternV2Candidate,
   node: Extract<PatternNodeV2, { kind: 'state' }>,
@@ -728,6 +820,155 @@ async function evaluateNode(
   if (node.kind === 'window') {
     return (await evaluateNode(node.child, context))
       .filter((candidate) => windowMatches(candidate, node.window));
+  }
+
+  if (node.kind === 'calendar') {
+    return (await evaluateNode(node.child, context))
+      .filter((candidate) => {
+        const event = latestBoundEvent(candidate, node.ref);
+        return event ? calendarNodeMatches(node, event) : false;
+      });
+  }
+
+  if (node.kind === 'notPresent') {
+    const forbidden = eventsForRef(context, node.ref);
+    return (await evaluateNode(node.child, context))
+      .filter(() => forbidden.length === 0);
+  }
+
+  if (node.kind === 'after') {
+    return (await evaluateNode(node.child, context))
+      .filter((candidate) => {
+        const event = latestBoundEvent(candidate, node.ref);
+        const anchor = latestBoundEvent(candidate, node.afterRef);
+        return Boolean(
+          event &&
+          anchor &&
+          Date.parse(event.occurredAt) > Date.parse(anchor.occurredAt),
+        );
+      });
+  }
+
+  if (node.kind === 'until') {
+    return (await evaluateNode(node.child, context))
+      .filter((candidate) => {
+        const event = latestBoundEvent(candidate, node.ref);
+        const boundary = latestBoundEvent(candidate, node.beforeRef);
+        return Boolean(
+          event &&
+          boundary &&
+          Date.parse(event.occurredAt) <= Date.parse(boundary.occurredAt),
+        );
+      });
+  }
+
+  if (node.kind === 'threshold') {
+    const refEvents = eventsForRef(context, node.ref);
+    if (refEvents.length < node.atLeast) return [];
+    return (await evaluateNode(node.child, context))
+      .map((candidate) =>
+        withBindingEvents(
+          candidate,
+          node.ref,
+          refEvents.slice(0, node.atLeast),
+          context.events,
+        )
+      );
+  }
+
+  if (node.kind === 'distinct') {
+    const chosen: TriggerSourceEvent[] = [];
+    const values = new Set<string>();
+    for (const event of eventsForRef(context, node.ref)) {
+      const value = getByPath(event.data, node.path);
+      if (
+        typeof value !== 'string' &&
+        typeof value !== 'number' &&
+        typeof value !== 'boolean'
+      ) {
+        continue;
+      }
+      const key = JSON.stringify(value);
+      if (values.has(key)) continue;
+      values.add(key);
+      chosen.push(event);
+      if (values.size >= node.atLeast) break;
+    }
+    if (values.size < node.atLeast) return [];
+    return (await evaluateNode(node.child, context))
+      .map((candidate) =>
+        withBindingEvents(candidate, node.ref, chosen, context.events)
+      );
+  }
+
+  if (node.kind === 'rate') {
+    const refEvents = eventsForRef(context, node.ref);
+    if (!refEvents.length) return [];
+    const latest = Math.max(
+      context.now.getTime(),
+      ...refEvents.map((event) => Date.parse(event.occurredAt)),
+    );
+    const inWindow = refEvents.filter(
+      (event) => latest - Date.parse(event.occurredAt) <= node.perMs,
+    );
+    if (inWindow.length < node.atLeast) return [];
+    return (await evaluateNode(node.child, context))
+      .map((candidate) =>
+        withBindingEvents(
+          candidate,
+          node.ref,
+          inWindow.slice(-node.atLeast),
+          context.events,
+        )
+      );
+  }
+
+  if (node.kind === 'debounce') {
+    const refEvents = eventsForRef(context, node.ref);
+    const latest = refEvents.at(-1);
+    if (!latest) return [];
+    const dueAt = Date.parse(latest.occurredAt) + node.forMs;
+    return (await evaluateNode(node.child, context))
+      .map((candidate) => {
+        const augmented = withBindingEvents(
+          candidate,
+          node.ref,
+          [latest],
+          context.events,
+        );
+        return {
+          ...augmented,
+          ...(context.now.getTime() < dueAt
+            ? { pendingUntil: new Date(dueAt).toISOString() }
+            : {}),
+        };
+      });
+  }
+
+  if (node.kind === 'absence') {
+    const bases = await evaluateNode(node.child, context);
+    const forbidden = eventsForRef(context, node.ref);
+    const output: PatternV2Candidate[] = [];
+
+    for (const base of bases) {
+      const anchor = latestBoundEvent(base, node.afterRef);
+      if (!anchor) continue;
+      const due = absenceNodeDueAt(node, anchor);
+      const anchorMs = Date.parse(anchor.occurredAt);
+      const blocked = forbidden.some((event) => {
+        const at = Date.parse(event.occurredAt);
+        return at >= anchorMs && at <= due.getTime();
+      });
+      if (blocked) continue;
+      output.push({
+        ...base,
+        ...(context.now.getTime() < due.getTime()
+          ? { pendingUntil: due.toISOString() }
+          : {}),
+      });
+    }
+
+    return output;
   }
 
   if (node.kind === 'notNext') {
