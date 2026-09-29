@@ -41,14 +41,32 @@ export const TriggerPlanInputSchema = z.object({
     leaseUntil: z.string().datetime({ offset: true }).optional(),
     completeOnGoal: z.boolean().optional(),
   }).strict().optional(),
-  target: RuntimeTargetSchema,
-  continuation: ContinuationContractSchema,
+  conditionOnly: z.boolean().default(false),
+  target: RuntimeTargetSchema.optional(),
+  continuation: ContinuationContractSchema.optional(),
   correlateBy: z.array(z.object({
     eventId: Id,
     path: z.string().min(1),
   }).strict()).min(2).optional(),
   semanticCorrelation: SemanticCorrelationSchema.optional(),
-}).strict();
+}).strict().superRefine((value, ctx) => {
+  if (value.conditionOnly) {
+    if (value.target || value.continuation) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'conditionOnly plans cannot declare target or continuation',
+      });
+    }
+    return;
+  }
+
+  if (!value.target || !value.continuation) {
+    ctx.addIssue({
+      code: 'custom',
+      message: 'Agent activation plans require target and continuation',
+    });
+  }
+});
 
 export type TriggerPlanEvent = z.infer<typeof TriggerPlanEventSchema>;
 export type TriggerPlanMatch = z.infer<typeof TriggerPlanMatchSchema>;
