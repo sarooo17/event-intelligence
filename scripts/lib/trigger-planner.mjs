@@ -1,5 +1,6 @@
 import {
   canonicalJson,
+  collectPatternRefs,
   parseCompositeTriggerDefinition,
   parseTriggerPlanInput,
   sha256Hex,
@@ -229,15 +230,49 @@ export class TriggerPlanner {
     });
 
     const refs = clauses.map((clause) => clause.id);
-    validateTemporalConditions(
-      plan.temporal,
-      clauses,
-      resolvedSources,
-      warnings,
-    );
+
+    if (plan.patternV2) {
+      const patternRefs = collectPatternRefs(plan.patternV2.root);
+      for (const ref of patternRefs) {
+        if (!refs.includes(ref)) {
+          const error = new Error(
+            `Pattern AST v2 references unknown event id: ${ref}`,
+          );
+          error.code = 'TRIGGER_PLAN_EVENT_REF_UNKNOWN';
+          throw error;
+        }
+      }
+
+      for (const dimension of plan.patternV2.partitionBy) {
+        for (const field of dimension.fields) {
+          const clauseIndex = clauses.findIndex(
+            (candidate) => candidate.id === field.ref,
+          );
+          if (clauseIndex < 0) {
+            const error = new Error(
+              `Pattern partition references unknown event id: ${field.ref}`,
+            );
+            error.code = 'TRIGGER_PLAN_EVENT_REF_UNKNOWN';
+            throw error;
+          }
+          validatePredicateAgainstSource(
+            resolvedSources[clauseIndex],
+            { path: field.path, op: 'exists', value: true },
+            warnings,
+          );
+        }
+      }
+    } else {
+      validateTemporalConditions(
+        plan.temporal,
+        clauses,
+        resolvedSources,
+        warnings,
+      );
+    }
 
     const correlation = {};
-    if (plan.correlateBy) {
+    if (!plan.patternV2 && plan.correlateBy) {
       for (const field of plan.correlateBy) {
         if (!refs.includes(field.eventId)) {
           const error = new Error(
@@ -262,7 +297,7 @@ export class TriggerPlanner {
         })),
       };
     }
-    if (plan.semanticCorrelation) {
+    if (!plan.patternV2 && plan.semanticCorrelation) {
       correlation.semantic = plan.semanticCorrelation;
     }
 
@@ -272,6 +307,7 @@ export class TriggerPlanner {
         events: plan.events,
         match: plan.match,
         temporal: plan.temporal,
+        patternV2: plan.patternV2 ?? null,
         eventTime: plan.eventTime ?? null,
         conditionOnly: plan.conditionOnly,
         continuation: plan.continuation?.instruction ?? null,
@@ -291,8 +327,11 @@ export class TriggerPlanner {
       conditionOnly: plan.conditionOnly,
       ...(plan.continuation ? { continuation: plan.continuation } : {}),
       clauses,
-      expression: expressionFor(plan.match, refs),
-      temporal: plan.temporal,
+      expression: plan.patternV2
+        ? { kind: 'anyOf', refs }
+        : expressionFor(plan.match, refs),
+      temporal: plan.patternV2 ? [] : plan.temporal,
+      ...(plan.patternV2 ? { patternV2: plan.patternV2 } : {}),
       withinMs: plan.withinMs,
       ...(plan.eventTime ? { eventTime: plan.eventTime } : {}),
       lifecycle: lifecycleFor(plan.lifecycle),
@@ -317,6 +356,7 @@ export class TriggerPlanner {
             where: clause.where,
           })),
           temporal: definition.temporal,
+          patternV2: definition.patternV2 ?? null,
           withinMs: definition.withinMs,
           eventTime: definition.eventTime ?? { allowedLatenessMs: 0 },
         },
