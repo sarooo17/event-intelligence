@@ -100,7 +100,7 @@ test('MCP stdio adapter exposes read-only Event Intelligence tools by default', 
       arguments: { category: 'temporal' },
     });
     assert.equal(language.isError, undefined);
-    assert.equal(language.structuredContent.version, '1');
+    assert.equal(language.structuredContent.version, '2');
     assert.equal(language.structuredContent.temporal.length, 10);
     assert.equal(
       language.structuredContent.temporal.some(
