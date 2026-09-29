@@ -1143,6 +1143,9 @@ export class McpEventsClientManager {
       );
       const store = context?.store ?? this.store;
       const states = store.listMcpClientStates(connection.connectionId);
+      const desired = context
+        ? this.desiredSubscriptions(connection, context)
+        : new Map();
       return {
         connectionId: connection.connectionId,
         scopeId: connection.scopeId,
@@ -1163,6 +1166,8 @@ export class McpEventsClientManager {
               .map((state) => ({
                 subscriptionId: state.subscriptionId,
                 arguments: state.arguments ?? {},
+                consumerCount:
+                  desired.get(state.subscriptionId)?.consumerRefs.length ?? 0,
                 delivery: state.deliveryMode,
                 cursor: state.cursor,
                 nextPollAt: state.nextPollAt ?? null,
