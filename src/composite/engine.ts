@@ -49,6 +49,8 @@ function clauseAccumulatesOccurrences(
   definition: CompositeTriggerDefinition,
   clauseId: string,
 ): boolean {
+  if (definition.correlation?.semantic) return true;
+
   if (
     definition.expression.kind === 'count' &&
     definition.expression.ref === clauseId
@@ -398,10 +400,10 @@ export class CompositeTriggerEngine {
       !accumulatesOccurrences &&
       compatible[0]?.hasClause
     ) {
-      // A repeated occurrence of a non-accumulating clause represents an
-      // alternate candidate window. Preserve the existing partial rather than
-      // widening/re-anchoring it and seed a new candidate with this event.
-      record = undefined;
+      // Repeated non-aggregating occurrences represent alternate paths through
+      // the same partial match. Branch the candidate so the new occurrence can
+      // advance the expression without destroying the pre-existing window.
+      record = await this.branchMatch(definition, record, event);
     }
 
     if (!record && eventTime < watermarkMs) {
@@ -627,6 +629,34 @@ export class CompositeTriggerEngine {
       matched: true,
       fired: false,
     };
+  }
+
+  private async branchMatch(
+    definition: CompositeTriggerDefinition,
+    source: TriggerMatchRecord,
+    event: CorrelatableEvent,
+  ): Promise<TriggerMatchRecord> {
+    const matchId = `tm_${(
+      await sha256Hex(
+        [
+          definition.triggerId,
+          definition.version,
+          source.matchId,
+          event.sourceEventId,
+          'branch',
+        ].join(':'),
+      )
+    ).slice(0, 24)}`;
+
+    return TriggerMatchRecordSchema.parse({
+      ...source,
+      matchId,
+      status: 'partial',
+      updatedAt: this.now().toISOString(),
+      correlationDecision: null,
+      firedWakeId: null,
+      derivedEventIds: [],
+    });
   }
 
   private async newMatch(
