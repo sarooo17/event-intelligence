@@ -472,7 +472,32 @@ export const PatternMeasureSchema = z.object({
       path: z.string().min(1).optional(),
       nth: z.number().int().min(0).optional(),
       percentile: z.number().min(0).max(1).optional(),
-    }).strict(),
+    }).strict().superRefine((value, ctx) => {
+      if (
+        value.function !== 'count' &&
+        !value.path
+      ) {
+        ctx.addIssue({
+          code: 'custom',
+          message: `${value.function} measure requires path`,
+        });
+      }
+      if (value.function === 'nth' && value.nth === undefined) {
+        ctx.addIssue({
+          code: 'custom',
+          message: 'nth measure requires nth',
+        });
+      }
+      if (
+        value.function === 'percentile' &&
+        value.percentile === undefined
+      ) {
+        ctx.addIssue({
+          code: 'custom',
+          message: 'percentile measure requires percentile',
+        });
+      }
+    }),
   ]),
 }).strict();
 
