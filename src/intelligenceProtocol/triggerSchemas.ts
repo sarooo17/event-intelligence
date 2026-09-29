@@ -1,5 +1,10 @@
 import { z } from 'zod';
 import { RuntimeTargetSchema } from './schemas.js';
+import {
+  PatternAstV2DefinitionSchema,
+  PatternMeasureSchema,
+  collectPatternRefs,
+} from './patternV2Schemas.js';
 
 export const COMPOSITE_TRIGGER_PROTOCOL_VERSION = '0.1.0' as const;
 export const COMPOSITE_TRIGGER_SCHEMA_VERSION = 'trigger.v0.1' as const;
@@ -14,8 +19,28 @@ export const StructuredPredicateSchema = z.discriminatedUnion('op', [
   z.object({ path: z.string().min(1), op: z.literal('eq'), value: Scalar }),
   z.object({ path: z.string().min(1), op: z.literal('neq'), value: Scalar }),
   z.object({ path: z.string().min(1), op: z.literal('contains'), value: Scalar }),
+  z.object({ path: z.string().min(1), op: z.literal('startsWith'), value: z.string() }),
+  z.object({ path: z.string().min(1), op: z.literal('endsWith'), value: z.string() }),
+  z.object({
+    path: z.string().min(1),
+    op: z.literal('regex'),
+    value: z.string(),
+    flags: z.string().max(10).optional(),
+  }),
   z.object({ path: z.string().min(1), op: z.literal('in'), value: z.array(Scalar).min(1) }),
+  z.object({ path: z.string().min(1), op: z.literal('notIn'), value: z.array(Scalar).min(1) }),
+  z.object({
+    path: z.string().min(1),
+    op: z.literal('between'),
+    value: z.tuple([Scalar, Scalar]),
+  }),
   z.object({ path: z.string().min(1), op: z.literal('exists'), value: z.boolean().default(true) }),
+  z.object({ path: z.string().min(1), op: z.literal('isNull'), value: z.boolean().default(true) }),
+  z.object({
+    path: z.string().min(1),
+    op: z.literal('type'),
+    value: z.enum(['string', 'number', 'boolean', 'null', 'object', 'array']),
+  }),
   z.object({ path: z.string().min(1), op: z.literal('gt'), value: z.number() }),
   z.object({ path: z.string().min(1), op: z.literal('gte'), value: z.number() }),
   z.object({ path: z.string().min(1), op: z.literal('lt'), value: z.number() }),
@@ -123,6 +148,7 @@ export const DerivedEventDefinitionSchema = z.object({
   contractVersion: z.string().min(1).max(50),
   projections: z.array(DerivedEventProjectionSchema).max(32).default([]),
   constants: z.record(z.string(), Scalar).default({}),
+  measures: z.array(PatternMeasureSchema).max(32).default([]),
 }).strict();
 
 export const DerivedEventEvidenceRefSchema = z.object({
@@ -212,6 +238,7 @@ export const CompositeTriggerDefinitionSchema = z.object({
   clauses: z.array(TriggerClauseSchema).min(1),
   expression: TriggerExpressionSchema,
   temporal: z.array(TemporalConditionSchema).default([]),
+  patternV2: PatternAstV2DefinitionSchema.optional(),
   eventTime: EventTimePolicySchema.optional(),
   lifecycle: TriggerLifecyclePolicySchema.default({
     oneShot: false,
@@ -326,6 +353,29 @@ export const CompositeTriggerDefinitionSchema = z.object({
         code: 'custom',
         message: 'Derived event constant key _derived is reserved',
       });
+    }
+  }
+
+  if (value.patternV2) {
+    const patternRefs = collectPatternRefs(value.patternV2.root);
+    for (const ref of patternRefs) {
+      if (!ids.has(ref)) {
+        ctx.addIssue({
+          code: 'custom',
+          message: `Pattern AST v2 references unknown clause: ${ref}`,
+        });
+      }
+    }
+
+    for (const dimension of value.patternV2.partitionBy) {
+      for (const field of dimension.fields) {
+        if (!ids.has(field.ref)) {
+          ctx.addIssue({
+            code: 'custom',
+            message: `Pattern partition ${dimension.key} references unknown clause: ${field.ref}`,
+          });
+        }
+      }
     }
   }
 
