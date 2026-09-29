@@ -81,6 +81,60 @@ test('out-of-order delivery uses event time and can satisfy a sequence', async (
   }
 });
 
+test('repeated sequence clauses preserve alternate valid windows', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'ei-event-time-alternates-'));
+  try {
+    const store = new PersistentEventStore(dir);
+    await store.init();
+    const engine = new CompositeTriggerEngine(store);
+    await engine.register({
+      ...sequenceCondition('alternate-sequence-window', 10 * 60 * 1000),
+      eventTime: { allowedLatenessMs: 20 * 60 * 1000 },
+    });
+
+    await engine.ingest(sourceEvent(
+      'a-late',
+      'event.a',
+      '2026-09-30T10:15:00.000Z',
+      '2026-09-30T10:15:01.000Z',
+    ));
+
+    await engine.ingest(sourceEvent(
+      'a-early',
+      'event.a',
+      '2026-09-30T10:08:00.000Z',
+      '2026-09-30T10:16:00.000Z',
+    ));
+
+    const partials = store.listTriggerMatches('alternate-sequence-window')
+      .filter((match) => match.status === 'partial');
+    assert.equal(partials.length, 2);
+    assert.deepEqual(
+      partials
+        .map((match) => match.sourceEvents.map((event) => event.sourceEventId))
+        .sort(),
+      [['a-early'], ['a-late']],
+    );
+
+    const result = await engine.ingest(sourceEvent(
+      'b-valid',
+      'event.b',
+      '2026-09-30T10:20:00.000Z',
+      '2026-09-30T10:20:01.000Z',
+    ));
+
+    assert.equal(result[0].matched, true);
+    assert.equal(result[0].match.openedAt, '2026-09-30T10:15:00.000Z');
+    assert.equal(result[0].match.expiresAt, '2026-09-30T10:25:00.000Z');
+    assert.deepEqual(
+      result[0].match.sourceEvents.map((event) => event.sourceEventId).sort(),
+      ['a-late', 'b-valid'],
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('allowed lateness keeps a compatible older partial behind a newer event', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'ei-event-time-lateness-'));
   try {
