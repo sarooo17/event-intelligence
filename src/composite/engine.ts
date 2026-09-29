@@ -45,6 +45,28 @@ export interface CompositeIngestResult {
   fired: boolean;
 }
 
+function clauseAccumulatesOccurrences(
+  definition: CompositeTriggerDefinition,
+  clauseId: string,
+): boolean {
+  if (
+    definition.expression.kind === 'count' &&
+    definition.expression.ref === clauseId
+  ) {
+    return true;
+  }
+
+  return definition.temporal.some((condition) =>
+    (
+      condition.kind === 'threshold' ||
+      condition.kind === 'rate' ||
+      condition.kind === 'distinct' ||
+      condition.kind === 'debounce'
+    ) &&
+    condition.ref === clauseId
+  );
+}
+
 function prospectiveEventWindow(
   record: Pick<TriggerMatchRecord, 'sourceEvents'>,
   event: CorrelatableEvent,
@@ -346,19 +368,42 @@ export class CompositeTriggerEngine {
       });
     }
 
+    const accumulatesOccurrences = clauseAccumulatesOccurrences(
+      definition,
+      clause.id,
+    );
     const compatible = partials
       .filter((record) => !staleIds.has(record.matchId))
       .map((record) => ({
         record,
         window: prospectiveEventWindow(record, event, definition.withinMs),
+        hasClause: record.sourceEvents.some(
+          (source) => source.clauseId === clause.id,
+        ),
       }))
       .filter(({ window }) => window.fits)
       .sort((a, b) =>
+        (
+          accumulatesOccurrences
+            ? 0
+            : Number(a.hasClause) - Number(b.hasClause)
+        ) ||
         a.window.spanMs - b.window.spanMs ||
         Date.parse(b.record.updatedAt) - Date.parse(a.record.updatedAt)
       );
 
     let record = compatible[0]?.record;
+    if (
+      record &&
+      !accumulatesOccurrences &&
+      compatible[0]?.hasClause
+    ) {
+      // A repeated occurrence of a non-accumulating clause represents an
+      // alternate candidate window. Preserve the existing partial rather than
+      // widening/re-anchoring it and seed a new candidate with this event.
+      record = undefined;
+    }
+
     if (!record && eventTime < watermarkMs) {
       await this.store.appendAudit({
         auditId: `audit_${(
