@@ -100,6 +100,7 @@ export class ActivationHydrator {
       eventName: event.eventName,
       traceId: event.traceId,
       occurredAt: event.occurredAt,
+      ...(event.receivedAt ? { receivedAt: event.receivedAt } : {}),
       payloadHash: event.payloadHash ?? null,
       ...(includeData ? { data: event.data } : {}),
     }));
