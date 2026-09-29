@@ -103,7 +103,9 @@ Supported temporal operators include calendar windows, absence, not/unless, afte
 
 Event windows are based on event-time (`occurredAt`). MCP ingress separately records host receive-time (`receivedAt`) when available. Sequence/order semantics are evaluated from event-time, not delivery order.
 
-Partial matches may coexist for the same trigger/correlation key. An out-of-order event joins only a partial match whose complete event-time span fits `withinMs`; if it arrives earlier than the current anchor, the window is re-anchored to the earliest event-time. Incompatible late events seed a separate partial window instead of creating a false match.
+Partial matches may coexist for the same trigger/correlation key. An out-of-order event joins only a partial match whose complete event-time span fits `withinMs`; if it arrives earlier than the current anchor, the window is re-anchored to the earliest event-time.
+
+Each trigger may declare `eventTime.allowedLatenessMs` (default `0`). EI derives a watermark from the greatest observed event-time minus that allowance. A partial is expired only once its event-time window ends before the watermark. An event older than the watermark may close a still-retained compatible partial, but it cannot open a new stale window.
 
 Absence/deadline progression is based on Event Intelligence processing-time. Pending deadlines are persisted and later materialized as internal `event-intelligence.timer.reached` events.
 
