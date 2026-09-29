@@ -91,11 +91,12 @@ const triggerPlanInputSchema = z.object({
     leaseUntil: z.string().optional(),
     completeOnGoal: z.boolean().optional(),
   }).optional(),
+  conditionOnly: z.boolean().optional(),
   target: z.object({
     runtime: z.string().min(1),
     kind: z.enum(['goal', 'session', 'conversation', 'task', 'spawn_template']),
     id: z.string().min(1),
-  }),
+  }).optional(),
   continuation: z.object({
     instruction: z.string().min(1).max(4000),
     contextPolicy: z.object({
@@ -103,7 +104,7 @@ const triggerPlanInputSchema = z.object({
       maxEvents: z.number().int().min(1).max(50).optional(),
       includeData: z.boolean().optional(),
     }).optional(),
-  }),
+  }).optional(),
   correlateBy: z.array(z.object({
     eventId: z.string().min(1),
     path: z.string().min(1),
