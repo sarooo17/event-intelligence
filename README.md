@@ -59,7 +59,17 @@ Event Intelligence enumerates the host registry automatically. GitHub, Gmail, pr
 
 ### Agent-first trigger flow
 
-Agents no longer need to construct the low-level trigger DSL directly for common cases. Ask EI to compile an agent-friendly plan against the event sources that are actually available:
+Agents do not need to construct the low-level trigger DSL directly. The public authoring flow is self-describing: discover the live event sources, inspect the trigger language only when needed, then ask EI to compile an agent-friendly plan against the sources that are actually available:
+
+```js
+const temporalLanguage = ei.describeTriggerLanguage({
+  category: 'temporal',
+});
+
+// returns the supported temporal operators, required fields and examples
+```
+
+The same catalog is available through the optional MCP control plane as `trigger_language_describe`. This keeps operator discovery out of the agent's permanent prompt/context and makes new operators discoverable on demand.
 
 ```js
 const plan = await ei.planTrigger({
@@ -91,7 +101,9 @@ await ei.triggerControl.createTrigger({
 });
 ```
 
-`planTrigger()` is deterministic. It does not call a model. It resolves event names to live source/server IDs, validates predicate paths against advertised payload schemas, compiles `all` / `any` / `sequence` / `count`, and returns the canonical trigger definition plus the required connection IDs.
+`planTrigger()` is deterministic. It does not call a model. It resolves event names to live source/server IDs, validates predicate paths against advertised payload schemas, compiles `all` / `any` / `sequence` / `count`, accepts the canonical temporal operator set (`calendar`, `absence`, `not`, `unless`, `after`, `until`, `debounce`, `threshold`, `rate`, `distinct`), and returns the canonical trigger definition plus the required connection IDs.
+
+The canonical trigger definition remains the engine IR/advanced API. Agents should normally author through `planTrigger()` / `trigger_plan`, using `describeTriggerLanguage()` / `trigger_language_describe` for operator discovery.
 
 The persisted `continuation` answers a separate question from the trigger condition: **what should the agent do after the future condition becomes true?** A trigger can instead set `conditionOnly: true` and persist only the condition state, with no runtime target or continuation.
 
