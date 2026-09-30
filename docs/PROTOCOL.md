@@ -40,6 +40,20 @@ This preserves two independent contracts:
 
 Poll, push and webhook all normalize into the same EventOccurrence path before composite evaluation. Active clauses with an identical `(connection, event name, arguments)` tuple share one upstream subscription and fan out locally. Existing persisted trigger definitions without `arguments` read as `arguments: {}`.
 
+## Pattern AST v2
+
+Pattern AST v2 is the preferred advanced CEP representation. It is additive to the legacy composite-trigger fields and reuses the same discovered event-source clauses.
+
+A v2 program contains a recursive `root` pattern, optional `partitionBy` dimensions, match-selection policy (`overlap`, `afterMatch`, `maxMatchesPerEvent`) and execution budgets (`maxCandidates`, `maxSemanticEvaluations`).
+
+The node set includes nested boolean patterns, `sequence` with `next` / `followedBy` / `followedByAny`, `repeat` / `optional` with greedy/lazy preference, bounded negative patterns, event-time windows, cross-event comparisons and arithmetic, aggregates, state transitions, the existing temporal operators, and a vendor-neutral `semantic` node.
+
+`partitionBy` fields are validated against live provider payload schemas and every dimension must map all aliases used by the pattern. The runtime persists one bounded buffer per trigger/version/partition. `withinMs` is the global maximum horizon; Pattern v2 duration-bearing nodes cannot exceed it.
+
+Semantic evaluation is never implicit. A `semantic` node declares projected inputs, thresholds, uncertainty policy and timeout. It runs through `SemanticEvaluator`; TypeSafe Jev is only the optional bundled implementation. Every evaluated semantic decision is audit-recorded whether it matches or rejects.
+
+Legacy triggers remain valid. `compileLegacyTriggerToPatternV2()` translates legacy expression/temporal/correlation semantics into the new AST for migration and differential verification.
+
 ## Composite programs
 
 A trigger contains:
