@@ -1,5 +1,15 @@
-import { appendFile, mkdir, readFile, readdir } from 'node:fs/promises';
+import {
+  appendFile,
+  mkdir,
+  readFile,
+  readdir,
+  rename,
+  writeFile,
+} from 'node:fs/promises';
 import path from 'node:path';
+import {
+  REFERENCE_STORE_CAPABILITIES,
+} from './store-capabilities.mjs';
 import {
   AuditChain,
   parseAuditRecord,
@@ -61,6 +71,15 @@ async function readJsonLines(filePath) {
   }
 }
 
+async function writeJsonLinesAtomic(filePath, records) {
+  const tempPath = `${filePath}.tmp-${process.pid}-${Date.now()}`;
+  const content = records.length
+    ? `${records.map((record) => JSON.stringify(record)).join('\n')}\n`
+    : '';
+  await writeFile(tempPath, content, 'utf8');
+  await rename(tempPath, filePath);
+}
+
 export class PersistentEventStore {
   #queue = Promise.resolve();
   #eventKeys = new Set();
@@ -79,6 +98,7 @@ export class PersistentEventStore {
   #temporalDeadlines = new Map();
   #derivedEvents = new Map();
   #derivedContracts = new Map();
+  #partitionLeases = new Map();
   #auditChain = new AuditChain();
   #scopeStores = new Map();
 
@@ -98,8 +118,13 @@ export class PersistentEventStore {
       temporalDeadlines: path.join(dataDir, 'temporal-deadlines.jsonl'),
       derivedEvents: path.join(dataDir, 'derived-events.jsonl'),
       derivedContracts: path.join(dataDir, 'derived-contracts.jsonl'),
+      partitionLeases: path.join(dataDir, 'partition-leases.jsonl'),
       audit: path.join(dataDir, 'audit.jsonl'),
     };
+  }
+
+  storeCapabilities() {
+    return { ...REFERENCE_STORE_CAPABILITIES };
   }
 
   async forScope(scopeIdInput = DEFAULT_EVENT_SCOPE_ID) {
@@ -154,6 +179,7 @@ export class PersistentEventStore {
       temporalDeadlines,
       derivedEvents,
       derivedContracts,
+      partitionLeases,
       audit,
     ] = await Promise.all([
       readJsonLines(this.files.events),
@@ -169,6 +195,7 @@ export class PersistentEventStore {
       readJsonLines(this.files.temporalDeadlines),
       readJsonLines(this.files.derivedEvents),
       readJsonLines(this.files.derivedContracts),
+      readJsonLines(this.files.partitionLeases),
       readJsonLines(this.files.audit),
     ]);
 
@@ -379,6 +406,24 @@ export class PersistentEventStore {
       );
     }
 
+    this.#partitionLeases = new Map();
+    for (const raw of partitionLeases) {
+      if (!raw?.partitionKey) continue;
+      const key = String(raw.partitionKey);
+      if (raw.status === 'released') {
+        this.#partitionLeases.delete(key);
+        continue;
+      }
+      if (!raw.workerId || !raw.leaseUntil) continue;
+      this.#partitionLeases.set(key, {
+        partitionKey: key,
+        workerId: String(raw.workerId),
+        leaseUntil: String(raw.leaseUntil),
+        updatedAt: String(raw.updatedAt || new Date(0).toISOString()),
+        status: 'active',
+      });
+    }
+
     this.#auditChain = new AuditChain(audit.map(parseAuditRecord));
 
     for (const record of events) {
@@ -404,6 +449,7 @@ export class PersistentEventStore {
       temporalDeadlines: this.#temporalDeadlines.size,
       derivedEvents: this.#derivedEvents.size,
       derivedContracts: this.#derivedContracts.size,
+      partitionLeases: this.#partitionLeases.size,
       audit: audit.length,
     };
   }
@@ -1073,6 +1119,124 @@ export class PersistentEventStore {
       return {
         accepted: true,
         record,
+      };
+    });
+  }
+
+  getPartitionLease(partitionKeyInput) {
+    return this.#partitionLeases.get(String(partitionKeyInput || '')) ?? null;
+  }
+
+  async claimPartitionLease(partitionKeyInput, {
+    workerId,
+    now = new Date().toISOString(),
+    leaseMs = 30000,
+  } = {}) {
+    return this.#serialized(async () => {
+      const partitionKey = String(partitionKeyInput || '').trim();
+      const owner = String(workerId || '').trim();
+      if (!partitionKey || !owner) {
+        throw new Error('Partition lease requires partitionKey and workerId');
+      }
+      const nowMs = Date.parse(now);
+      const current = this.#partitionLeases.get(partitionKey);
+      if (
+        current &&
+        current.workerId !== owner &&
+        Date.parse(current.leaseUntil) > nowMs
+      ) {
+        return null;
+      }
+      const record = {
+        partitionKey,
+        workerId: owner,
+        leaseUntil: new Date(
+          nowMs + Math.max(1000, Number(leaseMs) || 30000),
+        ).toISOString(),
+        updatedAt: now,
+        status: 'active',
+      };
+      this.#partitionLeases.set(partitionKey, record);
+      await appendFile(
+        this.files.partitionLeases,
+        `${JSON.stringify(record)}\n`,
+        'utf8',
+      );
+      return record;
+    });
+  }
+
+  async renewPartitionLease(partitionKeyInput, {
+    workerId,
+    now = new Date().toISOString(),
+    leaseMs = 30000,
+  } = {}) {
+    return this.#serialized(async () => {
+      const partitionKey = String(partitionKeyInput || '').trim();
+      const owner = String(workerId || '').trim();
+      const current = this.#partitionLeases.get(partitionKey);
+      if (!current || current.workerId !== owner) return null;
+      const record = {
+        ...current,
+        leaseUntil: new Date(
+          Date.parse(now) + Math.max(1000, Number(leaseMs) || 30000),
+        ).toISOString(),
+        updatedAt: now,
+      };
+      this.#partitionLeases.set(partitionKey, record);
+      await appendFile(
+        this.files.partitionLeases,
+        `${JSON.stringify(record)}\n`,
+        'utf8',
+      );
+      return record;
+    });
+  }
+
+  async releasePartitionLease(partitionKeyInput, {
+    workerId,
+    now = new Date().toISOString(),
+  } = {}) {
+    return this.#serialized(async () => {
+      const partitionKey = String(partitionKeyInput || '').trim();
+      const owner = String(workerId || '').trim();
+      const current = this.#partitionLeases.get(partitionKey);
+      if (!current || current.workerId !== owner) return false;
+      this.#partitionLeases.delete(partitionKey);
+      await appendFile(
+        this.files.partitionLeases,
+        `${JSON.stringify({
+          partitionKey,
+          workerId: owner,
+          status: 'released',
+          updatedAt: now,
+        })}\n`,
+        'utf8',
+      );
+      return true;
+    });
+  }
+
+  async compactMutableState() {
+    return this.#serialized(async () => {
+      const snapshots = [
+        [this.files.wakeDeliveries, [...this.#wakeDeliveries.values()]],
+        [this.files.triggerStates, [...this.#triggerStates.values()]],
+        [this.files.eventSources, [...this.#eventSources.values()]],
+        [this.files.mcpClientStates, [...this.#mcpClientStates.values()]],
+        [this.files.temporalDeadlines, [...this.#temporalDeadlines.values()]],
+        [this.files.derivedContracts, [...this.#derivedContracts.values()]],
+        [this.files.partitionLeases, [...this.#partitionLeases.values()]],
+      ];
+      for (const [filePath, records] of snapshots) {
+        await writeJsonLinesAtomic(filePath, records);
+      }
+      return {
+        ok: true,
+        compacted: snapshots.map(([filePath, records]) => ({
+          file: path.basename(filePath),
+          records: records.length,
+        })),
       };
     });
   }
