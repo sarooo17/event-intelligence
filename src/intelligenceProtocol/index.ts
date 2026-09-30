@@ -68,9 +68,6 @@ export {
   LifecycleStateSchema,
   AuditKindSchema,
   AuditRecordSchema,
-  parseEventIngestRequest,
-  parseEventLineage,
-  parseSemanticDecisionRecord,
   parseWakeRecord,
   parseAuditRecord,
 } from './schemas.js';
