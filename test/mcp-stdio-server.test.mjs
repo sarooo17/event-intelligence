@@ -72,19 +72,25 @@ test('MCP stdio adapter exposes read-only Event Intelligence tools by default', 
     for (const operator of [
       'calendar',
       'absence',
-      'not',
-      'unless',
+      'notPresent',
+      'notNext',
+      'notFollowedBy',
       'after',
       'until',
       'debounce',
       'threshold',
       'rate',
       'distinct',
+      'window',
+      'compare',
+      'aggregate',
+      'state',
+      'semantic',
     ]) {
       assert.match(
         triggerPlanSchema,
         new RegExp(`"${operator}"`),
-        `trigger_plan schema does not advertise temporal operator ${operator}`,
+        `trigger_plan schema does not advertise Pattern operator ${operator}`,
       );
     }
 
