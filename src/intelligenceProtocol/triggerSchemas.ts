@@ -594,6 +594,28 @@ export const TriggerMatchStatusSchema = z.enum([
   'expired',
 ]);
 
+export const PatternSemanticDecisionSchema = z.object({
+  outcome: z.enum(['match', 'reject', 'uncertain']),
+  matched: z.boolean(),
+  shouldEscalate: z.boolean(),
+  probability: z.number().min(0).max(1),
+  evaluator: z.string().min(1),
+  condition: z.object({
+    type: z.literal('semantic_boolean'),
+    instruction: z.string().min(1),
+    input: z.array(z.string().min(1)),
+    matchThreshold: z.number().min(0).max(1),
+    rejectThreshold: z.number().min(0).max(1),
+    uncertain: z.enum(['escalate', 'reject', 'match']),
+  }).strict(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
+}).strict();
+
+export const PatternSemanticCacheEntrySchema = z.object({
+  key: z.string().min(1),
+  decision: PatternSemanticDecisionSchema,
+}).strict();
+
 export const PatternMatchStateSchema = z.object({
   version: z.literal('2'),
   role: z.enum(['buffer', 'match']),
@@ -603,6 +625,7 @@ export const PatternMatchStateSchema = z.object({
     nodeId: Id,
     decision: CompositeCorrelationDecisionSchema,
   }).strict()).default([]),
+  semanticCache: z.array(PatternSemanticCacheEntrySchema).default([]),
 }).strict();
 
 export const TriggerMatchRecordSchema = z.object({
@@ -635,6 +658,8 @@ export type DerivedEventRecord = z.infer<typeof DerivedEventRecordSchema>;
 export type CompositeTriggerDefinition = z.infer<typeof CompositeTriggerDefinitionSchema>;
 export type CorrelatableEvent = z.infer<typeof CorrelatableEventSchema>;
 export type TriggerSourceEvent = z.infer<typeof TriggerSourceEventSchema>;
+export type PatternSemanticCacheEntry =
+  z.infer<typeof PatternSemanticCacheEntrySchema>;
 export type PatternMatchState = z.infer<typeof PatternMatchStateSchema>;
 export type TriggerMatchRecord = z.infer<typeof TriggerMatchRecordSchema>;
 export type CompositeCorrelationDecision = z.infer<typeof CompositeCorrelationDecisionSchema>;
