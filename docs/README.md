@@ -8,7 +8,7 @@ Current package documentation:
 - [Security model](SECURITY-MODEL.md)
 - [MCP Registry](MCP-REGISTRY.md)
 - [Release-gate example](examples/release-gate.md)
-- [Latest release notes](releases/v0.4.0.md)
+- [Latest release notes](releases/v0.5.0.md)
 - [Release history](releases/)
 
 The package release version and the internal persisted protocol version are intentionally separate. Internal protocol/schema identifiers therefore do not necessarily match the npm package version; release notes call out compatibility changes explicitly.
