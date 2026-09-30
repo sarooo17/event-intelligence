@@ -642,7 +642,7 @@ export async function simulateTrigger({
     order,
     evaluatedUntil: clock.toISOString(),
     steps,
-    inspection: inspector.inspect({
+    inspection: await inspector.inspect({
       triggerId: definition.triggerId,
       version: definition.version,
     }),
