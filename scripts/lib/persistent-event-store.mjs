@@ -79,6 +79,7 @@ export class PersistentEventStore {
   #temporalDeadlines = new Map();
   #derivedEvents = new Map();
   #derivedContracts = new Map();
+  #semanticDecisionCache = new Map();
   #auditChain = new AuditChain();
   #scopeStores = new Map();
 
@@ -98,6 +99,7 @@ export class PersistentEventStore {
       temporalDeadlines: path.join(dataDir, 'temporal-deadlines.jsonl'),
       derivedEvents: path.join(dataDir, 'derived-events.jsonl'),
       derivedContracts: path.join(dataDir, 'derived-contracts.jsonl'),
+      semanticDecisionCache: path.join(dataDir, 'semantic-decision-cache.jsonl'),
       audit: path.join(dataDir, 'audit.jsonl'),
     };
   }
@@ -154,6 +156,7 @@ export class PersistentEventStore {
       temporalDeadlines,
       derivedEvents,
       derivedContracts,
+      semanticDecisionCache,
       audit,
     ] = await Promise.all([
       readJsonLines(this.files.events),
@@ -169,6 +172,7 @@ export class PersistentEventStore {
       readJsonLines(this.files.temporalDeadlines),
       readJsonLines(this.files.derivedEvents),
       readJsonLines(this.files.derivedContracts),
+      readJsonLines(this.files.semanticDecisionCache),
       readJsonLines(this.files.audit),
     ]);
 
@@ -379,6 +383,19 @@ export class PersistentEventStore {
       );
     }
 
+    this.#semanticDecisionCache = new Map();
+    for (const raw of semanticDecisionCache) {
+      if (!raw?.key || !raw?.decision || typeof raw.decision !== 'object') {
+        continue;
+      }
+      this.#semanticDecisionCache.set(String(raw.key), {
+        key: String(raw.key),
+        decision: raw.decision,
+        createdAt: String(raw.createdAt || raw.updatedAt || new Date(0).toISOString()),
+        updatedAt: String(raw.updatedAt || raw.createdAt || new Date(0).toISOString()),
+      });
+    }
+
     this.#auditChain = new AuditChain(audit.map(parseAuditRecord));
 
     for (const record of events) {
@@ -404,6 +421,7 @@ export class PersistentEventStore {
       temporalDeadlines: this.#temporalDeadlines.size,
       derivedEvents: this.#derivedEvents.size,
       derivedContracts: this.#derivedContracts.size,
+      semanticDecisionCache: this.#semanticDecisionCache.size,
       audit: audit.length,
     };
   }
@@ -1075,6 +1093,39 @@ export class PersistentEventStore {
         record,
       };
     });
+  }
+
+  getSemanticDecisionCache(keyInput) {
+    const record = this.#semanticDecisionCache.get(String(keyInput || ''));
+    return record?.decision ?? null;
+  }
+
+  async putSemanticDecisionCache(keyInput, decision) {
+    return this.#serialized(async () => {
+      const key = String(keyInput || '').trim();
+      if (!key || !decision || typeof decision !== 'object') {
+        throw new Error('Semantic decision cache requires key and decision');
+      }
+      const previous = this.#semanticDecisionCache.get(key);
+      const now = new Date().toISOString();
+      const record = {
+        key,
+        decision,
+        createdAt: previous?.createdAt ?? now,
+        updatedAt: now,
+      };
+      this.#semanticDecisionCache.set(key, record);
+      await appendFile(
+        this.files.semanticDecisionCache,
+        `${JSON.stringify(record)}\n`,
+        'utf8',
+      );
+      return record;
+    });
+  }
+
+  semanticDecisionCacheSize() {
+    return this.#semanticDecisionCache.size;
   }
 
   async appendAudit(input) {
