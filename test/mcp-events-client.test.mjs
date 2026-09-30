@@ -150,7 +150,7 @@ test('two host-owned MCP clients auto-discover, correlate and resume cursors aft
     const discovery = await first.manager.discoverAll();
     assert.deepEqual(discovery.map((item) => item.status), ['ready', 'ready']);
 
-    const sources = first.control.listEventSources({
+    const sources = await first.control.listEventSources({
       connectionIds: ['conn_alpha', 'conn_beta'],
     });
     assert.deepEqual(
@@ -195,12 +195,12 @@ test('two host-owned MCP clients auto-discover, correlate and resume cursors aft
     assert.equal(ingest[0].results[0].accepted, 1);
     assert.equal(ingest[1].results[0].accepted, 1);
 
-    const matches = first.store.listTriggerMatches('generic-cross-server');
+    const matches = await first.store.listTriggerMatches('generic-cross-server');
     assert.equal(matches.length, 1);
     assert.equal(matches[0].status, 'matched');
 
-    assert.equal(first.store.getMcpClientState('conn_alpha', 'alpha.opened').cursor, 'c1');
-    assert.equal(first.store.getMcpClientState('conn_beta', 'beta.confirmed').cursor, 'c1');
+    assert.equal((await first.store.getMcpClientState('conn_alpha', 'alpha.opened')).cursor, 'c1');
+    assert.equal((await first.store.getMcpClientState('conn_beta', 'beta.confirmed')).cursor, 'c1');
 
     const restartedClients = [
       connection(
@@ -223,7 +223,7 @@ test('two host-owned MCP clients auto-discover, correlate and resume cursors aft
       ),
     ];
     const second = await buildRuntime(dir, restartedClients);
-    assert.equal(second.store.listMcpClientStates().length, 2);
+    assert.equal((await second.store.listMcpClientStates()).length, 2);
     await second.manager.discoverAll();
 
     // Persisted cursors are owned by EI even though the MCP transports are
@@ -231,7 +231,7 @@ test('two host-owned MCP clients auto-discover, correlate and resume cursors aft
     const afterRestart = await second.manager.pollAll();
     assert.equal(afterRestart[0].results[0].accepted, 0);
     assert.equal(afterRestart[1].results[0].accepted, 0);
-    assert.equal(second.store.listTriggerMatches('generic-cross-server').length, 1);
+    assert.equal((await second.store.listTriggerMatches('generic-cross-server')).length, 1);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -353,33 +353,33 @@ test('subscription arguments create independent durable cursor state', async () 
     await runtime.manager.pollAll();
     await runtime.manager.pollAll();
 
-    const states = runtime.store.listMcpClientStates('mail');
+    const states = await runtime.store.listMcpClientStates('mail');
     assert.equal(states.length, 2);
     assert.deepEqual(
       states.map((state) => state.arguments.mailbox).sort(),
       ['sales', 'support'],
     );
     assert.equal(
-      runtime.store.getMcpClientState(
+      (await runtime.store.getMcpClientState(
         'mail',
         'email.received',
         { mailbox: 'sales' },
-      ).cursor,
+      )).cursor,
       'sales:1',
     );
     assert.equal(
-      runtime.store.getMcpClientState(
+      (await runtime.store.getMcpClientState(
         'mail',
         'email.received',
         { mailbox: 'support' },
-      ).cursor,
+      )).cursor,
       'support:1',
     );
     assert.equal(calls.filter((call) => call.mailbox === 'sales').length, 2);
     assert.equal(calls.filter((call) => call.mailbox === 'support').length, 2);
 
-    const salesMatches = runtime.store.listTriggerMatches('mail-sales');
-    const supportMatches = runtime.store.listTriggerMatches('mail-support');
+    const salesMatches = await runtime.store.listTriggerMatches('mail-sales');
+    const supportMatches = await runtime.store.listTriggerMatches('mail-support');
     assert.equal(salesMatches.length, 1);
     assert.equal(supportMatches.length, 1);
     assert.equal(
@@ -502,10 +502,10 @@ for (const delivery of ['push', 'webhook']) {
       assert.equal(result[0].delivery, delivery);
       assert.equal(result[0].status, 'active');
       assert.equal(
-        runtime.store.listTriggerMatches(`${delivery}-trigger`)[0].status,
+        (await runtime.store.listTriggerMatches(`${delivery}-trigger`))[0].status,
         'matched',
       );
-      const state = runtime.store.getMcpClientState(
+      const state = await runtime.store.getMcpClientState(
         `${delivery}-conn`,
         'deploy.completed',
         { environment: 'staging' },
