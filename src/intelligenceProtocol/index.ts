@@ -7,6 +7,7 @@ export {
   PatternWindowSchema,
   PatternNodeV2Schema,
   PatternPartitionDimensionSchema,
+  PatternAfterMatchSchema,
   PatternSelectionSchema,
   PatternExecutionPolicySchema,
   PatternMeasureSchema,
@@ -21,6 +22,7 @@ export type {
   PatternArithmeticValue,
   PatternWindow,
   PatternNodeV2,
+  PatternAfterMatch,
   PatternAstV2Definition,
   PatternMeasure,
 } from './patternV2Schemas.js';
