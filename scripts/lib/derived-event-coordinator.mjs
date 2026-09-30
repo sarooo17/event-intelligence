@@ -206,11 +206,13 @@ export class DerivedEventCoordinator {
         const value = evaluatePatternMeasure(candidate, measure);
         if (
           value === undefined ||
-          value === null ||
-          !['string', 'number', 'boolean'].includes(typeof value)
+          (
+            value !== null &&
+            !['string', 'number', 'boolean'].includes(typeof value)
+          )
         ) {
           throw new Error(
-            `Derived event measure must resolve to scalar: ${measure.key}`,
+            `Derived event measure must resolve to scalar or null: ${measure.key}`,
           );
         }
         measured[measure.key] = value;
