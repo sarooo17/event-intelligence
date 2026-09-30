@@ -150,7 +150,7 @@ wake: async (packet, activation) => {
 The envelope can also be reconstructed later with:
 
 ```js
-const activation = ei.hydrateWake(packet.wake_id);
+const activation = await ei.hydrateWake(packet.wake_id);
 ```
 
 Matched event payloads in the envelope are explicitly marked as untrusted
