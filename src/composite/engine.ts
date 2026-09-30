@@ -1079,12 +1079,12 @@ export class CompositeTriggerEngine {
     const eventTime = Date.parse(event.occurredAt);
     const key = deterministicKeyForClause(definition, clause.id, event);
 
-    const relatedMatches = this.store
-      .listTriggerMatches(definition.triggerId)
-      .filter((record) =>
-        record.triggerVersion === definition.version &&
-        matchesCorrelationKey(record, key),
-      );
+    const relatedMatches = (
+      await this.store.listTriggerMatches(definition.triggerId)
+    ).filter((record) =>
+      record.triggerVersion === definition.version &&
+      matchesCorrelationKey(record, key),
+    );
 
     const activeMatches = relatedMatches.filter(
       (record) =>
