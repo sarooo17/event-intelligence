@@ -143,11 +143,11 @@ export interface EventIntelligenceScopedHost {
   readonly eventSources: Promise<any[]> | any[];
   readonly storeCapabilities?: EventIntelligenceStoreCapabilities;
   describeTriggerLanguage(input?: {
-    category?: 'predicates' | 'composition' | 'temporal' | 'pattern' | 'windows' | 'aggregates' | 'state' | 'selection' | 'semantic' | 'execution' | 'correlation' | 'timing' | 'lifecycle';
+    category?: 'predicates' | 'pattern' | 'windows' | 'aggregates' | 'state' | 'selection' | 'semantic' | 'execution' | 'timing' | 'lifecycle';
     operator?: string;
   }): Record<string, unknown>;
   planTrigger(input: TriggerPlanInput): Promise<{
-    planVersion: '1';
+    planVersion: '2';
     definition: any;
     connectionIds: string[];
     resolvedSources: any[];
