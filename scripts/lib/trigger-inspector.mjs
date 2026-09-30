@@ -220,7 +220,7 @@ export class TriggerInspector {
         ? {
             matchId: match.matchId,
             status: match.status,
-            correlationKey: match.correlationKey,
+            partitionKey: match.partitionKey,
             openedAt: match.openedAt,
             expiresAt: match.expiresAt,
             updatedAt: match.updatedAt,
