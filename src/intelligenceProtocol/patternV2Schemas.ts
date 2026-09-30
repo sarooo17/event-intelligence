@@ -169,6 +169,11 @@ export const PatternNodeV2Schema: z.ZodType<any> = z.lazy(() => {
       min: z.number().int().min(0),
       max: z.number().int().min(1).optional(),
       mode: z.enum(['greedy', 'lazy']).default('greedy'),
+      contiguity: z.enum([
+        'consecutive',
+        'relaxed',
+        'combinations',
+      ]).default('relaxed'),
     }).strict().superRefine((value, ctx) => {
       if (value.max !== undefined && value.max < value.min) {
         ctx.addIssue({
@@ -452,9 +457,11 @@ export const PatternNodeV2Schema: z.ZodType<any> = z.lazy(() => {
       execution: z.object({
         cache: z.boolean().default(true),
         timeoutMs: z.number().int().positive().max(60000).default(5000),
+        onUnavailable: z.enum(['error', 'reject']).default('error'),
       }).default({
         cache: true,
         timeoutMs: 5000,
+        onUnavailable: 'error',
       }),
     }).strict().superRefine((value, ctx) => {
       if (value.rejectThreshold > value.matchThreshold) {
@@ -479,15 +486,21 @@ export const PatternPartitionDimensionSchema = z.object({
   }).strict()).min(1),
 }).strict();
 
-export const PatternSelectionSchema = z.object({
-  overlap: z.enum(['allow', 'disallow']).default('disallow'),
-  afterMatch: z.enum([
+export const PatternAfterMatchSchema = z.union([
+  z.enum([
     'skipPastLast',
     'skipToNext',
-    'skipToFirst',
-    'skipToLast',
     'keepAll',
-  ]).default('skipPastLast'),
+  ]),
+  z.object({
+    kind: z.enum(['skipToFirst', 'skipToLast']),
+    ref: Id,
+  }).strict(),
+]);
+
+export const PatternSelectionSchema = z.object({
+  overlap: z.enum(['allow', 'disallow']).default('disallow'),
+  afterMatch: PatternAfterMatchSchema.default('skipPastLast'),
   maxMatchesPerEvent: z.number().int().min(1).max(100).default(10),
 }).strict();
 
@@ -551,6 +564,7 @@ export const PatternAstV2DefinitionSchema = z.object({
   }),
 }).strict();
 
+export type PatternAfterMatch = z.infer<typeof PatternAfterMatchSchema>;
 export type PatternAstV2Definition =
   z.infer<typeof PatternAstV2DefinitionSchema>;
 export type PatternMeasure = z.infer<typeof PatternMeasureSchema>;
