@@ -153,6 +153,9 @@ export function compileLegacyTriggerToPatternV2(
   const deterministic = definition.correlation?.deterministic;
   if (deterministic?.fields?.length) {
     const [anchorField, ...otherFields] = deterministic.fields;
+    if (!anchorField) {
+      throw new Error('Deterministic correlation requires at least one field');
+    }
     for (const field of otherFields) {
       root = {
         kind: 'compare',
