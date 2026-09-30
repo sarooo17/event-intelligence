@@ -729,6 +729,10 @@ export class CompositeTriggerEngine {
         role: 'buffer',
         maxObservedOccurredAt: new Date(maxObserved).toISOString(),
         semanticDecisions: [],
+        semanticCache:
+          existing?.patternState?.version === '2'
+            ? existing.patternState.semanticCache
+            : [],
       },
       firedWakeId: null,
       derivedEventIds: [],
@@ -754,10 +758,31 @@ export class CompositeTriggerEngine {
       now: evaluationNow,
       allowedLatenessMs:
         definition.eventTime?.allowedLatenessMs ?? 0,
+      semanticCacheEntries:
+        buffer.patternState?.version === '2'
+          ? buffer.patternState.semanticCache
+          : [],
     });
 
+    const semanticCache = pattern.execution.maxSemanticCacheEntries > 0
+      ? evaluation.semanticCacheEntries.slice(
+        -pattern.execution.maxSemanticCacheEntries,
+      )
+      : [];
+    const workingBuffer = TriggerMatchRecordSchema.parse({
+      ...buffer,
+      updatedAt: nowIso,
+      patternState: {
+        ...buffer.patternState,
+        version: '2',
+        role: 'buffer',
+        semanticCache,
+      },
+    });
+    await this.store.appendTriggerMatch(workingBuffer);
+
     for (const semantic of evaluation.semanticTrace) {
-      await this.support.auditMatch(buffer, 'trigger.correlation', {
+      await this.support.auditMatch(workingBuffer, 'trigger.correlation', {
         patternVersion: '2',
         semanticNodeId: semantic.nodeId,
         candidateSignature: semantic.candidateSignature,
@@ -773,7 +798,7 @@ export class CompositeTriggerEngine {
       });
     }
 
-    await this.support.cancelDeadlinesForMatch(buffer.matchId);
+    await this.support.cancelDeadlinesForMatch(workingBuffer.matchId);
     if (evaluation.pending.length) {
       const deadlines = evaluation.pending
         .filter((candidate) => candidate.pendingUntil)
@@ -783,7 +808,7 @@ export class CompositeTriggerEngine {
         }));
       await this.support.scheduleDeadlines(
         definition,
-        buffer,
+        workingBuffer,
         deadlines,
       );
     }
@@ -840,7 +865,7 @@ export class CompositeTriggerEngine {
         selectionLimit = Math.min(selectionLimit, 1);
       }
     }
-    const indexed = [...buffer.sourceEvents].sort(sourceEventOrder);
+    const indexed = [...workingBuffer.sourceEvents].sort(sourceEventOrder);
     const indexByIdentity = new Map(
       indexed.map((source, index) => [
         patternPhysicalIdentity(source),
@@ -908,13 +933,13 @@ export class CompositeTriggerEngine {
         await sha256Hex([
           definition.triggerId,
           definition.version,
-          buffer.correlationKey ?? '-',
+          workingBuffer.correlationKey ?? '-',
           signature,
           'pattern-v2-match',
         ].join(':'))
       ).slice(0, 24)}`;
       const openedAt =
-        candidate.events[0]?.occurredAt ?? buffer.openedAt;
+        candidate.events[0]?.occurredAt ?? workingBuffer.openedAt;
       const semanticDecisions = candidate.semanticDecisions.map((item) =>
         this.patternDecisionRecord(item, nowIso)
       );
@@ -928,7 +953,7 @@ export class CompositeTriggerEngine {
         triggerId: definition.triggerId,
         triggerVersion: definition.version,
         status: 'matched',
-        correlationKey: buffer.correlationKey,
+        correlationKey: workingBuffer.correlationKey,
         openedAt,
         expiresAt: new Date(
           Date.parse(openedAt) + definition.withinMs,
@@ -977,7 +1002,7 @@ export class CompositeTriggerEngine {
         ? Math.max(...selected.map((candidate) => candidate.endIndex))
         : -1;
 
-      let retained = [...buffer.sourceEvents];
+      let retained = [...workingBuffer.sourceEvents];
 
       const shouldDropByIndex = (index: number) => {
         const afterMatch = pattern.selection.afterMatch;
@@ -1020,7 +1045,7 @@ export class CompositeTriggerEngine {
       const openedAt =
         retained[0]?.occurredAt ?? evaluationNow.toISOString();
       const updatedBuffer = TriggerMatchRecordSchema.parse({
-        ...buffer,
+        ...workingBuffer,
         openedAt,
         expiresAt: new Date(
           Date.parse(openedAt) + definition.withinMs,
@@ -1032,7 +1057,7 @@ export class CompositeTriggerEngine {
     }
 
     if (!results.length) {
-      await this.support.auditMatch(buffer, 'trigger.partial', {
+      await this.support.auditMatch(workingBuffer, 'trigger.partial', {
         reason: 'pattern_v2_wait',
         patternVersion: '2',
         pendingCandidates: evaluation.pending.length,
@@ -1041,7 +1066,7 @@ export class CompositeTriggerEngine {
       });
       return [{
         triggerId: definition.triggerId,
-        match: buffer,
+        match: workingBuffer,
         matched: false,
         fired: false,
       }];
