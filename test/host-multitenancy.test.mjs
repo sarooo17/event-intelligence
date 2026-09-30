@@ -161,14 +161,14 @@ test('one host isolates tenant scopes across sources, triggers, matches, wakes a
       wakes.map((packet) => packet.scope_id).sort(),
       ['tenant-a', 'tenant-b'],
     );
-    assert.equal(
-      (await tenantA.store.listTriggerMatches('same-trigger-id'))[0].sourceEvents[0].sourceEventId,
-      'event-a',
-    );
-    assert.equal(
-      (await tenantB.store.listTriggerMatches('same-trigger-id'))[0].sourceEvents[0].sourceEventId,
-      'event-b',
-    );
+    const tenantAMatch = (await tenantA.store.listTriggerMatches('same-trigger-id'))
+      .find((match) => match.patternState?.role === 'match');
+    const tenantBMatch = (await tenantB.store.listTriggerMatches('same-trigger-id'))
+      .find((match) => match.patternState?.role === 'match');
+    assert.ok(tenantAMatch);
+    assert.ok(tenantBMatch);
+    assert.equal(tenantAMatch.sourceEvents[0].sourceEventId, 'event-a');
+    assert.equal(tenantBMatch.sourceEvents[0].sourceEventId, 'event-b');
     assert.equal((await host.store.listTriggerMatches('same-trigger-id')).length, 0);
 
     assert.deepEqual(
