@@ -40,13 +40,13 @@ jobs:
           test "$VERSION" = "$PACKAGE_VERSION"
 
           FOUND=""
-          for attempt in $(seq 1 18); do
-            FOUND="$(npm view "mcp-event-intelligence@$VERSION" version 2>/dev/null || true)"
+          for attempt in $(seq 1 60); do
+            FOUND="$(npm view "mcp-event-intelligence@$VERSION" version --registry=https://registry.npmjs.org/ --prefer-online 2>/dev/null || true)"
             if [ "$FOUND" = "$VERSION" ]; then
               break
             fi
-            echo "npm registry has not propagated $VERSION yet (attempt $attempt/18)"
-            sleep 5
+            echo "npm registry has not propagated $VERSION yet (attempt $attempt/60)"
+            sleep 10
           done
           test "$FOUND" = "$VERSION"
 
