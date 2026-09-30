@@ -1,13 +1,13 @@
 export const EVENT_INTELLIGENCE_STORE_CAPABILITIES_VERSION = '1';
 
-export const LEGACY_STORE_CAPABILITIES = Object.freeze({
+export const UNDECLARED_STORE_CAPABILITIES = Object.freeze({
   version: EVENT_INTELLIGENCE_STORE_CAPABILITIES_VERSION,
   sharedState: 'none',
   scopeIsolation: 'unknown',
   wakeClaims: 'unknown',
   partitionLeases: 'none',
   mutableCompaction: 'none',
-  readModel: 'synchronous',
+  readModel: 'undeclared',
 });
 
 export const REFERENCE_STORE_CAPABILITIES = Object.freeze({
@@ -26,11 +26,11 @@ export function describeStoreCapabilities(store) {
     typeof store.storeCapabilities === 'function'
   ) {
     return {
-      ...LEGACY_STORE_CAPABILITIES,
+      ...UNDECLARED_STORE_CAPABILITIES,
       ...store.storeCapabilities(),
     };
   }
-  return { ...LEGACY_STORE_CAPABILITIES };
+  return { ...UNDECLARED_STORE_CAPABILITIES };
 }
 
 export function validateSharedStoreCapabilities(store) {
