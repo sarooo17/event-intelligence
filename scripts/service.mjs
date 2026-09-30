@@ -13,13 +13,10 @@ import {
 import {
   ExperimentalMcpEventsServer,
 } from '../dist/src/mcpEvents/server.js';
-import { EventProcessor } from './lib/event-processor.mjs';
 import {
-  githubEventPassesStructuredFilter,
   translateGitHubWebhook,
   verifyGitHubWebhookSignature,
 } from './lib/github-webhook.mjs';
-import { createHttpWakeDeliverer } from './lib/http-wake-deliverer.mjs';
 import {
   CompositeWakeCoordinator,
 } from './lib/composite-wake-coordinator.mjs';
@@ -65,23 +62,6 @@ const evaluator = process.env.TYPESAFE_API_KEY
   ? TypeSafeJevEvaluator.fromEnvironment(process.env)
   : null;
 
-const wakeDeliverer = createHttpWakeDeliverer(
-  process.env.RUNTIME_WAKE_URL ?? '',
-);
-
-const deliveryOptions = {
-  leaseMs: Number(process.env.WAKE_DELIVERY_LEASE_MS ?? 30000),
-  maxAttempts: Number(process.env.WAKE_DELIVERY_MAX_ATTEMPTS ?? 5),
-  retryBaseDelayMs: Number(process.env.WAKE_RETRY_BASE_DELAY_MS ?? 1000),
-  retryMaxDelayMs: Number(process.env.WAKE_RETRY_MAX_DELAY_MS ?? 60000),
-};
-
-const processor = new EventProcessor({
-  store,
-  evaluator,
-  wakeDeliverer,
-  ...deliveryOptions,
-});
 const compositeTriggers = new CompositeTriggerEngine(store, evaluator);
 const runtimeWakeTargets = readRuntimeWakeTargets(
   process.env.RUNTIME_WAKE_TARGETS_JSON,
@@ -104,7 +84,6 @@ const compositeEventConsumer = new CompositeEventConsumer({
   triggerEngine: compositeTriggers,
   wakeCoordinators,
   derivedEventCoordinator,
-  processor,
   maxDerivedDepth: Number(process.env.MAX_DERIVED_EVENT_DEPTH ?? 16),
 });
 const temporalScheduler = new TemporalDeadlineScheduler({
@@ -116,7 +95,6 @@ temporalScheduler.start();
 
 const wakeRetryScheduler = new WakeRetryScheduler({
   store,
-  eventProcessor: processor,
   resolveCoordinator: (runtime) => wakeCoordinators.get(runtime) ?? null,
   intervalMs: Number(process.env.WAKE_RETRY_TICK_MS ?? 1000),
 });
@@ -167,59 +145,6 @@ function requireBearer(request, response) {
   return true;
 }
 
-function githubSemanticCondition() {
-  const instruction = process.env.SEMANTIC_INSTRUCTION;
-  if (!instruction) return undefined;
-
-  return {
-    type: 'semantic_boolean',
-    instruction,
-    input: ['data.title', 'data.bodyPreview', 'data.labels'],
-    matchThreshold: Number(process.env.SEMANTIC_MATCH_THRESHOLD ?? 0.8),
-    rejectThreshold: Number(process.env.SEMANTIC_REJECT_THRESHOLD ?? 0.2),
-    uncertain: process.env.SEMANTIC_UNCERTAIN_POLICY ?? 'escalate',
-  };
-}
-
-function logProcessingResult(result) {
-  console.log(
-    JSON.stringify({
-      message: 'event_intelligence_result',
-      traceId: result.traceId,
-      sourceEventId: result.sourceEventId,
-      status: result.status,
-      decisionId: result.decision?.decisionId ?? null,
-      outcome: result.decision?.outcome ?? null,
-      probability: result.decision?.probability ?? null,
-      evaluator: result.decision?.evaluator ?? null,
-      providerEvidence: result.decision?.providerEvidence ?? null,
-      wakeId: result.wake?.wakeId ?? null,
-      wakeStatus: result.wake?.status ?? null,
-    }),
-  );
-}
-
-function githubContext() {
-  const targetId = process.env.RUNTIME_TARGET_ID;
-  if (!targetId) {
-    throw new Error('RUNTIME_TARGET_ID is required for GitHub webhook delivery');
-  }
-
-  return {
-    environmentId,
-    subscriptionId:
-      process.env.GITHUB_SUBSCRIPTION_ID ?? 'github-issues-default',
-    serverId: process.env.GITHUB_SERVER_ID ?? 'github-webhook-adapter',
-    transport: 'webhook',
-    provider: 'github',
-    target: {
-      runtime: process.env.RUNTIME_TARGET_RUNTIME ?? 'agent-runtime',
-      kind: process.env.RUNTIME_TARGET_KIND ?? 'session',
-      id: targetId,
-    },
-  };
-}
-
 const server = createServer(async (request, response) => {
   try {
     const url = new URL(
@@ -237,20 +162,12 @@ const server = createServer(async (request, response) => {
 
     if (request.method === 'GET' && url.pathname === '/readyz') {
       const auditValid = await store.verifyAudit();
-      const semanticRequired = Boolean(process.env.SEMANTIC_INSTRUCTION);
       const evaluatorConfigured = Boolean(evaluator);
-      const ready =
-        auditValid &&
-        (!semanticRequired || evaluatorConfigured);
+      const ready = auditValid;
 
       return sendJson(response, ready ? 200 : 503, {
-        status: ready
-          ? 'ready'
-          : !auditValid
-            ? 'audit_invalid'
-            : 'semantic_evaluator_unavailable',
+        status: ready ? 'ready' : 'audit_invalid',
         auditValid,
-        semanticRequired,
         evaluatorConfigured,
         wakeCallbackConfigured: Boolean(wakeDeliverer),
         genericRuntimeWakeTargets: [...runtimeWakeTargets.keys()],
@@ -338,27 +255,11 @@ const server = createServer(async (request, response) => {
         }));
       }
 
-      if (
-        !githubEventPassesStructuredFilter(translated.event, {
-          repository: process.env.GITHUB_REPOSITORY,
-          label: process.env.GITHUB_LABEL,
-        })
-      ) {
-        return sendJson(response, 202, {
-          status: 'filtered_structured',
-        });
-      }
-
-      const result = await processor.ingest({
-        event: translated.event,
-        context: githubContext(),
-        semanticCondition: githubSemanticCondition(),
-        wakeOnEscalation:
-          process.env.WAKE_ON_ESCALATION === 'true',
+      return sendJson(response, 202, {
+        status: mcpReceipt.accepted ? 'accepted' : 'duplicate',
+        mcpReceipt,
+        composite,
       });
-
-      logProcessingResult(result);
-      return sendJson(response, 202, result);
     }
 
     if (request.method === 'POST' && url.pathname === '/mcp') {
@@ -704,13 +605,6 @@ const server = createServer(async (request, response) => {
       });
     }
 
-    if (request.method === 'POST' && url.pathname === '/v1/events/ingest') {
-      const raw = await readRawBody(request);
-      const body = JSON.parse(raw.toString('utf8'));
-      const result = await processor.ingest(body);
-      logProcessingResult(result);
-      return sendJson(response, 202, result);
-    }
 
     if (request.method === 'GET' && url.pathname === '/v1/audit') {
       const afterSequence = Number(url.searchParams.get('afterSequence') ?? -1);
@@ -731,26 +625,6 @@ const server = createServer(async (request, response) => {
       return sendJson(response, 200, store.trace(traceId));
     }
 
-    if (
-      request.method === 'POST' &&
-      url.pathname.startsWith('/v1/wakes/') &&
-      url.pathname.endsWith('/ack')
-    ) {
-      const wakeId = decodeURIComponent(
-        url.pathname.slice('/v1/wakes/'.length, -'/ack'.length),
-      );
-      const raw = await readRawBody(request);
-      const body = raw.length
-        ? JSON.parse(raw.toString('utf8'))
-        : {};
-      const handled = await processor.acknowledgeWake(
-        wakeId,
-        typeof body.runtimeReceiptId === 'string'
-          ? body.runtimeReceiptId
-          : undefined,
-      );
-      return sendJson(response, 200, handled);
-    }
 
     return sendJson(response, 404, { error: 'NOT_FOUND' });
   } catch (error) {
