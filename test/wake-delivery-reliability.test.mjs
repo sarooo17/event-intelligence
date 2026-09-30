@@ -123,7 +123,9 @@ test('failed wake persists retry state and succeeds after store/runtime restart'
     assert.equal(delivery.attemptCount, 2);
     assert.match(delivery.runtimeReceiptId, /^receipt:/);
 
-    const fired = restoredStore.listTriggerMatches('retry-trigger')[0];
+    const fired = restoredStore.listTriggerMatches('retry-trigger')
+      .find((match) => match.patternState?.role === 'match');
+    assert.ok(fired);
     assert.equal(fired.status, 'fired');
     assert.equal(fired.firedWakeId, firstAttempt.wake.wakeId);
     assert.equal(await restoredStore.verifyAudit(), true);
@@ -464,7 +466,10 @@ test('a persisted runtime receipt is reconciled after restart without redelivery
     });
 
     assert.equal(firstStore.latestWake(wakeId).status, 'queued');
-    assert.equal(firstStore.listTriggerMatches('reconcile-trigger')[0].status, 'matched');
+    const preRestartMatch = firstStore.listTriggerMatches('reconcile-trigger')
+      .find((match) => match.patternState?.role === 'match');
+    assert.ok(preRestartMatch);
+    assert.equal(preRestartMatch.status, 'matched');
 
     const restoredStore = new PersistentEventStore(dir);
     await restoredStore.init();
@@ -492,7 +497,10 @@ test('a persisted runtime receipt is reconciled after restart without redelivery
     assert.equal(redeliveries, 0);
     assert.equal(restoredStore.latestWake(wakeId).status, 'delivered');
     assert.equal(restoredStore.latestWake(wakeId).runtimeReceiptId, 'receipt-already-returned');
-    assert.equal(restoredStore.listTriggerMatches('reconcile-trigger')[0].status, 'fired');
+    const reconciledMatch = restoredStore.listTriggerMatches('reconcile-trigger')
+      .find((match) => match.patternState?.role === 'match');
+    assert.ok(reconciledMatch);
+    assert.equal(reconciledMatch.status, 'fired');
     assert.equal(await restoredStore.verifyAudit(), true);
   } finally {
     await rm(dir, { recursive: true, force: true });
