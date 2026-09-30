@@ -670,6 +670,17 @@ export class CompositeTriggerEngine {
         }
         : null;
 
+    const reachedDeadlines =
+      this.store.listTemporalDeadlines
+        ? (await this.store.listTemporalDeadlines({
+            matchId: buffer.matchId,
+            status: 'pending',
+          }))
+            .filter((deadline) =>
+              Date.parse(deadline.dueAt) <= evaluationNow.getTime()
+            )
+        : [];
+
     const evaluation = await evaluatePatternV2({
       definition: pattern,
       events: buffer.sourceEvents,
@@ -848,6 +859,17 @@ export class CompositeTriggerEngine {
       const semanticDecisions = candidate.semanticDecisions.map((item) =>
         this.patternDecisionRecord(item, nowIso)
       );
+      const sourceCompletionAt = candidate.events
+        .map((item) => Date.parse(item.occurredAt))
+        .filter(Number.isFinite)
+        .sort((a, b) => b - a)[0] ?? evaluationNow.getTime();
+      const deadlineCompletionAt = reachedDeadlines
+        .map((deadline) => Date.parse(deadline.dueAt))
+        .filter(Number.isFinite)
+        .sort((a, b) => b - a)[0];
+      const completedAt = new Date(
+        deadlineCompletionAt ?? sourceCompletionAt,
+      ).toISOString();
       const lastSemantic =
         semanticDecisions.at(-1)?.decision ?? null;
 
@@ -870,6 +892,7 @@ export class CompositeTriggerEngine {
           version: '2',
           role: 'match',
           signature,
+          completedAt,
           semanticDecisions,
         },
         firedWakeId: null,
