@@ -29,10 +29,6 @@ export type {
 } from './patternV2Schemas.js';
 
 export {
-  compileLegacyTriggerToPatternV2,
-} from '../patternV2/legacyCompiler.js';
-
-export {
   evaluatePatternV2,
   evaluatePatternAggregate,
   evaluatePatternMeasure,
@@ -50,8 +46,6 @@ export type {
 export {
   TRIGGER_LANGUAGE_VERSION,
   PREDICATE_OPERATOR,
-  COMPOSITION_OPERATOR,
-  TEMPORAL_OPERATOR,
   TRIGGER_LANGUAGE_CATALOG,
   describeTriggerLanguage,
 } from './operatorRegistry.js';
@@ -136,7 +130,6 @@ export {
   COMPOSITE_TRIGGER_SCHEMA_VERSION,
   StructuredPredicateSchema,
   TriggerClauseSchema,
-  TemporalConditionSchema,
   ContinuationContextPolicySchema,
   ContinuationContractSchema,
   EventTimePolicySchema,
@@ -144,8 +137,6 @@ export {
   DerivedEventDefinitionSchema,
   DerivedEventEvidenceRefSchema,
   DerivedEventRecordSchema,
-  DeterministicCorrelationSchema,
-  SemanticCorrelationSchema,
   CompositeTriggerDefinitionSchema,
   CorrelatableEventSchema,
   TriggerSourceEventSchema,
@@ -162,7 +153,6 @@ export {
 export type {
   StructuredPredicate,
   TriggerClause,
-  TemporalCondition,
   ContinuationContextPolicy,
   ContinuationContract,
   EventTimePolicy,
@@ -179,14 +169,12 @@ export type {
 
 export {
   TriggerPlanEventSchema,
-  TriggerPlanMatchSchema,
   TriggerPlanInputSchema,
   parseTriggerPlanInput,
 } from './triggerPlanSchemas.js';
 
 export type {
   TriggerPlanEvent,
-  TriggerPlanMatch,
   TriggerPlanInput,
 } from './triggerPlanSchemas.js';
 
