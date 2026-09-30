@@ -40,6 +40,7 @@ interface JevHttpResponse {
 }
 
 export class TypeSafeJevEvaluator implements SemanticEvaluator {
+  readonly cacheIdentity: string;
   private readonly model: string;
   private readonly baseUrl: string;
   private readonly fetchFn: FetchLike;
@@ -56,6 +57,11 @@ export class TypeSafeJevEvaluator implements SemanticEvaluator {
     this.fetchFn = options.fetchFn ?? fetch;
     this.maxRetries = options.maxRetries ?? 2;
     this.retryBaseMs = options.retryBaseMs ?? 100;
+    this.cacheIdentity = [
+      'typesafe-jev',
+      this.baseUrl,
+      this.model,
+    ].join(':');
   }
 
   static fromEnvironment(
