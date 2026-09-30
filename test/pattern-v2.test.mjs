@@ -1293,3 +1293,65 @@ test('derived measures cannot depend on optional Pattern v2 bindings', async () 
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+
+test('Pattern v2 watermark remains monotonic after match pruning', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'ei-pattern-v2-watermark-'));
+  try {
+    const store = new PersistentEventStore(dir);
+    await store.init();
+    const engine = new CompositeTriggerEngine(store);
+
+    await engine.register({
+      triggerId: 'monotonic-watermark',
+      version: '1',
+      conditionOnly: true,
+      clauses: [
+        { id: 'e', event: 'e.event', arguments: {}, where: [] },
+      ],
+      expression: { kind: 'anyOf', refs: ['e'] },
+      temporal: [],
+      patternV2: pattern({
+        kind: 'event',
+        ref: 'e',
+      }),
+      eventTime: {
+        allowedLatenessMs: 5 * 60 * 1000,
+      },
+      withinMs: 10 * 60 * 1000,
+    });
+
+    const first = await engine.ingest(correlatable(
+      'newer',
+      'e.event',
+      '2026-09-30T10:20:00.000Z',
+    ));
+    assert.equal(first.some((entry) => entry.matched), true);
+
+    const late = await engine.ingest(correlatable(
+      'too-old',
+      'e.event',
+      '2026-09-30T10:00:00.000Z',
+    ));
+    assert.equal(late.some((entry) => entry.matched), false);
+
+    const buffer = store.listTriggerMatches('monotonic-watermark')
+      .filter((record) => record.patternState?.role === 'buffer')
+      .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))[0];
+
+    assert.equal(
+      buffer.patternState.maxObservedOccurredAt,
+      '2026-09-30T10:20:00.000Z',
+    );
+    assert.equal(
+      store.listAudit()
+        .some((entry) =>
+          entry.kind === 'event.late_dropped' &&
+          entry.details?.sourceEventId === 'too-old'
+        ),
+      true,
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
