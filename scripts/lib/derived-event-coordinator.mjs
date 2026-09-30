@@ -228,7 +228,7 @@ export class DerivedEventCoordinator {
         triggerId: definition.triggerId,
         triggerVersion: definition.version,
         matchId: match.matchId,
-        correlationKey: match.correlationKey,
+        partitionKey: match.partitionKey,
         contractVersion: spec.contractVersion,
         schemaFingerprint: contract.schemaFingerprint,
       },
