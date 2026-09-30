@@ -220,9 +220,17 @@ test('zero lateness drops stale events instead of creating a false sequence', as
       '2026-09-30T10:03:00.000Z',
       '2026-09-30T10:12:00.000Z',
     ));
-    assert.equal(tooOld[0].match, null);
+    assert.equal(tooOld[0].match.status, 'partial');
+    assert.deepEqual(
+      tooOld[0].match.sourceEvents.map((event) => event.sourceEventId),
+      ['b-late'],
+    );
     assert.equal(compatibleB[0].matched, false);
-    assert.equal(compatibleB[0].match, null);
+    assert.equal(compatibleB[0].match.status, 'partial');
+    assert.deepEqual(
+      compatibleB[0].match.sourceEvents.map((event) => event.sourceEventId),
+      ['b-late'],
+    );
     assert.equal(
       store.listTriggerMatches('window-isolation')
         .filter((match) => match.status === 'matched').length,
