@@ -4,6 +4,7 @@ import {
   PatternAstV2DefinitionSchema,
   PatternMeasureSchema,
   collectPatternDurationsMs,
+  collectPatternMeasureRefs,
   collectPatternRefs,
 } from './patternV2Schemas.js';
 
@@ -319,11 +320,52 @@ export const CompositeTriggerDefinitionSchema = z.object({
 
   if (value.derivedEvent) {
     const projectionKeys = new Set();
+    const measureKeys = new Set();
+
+    for (const measure of value.derivedEvent.measures ?? []) {
+      if (measure.key === '_derived') {
+        ctx.addIssue({
+          code: 'custom',
+          message: 'Derived event measure key _derived is reserved',
+        });
+      }
+      if (measureKeys.has(measure.key)) {
+        ctx.addIssue({
+          code: 'custom',
+          message: `Derived event measure key must be unique: ${measure.key}`,
+        });
+      }
+      if (Object.prototype.hasOwnProperty.call(
+        value.derivedEvent.constants,
+        measure.key,
+      )) {
+        ctx.addIssue({
+          code: 'custom',
+          message: `Derived event key cannot be both constant and measure: ${measure.key}`,
+        });
+      }
+      for (const ref of collectPatternMeasureRefs(measure)) {
+        if (!ids.has(ref)) {
+          ctx.addIssue({
+            code: 'custom',
+            message: `Derived event measure ${measure.key} references unknown clause: ${ref}`,
+          });
+        }
+      }
+      measureKeys.add(measure.key);
+    }
+
     for (const projection of value.derivedEvent.projections) {
       if (!ids.has(projection.ref)) {
         ctx.addIssue({
           code: 'custom',
           message: `Derived event projection references unknown clause: ${projection.ref}`,
+        });
+      }
+      if (measureKeys.has(projection.key)) {
+        ctx.addIssue({
+          code: 'custom',
+          message: `Derived event key cannot be both measure and projection: ${projection.key}`,
         });
       }
       if (projectionKeys.has(projection.key)) {
