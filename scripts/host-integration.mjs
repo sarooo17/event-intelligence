@@ -105,7 +105,7 @@ function scopedHostView(runtime, context) {
       return runtime.mcpEventsClient.attachConnection(normalized);
     },
     async mcpStatus() {
-      return await runtime.mcpEventsClient.status()
+      return (await runtime.mcpEventsClient.status())
         .filter((entry) => entry.scopeId === scopeId);
     },
   };
