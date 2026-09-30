@@ -227,12 +227,12 @@ export class TriggerInspector {
     this.now = now;
   }
 
-  inspect({
+  async inspect({
     triggerId,
     version,
     matchId,
   }) {
-    const candidates = this.store.listTriggers()
+    const candidates = (await this.store.listTriggers())
       .filter((definition) => definition.triggerId === triggerId)
       .filter((definition) => !version || definition.version === version);
 
@@ -250,12 +250,12 @@ export class TriggerInspector {
           })
         )[0];
 
-    const state = this.store.getTriggerState(
+    const state = await this.store.getTriggerState(
       definition.triggerId,
       definition.version,
     );
 
-    const matches = this.store.listTriggerMatches(definition.triggerId)
+    const matches = (await this.store.listTriggerMatches(definition.triggerId))
       .filter((match) => match.triggerVersion === definition.version);
     const match = matchId
       ? matches.find((candidate) => candidate.matchId === matchId) ?? null
@@ -294,11 +294,11 @@ export class TriggerInspector {
       .sort()[0] ?? null;
 
     const wake = match?.firedWakeId
-      ? this.store.latestWake(match.firedWakeId)
+      ? await this.store.latestWake(match.firedWakeId)
       : null;
 
     const derivedOutputs = match
-      ? (this.store.listDerivedEvents?.({ matchId: match.matchId }) ?? [])
+      ? (await this.store.listDerivedEvents?.({ matchId: match.matchId }) ?? [])
       : [];
 
     const matchHistory = match
