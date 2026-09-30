@@ -115,7 +115,7 @@ test('host registry auto-discovers event MCPs, ignores tools-only MCPs and wakes
             serverId: 'github-mcp',
             where: [],
           }],
-          expression: { kind: 'anyOf', refs: ['build'] },
+          pattern: { root: { kind: 'event', ref: 'build' } },
           withinMs: 60000,
           lifecycle: { oneShot: true },
           target: {
