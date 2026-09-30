@@ -476,7 +476,7 @@ export const PatternPartitionDimensionSchema = z.object({
   fields: z.array(z.object({
     ref: Id,
     path: z.string().min(1),
-  }).strict()).min(2),
+  }).strict()).min(1),
 }).strict();
 
 export const PatternSelectionSchema = z.object({
