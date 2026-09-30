@@ -45,6 +45,10 @@ export interface PatternV2Evaluation {
   pending: PatternV2Candidate[];
   semanticEvaluations: number;
   semanticTrace: PatternV2SemanticTrace[];
+  semanticCacheEntries: Array<{
+    key: string;
+    decision: SemanticDecision;
+  }>;
   truncated: boolean;
 }
 
@@ -193,6 +197,24 @@ function candidateSignature(candidate: PatternV2Candidate): string {
     .map((event) => `${event.clauseId}:${eventIdentity(event)}`)
     .sort()
     .join('|');
+}
+
+function semanticCacheKey(
+  node: Extract<PatternNodeV2, { kind: 'semantic' }>,
+  candidate: PatternV2Candidate,
+): string {
+  return JSON.stringify(stableValue({
+    node: {
+      id: node.id,
+      refs: node.refs,
+      instruction: node.instruction,
+      input: node.input,
+      matchThreshold: node.matchThreshold,
+      rejectThreshold: node.rejectThreshold,
+      uncertain: node.uncertain,
+    },
+    candidate: candidateSignature(candidate),
+  }));
 }
 
 function dedupe(
@@ -1169,12 +1191,12 @@ async function evaluateNode(
       break;
     }
 
-    const cacheKey = [
-      node.id,
-      candidateSignature(candidate),
-      node.instruction,
-    ].join(':');
+    const cacheKey = semanticCacheKey(node, candidate);
     let decision = context.semanticCache.get(cacheKey);
+    if (decision) {
+      context.semanticCache.delete(cacheKey);
+      context.semanticCache.set(cacheKey, decision);
+    }
     if (!decision) {
       context.semanticEvaluations += 1;
       decision = await withTimeout(
@@ -1241,12 +1263,17 @@ export async function evaluatePatternV2({
   evaluator = null,
   now = new Date(),
   allowedLatenessMs = 0,
+  semanticCacheEntries = [],
 }: {
   definition: PatternAstV2Definition;
   events: TriggerSourceEvent[];
   evaluator?: SemanticEvaluator | null;
   now?: Date;
   allowedLatenessMs?: number;
+  semanticCacheEntries?: Iterable<{
+    key: string;
+    decision: SemanticDecision;
+  }>;
 }): Promise<PatternV2Evaluation> {
   const ordered = [...events].sort(eventOrder);
   const context: EvaluationContext = {
@@ -1257,7 +1284,12 @@ export async function evaluatePatternV2({
     maxSemanticEvaluations: definition.execution.maxSemanticEvaluations,
     semanticEvaluations: 0,
     truncated: false,
-    semanticCache: new Map(),
+    semanticCache: new Map(
+      [...semanticCacheEntries].map((entry) => [
+        entry.key,
+        entry.decision,
+      ]),
+    ),
     semanticTrace: [],
     allowedLatenessMs,
   };
@@ -1282,6 +1314,9 @@ export async function evaluatePatternV2({
     pending,
     semanticEvaluations: context.semanticEvaluations,
     semanticTrace: context.semanticTrace,
+    semanticCacheEntries: [
+      ...context.semanticCache.entries(),
+    ].map(([key, decision]) => ({ key, decision })),
     truncated: context.truncated,
   };
 }
