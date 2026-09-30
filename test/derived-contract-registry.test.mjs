@@ -291,8 +291,16 @@ test('explicit v1/v2 consumers receive only matching derived contract occurrence
       inputEvent('source.v1', 'input_v1', 'release-1'),
     );
 
-    assert.equal(store.listTriggerMatches('consumer-v1').length, 1);
-    assert.equal(store.listTriggerMatches('consumer-v2').length, 0);
+    assert.equal(
+      store.listTriggerMatches('consumer-v1')
+        .filter((match) => match.patternState?.role === 'match').length,
+      1,
+    );
+    assert.equal(
+      store.listTriggerMatches('consumer-v2')
+        .filter((match) => match.patternState?.role === 'match').length,
+      0,
+    );
 
     const emittedV1 = store.listDerivedEvents({ name: 'release.ready' })[0];
     assert.equal(emittedV1.event.data._derived.contractVersion, '1');
@@ -305,8 +313,16 @@ test('explicit v1/v2 consumers receive only matching derived contract occurrence
       inputEvent('source.v2', 'input_v2', 'release-2'),
     );
 
-    assert.equal(store.listTriggerMatches('consumer-v1').length, 1);
-    assert.equal(store.listTriggerMatches('consumer-v2').length, 1);
+    assert.equal(
+      store.listTriggerMatches('consumer-v1')
+        .filter((match) => match.patternState?.role === 'match').length,
+      1,
+    );
+    assert.equal(
+      store.listTriggerMatches('consumer-v2')
+        .filter((match) => match.patternState?.role === 'match').length,
+      1,
+    );
 
     const emitted = store.listDerivedEvents({ name: 'release.ready' });
     assert.deepEqual(
