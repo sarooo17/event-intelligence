@@ -103,50 +103,6 @@ function validatePredicateAgainstSource(source, predicate, warnings) {
   }
 }
 
-function clauseSourceForRef(ref, clauses, resolvedSources) {
-  const index = clauses.findIndex((clause) => clause.id === ref);
-  if (index < 0) {
-    const error = new Error(`Temporal condition references unknown event id: ${ref}`);
-    error.code = 'TRIGGER_PLAN_EVENT_REF_UNKNOWN';
-    throw error;
-  }
-  return resolvedSources[index];
-}
-
-function validateTemporalConditions(conditions, clauses, resolvedSources, warnings) {
-  const refs = new Set(clauses.map((clause) => clause.id));
-
-  for (const condition of conditions) {
-    const referenced = [];
-    if ('ref' in condition) referenced.push(condition.ref);
-    if ('afterRef' in condition) referenced.push(condition.afterRef);
-    if ('beforeRef' in condition) referenced.push(condition.beforeRef);
-
-    for (const ref of referenced) {
-      if (!refs.has(ref)) {
-        const error = new Error(
-          `Temporal condition ${condition.id} references unknown event id: ${ref}`,
-        );
-        error.code = 'TRIGGER_PLAN_EVENT_REF_UNKNOWN';
-        throw error;
-      }
-    }
-
-    if (condition.kind === 'distinct') {
-      const source = clauseSourceForRef(
-        condition.ref,
-        clauses,
-        resolvedSources,
-      );
-      validatePredicateAgainstSource(
-        source,
-        { path: condition.path, op: 'exists', value: true },
-        warnings,
-      );
-    }
-  }
-}
-
 function walkPatternValue(value, visitor) {
   if (!value || typeof value !== 'object') return;
   if (value.kind === 'field') {
@@ -189,32 +145,6 @@ function walkPatternNode(node, visitor) {
   if (node.forbidden) walkPatternNode(node.forbidden, visitor);
 }
 
-function expressionFor(match, refs) {
-  if (typeof match === 'object' && match?.kind === 'count') {
-    if (!refs.includes(match.eventId)) {
-      const error = new Error(`Count match references unknown event id: ${match.eventId}`);
-      error.code = 'TRIGGER_PLAN_EVENT_REF_UNKNOWN';
-      throw error;
-    }
-    return { kind: 'count', ref: match.eventId, atLeast: match.atLeast };
-  }
-
-  if (match === 'sequence') {
-    if (refs.length < 2) {
-      const error = new Error('Sequence match requires at least two events');
-      error.code = 'TRIGGER_PLAN_SEQUENCE_REQUIRES_MULTIPLE_EVENTS';
-      throw error;
-    }
-    return { kind: 'sequence', refs };
-  }
-
-  if (match === 'any' || refs.length === 1) {
-    return { kind: 'anyOf', refs };
-  }
-
-  return { kind: 'allOf', refs };
-}
-
 function lifecycleFor(input = {}) {
   return {
     oneShot: input.oneShot ?? false,
@@ -223,6 +153,31 @@ function lifecycleFor(input = {}) {
     ...(input.maxFirings !== undefined ? { maxFirings: input.maxFirings } : {}),
     ...(input.expiresAt ? { expiresAt: input.expiresAt } : {}),
     ...(input.leaseUntil ? { leaseUntil: input.leaseUntil } : {}),
+  };
+}
+
+function defaultPattern(refs) {
+  const root = refs.length === 1
+    ? { kind: 'event', ref: refs[0] }
+    : {
+        kind: 'allOf',
+        children: refs.map((ref) => ({ kind: 'event', ref })),
+      };
+
+  return {
+    version: '2',
+    root,
+    partitionBy: [],
+    selection: {
+      overlap: 'disallow',
+      afterMatch: 'skipPastLast',
+      maxMatchesPerEvent: 10,
+    },
+    execution: {
+      maxCandidates: 512,
+      maxSemanticEvaluations: 16,
+      maxBufferedEvents: 10000,
+    },
   };
 }
 
@@ -285,12 +240,13 @@ export class TriggerPlanner {
 
     const refs = clauses.map((clause) => clause.id);
 
-    if (plan.patternV2) {
-      const patternRefs = collectPatternRefs(plan.patternV2.root);
+    const pattern = plan.pattern ?? defaultPattern(refs);
+    {
+      const patternRefs = collectPatternRefs(pattern.root);
       for (const ref of patternRefs) {
         if (!refs.includes(ref)) {
           const error = new Error(
-            `Pattern AST v2 references unknown event id: ${ref}`,
+            `Pattern AST references unknown event id: ${ref}`,
           );
           error.code = 'TRIGGER_PLAN_EVENT_REF_UNKNOWN';
           throw error;
@@ -301,7 +257,7 @@ export class TriggerPlanner {
         const index = clauses.findIndex((candidate) => candidate.id === ref);
         if (index < 0) {
           const error = new Error(
-            `Pattern AST v2 references unknown event id: ${ref}`,
+            `Pattern AST references unknown event id: ${ref}`,
           );
           error.code = 'TRIGGER_PLAN_EVENT_REF_UNKNOWN';
           throw error;
@@ -309,7 +265,7 @@ export class TriggerPlanner {
         return resolvedSources[index];
       };
 
-      walkPatternNode(plan.patternV2.root, (ref, fieldPath, purpose) => {
+      walkPatternNode(pattern.root, (ref, fieldPath, purpose) => {
         validatePredicateAgainstSource(
           sourceForRef(ref),
           { path: fieldPath, op: 'exists', value: true },
@@ -317,7 +273,7 @@ export class TriggerPlanner {
         );
       });
 
-      for (const dimension of plan.patternV2.partitionBy) {
+      for (const dimension of pattern.partitionBy) {
         for (const field of dimension.fields) {
           const clauseIndex = clauses.findIndex(
             (candidate) => candidate.id === field.ref,
@@ -336,44 +292,8 @@ export class TriggerPlanner {
           );
         }
       }
-    } else {
-      validateTemporalConditions(
-        plan.temporal,
-        clauses,
-        resolvedSources,
-        warnings,
-      );
     }
 
-    const correlation = {};
-    if (!plan.patternV2 && plan.correlateBy) {
-      for (const field of plan.correlateBy) {
-        if (!refs.includes(field.eventId)) {
-          const error = new Error(
-            `Correlation references unknown event id: ${field.eventId}`,
-          );
-          error.code = 'TRIGGER_PLAN_EVENT_REF_UNKNOWN';
-          throw error;
-        }
-        const clause = clauses.find((candidate) => candidate.id === field.eventId);
-        const source = resolvedSources[clauses.indexOf(clause)];
-        validatePredicateAgainstSource(
-          source,
-          { path: field.path, op: 'exists', value: true },
-          warnings,
-        );
-      }
-      correlation.deterministic = {
-        kind: 'same_value',
-        fields: plan.correlateBy.map((field) => ({
-          ref: field.eventId,
-          path: field.path,
-        })),
-      };
-    }
-    if (!plan.patternV2 && plan.semanticCorrelation) {
-      correlation.semantic = plan.semanticCorrelation;
-    }
 
     const triggerId = plan.triggerId || `planned_${(
       await sha256Hex(canonicalJson({
@@ -381,7 +301,7 @@ export class TriggerPlanner {
         events: plan.events,
         match: plan.match,
         temporal: plan.temporal,
-        patternV2: plan.patternV2 ?? null,
+        patternV2: plan.pattern ?? null,
         eventTime: plan.eventTime ?? null,
         conditionOnly: plan.conditionOnly,
         continuation: plan.continuation?.instruction ?? null,
@@ -401,27 +321,21 @@ export class TriggerPlanner {
       conditionOnly: plan.conditionOnly,
       ...(plan.continuation ? { continuation: plan.continuation } : {}),
       clauses,
-      expression: plan.patternV2
-        ? { kind: 'anyOf', refs }
-        : expressionFor(plan.match, refs),
-      temporal: plan.patternV2 ? [] : plan.temporal,
-      ...(plan.patternV2 ? { patternV2: plan.patternV2 } : {}),
+      pattern,
       withinMs: plan.withinMs,
       ...(plan.eventTime ? { eventTime: plan.eventTime } : {}),
       lifecycle: lifecycleFor(plan.lifecycle),
-      ...(Object.keys(correlation).length ? { correlation } : {}),
       ...(plan.target ? { target: plan.target } : {}),
     });
 
     return {
-      planVersion: '1',
+      planVersion: '2',
       definition,
       connectionIds: [...new Set(resolvedSources.map((source) => source.connectionId))],
       resolvedSources: resolvedSources.map(sourceSummary),
       warnings,
       explanation: {
         when: {
-          expression: definition.expression,
           events: clauses.map((clause) => ({
             id: clause.id,
             event: clause.event,
