@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## [0.5.0] - 2026-09-30
 
 ### Pattern AST v2 / advanced CEP
 
@@ -49,6 +49,14 @@
 - external draft assumptions are centralized behind a versioned compatibility profile instead of being spread through the runtime;
 - the current default profile remains the 2026-09-25 experimental extension snapshot;
 - host-owned/embedded integration remains the primary architecture; standalone/provider-native paths are compatibility surfaces, not a new deployment requirement.
+
+
+### Compatibility
+
+- Pattern AST v2 is additive; legacy composite/temporal triggers remain executable unchanged;
+- the internal persisted Event Intelligence protocol/schema identifiers remain on the v0.1 compatibility line;
+- `compileLegacyTriggerToPatternV2()` is available for migration/differential verification without forcing existing persisted triggers to rewrite;
+- MCP Events remains experimental and isolated behind the versioned compatibility profile.
 
 
 ## [0.4.0] - 2026-09-25
