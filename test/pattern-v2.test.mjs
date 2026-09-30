@@ -1081,7 +1081,7 @@ test('targeted after-match selection refs are validated', async () => {
         ),
         withinMs: 3600000,
       }),
-      /afterMatch references unknown pattern ref/,
+      /afterMatch ref is not guaranteed by every match/,
     );
   } finally {
     await rm(dir, { recursive: true, force: true });
