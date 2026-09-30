@@ -775,19 +775,8 @@ export class TriggerControlPlane {
       }
     }
 
-    for (const field of definition.correlation?.deterministic?.fields ?? []) {
-      const clause = definition.clauses.find(
-        (candidate) => candidate.id === field.ref,
-      );
-      const source = clause ? resolveSource(clause) : null;
-      assertAdvertisedPath(
-        source,
-        field.path,
-        `Correlation ${field.ref}`,
-      );
-    }
 
-    if (definition.patternV2) {
+    {
       const clauseForRef = (ref) =>
         definition.clauses.find((candidate) => candidate.id === ref);
       const sourceForRef = (ref) => {
@@ -795,7 +784,7 @@ export class TriggerControlPlane {
         return clause ? resolveSource(clause) : null;
       };
 
-      for (const dimension of definition.patternV2.partitionBy ?? []) {
+      for (const dimension of definition.pattern.partitionBy ?? []) {
         for (const field of dimension.fields ?? []) {
           assertAdvertisedPath(
             sourceForRef(field.ref),
@@ -805,7 +794,7 @@ export class TriggerControlPlane {
         }
       }
 
-      walkPatternNode(definition.patternV2.root, (ref, fieldPath, purpose) => {
+      walkPatternNode(definition.pattern.root, (ref, fieldPath, purpose) => {
         assertAdvertisedPath(
           sourceForRef(ref),
           fieldPath,
