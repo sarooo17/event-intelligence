@@ -211,6 +211,8 @@ export class CompositeTriggerEngine {
           event,
         ),
       );
+    }
+
     return results;
   }
 
@@ -331,6 +333,8 @@ export class CompositeTriggerEngine {
     }
 
     return [];
+  }
+
   private patternPartitionKey(
     definition: CompositeTriggerDefinition,
     matchingClauses: TriggerClause[],
