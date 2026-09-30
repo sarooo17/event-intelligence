@@ -119,9 +119,22 @@ export async function createLocalEventIntelligenceRuntime({
   const rootStore = providedStore ?? new PersistentEventStore(dataDir);
   const restored = await initializeStore(rootStore);
   const storeCapabilities = describeStoreCapabilities(rootStore);
-  if (env.EVENT_INTELLIGENCE_REQUIRE_SHARED_STORE === 'true') {
+  const requireSharedStore =
+    env.EVENT_INTELLIGENCE_REQUIRE_SHARED_STORE === 'true';
+  if (requireSharedStore) {
     assertSharedStoreCapabilities(rootStore);
+    if (!String(env.EVENT_INTELLIGENCE_WORKER_ID || '').trim()) {
+      const error = new Error(
+        'EVENT_INTELLIGENCE_WORKER_ID is required in shared-store mode',
+      );
+      error.code = 'EVENT_INTELLIGENCE_WORKER_ID_REQUIRED';
+      throw error;
+    }
   }
+  const rootWorkerId = String(
+    env.EVENT_INTELLIGENCE_WORKER_ID ||
+    `ei-${process.pid}`,
+  ).trim();
 
   const evaluator =
     semanticEvaluator !== undefined
@@ -169,7 +182,17 @@ export async function createLocalEventIntelligenceRuntime({
       assertStoreContract(store);
     }
 
-    const triggerEngine = new CompositeTriggerEngine(store, evaluator);
+    const triggerEngine = new CompositeTriggerEngine(
+      store,
+      evaluator,
+      undefined,
+      {
+        workerId: `${rootWorkerId}:${scopeId}`,
+        partitionLeaseMs: Number(
+          env.EVENT_INTELLIGENCE_PARTITION_LEASE_MS ?? 300000,
+        ),
+      },
+    );
     const triggerPlanner = new TriggerPlanner({ store });
     const activationHydrator = new ActivationHydrator({ store });
     const wakeCoordinators = new Map();
