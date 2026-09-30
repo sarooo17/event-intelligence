@@ -14,59 +14,6 @@ export const RuntimeTargetSchema = z.object({
   id: Id,
 });
 
-export const EventSourceSchema = z.object({
-  serverId: Id,
-  transport: z.enum(['stdio', 'streamable_http', 'webhook', 'poll', 'internal']),
-  provider: z.string().min(1).optional(),
-  cursor: z.string().nullable().optional(),
-});
-
-export const EventLineageSchema = z.object({
-  protocol: z.literal(EVENT_INTELLIGENCE_PROTOCOL),
-  protocolVersion: z.literal(EVENT_INTELLIGENCE_PROTOCOL_VERSION),
-  schemaVersion: z.literal(EVENT_INTELLIGENCE_SCHEMA_VERSION),
-  traceId: Id,
-  environmentId: Id,
-  subscriptionId: Id,
-  sourceEventId: Id,
-  observedAt: Timestamp,
-  source: EventSourceSchema,
-  target: RuntimeTargetSchema,
-  event: z.object({
-    name: z.string().min(1),
-    occurredAt: Timestamp,
-    payloadHash: z.string().regex(/^[a-f0-9]{64}$/),
-  }),
-});
-
-export const SemanticDecisionRecordSchema = z.object({
-  decisionId: Id,
-  traceId: Id,
-  subscriptionId: Id,
-  sourceEventId: Id,
-  createdAt: Timestamp,
-  evaluator: z.string().min(1),
-  outcome: z.enum(['match', 'reject', 'uncertain']),
-  probability: z.number().min(0).max(1),
-  matched: z.boolean(),
-  shouldEscalate: z.boolean(),
-  policy: z.object({
-    matchThreshold: z.number().min(0).max(1),
-    rejectThreshold: z.number().min(0).max(1),
-    uncertain: z.enum(['escalate', 'reject', 'match']),
-  }),
-  inputFields: z.array(z.string().min(1)),
-  providerEvidence: z.object({
-    requestedModel: z.string().min(1).optional(),
-    resolvedModel: z.string().min(1).optional(),
-    requestId: z.string().min(1).optional(),
-    httpStatus: z.number().int().min(100).max(599).optional(),
-    inputTokens: z.number().int().nonnegative().optional(),
-    outputTokens: z.number().int().nonnegative().optional(),
-    providerReportedCost: z.number().nonnegative().optional(),
-  }).optional(),
-});
-
 export const WakeRecordSchema = z.object({
   wakeId: Id,
   traceId: Id,
@@ -75,7 +22,7 @@ export const WakeRecordSchema = z.object({
   sourceEventId: Id,
   createdAt: Timestamp,
   target: RuntimeTargetSchema,
-  status: z.enum(['queued', 'delivered', 'handled', 'duplicate', 'dead_letter']),
+  status: z.enum(['queued', 'delivered', 'dead_letter']),
   runtimeReceiptId: Id.optional(),
 });
 
@@ -90,55 +37,18 @@ export const McpEventOccurrenceSchema = z.object({
   _meta: z.record(z.string(), z.unknown()).optional(),
 });
 
-export const SemanticConditionWireSchema = z.object({
-  type: z.literal('semantic_boolean'),
-  instruction: z.string().min(1),
-  input: z.array(z.string().min(1)).min(1),
-  matchThreshold: z.number().min(0).max(1),
-  rejectThreshold: z.number().min(0).max(1),
-  uncertain: z.enum(['escalate', 'reject', 'match']),
-});
-
-export const EventIngestRequestSchema = z.object({
-  event: McpEventOccurrenceSchema,
-  context: z.object({
-    traceId: Id.optional(),
-    environmentId: Id,
-    subscriptionId: Id,
-    serverId: Id,
-    transport: z.enum(['stdio', 'streamable_http', 'webhook', 'poll', 'internal']),
-    provider: z.string().min(1).optional(),
-    target: RuntimeTargetSchema,
-  }),
-  semanticCondition: SemanticConditionWireSchema.optional(),
-  wakeOnEscalation: z.boolean().default(false),
-});
-
 export const LifecycleStateSchema = z.enum([
-  'received',
-  'duplicate',
-  'evaluating',
-  'matched',
-  'rejected',
-  'escalated',
   'wake_queued',
   'wake_delivered',
-  'handled',
-  'failed',
   'dead_letter',
 ]);
 
 export const AuditKindSchema = z.enum([
-  'event.received',
-  'event.duplicate',
   'event.late_dropped',
   'event.buffer_overflow',
-  'decision.evaluated',
-  'lifecycle.transition',
   'wake.queued',
   'wake.delivered',
   'wake.retry_scheduled',
-  'wake.handled',
   'wake.dead_letter',
   'trigger.partial',
   'trigger.correlation',
@@ -170,7 +80,6 @@ export const AuditRecordSchema = z.object({
   kind: AuditKindSchema,
   entityType: z.enum([
     'event',
-    'decision',
     'wake',
     'subscription',
     'runtime',
@@ -190,25 +99,9 @@ export const AuditRecordSchema = z.object({
 
 export type RuntimeTarget = z.infer<typeof RuntimeTargetSchema>;
 export type McpEventOccurrence = z.infer<typeof McpEventOccurrenceSchema>;
-export type SemanticConditionWire = z.infer<typeof SemanticConditionWireSchema>;
-export type EventIngestRequest = z.infer<typeof EventIngestRequestSchema>;
-export type EventLineage = z.infer<typeof EventLineageSchema>;
-export type SemanticDecisionRecord = z.infer<typeof SemanticDecisionRecordSchema>;
 export type WakeRecord = z.infer<typeof WakeRecordSchema>;
 export type LifecycleState = z.infer<typeof LifecycleStateSchema>;
 export type AuditRecord = z.infer<typeof AuditRecordSchema>;
-
-export function parseEventIngestRequest(value: unknown): EventIngestRequest {
-  return EventIngestRequestSchema.parse(value);
-}
-
-export function parseEventLineage(value: unknown): EventLineage {
-  return EventLineageSchema.parse(value);
-}
-
-export function parseSemanticDecisionRecord(value: unknown): SemanticDecisionRecord {
-  return SemanticDecisionRecordSchema.parse(value);
-}
 
 export function parseWakeRecord(value: unknown): WakeRecord {
   return WakeRecordSchema.parse(value);
