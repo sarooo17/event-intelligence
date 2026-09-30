@@ -2,9 +2,6 @@ import {
   CompositeTriggerEngine,
 } from '../../dist/src/composite/engine.js';
 import {
-  evaluateTemporalConditions,
-} from '../../dist/src/composite/temporal.js';
-import {
   parseCompositeTriggerDefinition,
   parseCorrelatableEvent,
   parseTriggerMatchRecord,
@@ -32,12 +29,6 @@ function sourceRef(event) {
   };
 }
 
-function baseExpressionRefs(expression) {
-  return expression.kind === 'count'
-    ? [expression.ref]
-    : expression.refs;
-}
-
 function clauseState(definition, match) {
   const seen = new Map();
   for (const event of match?.sourceEvents ?? []) {
@@ -48,63 +39,19 @@ function clauseState(definition, match) {
 
   return definition.clauses.map((clause) => {
     const evidence = seen.get(clause.id) ?? [];
-    const requiredCount =
-      definition.expression.kind === 'count' &&
-      definition.expression.ref === clause.id
-        ? definition.expression.atLeast
-        : 1;
     return {
       clauseId: clause.id,
       event: clause.event,
       serverId: clause.serverId ?? null,
       contractVersion: clause.contractVersion ?? null,
-      status: evidence.length >= requiredCount ? 'satisfied' : 'waiting',
+      status: evidence.length ? 'observed' : 'waiting',
       observedCount: evidence.length,
-      requiredCount,
       evidence,
     };
   });
 }
 
-function baseExpressionSatisfied(definition, clauses) {
-  const byId = new Map(clauses.map((entry) => [entry.clauseId, entry]));
-  const expression = definition.expression;
-  if (expression.kind === 'allOf') {
-    return expression.refs.every(
-      (ref) => byId.get(ref)?.status === 'satisfied',
-    );
-  }
-  if (expression.kind === 'anyOf') {
-    return expression.refs.some(
-      (ref) => byId.get(ref)?.status === 'satisfied',
-    );
-  }
-  if (expression.kind === 'count') {
-    return (byId.get(expression.ref)?.observedCount ?? 0) >= expression.atLeast;
-  }
-
-  const ordered = [];
-  for (const ref of expression.refs) {
-    const evidence = byId.get(ref)?.evidence ?? [];
-    if (!evidence.length) return false;
-    ordered.push(evidence[0]);
-  }
-  return ordered.every(
-    (event, index) =>
-      index === 0 ||
-      Date.parse(event.occurredAt) >
-        Date.parse(ordered[index - 1].occurredAt),
-  );
-}
-
-function explain({
-  definition,
-  state,
-  match,
-  clauses,
-  temporal,
-  wake,
-}) {
+function explain({ state, match, wake }) {
   if (state.status === 'paused') {
     return {
       code: 'trigger_paused',
@@ -132,8 +79,9 @@ function explain({
 
   if (!match) {
     return {
-      code: 'waiting_for_first_event',
-      summary: `Waiting for: ${baseExpressionRefs(definition.expression).join(', ')}.`,
+      code: 'waiting_for_pattern_evidence',
+      summary: 'Waiting for evidence that can satisfy the Pattern AST.',
+      patternVersion: '2',
     };
   }
 
@@ -156,65 +104,22 @@ function explain({
   if (match.status === 'matched') {
     return {
       code: 'matched_waiting_delivery',
-      summary: 'All trigger conditions are satisfied; runtime delivery is pending or not yet marked fired.',
+      summary: 'The Pattern AST is satisfied; effect delivery is pending or not yet marked fired.',
     };
   }
   if (match.status === 'expired') {
     return {
       code: 'match_expired',
-      summary: 'This match can no longer satisfy the trigger.',
-    };
-  }
-
-  if (definition.patternV2) {
-    return {
-      code: 'pattern_v2_waiting',
-      summary:
-        'Pattern AST v2 has buffered evidence but no new complete match is currently eligible.',
-      patternVersion: '2',
-      bufferRole: match.patternState?.role ?? null,
-      semanticDecisions:
-        match.patternState?.semanticDecisions ?? [],
-    };
-  }
-
-  const missing = clauses
-    .filter((clause) => clause.status !== 'satisfied')
-    .map((clause) => clause.clauseId);
-
-  if (!baseExpressionSatisfied(definition, clauses)) {
-    return {
-      code: 'waiting_for_event_clauses',
-      summary: `Waiting for event clauses: ${missing.join(', ') || 'expression ordering'}.`,
-      missingClauses: missing,
-    };
-  }
-
-  const blocked = temporal.conditionStates.filter(
-    (condition) => condition.status === 'blocked',
-  );
-  if (blocked.length) {
-    return {
-      code: 'temporal_blocked',
-      summary: `Temporal condition blocked: ${blocked.map((entry) => entry.conditionId).join(', ')}.`,
-      temporalConditionIds: blocked.map((entry) => entry.conditionId),
-    };
-  }
-
-  const pending = temporal.conditionStates.filter(
-    (condition) => condition.status === 'pending',
-  );
-  if (pending.length) {
-    return {
-      code: 'waiting_for_temporal_conditions',
-      summary: `Waiting for temporal conditions: ${pending.map((entry) => entry.conditionId).join(', ')}.`,
-      temporalConditionIds: pending.map((entry) => entry.conditionId),
+      summary: 'This Pattern match can no longer satisfy the trigger.',
     };
   }
 
   return {
-    code: 'waiting_for_correlation',
-    summary: 'Event and temporal conditions are present; correlation or semantic evaluation has not completed.',
+    code: 'pattern_waiting',
+    summary: 'Pattern AST has buffered evidence but no new complete match is currently eligible.',
+    patternVersion: '2',
+    bufferRole: match.patternState?.role ?? null,
+    semanticDecisions: match.patternState?.semanticDecisions ?? [],
   };
 }
 
@@ -268,27 +173,8 @@ export class TriggerInspector {
     }
 
     const clauses = clauseState(definition, match);
-    const temporal = match
-      ? evaluateTemporalConditions(definition, match, this.now())
-      : {
-          outcome: definition.temporal?.length ? 'pending' : 'satisfied',
-          pendingDeadlines: [],
-          conditionStates: (definition.temporal ?? []).map((condition) => ({
-            conditionId: condition.id,
-            kind: condition.kind,
-            status: 'pending',
-            reason: 'waiting for a match',
-          })),
-        };
-
-    const deadlines = match
-      ? (
-          this.store.listTemporalDeadlines
-            ? await this.store.listTemporalDeadlines({
-                matchId: match.matchId,
-              })
-            : []
-        )
+    const deadlines = match && this.store.listTemporalDeadlines
+      ? await this.store.listTemporalDeadlines({ matchId: match.matchId })
       : [];
     const pendingDeadlines = deadlines.filter(
       (deadline) => deadline.status === 'pending',
@@ -305,18 +191,18 @@ export class TriggerInspector {
       ? (await this.store.listDerivedEvents?.({ matchId: match.matchId }) ?? [])
       : [];
 
-    const matchHistory = match
-      ? (this.store.listTriggerMatchHistory?.(match.matchId) ?? [match])
-          .map((record) => ({
-            status: record.status,
-            updatedAt: record.updatedAt,
-            firedWakeId: record.firedWakeId,
-            derivedEventIds: record.derivedEventIds ?? [],
-            sourceEventIds: record.sourceEvents.map(
-              (event) => event.sourceEventId,
-            ),
-          }))
-      : [];
+    const rawHistory = match && this.store.listTriggerMatchHistory
+      ? await this.store.listTriggerMatchHistory(match.matchId)
+      : (match ? [match] : []);
+    const matchHistory = rawHistory.map((record) => ({
+      status: record.status,
+      updatedAt: record.updatedAt,
+      firedWakeId: record.firedWakeId,
+      derivedEventIds: record.derivedEventIds ?? [],
+      sourceEventIds: record.sourceEvents.map(
+        (event) => event.sourceEventId,
+      ),
+    }));
 
     return {
       trigger: {
@@ -326,9 +212,7 @@ export class TriggerInspector {
         continuation: definition.continuation ?? null,
         target: definition.target ?? null,
         derivedEvent: definition.derivedEvent ?? null,
-        expression: definition.expression,
-        temporal: definition.temporal ?? [],
-        patternV2: definition.patternV2 ?? null,
+        pattern: definition.pattern,
         lifecycle: definition.lifecycle ?? {},
       },
       lifecycle: state,
@@ -344,10 +228,6 @@ export class TriggerInspector {
           }
         : null,
       clauses,
-      temporal: {
-        outcome: temporal.outcome,
-        conditions: temporal.conditionStates,
-      },
       deadlines: deadlines.map((deadline) => ({
         deadlineId: deadline.deadlineId,
         conditionId: deadline.conditionId,
@@ -380,14 +260,7 @@ export class TriggerInspector {
         matchHistory,
         patternState: match?.patternState ?? null,
       },
-      why: explain({
-        definition,
-        state,
-        match,
-        clauses,
-        temporal,
-        wake,
-      }),
+      why: explain({ state, match, wake }),
     };
   }
 }
