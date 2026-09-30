@@ -457,6 +457,44 @@ test('legacy composite definitions compile to Pattern AST v2', () => {
   assert.equal(compiled.root.child.kind, 'anyOf');
 });
 
+test('legacy same-value correlation compiles to cross-event equality, not partitioning', () => {
+  const compiled = compileLegacyTriggerToPatternV2({
+    protocolVersion: '0.1.0',
+    schemaVersion: 'trigger.v0.1',
+    triggerId: 'legacy-correlation',
+    version: '1',
+    clauses: [
+      { id: 'order', event: 'order.created', arguments: {}, where: [] },
+      { id: 'payment', event: 'payment.completed', arguments: {}, where: [] },
+      { id: 'notice', event: 'notice.received', arguments: {}, where: [] },
+    ],
+    expression: { kind: 'allOf', refs: ['order', 'payment', 'notice'] },
+    temporal: [],
+    correlation: {
+      deterministic: {
+        kind: 'same_value',
+        fields: [
+          { ref: 'order', path: 'customer' },
+          { ref: 'payment', path: 'customer' },
+        ],
+      },
+    },
+    lifecycle: {
+      oneShot: false,
+      cooldownMs: 0,
+      completeOnGoal: false,
+    },
+    withinMs: 3600000,
+    target: { runtime: 'test', kind: 'task', id: 'legacy' },
+  });
+
+  assert.deepEqual(compiled.partitionBy, []);
+  assert.equal(compiled.root.kind, 'compare');
+  assert.equal(compiled.root.left.ref, 'order');
+  assert.equal(compiled.root.right.ref, 'payment');
+  assert.equal(compiled.root.child.kind, 'allOf');
+});
+
 test('Pattern AST v2 partitions durable state by business key', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'ei-pattern-v2-partition-'));
   try {
