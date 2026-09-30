@@ -98,12 +98,28 @@ function sourceEventOrder(
   );
 }
 
+function stablePatternValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stablePatternValue);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.keys(value as Record<string, unknown>)
+        .sort()
+        .map((key) => [
+          key,
+          stablePatternValue((value as Record<string, unknown>)[key]),
+        ]),
+    );
+  }
+  return value;
+}
+
 function patternPhysicalIdentity(
   event: TriggerMatchRecord['sourceEvents'][number],
 ): string {
   return [
     event.serverId ?? '-',
     event.sourceEventId,
+    JSON.stringify(stablePatternValue(event.subscriptionArguments ?? {})),
   ].join(':');
 }
 
@@ -178,6 +194,44 @@ export class CompositeTriggerEngine {
       if (matchingClauses.length === 0) continue;
 
       if (definition.patternV2) {
+        const replayed = this.store
+          .listTriggerMatches(definition.triggerId)
+          .filter((record) =>
+            record.triggerVersion === definition.version &&
+            record.sourceEvents.some(
+              (source) => sameEventIdentity(source, event),
+            )
+          )
+          .sort((a, b) => {
+            const rank = (status: TriggerMatchRecord['status']) =>
+              status === 'fired'
+                ? 4
+                : status === 'emitted'
+                  ? 3
+                  : status === 'matched'
+                    ? 2
+                    : status === 'partial'
+                      ? 1
+                      : 0;
+            return (
+              rank(b.status) - rank(a.status) ||
+              Date.parse(b.updatedAt) - Date.parse(a.updatedAt)
+            );
+          })[0];
+
+        if (replayed) {
+          results.push({
+            triggerId: definition.triggerId,
+            match: replayed,
+            matched:
+              replayed.status === 'matched' ||
+              replayed.status === 'emitted' ||
+              replayed.status === 'fired',
+            fired: replayed.status === 'fired',
+          });
+          continue;
+        }
+
         results.push(
           ...await this.applyPatternV2(
             definition,
