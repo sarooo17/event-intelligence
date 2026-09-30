@@ -282,9 +282,13 @@ export class TriggerInspector {
         };
 
     const deadlines = match
-      ? this.store.listTemporalDeadlines?.({
-          matchId: match.matchId,
-        }) ?? []
+      ? (
+          this.store.listTemporalDeadlines
+            ? await this.store.listTemporalDeadlines({
+                matchId: match.matchId,
+              })
+            : []
+        )
       : [];
     const pendingDeadlines = deadlines.filter(
       (deadline) => deadline.status === 'pending',
