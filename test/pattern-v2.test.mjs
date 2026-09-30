@@ -295,6 +295,75 @@ test('tumbling, hopping, session and count windows are executable', async () => 
   }
 });
 
+test('optional sequence children preserve greedy and lazy preference', async () => {
+  const events = [
+    source('a', 'a-opt', '2026-09-30T10:00:00.000Z'),
+    source('b', 'b-opt', '2026-09-30T10:01:00.000Z'),
+    source('c', 'c-opt', '2026-09-30T10:02:00.000Z'),
+  ];
+
+  const run = (mode) => evaluatePatternV2({
+    definition: pattern({
+      kind: 'sequence',
+      contiguity: 'followedBy',
+      children: [
+        { kind: 'event', ref: 'a' },
+        {
+          kind: 'optional',
+          mode,
+          child: { kind: 'event', ref: 'b' },
+        },
+        { kind: 'event', ref: 'c' },
+      ],
+    }),
+    events,
+  });
+
+  const greedy = await run('greedy');
+  assert.equal(greedy.matches.length, 1);
+  assert.equal(greedy.matches[0].bindings.b?.[0]?.sourceEventId, 'b-opt');
+
+  const lazy = await run('lazy');
+  assert.equal(lazy.matches.length, 1);
+  assert.equal(lazy.matches[0].bindings.b, undefined);
+});
+
+test('cross-event equality rejects unresolved operands', async () => {
+  const definition = pattern({
+    kind: 'compare',
+    child: {
+      kind: 'allOf',
+      children: [
+        { kind: 'event', ref: 'a' },
+        { kind: 'event', ref: 'b' },
+      ],
+    },
+    left: {
+      kind: 'field',
+      ref: 'a',
+      path: 'optionalKey',
+      select: 'last',
+    },
+    op: 'eq',
+    right: {
+      kind: 'field',
+      ref: 'b',
+      path: 'optionalKey',
+      select: 'last',
+    },
+  });
+
+  const result = await evaluatePatternV2({
+    definition,
+    events: [
+      source('a', 'a-missing', '2026-09-30T10:00:00.000Z', {}),
+      source('b', 'b-missing', '2026-09-30T10:01:00.000Z', {}),
+    ],
+  });
+
+  assert.equal(result.matches.length, 0);
+});
+
 test('semantic is a first-class operator behind SemanticEvaluator', async () => {
   const requests = [];
   const evaluator = {
@@ -845,6 +914,13 @@ test('derived events can emit aggregate Pattern v2 measures', async () => {
                 ref: 'order',
               },
             },
+            {
+              key: 'nullableMeasure',
+              expression: {
+                kind: 'literal',
+                value: null,
+              },
+            },
           ],
         },
       },
@@ -873,6 +949,7 @@ test('derived events can emit aggregate Pattern v2 measures', async () => {
     })[0];
     assert.equal(derivedRecord.event.data.totalValue, 300);
     assert.equal(derivedRecord.event.data.orderCount, 2);
+    assert.equal(derivedRecord.event.data.nullableMeasure, null);
     assert.equal(derivedRecord.event.data.kind, 'burst');
   } finally {
     await rm(dir, { recursive: true, force: true });
