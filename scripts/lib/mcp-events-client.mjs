@@ -394,7 +394,7 @@ export class McpEventsClientManager {
     }
     const removed = this.connections.delete(connectionId);
     if (removed && context) {
-      const sources = context.store.listEventSources({
+      const sources = await context.store.listEventSources({
         connectionIds: [connectionId],
       });
       for (const source of sources) {
@@ -571,25 +571,26 @@ export class McpEventsClientManager {
     return results;
   }
 
-  desiredSubscriptions(connection, context) {
+  async desiredSubscriptions(connection, context) {
     const descriptors = this.descriptors.get(connection.connectionId) || [];
     const byName = new Map(descriptors.map((item) => [item.name, item]));
     const desired = new Map();
-    const triggers =
-      typeof context.triggerControl?.listTriggers === 'function'
-        ? context.triggerControl.listTriggers()
-        : typeof context.store?.listTriggers === 'function'
-          ? context.store.listTriggers().map((definition) => ({
-              definition,
-              state:
-                typeof context.store.getTriggerState === 'function'
-                  ? context.store.getTriggerState(
-                      definition.triggerId,
-                      definition.version,
-                    )
-                  : null,
-            }))
-          : [];
+    let triggers = [];
+    if (typeof context.triggerControl?.listTriggers === 'function') {
+      triggers = await context.triggerControl.listTriggers();
+    } else if (typeof context.store?.listTriggers === 'function') {
+      const definitions = await context.store.listTriggers();
+      triggers = await Promise.all(definitions.map(async (definition) => ({
+        definition,
+        state:
+          typeof context.store.getTriggerState === 'function'
+            ? await context.store.getTriggerState(
+              definition.triggerId,
+              definition.version,
+            )
+            : null,
+      })));
+    }
 
     for (const { definition, state } of triggers) {
       if (state?.status !== 'active') continue;
@@ -664,7 +665,7 @@ export class McpEventsClientManager {
     subscription,
     patch = {},
   ) {
-    const previous = context.store.getMcpClientState(
+    const previous = await context.store.getMcpClientState(
       connection.connectionId,
       subscription.eventName,
       subscription.arguments,
@@ -687,7 +688,7 @@ export class McpEventsClientManager {
     { respectSchedule = false } = {},
   ) {
     const store = context.store;
-    const current = store.getMcpClientState(
+    const current = await store.getMcpClientState(
       connection.connectionId,
       subscription.eventName,
       subscription.arguments,
@@ -810,7 +811,7 @@ export class McpEventsClientManager {
     }
     if (existing) await this.closeSession(subscription.subscriptionId);
 
-    const current = context.store.getMcpClientState(
+    const current = await context.store.getMcpClientState(
       connection.connectionId,
       subscription.eventName,
       subscription.arguments,
@@ -995,7 +996,7 @@ export class McpEventsClientManager {
       descriptors = await this.discoverConnection(connectionId);
     }
 
-    const desired = this.desiredSubscriptions(connection, context);
+    const desired = await this.desiredSubscriptions(connection, context);
     const desiredIds = new Set(desired.keys());
     const results = [];
 
@@ -1062,12 +1063,12 @@ export class McpEventsClientManager {
     return results;
   }
 
-  nextDelay(connection) {
+  async nextDelay(connection) {
     const context = this.scopeContexts.get(
       `${connection.connectionId}::${connection.scopeId}`,
     );
     if (!context) return connection.pollIntervalMs;
-    const states = context.store.listMcpClientStates(
+    const states = await context.store.listMcpClientStates(
       connection.connectionId,
     );
     const now = this.now().getTime();
@@ -1101,7 +1102,10 @@ export class McpEventsClientManager {
           this.started &&
           this.connections.get(connection.connectionId) === connection
         ) {
-          this.scheduleConnection(connection, this.nextDelay(connection));
+          this.scheduleConnection(
+            connection,
+            await this.nextDelay(connection),
+          );
         }
       }
     }, Math.max(0, delay));
@@ -1136,15 +1140,15 @@ export class McpEventsClientManager {
     await this.drain();
   }
 
-  status() {
-    return [...this.connections.values()].map((connection) => {
+  async status() {
+    return Promise.all([...this.connections.values()].map(async (connection) => {
       const context = this.scopeContexts.get(
         `${connection.connectionId}::${connection.scopeId}`,
       );
       const store = context?.store ?? this.store;
-      const states = store.listMcpClientStates(connection.connectionId);
+      const states = await store.listMcpClientStates(connection.connectionId);
       const desired = context
-        ? this.desiredSubscriptions(connection, context)
+        ? await this.desiredSubscriptions(connection, context)
         : new Map();
       return {
         connectionId: connection.connectionId,
@@ -1177,6 +1181,6 @@ export class McpEventsClientManager {
         ),
         error: this.lastErrors.get(connection.connectionId) ?? null,
       };
-    });
+    }));
   }
 }
