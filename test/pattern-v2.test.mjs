@@ -1432,3 +1432,114 @@ test('Pattern v2 watermark remains monotonic after match pruning', async () => {
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+
+test('semantic cache survives store restart and avoids duplicate evaluator cost', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'ei-pattern-v2-semantic-cache-'));
+  let calls = 0;
+  const evaluator = {
+    async evaluate() {
+      calls += 1;
+      return {
+        evaluator: 'test/cache',
+        probability: 0.95,
+        metadata: { call: calls },
+      };
+    },
+  };
+  const definition = {
+    triggerId: 'semantic-cache-restart',
+    version: '1',
+    conditionOnly: true,
+    clauses: [
+      { id: 'issue', event: 'issue.created', arguments: {}, where: [] },
+      { id: 'mail', event: 'mail.received', arguments: {}, where: [] },
+    ],
+    expression: { kind: 'anyOf', refs: ['issue', 'mail'] },
+    temporal: [],
+    patternV2: pattern(
+      {
+        kind: 'semantic',
+        id: 'same-problem',
+        refs: ['issue', 'mail'],
+        instruction: 'Same problem?',
+        input: ['issue.title', 'mail.subject'],
+        matchThreshold: 0.8,
+        rejectThreshold: 0.2,
+        uncertain: 'reject',
+        execution: {
+          cache: true,
+          timeoutMs: 1000,
+          onUnavailable: 'error',
+        },
+        child: {
+          kind: 'allOf',
+          children: [
+            { kind: 'event', ref: 'issue' },
+            { kind: 'event', ref: 'mail' },
+          ],
+        },
+      },
+      {
+        selection: {
+          overlap: 'allow',
+          afterMatch: 'keepAll',
+          maxMatchesPerEvent: 10,
+        },
+        execution: {
+          maxCandidates: 64,
+          maxSemanticEvaluations: 8,
+          maxBufferedEvents: 100,
+          maxSemanticCacheEntries: 8,
+        },
+      },
+    ),
+    withinMs: 3600000,
+  };
+
+  try {
+    const firstStore = new PersistentEventStore(dir);
+    await firstStore.init();
+    const firstEngine = new CompositeTriggerEngine(firstStore, evaluator);
+    await firstEngine.register(definition);
+
+    await firstEngine.ingest(correlatable(
+      'issue-cache-1',
+      'issue.created',
+      '2026-09-30T10:00:00.000Z',
+      { title: 'Payment failed' },
+    ));
+    const mail = correlatable(
+      'mail-cache-1',
+      'mail.received',
+      '2026-09-30T10:01:00.000Z',
+      { subject: 'Payment failed again' },
+    );
+    await firstEngine.ingest(mail);
+    assert.equal(calls, 1);
+
+    const beforeRestart = firstStore
+      .listTriggerMatches('semantic-cache-restart')
+      .filter((record) => record.patternState?.role === 'buffer')
+      .at(-1);
+    assert.equal(beforeRestart.patternState.semanticCache.length, 1);
+
+    const restartedStore = new PersistentEventStore(dir);
+    await restartedStore.init();
+    const restartedEngine = new CompositeTriggerEngine(
+      restartedStore,
+      evaluator,
+    );
+
+    await restartedEngine.ingest(mail);
+    assert.equal(calls, 1);
+
+    const afterRestart = restartedStore
+      .listTriggerMatches('semantic-cache-restart')
+      .filter((record) => record.patternState?.role === 'buffer')
+      .at(-1);
+    assert.equal(afterRestart.patternState.semanticCache.length, 1);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
