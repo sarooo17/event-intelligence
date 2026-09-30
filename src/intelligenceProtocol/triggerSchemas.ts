@@ -438,6 +438,17 @@ export const CompositeTriggerDefinitionSchema = z.object({
       }
     }
 
+    if (
+      typeof value.patternV2.selection.afterMatch === 'object' &&
+      !patternRefs.includes(value.patternV2.selection.afterMatch.ref)
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        message:
+          `Pattern afterMatch references unknown pattern ref: ${value.patternV2.selection.afterMatch.ref}`,
+      });
+    }
+
     const oversized = collectPatternDurationsMs(value.patternV2.root)
       .filter((duration) => duration > value.withinMs);
     if (oversized.length) {
