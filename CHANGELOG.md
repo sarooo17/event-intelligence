@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.6.1] - 2026-09-30
+
+Patch release for post-merge v0.6 review findings.
+
+### Fixed
+
+- migrate the advertised store conformance fixture to the v0.2 Pattern trigger schema;
+- create a valid Pattern match before exercising wake-claim exclusion in store conformance;
+- bind temporal match `completedAt` to the reached deadline for that candidate's signature instead of the latest deadline reached by the whole Pattern buffer;
+- add regression coverage for multiple temporal candidates becoming due in one scheduler tick;
+- harden release automation against npm registry propagation delay.
+
 ## [0.6.0] - 2026-09-30
 
 Breaking architecture cleanup: Pattern AST is now the single trigger model.
