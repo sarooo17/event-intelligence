@@ -148,15 +148,29 @@ function prospectiveEventWindow(
   };
 }
 
+export interface CompositeTriggerEngineOptions {
+  workerId?: string;
+  partitionLeaseMs?: number;
+}
+
 export class CompositeTriggerEngine {
   private readonly support: CompositeTriggerRuntimeSupport;
+  private readonly workerId: string;
+  private readonly partitionLeaseMs: number;
 
   constructor(
     private readonly store: CompositeTriggerStore & CompositeTriggerAudit,
     private readonly evaluator: SemanticEvaluator | null = null,
     private readonly now: () => Date = () => new Date(),
+    options: CompositeTriggerEngineOptions = {},
   ) {
     this.support = new CompositeTriggerRuntimeSupport(store, now);
+    this.workerId =
+      String(options.workerId || 'event-intelligence-engine');
+    this.partitionLeaseMs = Math.max(
+      1000,
+      Number(options.partitionLeaseMs) || 300000,
+    );
   }
 
   async register(definitionInput: unknown): Promise<CompositeTriggerDefinition> {
@@ -510,16 +524,82 @@ export class CompositeTriggerEngine {
     matchingClauses: TriggerClause[],
     event: CorrelatableEvent,
   ): Promise<CompositeIngestResult[]> {
-    const pattern = definition.patternV2;
-    if (!pattern) return [];
-
-    const now = this.now();
-    const nowIso = now.toISOString();
     const key = this.patternPartitionKey(
       definition,
       matchingClauses,
       event,
     );
+    const capabilities = this.store.storeCapabilities?.();
+    const distributedLeases =
+      capabilities?.partitionLeases === 'distributed-atomic';
+
+    if (!distributedLeases) {
+      return this.applyPatternV2WithPartition(
+        definition,
+        matchingClauses,
+        event,
+        key,
+      );
+    }
+
+    if (
+      !this.store.claimPartitionLease ||
+      !this.store.releasePartitionLease
+    ) {
+      const error = new Error(
+        'Distributed Pattern v2 store is missing partition lease methods',
+      );
+      (error as Error & { code?: string }).code =
+        'PATTERN_PARTITION_LEASE_UNSUPPORTED';
+      throw error;
+    }
+
+    const leaseKey = [
+      definition.triggerId,
+      definition.version,
+      key ?? '-',
+    ].join(':');
+    const nowIso = this.now().toISOString();
+    const lease = await this.store.claimPartitionLease(leaseKey, {
+      workerId: this.workerId,
+      now: nowIso,
+      leaseMs: this.partitionLeaseMs,
+    });
+    if (!lease) {
+      const error = new Error(
+        `Pattern partition is currently owned by another worker: ${leaseKey}`,
+      );
+      (error as Error & { code?: string }).code =
+        'PATTERN_PARTITION_LEASE_BUSY';
+      throw error;
+    }
+
+    try {
+      return await this.applyPatternV2WithPartition(
+        definition,
+        matchingClauses,
+        event,
+        key,
+      );
+    } finally {
+      await this.store.releasePartitionLease(leaseKey, {
+        workerId: this.workerId,
+        now: this.now().toISOString(),
+      });
+    }
+  }
+
+  private async applyPatternV2WithPartition(
+    definition: CompositeTriggerDefinition,
+    matchingClauses: TriggerClause[],
+    event: CorrelatableEvent,
+    key: string | null,
+  ): Promise<CompositeIngestResult[]> {
+    const pattern = definition.patternV2;
+    if (!pattern) return [];
+
+    const now = this.now();
+    const nowIso = now.toISOString();
     const bufferId = await this.patternBufferId(definition, key);
     const existing = this.latestMatch(bufferId);
 
