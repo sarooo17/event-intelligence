@@ -5,9 +5,7 @@ import {
 } from './patternV2Schemas.js';
 import {
   ContinuationContractSchema,
-  SemanticCorrelationSchema,
   StructuredPredicateSchema,
-  TemporalConditionSchema,
 } from './triggerSchemas.js';
 
 const Id = z.string().min(1).max(200);
@@ -20,29 +18,18 @@ export const TriggerPlanEventSchema = z.object({
   where: z.array(StructuredPredicateSchema).default([]),
 }).strict();
 
-export const TriggerPlanMatchSchema = z.union([
-  z.enum(['all', 'any', 'sequence']),
-  z.object({
-    kind: z.literal('count'),
-    eventId: Id,
-    atLeast: z.number().int().min(1),
-  }).strict(),
-]);
-
 export const TriggerPlanInputSchema = z.object({
   triggerId: Id.optional(),
   version: z.string().min(1).default('1'),
   description: z.string().max(500).optional(),
   events: z.array(TriggerPlanEventSchema).min(1),
-  match: TriggerPlanMatchSchema.default('all'),
+  pattern: PatternAstV2DefinitionSchema.optional(),
   withinMs: z.number().int().positive().max(1000 * 60 * 60 * 24 * 30)
     .default(60 * 60 * 1000),
   eventTime: z.object({
     allowedLatenessMs: z.number().int().nonnegative()
       .max(1000 * 60 * 60 * 24 * 30),
   }).strict().optional(),
-  temporal: z.array(TemporalConditionSchema).default([]),
-  patternV2: PatternAstV2DefinitionSchema.optional(),
   lifecycle: z.object({
     oneShot: z.boolean().optional(),
     maxFirings: z.number().int().min(1).optional(),
@@ -54,26 +41,7 @@ export const TriggerPlanInputSchema = z.object({
   conditionOnly: z.boolean().default(false),
   target: RuntimeTargetSchema.optional(),
   continuation: ContinuationContractSchema.optional(),
-  correlateBy: z.array(z.object({
-    eventId: Id,
-    path: z.string().min(1),
-  }).strict()).min(2).optional(),
-  semanticCorrelation: SemanticCorrelationSchema.optional(),
 }).strict().superRefine((value, ctx) => {
-  if (
-    value.patternV2 &&
-    (
-      value.temporal.length > 0 ||
-      value.correlateBy ||
-      value.semanticCorrelation
-    )
-  ) {
-    ctx.addIssue({
-      code: 'custom',
-      message: 'patternV2 cannot be combined with legacy temporal/correlation fields',
-    });
-  }
-
   if (value.conditionOnly) {
     if (value.target || value.continuation) {
       ctx.addIssue({
@@ -93,7 +61,6 @@ export const TriggerPlanInputSchema = z.object({
 });
 
 export type TriggerPlanEvent = z.infer<typeof TriggerPlanEventSchema>;
-export type TriggerPlanMatch = z.infer<typeof TriggerPlanMatchSchema>;
 export type TriggerPlanInput = z.infer<typeof TriggerPlanInputSchema>;
 
 export function parseTriggerPlanInput(value: unknown): TriggerPlanInput {
