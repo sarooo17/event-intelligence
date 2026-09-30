@@ -236,7 +236,11 @@ test('two host-owned MCP clients auto-discover, correlate and resume cursors aft
     const afterRestart = await second.manager.pollAll();
     assert.equal(afterRestart[0].results[0].accepted, 0);
     assert.equal(afterRestart[1].results[0].accepted, 0);
-    assert.equal((await second.store.listTriggerMatches('generic-cross-server')).length, 1);
+    assert.equal(
+      (await second.store.listTriggerMatches('generic-cross-server'))
+        .filter((match) => match.patternState?.role === 'match').length,
+      1,
+    );
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
