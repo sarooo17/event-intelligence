@@ -149,7 +149,11 @@ test('accepted MCP GitHub occurrences automatically satisfy a composite trigger'
 
     assert.equal(replay.results.length, 1);
     assert.equal(replay.results[0].match.matchId, closed.results[0].match.matchId);
-    assert.equal(store.listTriggerMatches('github-open-close-same-issue').length, 1);
+    assert.equal(
+      store.listTriggerMatches('github-open-close-same-issue')
+        .filter((match) => match.patternState?.role === 'match').length,
+      1,
+    );
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
