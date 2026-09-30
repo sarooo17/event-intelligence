@@ -161,25 +161,29 @@ test('two host-owned MCP clients auto-discover, correlate and resume cursors aft
 
     await first.control.createTrigger({
       definition: {
-        protocolVersion: '0.1.0',
-        schemaVersion: 'trigger.v0.1',
         triggerId: 'generic-cross-server',
         version: '1',
         clauses: [
           { id: 'alpha', event: 'alpha.opened', serverId: 'alpha-mcp', where: [] },
           { id: 'beta', event: 'beta.confirmed', serverId: 'beta-mcp', where: [] },
         ],
-        expression: { kind: 'allOf', refs: ['alpha', 'beta'] },
-        withinMs: 3600000,
-        correlation: {
-          deterministic: {
-            kind: 'same_value',
+        pattern: {
+          root: {
+            kind: 'allOf',
+            children: [
+              { kind: 'event', ref: 'alpha' },
+              { kind: 'event', ref: 'beta' },
+            ],
+          },
+          partitionBy: [{
+            key: 'entity',
             fields: [
               { ref: 'alpha', path: 'entityId' },
               { ref: 'beta', path: 'entityId' },
             ],
-          },
+          }],
         },
+        withinMs: 3600000,
         target: { runtime: 'test-runtime', kind: 'task', id: 'proof' },
       },
       connectionIds: ['conn_alpha', 'conn_beta'],
@@ -340,7 +344,7 @@ test('subscription arguments create independent durable cursor state', async () 
             arguments: { mailbox },
             where: [],
           }],
-          expression: { kind: 'anyOf', refs: ['mail'] },
+          pattern: { root: { kind: 'event', ref: 'mail' } },
           withinMs: 60000,
           target: { runtime: 'test-runtime', kind: 'task', id: mailbox },
         },
@@ -489,7 +493,7 @@ for (const delivery of ['push', 'webhook']) {
             arguments: { environment: 'staging' },
             where: [],
           }],
-          expression: { kind: 'anyOf', refs: ['deploy'] },
+          pattern: { root: { kind: 'event', ref: 'deploy' } },
           withinMs: 60000,
           target: { runtime: 'test-runtime', kind: 'task', id: delivery },
         },
