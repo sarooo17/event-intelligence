@@ -454,7 +454,7 @@ const server = createServer(async (request, response) => {
       const triggerId = decodeURIComponent(
         url.pathname.slice('/v1/inspector/triggers/'.length),
       );
-      return sendJson(response, 200, triggerInspector.inspect({
+      return sendJson(response, 200, await triggerInspector.inspect({
         triggerId,
         version: url.searchParams.get('version') ?? undefined,
         matchId: url.searchParams.get('matchId') ?? undefined,
