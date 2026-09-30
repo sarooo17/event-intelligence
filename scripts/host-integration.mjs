@@ -104,8 +104,8 @@ function scopedHostView(runtime, context) {
       });
       return runtime.mcpEventsClient.attachConnection(normalized);
     },
-    mcpStatus() {
-      return runtime.mcpEventsClient.status()
+    async mcpStatus() {
+      return await runtime.mcpEventsClient.status()
         .filter((entry) => entry.scopeId === scopeId);
     },
   };
@@ -273,8 +273,8 @@ export async function createEventIntelligenceHost({
       registryManaged.delete(connectionId);
       return runtime.mcpEventsClient.detachConnection(connectionId);
     },
-    mcpStatus() {
-      return runtime.mcpEventsClient.status();
+    async mcpStatus() {
+      return await runtime.mcpEventsClient.status();
     },
     loadedScopes() {
       return runtime.loadedScopes();
