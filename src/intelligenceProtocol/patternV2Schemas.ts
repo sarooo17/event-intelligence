@@ -520,6 +520,94 @@ export type PatternAstV2Definition =
   z.infer<typeof PatternAstV2DefinitionSchema>;
 export type PatternMeasure = z.infer<typeof PatternMeasureSchema>;
 
+export function collectPatternDurationsMs(
+  node: PatternNodeV2,
+): number[] {
+  const durations: number[] = [];
+
+  const visit = (current: PatternNodeV2) => {
+    if (current.kind === 'window') {
+      if (
+        current.window.type === 'within' ||
+        current.window.type === 'sliding' ||
+        current.window.type === 'tumbling' ||
+        current.window.type === 'hopping'
+      ) {
+        durations.push(current.window.sizeMs);
+      } else if (current.window.type === 'session') {
+        durations.push(current.window.gapMs);
+      }
+      visit(current.child);
+      return;
+    }
+
+    if (current.kind === 'notFollowedBy') {
+      durations.push(current.withinMs);
+      visit(current.child);
+      visit(current.forbidden);
+      return;
+    }
+
+    if (current.kind === 'absence') {
+      if (current.forMs) durations.push(current.forMs);
+      visit(current.child);
+      return;
+    }
+
+    if (current.kind === 'debounce') {
+      durations.push(current.forMs);
+      visit(current.child);
+      return;
+    }
+
+    if (current.kind === 'rate') {
+      durations.push(current.perMs);
+      visit(current.child);
+      return;
+    }
+
+    if (current.kind === 'state') {
+      if (current.forMs) durations.push(current.forMs);
+      visit(current.child);
+      return;
+    }
+
+    if (
+      current.kind === 'repeat' ||
+      current.kind === 'optional' ||
+      current.kind === 'calendar' ||
+      current.kind === 'notPresent' ||
+      current.kind === 'after' ||
+      current.kind === 'until' ||
+      current.kind === 'threshold' ||
+      current.kind === 'distinct' ||
+      current.kind === 'compare' ||
+      current.kind === 'aggregate' ||
+      current.kind === 'semantic'
+    ) {
+      visit(current.child);
+      return;
+    }
+
+    if (current.kind === 'notNext') {
+      visit(current.child);
+      visit(current.forbidden);
+      return;
+    }
+
+    if (
+      current.kind === 'allOf' ||
+      current.kind === 'anyOf' ||
+      current.kind === 'sequence'
+    ) {
+      current.children.forEach(visit);
+    }
+  };
+
+  visit(node);
+  return durations;
+}
+
 export function collectPatternRefs(node: PatternNodeV2): string[] {
   const refs = new Set<string>();
 
