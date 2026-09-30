@@ -34,10 +34,17 @@ export interface PatternV2Candidate {
   semanticDecisions: PatternV2SemanticDecision[];
 }
 
+export interface PatternV2SemanticTrace {
+  nodeId: string;
+  candidateSignature: string;
+  decision: SemanticDecision;
+}
+
 export interface PatternV2Evaluation {
   matches: PatternV2Candidate[];
   pending: PatternV2Candidate[];
   semanticEvaluations: number;
+  semanticTrace: PatternV2SemanticTrace[];
   truncated: boolean;
 }
 
@@ -50,6 +57,7 @@ interface EvaluationContext {
   semanticEvaluations: number;
   truncated: boolean;
   semanticCache: Map<string, SemanticDecision>;
+  semanticTrace: PatternV2SemanticTrace[];
 }
 
 function eventIdentity(event: TriggerSourceEvent): string {
@@ -1020,8 +1028,12 @@ async function evaluateNode(
       const dueAt = anchor + node.withinMs;
       const blocked = forbidden.some((candidate) => {
         if (!candidate.events.length) return false;
-        const at = Date.parse(candidate.events[0]!.occurredAt);
-        return at > anchor && at <= dueAt;
+        const startedAt = Date.parse(candidate.events[0]!.occurredAt);
+        const completedAt = Date.parse(candidate.events.at(-1)!.occurredAt);
+        return (
+          startedAt > anchor &&
+          completedAt <= dueAt
+        );
       });
       if (blocked) continue;
       output.push({
@@ -1106,6 +1118,12 @@ async function evaluateNode(
       }
     }
 
+    context.semanticTrace.push({
+      nodeId: node.id,
+      candidateSignature: candidateSignature(candidate),
+      decision,
+    });
+
     if (!decision.matched) continue;
     output.push({
       ...candidate,
@@ -1157,6 +1175,7 @@ export async function evaluatePatternV2({
     semanticEvaluations: 0,
     truncated: false,
     semanticCache: new Map(),
+    semanticTrace: [],
   };
 
   const candidates = await evaluateNode(definition.root, context);
@@ -1178,6 +1197,7 @@ export async function evaluatePatternV2({
     matches,
     pending,
     semanticEvaluations: context.semanticEvaluations,
+    semanticTrace: context.semanticTrace,
     truncated: context.truncated,
   };
 }
