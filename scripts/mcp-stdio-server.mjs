@@ -247,7 +247,7 @@ function registerReadTools(server, runtime) {
       try {
         return jsonResult({
           restored: runtime.restored,
-          hostMcpEventConnections: runtime.mcpEventsClient.status(),
+          hostMcpEventConnections: await runtime.mcpEventsClient.status(),
           pendingTemporalDeadlines:
             (await runtime.store.listTemporalDeadlines({ status: 'pending' })).length,
           derivedEvents: (await runtime.store.listDerivedEvents()).length,
