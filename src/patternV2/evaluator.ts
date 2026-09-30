@@ -337,6 +337,10 @@ function compareValue(
     return typeof actual === expected;
   }
 
+  // Undefined means the selector/path could not be resolved. General
+  // comparisons must fail closed; isNull is the explicit absence operator.
+  if (actual === undefined) return false;
+
   if (node.op === 'in' || node.op === 'notIn') {
     const present = (node.values ?? []).some(
       (value: unknown) => value === actual,
@@ -368,6 +372,8 @@ function compareValue(
   const expected = node.right
     ? evaluateValue(node.right, candidate)
     : node.values?.[0];
+
+  if (expected === undefined) return false;
 
   if (node.op === 'eq') return actual === expected;
   if (node.op === 'neq') return actual !== expected;
@@ -766,7 +772,8 @@ async function evaluateNode(
 
       for (const left of current) {
         const compatible = next
-          .filter((right) => {
+          .map((candidate, rank) => ({ candidate, rank }))
+          .filter(({ candidate: right }) => {
             if (!right.events.length) return true;
             if (!left.events.length) return true;
             if (right.startIndex <= left.endIndex) return false;
@@ -778,7 +785,30 @@ async function evaluateNode(
             }
             return true;
           })
-          .sort((a, b) => a.startIndex - b.startIndex);
+          .sort((a, b) => {
+            const leftEmpty = a.candidate.events.length === 0;
+            const rightEmpty = b.candidate.events.length === 0;
+            if (leftEmpty !== rightEmpty) {
+              const preference =
+                (
+                  child.kind === 'optional' ||
+                  (child.kind === 'repeat' && child.min === 0)
+                )
+                  ? child.mode
+                  : 'lazy';
+              return preference === 'greedy'
+                ? Number(leftEmpty) - Number(rightEmpty)
+                : Number(rightEmpty) - Number(leftEmpty);
+            }
+            if (!leftEmpty && !rightEmpty) {
+              return (
+                a.candidate.startIndex - b.candidate.startIndex ||
+                a.rank - b.rank
+              );
+            }
+            return a.rank - b.rank;
+          })
+          .map(({ candidate }) => candidate);
 
         const selected =
           node.contiguity === 'followedBy'
