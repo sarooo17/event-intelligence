@@ -666,6 +666,26 @@ function semanticSource(
   return source;
 }
 
+async function withTimeout<T>(
+  operation: Promise<T>,
+  timeoutMs: number,
+  label: string,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 async function evaluateNode(
   node: PatternNodeV2,
   context: EvaluationContext,
@@ -1064,18 +1084,22 @@ async function evaluateNode(
     let decision = context.semanticCache.get(cacheKey);
     if (!decision) {
       context.semanticEvaluations += 1;
-      decision = await new SemanticConditionEngine(
-        context.evaluator,
-      ).evaluate(
-        semanticSource(candidate, node.refs),
-        {
-          type: 'semantic_boolean',
-          instruction: node.instruction,
-          input: node.input,
-          matchThreshold: node.matchThreshold,
-          rejectThreshold: node.rejectThreshold,
-          uncertain: node.uncertain,
-        },
+      decision = await withTimeout(
+        new SemanticConditionEngine(
+          context.evaluator,
+        ).evaluate(
+          semanticSource(candidate, node.refs),
+          {
+            type: 'semantic_boolean',
+            instruction: node.instruction,
+            input: node.input,
+            matchThreshold: node.matchThreshold,
+            rejectThreshold: node.rejectThreshold,
+            uncertain: node.uncertain,
+          },
+        ),
+        node.execution.timeoutMs,
+        `Semantic node ${node.id}`,
       );
       if (node.execution.cache) {
         context.semanticCache.set(cacheKey, decision);
