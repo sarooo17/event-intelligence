@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### Pattern AST v2 / advanced CEP
+
+- add additive recursive Pattern AST v2 while keeping legacy composite triggers executable;
+- add nested `allOf` / `anyOf` / `sequence`, explicit `next` / `followedBy` / `followedByAny` contiguity, repeat/optional quantifiers and greedy/lazy matching;
+- add bounded negative patterns (`notNext`, `notFollowedBy`) and first-class calendar/absence/debounce/rate/distinct temporal nodes;
+- add within/sliding/tumbling/hopping/session/count windows;
+- add cross-event arithmetic comparisons plus startsWith/endsWith/regex/notIn/between/isNull/type predicates;
+- add sum/avg/min/max/count/countDistinct/first/last/nth/stddev/percentile aggregates and derived-event measures;
+- add changed/changedFrom/increasedBy/decreasedBy/delta/percentChange/stableFor/crossesAbove/crossesBelow state operators;
+- add partitioned durable CEP buffers, overlap/after-match selection policies, bounded candidate budgets and bounded event-time retention;
+- add vendor-neutral first-class `semantic` nodes behind `SemanticEvaluator`; TypeSafe Jev remains optional and explicit;
+- enforce per-node semantic timeout, trigger-level semantic-evaluation budgets and audit every semantic decision, including rejects;
+- validate Pattern v2 refs, partition dimensions, durations, payload paths and derived measures against live source contracts;
+- add `compileLegacyTriggerToPatternV2()` for compatibility/migration and differential verification;
+- expose the complete v2 language through `describeTriggerLanguage()` / `trigger_language_describe`;
+- add end-to-end coverage for advanced predicates, quantifiers, contiguity, windows, arithmetic, state, semantic evaluation, partition isolation, negative deadlines and derived measures.
+
 ### Event-time correctness
 
 - preserve host `receivedAt` separately from provider `occurredAt` through correlation evidence, derived lineage and activation hydration;
