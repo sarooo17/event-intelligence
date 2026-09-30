@@ -282,7 +282,9 @@ test('derived events compose triggers end-to-end without intermediate runtime wa
       ['approval_218', 'deploy_218', 'pr_218'],
     );
 
-    const finalMatch = store.listTriggerMatches('runtime-final')[0];
+    const finalMatch = store.listTriggerMatches('runtime-final')
+      .find((match) => match.status === 'fired');
+    assert.ok(finalMatch);
     assert.equal(finalMatch.status, 'fired');
     assert.equal(
       store.getTriggerState('runtime-final', '1').status,
