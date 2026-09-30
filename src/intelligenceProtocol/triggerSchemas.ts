@@ -3,6 +3,7 @@ import { RuntimeTargetSchema } from './schemas.js';
 import {
   PatternAstV2DefinitionSchema,
   PatternMeasureSchema,
+  collectPatternDurationsMs,
   collectPatternRefs,
 } from './patternV2Schemas.js';
 
@@ -368,6 +369,7 @@ export const CompositeTriggerDefinitionSchema = z.object({
     }
 
     for (const dimension of value.patternV2.partitionBy) {
+      const dimensionRefs = new Set();
       for (const field of dimension.fields) {
         if (!ids.has(field.ref)) {
           ctx.addIssue({
@@ -375,7 +377,33 @@ export const CompositeTriggerDefinitionSchema = z.object({
             message: `Pattern partition ${dimension.key} references unknown clause: ${field.ref}`,
           });
         }
+        if (dimensionRefs.has(field.ref)) {
+          ctx.addIssue({
+            code: 'custom',
+            message: `Pattern partition ${dimension.key} has duplicate field mapping for ${field.ref}`,
+          });
+        }
+        dimensionRefs.add(field.ref);
       }
+
+      for (const ref of patternRefs) {
+        if (!dimensionRefs.has(ref)) {
+          ctx.addIssue({
+            code: 'custom',
+            message: `Pattern partition ${dimension.key} does not map pattern ref: ${ref}`,
+          });
+        }
+      }
+    }
+
+    const oversized = collectPatternDurationsMs(value.patternV2.root)
+      .filter((duration) => duration > value.withinMs);
+    if (oversized.length) {
+      ctx.addIssue({
+        code: 'custom',
+        message:
+          `Pattern AST v2 duration exceeds trigger withinMs: ${Math.max(...oversized)} > ${value.withinMs}`,
+      });
     }
   }
 
