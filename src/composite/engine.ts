@@ -496,6 +496,9 @@ export class CompositeTriggerEngine {
     matchingClauses: TriggerClause[],
     event: CorrelatableEvent,
   ): Promise<CompositeIngestResult[]> {
+    const pattern = definition.patternV2;
+    if (!pattern) return [];
+
     const now = this.now();
     const nowIso = now.toISOString();
     const key = this.patternPartitionKey(
@@ -538,7 +541,7 @@ export class CompositeTriggerEngine {
     );
 
     if (
-      sourceEvents.length > definition.patternV2.execution.maxBufferedEvents
+      sourceEvents.length > pattern.execution.maxBufferedEvents
     ) {
       await this.store.appendAudit({
         auditId: `audit_${(
@@ -557,11 +560,11 @@ export class CompositeTriggerEngine {
           correlationKey: key,
           bufferedEvents: sourceEvents.length,
           maxBufferedEvents:
-            definition.patternV2.execution.maxBufferedEvents,
+            pattern.execution.maxBufferedEvents,
         },
       });
       const error = new Error(
-        `Pattern v2 buffer exceeded maxBufferedEvents=${definition.patternV2.execution.maxBufferedEvents}`,
+        `Pattern v2 buffer exceeded maxBufferedEvents=${pattern.execution.maxBufferedEvents}`,
       );
       (error as Error & { code?: string }).code =
         'PATTERN_V2_BUFFER_LIMIT_EXCEEDED';
