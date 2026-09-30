@@ -71,6 +71,44 @@ connection IDs needed by the control plane.
 
 It does **not** call another model.
 
+### Advanced Pattern AST v2
+
+For advanced CEP, discover the `pattern`, `windows`, `aggregates`, `state`, `selection` or `semantic` language categories on demand and submit `patternV2` through the same planner:
+
+```js
+const language = ei.describeTriggerLanguage({ category: 'pattern' });
+
+const plan = await ei.planTrigger({
+  events: [
+    { id: 'deploy', event: 'deployment.succeeded' },
+    { id: 'error', event: 'production.error' },
+  ],
+  withinMs: 30 * 60 * 1000,
+  patternV2: {
+    version: '2',
+    root: {
+      kind: 'notFollowedBy',
+      id: 'quiet-release',
+      child: { kind: 'event', ref: 'deploy' },
+      forbidden: { kind: 'event', ref: 'error' },
+      withinMs: 10 * 60 * 1000,
+    },
+  },
+  target: {
+    runtime: 'agent',
+    kind: 'conversation',
+    id: 'release-review',
+  },
+  continuation: {
+    instruction: 'Review the release after the quiet period.',
+  },
+});
+```
+
+The same source-schema validation, source scoping and mutation controls apply. Pattern v2 adds partitioning, nested patterns, quantifiers, contiguity, windows, aggregations, state operators, negative patterns, match-selection policies and deterministic derived measures.
+
+A `semantic` node is optional and explicit. It calls the configured `SemanticEvaluator`; `TYPESAFE_API_KEY` only selects the bundled Jev adapter. Deterministic CEP does not require Jev or any other model API.
+
 ## 3. Persist the planned trigger
 
 ```js
@@ -119,11 +157,11 @@ Matched event payloads in the envelope are explicitly marked as untrusted
 external evidence. `continuation.contextPolicy` controls whether payload data
 is included or only refs are returned.
 
-## 5. Semantic correlation is optional
+## 5. Semantic evaluation is optional
 
 No TypeSafe/Jev key is required for deterministic Event Intelligence behavior.
 
-`TYPESAFE_API_KEY` only enables the bundled Jev evaluator for triggers that explicitly use semantic correlation. Hosts may inject their own `semanticEvaluator`.
+Pattern AST v2 exposes a vendor-neutral `semantic` node; legacy `semanticCorrelation` remains supported. `TYPESAFE_API_KEY` enables the bundled Jev evaluator only for explicit semantic evaluation. Hosts may inject their own `semanticEvaluator`.
 
 There is no OpenAI dependency in EI. The surrounding agent/harness does the reasoning; EI owns durable event semantics.
 
@@ -162,7 +200,7 @@ trigger_plan
 trigger_create
 ```
 
-`trigger_plan` exposes the full public authoring language, including the canonical temporal conditions. The raw canonical `definition` remains available as an advanced/internal representation, but normal agent authoring should go through the planner.
+`trigger_plan` exposes the full public authoring language, including Pattern AST v2. Use `trigger_language_describe` to discover only the categories/operators needed for the current intent rather than placing the whole CEP grammar in the agent prompt. The raw canonical `definition` remains available as an advanced/internal representation, but normal agent authoring should go through the planner.
 
 With writes enabled, `trigger_create` accepts either a raw canonical `definition`
 or an agent-friendly `plan`. In the latter case EI compiles the plan before
