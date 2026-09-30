@@ -12,6 +12,11 @@ import {
   PersistentEventStore,
   normalizeEventScopeId,
 } from './lib/persistent-event-store.mjs';
+import {
+  assertSharedStoreCapabilities,
+  describeStoreCapabilities,
+  validateSharedStoreCapabilities,
+} from './lib/store-capabilities.mjs';
 
 function normalizeMcpConnection(input) {
   const connectionId = String(
@@ -75,6 +80,7 @@ function scopedHostView(runtime, context) {
     scopeId,
     runtime: context,
     store: context.store,
+    storeCapabilities: describeStoreCapabilities(context.store),
     triggerControl: context.triggerControl,
     triggerInspector: context.triggerInspector,
     triggerPlanner: context.triggerPlanner,
@@ -231,6 +237,9 @@ export async function createEventIntelligenceHost({
     get store() {
       return runtime.store;
     },
+    get storeCapabilities() {
+      return runtime.storeCapabilities;
+    },
     get triggerControl() {
       return runtime.triggerControl;
     },
@@ -283,6 +292,9 @@ export async function createEventIntelligenceHost({
 }
 
 export {
+  assertSharedStoreCapabilities,
   createHostMcpEventsConnection,
+  describeStoreCapabilities,
   PersistentEventStore,
+  validateSharedStoreCapabilities,
 };

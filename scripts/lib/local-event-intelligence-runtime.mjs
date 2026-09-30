@@ -27,6 +27,10 @@ import {
   normalizeEventScopeId,
 } from './persistent-event-store.mjs';
 import {
+  assertSharedStoreCapabilities,
+  describeStoreCapabilities,
+} from './store-capabilities.mjs';
+import {
   TriggerInspector,
 } from './trigger-inspector.mjs';
 import {
@@ -114,6 +118,23 @@ export async function createLocalEventIntelligenceRuntime({
   const dataDir = env.DATA_DIR ?? './data';
   const rootStore = providedStore ?? new PersistentEventStore(dataDir);
   const restored = await initializeStore(rootStore);
+  const storeCapabilities = describeStoreCapabilities(rootStore);
+  const requireSharedStore =
+    env.EVENT_INTELLIGENCE_REQUIRE_SHARED_STORE === 'true';
+  if (requireSharedStore) {
+    assertSharedStoreCapabilities(rootStore);
+    if (!String(env.EVENT_INTELLIGENCE_WORKER_ID || '').trim()) {
+      const error = new Error(
+        'EVENT_INTELLIGENCE_WORKER_ID is required in shared-store mode',
+      );
+      error.code = 'EVENT_INTELLIGENCE_WORKER_ID_REQUIRED';
+      throw error;
+    }
+  }
+  const rootWorkerId = String(
+    env.EVENT_INTELLIGENCE_WORKER_ID ||
+    `ei-${process.pid}`,
+  ).trim();
 
   const evaluator =
     semanticEvaluator !== undefined
@@ -161,7 +182,17 @@ export async function createLocalEventIntelligenceRuntime({
       assertStoreContract(store);
     }
 
-    const triggerEngine = new CompositeTriggerEngine(store, evaluator);
+    const triggerEngine = new CompositeTriggerEngine(
+      store,
+      evaluator,
+      undefined,
+      {
+        workerId: `${rootWorkerId}:${scopeId}`,
+        partitionLeaseMs: Number(
+          env.EVENT_INTELLIGENCE_PARTITION_LEASE_MS ?? 300000,
+        ),
+      },
+    );
     const triggerPlanner = new TriggerPlanner({ store });
     const activationHydrator = new ActivationHydrator({ store });
     const wakeCoordinators = new Map();
@@ -330,6 +361,7 @@ export async function createLocalEventIntelligenceRuntime({
 
   return {
     restored,
+    storeCapabilities,
     store: defaultContext.store,
     evaluator,
     triggerEngine: defaultContext.triggerEngine,
