@@ -15,8 +15,6 @@ export const COMPOSITE_TRIGGER_SCHEMA_VERSION = 'trigger.v0.2' as const;
 const Id = z.string().min(1).max(200);
 const Timestamp = z.string().datetime({ offset: true });
 const Scalar = z.union([z.string(), z.number(), z.boolean()]);
-const ClockTime = z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/);
-const CalendarDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 
 export const StructuredPredicateSchema = z.discriminatedUnion('op', [
   z.object({ path: z.string().min(1), op: z.literal('eq'), value: Scalar }),
