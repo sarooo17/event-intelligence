@@ -41,7 +41,7 @@ export const ActivationEnvelopeSchema = z.object({
   match: z.object({
     matchId: Id,
     status: z.string().min(1),
-    correlationKey: z.string().nullable(),
+    partitionKey: z.string().nullable(),
     openedAt: Timestamp,
     updatedAt: Timestamp,
   }).strict(),
