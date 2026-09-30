@@ -65,7 +65,6 @@ test('agent-friendly plan compiles, fires, and delivers a hydrated activation en
           value: 10000,
         }],
       }],
-      match: 'all',
       withinMs: 3600000,
       lifecycle: { oneShot: false },
       target: {
