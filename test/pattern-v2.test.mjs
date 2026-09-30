@@ -878,3 +878,212 @@ test('derived events can emit aggregate Pattern v2 measures', async () => {
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+
+test('repeat internal contiguity distinguishes consecutive relaxed and combinations', async () => {
+  const events = [
+    source('e', 'e1', '2026-09-30T10:00:00.000Z'),
+    source('noise', 'n1', '2026-09-30T10:01:00.000Z'),
+    source('e', 'e2', '2026-09-30T10:02:00.000Z'),
+    source('e', 'e3', '2026-09-30T10:03:00.000Z'),
+  ];
+
+  const run = async (contiguity) =>
+    evaluatePatternV2({
+      definition: pattern({
+        kind: 'repeat',
+        child: { kind: 'event', ref: 'e' },
+        min: 2,
+        max: 2,
+        mode: 'greedy',
+        contiguity,
+      }),
+      events,
+    });
+
+  const consecutive = await run('consecutive');
+  assert.deepEqual(
+    consecutive.matches.map((candidate) =>
+      candidate.bindings.e.map((event) => event.sourceEventId)
+    ),
+    [['e2', 'e3']],
+  );
+
+  const relaxed = await run('relaxed');
+  assert.deepEqual(
+    relaxed.matches.map((candidate) =>
+      candidate.bindings.e.map((event) => event.sourceEventId)
+    ),
+    [['e1', 'e2'], ['e2', 'e3']],
+  );
+
+  const combinations = await run('combinations');
+  assert.deepEqual(
+    combinations.matches.map((candidate) =>
+      candidate.bindings.e.map((event) => event.sourceEventId)
+    ),
+    [['e1', 'e2'], ['e1', 'e3'], ['e2', 'e3']],
+  );
+});
+
+test('bounded negative patterns honor allowed lateness before finalizing', async () => {
+  const definition = pattern({
+    kind: 'notFollowedBy',
+    id: 'quiet',
+    child: { kind: 'event', ref: 'deploy' },
+    forbidden: { kind: 'event', ref: 'error' },
+    withinMs: 10 * 60 * 1000,
+  });
+
+  const events = [
+    source('deploy', 'd1', '2026-09-30T10:00:00.000Z'),
+  ];
+
+  const early = await evaluatePatternV2({
+    definition,
+    events,
+    now: new Date('2026-09-30T10:10:30.000Z'),
+    allowedLatenessMs: 2 * 60 * 1000,
+  });
+  assert.equal(early.matches.length, 0);
+  assert.equal(early.pending.length, 1);
+  assert.equal(
+    early.pending[0].pendingUntil,
+    '2026-09-30T10:12:00.000Z',
+  );
+
+  const final = await evaluatePatternV2({
+    definition,
+    events,
+    now: new Date('2026-09-30T10:12:00.000Z'),
+    allowedLatenessMs: 2 * 60 * 1000,
+  });
+  assert.equal(final.matches.length, 1);
+
+  const lateButAllowedForbidden = await evaluatePatternV2({
+    definition,
+    events: [
+      ...events,
+      source('error', 'err1', '2026-09-30T10:09:00.000Z'),
+    ],
+    now: new Date('2026-09-30T10:11:00.000Z'),
+    allowedLatenessMs: 2 * 60 * 1000,
+  });
+  assert.equal(lateButAllowedForbidden.matches.length, 0);
+  assert.equal(lateButAllowedForbidden.pending.length, 0);
+});
+
+test('rate windows are event-time based and stable across delayed processing', async () => {
+  const definition = pattern({
+    kind: 'rate',
+    ref: 'order',
+    atLeast: 2,
+    perMs: 5 * 60 * 1000,
+    child: { kind: 'event', ref: 'order' },
+  });
+
+  const result = await evaluatePatternV2({
+    definition,
+    events: [
+      source('order', 'o-rate-1', '2026-09-30T10:00:00.000Z'),
+      source('order', 'o-rate-2', '2026-09-30T10:01:00.000Z'),
+    ],
+    now: new Date('2026-10-01T10:00:00.000Z'),
+  });
+
+  assert.equal(result.matches.length >= 1, true);
+});
+
+test('notPresent is scoped to the candidate interval, not entire partition history', async () => {
+  const definition = pattern({
+    kind: 'notPresent',
+    ref: 'cancelled',
+    child: {
+      kind: 'sequence',
+      contiguity: 'followedBy',
+      children: [
+        { kind: 'event', ref: 'start' },
+        { kind: 'event', ref: 'end' },
+      ],
+    },
+  });
+
+  const result = await evaluatePatternV2({
+    definition,
+    events: [
+      source('cancelled', 'old-cancel', '2026-09-30T09:00:00.000Z'),
+      source('start', 's-not', '2026-09-30T10:00:00.000Z'),
+      source('end', 'e-not', '2026-09-30T10:01:00.000Z'),
+    ],
+  });
+
+  assert.equal(result.matches.length, 1);
+});
+
+test('semantic nodes fail closed when no evaluator is configured', async () => {
+  const definition = pattern({
+    kind: 'semantic',
+    id: 'requires-evaluator',
+    refs: ['issue'],
+    instruction: 'Is this urgent?',
+    input: ['issue.title'],
+    matchThreshold: 0.8,
+    rejectThreshold: 0.2,
+    child: { kind: 'event', ref: 'issue' },
+  });
+
+  await assert.rejects(
+    () => evaluatePatternV2({
+      definition,
+      events: [
+        source('issue', 'i-no-evaluator', '2026-09-30T10:00:00.000Z', {
+          title: 'urgent',
+        }),
+      ],
+    }),
+    /requires a SemanticEvaluator/,
+  );
+});
+
+test('targeted after-match selection refs are validated', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'ei-pattern-v2-skip-ref-'));
+  try {
+    const store = new PersistentEventStore(dir);
+    await store.init();
+    const engine = new CompositeTriggerEngine(store);
+
+    await assert.rejects(
+      () => engine.register({
+        triggerId: 'bad-skip-ref',
+        version: '1',
+        conditionOnly: true,
+        clauses: [
+          { id: 'a', event: 'a.event', arguments: {}, where: [] },
+          { id: 'b', event: 'b.event', arguments: {}, where: [] },
+        ],
+        expression: { kind: 'anyOf', refs: ['a', 'b'] },
+        temporal: [],
+        patternV2: pattern(
+          {
+            kind: 'sequence',
+            children: [
+              { kind: 'event', ref: 'a' },
+              { kind: 'event', ref: 'b' },
+            ],
+          },
+          {
+            selection: {
+              overlap: 'allow',
+              afterMatch: { kind: 'skipToFirst', ref: 'missing' },
+              maxMatchesPerEvent: 10,
+            },
+          },
+        ),
+        withinMs: 3600000,
+      }),
+      /afterMatch references unknown pattern ref/,
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
