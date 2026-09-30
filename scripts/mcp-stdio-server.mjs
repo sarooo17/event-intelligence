@@ -93,7 +93,7 @@ function registerReadTools(server, runtime) {
     async ({ connectionIds }) => {
       try {
         return jsonResult({
-          sources: runtime.triggerControl.listEventSources({
+          sources: await runtime.triggerControl.listEventSources({
             ...(connectionIds ? { connectionIds } : {}),
           }),
         });
@@ -147,7 +147,7 @@ function registerReadTools(server, runtime) {
     async ({ ownerOnly }) => {
       try {
         return jsonResult({
-          triggers: runtime.triggerControl.listTriggers(
+          triggers: await runtime.triggerControl.listTriggers(
             ownerOnly ? { owner: ownerFromEnv(process.env) } : {},
           ),
         });
@@ -210,7 +210,7 @@ function registerReadTools(server, runtime) {
     async ({ eventName }) => {
       try {
         return jsonResult({
-          contracts: runtime.store.listDerivedContracts(eventName),
+          contracts: await runtime.store.listDerivedContracts(eventName),
         });
       } catch (error) {
         return errorResult(error);
@@ -229,7 +229,7 @@ function registerReadTools(server, runtime) {
     },
     async ({ wakeId }) => {
       try {
-        return jsonResult(runtime.activationHydrator.hydrateWake(wakeId));
+        return jsonResult(await runtime.activationHydrator.hydrateWake(wakeId));
       } catch (error) {
         return errorResult(error);
       }
@@ -249,9 +249,9 @@ function registerReadTools(server, runtime) {
           restored: runtime.restored,
           hostMcpEventConnections: runtime.mcpEventsClient.status(),
           pendingTemporalDeadlines:
-            runtime.store.listTemporalDeadlines({ status: 'pending' }).length,
-          derivedEvents: runtime.store.listDerivedEvents().length,
-          derivedContracts: runtime.store.listDerivedContracts().length,
+            (await runtime.store.listTemporalDeadlines({ status: 'pending' })).length,
+          derivedEvents: (await runtime.store.listDerivedEvents()).length,
+          derivedContracts: (await runtime.store.listDerivedContracts()).length,
           writeEnabled: process.env.MCP_WRITE_ENABLED === 'true',
         });
       } catch (error) {
