@@ -121,7 +121,9 @@ test('composite match wakes a generic runtime once and replay cannot refire', as
     assert.equal(delivered.wake.status, 'delivered');
     assert.equal(deliveredPackets, 1);
 
-    const firedMatch = store.listTriggerMatches('issue-and-mail')[0];
+    const firedMatch = store.listTriggerMatches('issue-and-mail')
+      .find((record) => record.status === 'fired');
+    assert.ok(firedMatch);
     assert.equal(firedMatch.status, 'fired');
     assert.equal(firedMatch.firedWakeId, delivered.wake.wakeId);
 
@@ -167,8 +169,8 @@ test('generic wake packet bounds source refs to the latest 50 events', () => {
       firedWakeId: null,
     },
     definition: {
-      protocolVersion: '0.1.0',
-      schemaVersion: 'trigger.v0.1',
+      protocolVersion: '0.2.0',
+      schemaVersion: 'trigger.v0.2',
       triggerId: 'many-events',
       version: '1',
       clauses: [{ id: 'mail', event: 'email.received', where: [] }],
