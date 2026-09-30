@@ -538,6 +538,37 @@ export class CompositeTriggerEngine {
     );
 
     if (
+      sourceEvents.length > definition.patternV2.execution.maxBufferedEvents
+    ) {
+      await this.store.appendAudit({
+        auditId: `audit_${(
+          await sha256Hex(
+            `${definition.triggerId}:${definition.version}:pattern_buffer_overflow:${key ?? '-'}:${nowIso}`,
+          )
+        ).slice(0, 24)}`,
+        traceId: event.traceId,
+        timestamp: nowIso,
+        kind: 'event.buffer_overflow',
+        entityType: 'trigger',
+        entityId: definition.triggerId,
+        details: {
+          triggerVersion: definition.version,
+          patternVersion: '2',
+          correlationKey: key,
+          bufferedEvents: sourceEvents.length,
+          maxBufferedEvents:
+            definition.patternV2.execution.maxBufferedEvents,
+        },
+      });
+      const error = new Error(
+        `Pattern v2 buffer exceeded maxBufferedEvents=${definition.patternV2.execution.maxBufferedEvents}`,
+      );
+      (error as Error & { code?: string }).code =
+        'PATTERN_V2_BUFFER_LIMIT_EXCEEDED';
+      throw error;
+    }
+
+    if (
       Date.parse(event.occurredAt) < retentionFloor &&
       !existing?.sourceEvents.some(
         (source) => sameEventIdentity(source, event),
@@ -676,6 +707,32 @@ export class CompositeTriggerEngine {
 
     const selected: PatternV2Candidate[] = [];
     const occupied = new Set<string>();
+
+    let selectionLimit = pattern.selection.maxMatchesPerEvent;
+    const hasEffect = Boolean(definition.target || definition.derivedEvent);
+    if (hasEffect) {
+      const triggerState = this.store.getTriggerState?.(
+        definition.triggerId,
+        definition.version,
+      ) ?? null;
+      const lifecycle = definition.lifecycle ?? {};
+
+      if (lifecycle.oneShot || lifecycle.completeOnGoal) {
+        selectionLimit = Math.min(selectionLimit, 1);
+      }
+      if (lifecycle.maxFirings !== undefined) {
+        selectionLimit = Math.min(
+          selectionLimit,
+          Math.max(
+            0,
+            lifecycle.maxFirings - (triggerState?.fireCount ?? 0),
+          ),
+        );
+      }
+      if ((lifecycle.cooldownMs ?? 0) > 0) {
+        selectionLimit = Math.min(selectionLimit, 1);
+      }
+    }
     const indexed = [...buffer.sourceEvents].sort(sourceEventOrder);
     const indexByIdentity = new Map(
       indexed.map((source, index) => [
@@ -701,7 +758,7 @@ export class CompositeTriggerEngine {
     };
 
     for (const candidate of fresh) {
-      if (selected.length >= pattern.selection.maxMatchesPerEvent) break;
+      if (selected.length >= selectionLimit) break;
       if (candidate.startIndex <= skipPastLastThrough) continue;
       if (candidate.startIndex < skipBefore) continue;
       if (skipStarts.has(candidate.startIndex)) continue;
