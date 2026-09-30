@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Semantic CEP hardening
+
+- add a bounded durable cross-event/restart semantic cache for Pattern AST v2;
+- reuse deterministic semantic decisions after new events and process restarts instead of re-spending evaluator/Jev calls;
+- expose `maxSemanticCacheEntries` as an explicit execution budget.
+
 ## [0.5.0] - 2026-09-30
 
 ### Pattern AST v2 / advanced CEP
