@@ -872,7 +872,7 @@ export class TriggerControlPlane {
           triggerId: { type: 'string' },
           triggerVersion: { type: 'string' },
           matchId: { type: 'string' },
-          correlationKey: { type: ['string', 'null'] },
+          partitionKey: { type: ['string', 'null'] },
           contractVersion: { type: 'string' },
           schemaFingerprint: { type: 'string' },
         },
