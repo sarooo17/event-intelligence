@@ -28,7 +28,7 @@ test('agent-friendly plan compiles, fires, and delivers a hydrated activation en
       category: 'predicates',
       operator: 'gt',
     });
-    assert.equal(language.version, '1');
+    assert.equal(language.version, '2');
     assert.equal(language.predicates.length, 1);
     assert.equal(language.predicates[0].id, 'gt');
 

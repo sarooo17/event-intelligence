@@ -105,6 +105,73 @@ await ei.triggerControl.createTrigger({
 
 The canonical trigger definition remains the engine IR/advanced API. Agents should normally author through `planTrigger()` / `trigger_plan`, using `describeTriggerLanguage()` / `trigger_language_describe` for operator discovery.
 
+### Pattern AST v2: advanced CEP
+
+For advanced event programs, `TriggerPlanInput.patternV2` is the preferred authoring surface. Event declarations still describe discovered MCP event sources once; the recursive AST refers to those aliases and composes them without duplicating transport/provider configuration.
+
+```js
+const plan = await ei.planTrigger({
+  events: [
+    { id: 'order', event: 'erpnext.sales_order.created' },
+    { id: 'failure', event: 'payments.failed' },
+    { id: 'ticket', event: 'support.ticket.created' },
+  ],
+  withinMs: 30 * 60 * 1000,
+  patternV2: {
+    version: '2',
+    partitionBy: [{
+      key: 'customer',
+      fields: [
+        { ref: 'order', path: 'customer' },
+        { ref: 'failure', path: 'customer' },
+        { ref: 'ticket', path: 'customer' },
+      ],
+    }],
+    root: {
+      kind: 'aggregate',
+      function: 'sum',
+      ref: 'order',
+      path: 'grand_total',
+      op: 'gte',
+      value: 10000,
+      child: {
+        kind: 'sequence',
+        contiguity: 'followedBy',
+        children: [
+          { kind: 'event', ref: 'order' },
+          {
+            kind: 'repeat',
+            child: { kind: 'event', ref: 'failure' },
+            min: 2,
+            max: 5,
+            mode: 'greedy',
+          },
+          {
+            kind: 'optional',
+            child: { kind: 'event', ref: 'ticket' },
+            mode: 'greedy',
+          },
+        ],
+      },
+    },
+  },
+  target: {
+    runtime: 'agent',
+    kind: 'conversation',
+    id: 'chat-42',
+  },
+  continuation: {
+    instruction: 'Review this customer payment-risk pattern.',
+  },
+});
+```
+
+Pattern AST v2 adds nested boolean/sequence patterns, strict and relaxed contiguity, repeat/optional quantifiers, negative look-ahead, streaming windows, cross-event comparisons, aggregates, state-transition operators, partitioning, overlap/after-match policies and deterministic derived measures.
+
+The runtime is **deterministic first**. A first-class `semantic` node is available only when structural data cannot express the condition reliably. It is vendor-neutral and calls the configured `SemanticEvaluator`; the bundled TypeSafe Jev adapter is optional when `TYPESAFE_API_KEY` is present. Semantic calls are explicit, bounded, timed out and audit-recorded; ordinary CEP execution requires no model API.
+
+Legacy `expression + temporal + correlation` triggers remain supported. `compileLegacyTriggerToPatternV2()` provides an additive compatibility path rather than forcing stored v1 triggers to migrate synchronously.
+
 The persisted `continuation` answers a separate question from the trigger condition: **what should the agent do after the future condition becomes true?** A trigger can instead set `conditionOnly: true` and persist only the condition state, with no runtime target or continuation.
 
 The wire wake remains deliberately small and reference-only. Embedded hosts also receive an Activation Envelope as the second wake argument. The same envelope can be reconstructed later:
@@ -257,7 +324,7 @@ Poll, push and webhook are treated only as delivery mechanisms. All three normal
 - event-source discovery;
 - agent-friendly deterministic trigger planning/compilation;
 - MCP subscription `arguments` validated against each source `inputSchema`, kept distinct from EI payload predicates;
-- `eq`, `neq`, `contains`, `in`, `exists`, `gt`, `gte`, `lt`, `lte` predicates;
+- structured predicates including `eq`, `neq`, `contains`, `startsWith`, `endsWith`, `regex`, `in`, `notIn`, `between`, `exists`, `isNull`, `type`, `gt`, `gte`, `lt`, `lte`;
 - persisted continuation contracts separated from trigger conditions;
 - Activation Envelope hydration with matched event evidence;
 - embedded wake callbacks receive `(packet, activation)`;
@@ -319,10 +386,12 @@ This project does **not** propose a replacement for MCP Events and does not clai
 
 ## AI and API keys
 
-Event Intelligence has one optional AI boundary: **semantic correlation**.
+Event Intelligence has one optional AI boundary: **explicit semantic evaluation**.
 
-- `TYPESAFE_API_KEY` enables the bundled TypeSafe Jev evaluator when a trigger explicitly requests semantic correlation.
+- Pattern AST v2 exposes a vendor-neutral `semantic` node; legacy `semanticCorrelation` is the compatibility form.
+- `TYPESAFE_API_KEY` enables the bundled TypeSafe Jev evaluator when a trigger explicitly requests semantic evaluation.
 - embedded hosts may inject a compatible `semanticEvaluator` instead.
+- deterministic predicates, patterns, windows, aggregations, state changes, deadlines and derived measures never require an AI evaluator.
 - there is no bundled OpenAI planner and no OpenAI API dependency.
 
 The agent/harness is already responsible for natural-language reasoning. It can use `trigger_plan` / `planTrigger()` to compile common requests deterministically against discovered source schemas, or submit a canonical trigger definition directly for advanced cases. Deterministic correlation, temporal logic, persistence, derived events and wake delivery require no model API.

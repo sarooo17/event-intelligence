@@ -1,6 +1,9 @@
 import { z } from 'zod';
 import { RuntimeTargetSchema } from './schemas.js';
 import {
+  PatternAstV2DefinitionSchema,
+} from './patternV2Schemas.js';
+import {
   ContinuationContractSchema,
   SemanticCorrelationSchema,
   StructuredPredicateSchema,
@@ -39,6 +42,7 @@ export const TriggerPlanInputSchema = z.object({
       .max(1000 * 60 * 60 * 24 * 30),
   }).strict().optional(),
   temporal: z.array(TemporalConditionSchema).default([]),
+  patternV2: PatternAstV2DefinitionSchema.optional(),
   lifecycle: z.object({
     oneShot: z.boolean().optional(),
     maxFirings: z.number().int().min(1).optional(),
@@ -56,6 +60,20 @@ export const TriggerPlanInputSchema = z.object({
   }).strict()).min(2).optional(),
   semanticCorrelation: SemanticCorrelationSchema.optional(),
 }).strict().superRefine((value, ctx) => {
+  if (
+    value.patternV2 &&
+    (
+      value.temporal.length > 0 ||
+      value.correlateBy ||
+      value.semanticCorrelation
+    )
+  ) {
+    ctx.addIssue({
+      code: 'custom',
+      message: 'patternV2 cannot be combined with legacy temporal/correlation fields',
+    });
+  }
+
   if (value.conditionOnly) {
     if (value.target || value.continuation) {
       ctx.addIssue({

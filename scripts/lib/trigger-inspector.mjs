@@ -166,6 +166,18 @@ function explain({
     };
   }
 
+  if (definition.patternV2) {
+    return {
+      code: 'pattern_v2_waiting',
+      summary:
+        'Pattern AST v2 has buffered evidence but no new complete match is currently eligible.',
+      patternVersion: '2',
+      bufferRole: match.patternState?.role ?? null,
+      semanticDecisions:
+        match.patternState?.semanticDecisions ?? [],
+    };
+  }
+
   const missing = clauses
     .filter((clause) => clause.status !== 'satisfied')
     .map((clause) => clause.clauseId);
@@ -312,6 +324,7 @@ export class TriggerInspector {
         derivedEvent: definition.derivedEvent ?? null,
         expression: definition.expression,
         temporal: definition.temporal ?? [],
+        patternV2: definition.patternV2 ?? null,
         lifecycle: definition.lifecycle ?? {},
       },
       lifecycle: state,
@@ -323,6 +336,7 @@ export class TriggerInspector {
             openedAt: match.openedAt,
             expiresAt: match.expiresAt,
             updatedAt: match.updatedAt,
+            patternState: match.patternState ?? null,
           }
         : null,
       clauses,
@@ -360,6 +374,7 @@ export class TriggerInspector {
           rootEvidence: record.rootEvidence,
         })),
         matchHistory,
+        patternState: match?.patternState ?? null,
       },
       why: explain({
         definition,
