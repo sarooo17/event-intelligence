@@ -199,7 +199,8 @@ test('two host-owned MCP clients auto-discover, correlate and resume cursors aft
     assert.equal(ingest[0].results[0].accepted, 1);
     assert.equal(ingest[1].results[0].accepted, 1);
 
-    const matches = await first.store.listTriggerMatches('generic-cross-server');
+    const matches = (await first.store.listTriggerMatches('generic-cross-server'))
+      .filter((match) => match.patternState?.role === 'match');
     assert.equal(matches.length, 1);
     assert.equal(matches[0].status, 'matched');
 
@@ -382,8 +383,10 @@ test('subscription arguments create independent durable cursor state', async () 
     assert.equal(calls.filter((call) => call.mailbox === 'sales').length, 2);
     assert.equal(calls.filter((call) => call.mailbox === 'support').length, 2);
 
-    const salesMatches = await runtime.store.listTriggerMatches('mail-sales');
-    const supportMatches = await runtime.store.listTriggerMatches('mail-support');
+    const salesMatches = (await runtime.store.listTriggerMatches('mail-sales'))
+      .filter((match) => match.patternState?.role === 'match');
+    const supportMatches = (await runtime.store.listTriggerMatches('mail-support'))
+      .filter((match) => match.patternState?.role === 'match');
     assert.equal(salesMatches.length, 1);
     assert.equal(supportMatches.length, 1);
     assert.equal(
@@ -505,10 +508,11 @@ for (const delivery of ['push', 'webhook']) {
       const result = await runtime.manager.pollConnection(`${delivery}-conn`);
       assert.equal(result[0].delivery, delivery);
       assert.equal(result[0].status, 'active');
-      assert.equal(
-        (await runtime.store.listTriggerMatches(`${delivery}-trigger`))[0].status,
-        'matched',
-      );
+      const deliveryMatch = (
+        await runtime.store.listTriggerMatches(`${delivery}-trigger`)
+      ).find((match) => match.patternState?.role === 'match');
+      assert.ok(deliveryMatch);
+      assert.equal(deliveryMatch.status, 'matched');
       const state = await runtime.store.getMcpClientState(
         `${delivery}-conn`,
         'deploy.completed',
