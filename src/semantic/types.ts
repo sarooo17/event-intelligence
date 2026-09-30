@@ -21,6 +21,12 @@ export interface SemanticEvaluation {
 }
 
 export interface SemanticEvaluator {
+  /**
+   * Stable identity for durable semantic-decision caching. It must change when
+   * evaluator semantics/model configuration changes. Evaluators that omit it
+   * remain eligible only for evaluation-pass caching.
+   */
+  readonly cacheIdentity?: string;
   evaluate(request: SemanticEvaluationRequest): Promise<SemanticEvaluation>;
 }
 
