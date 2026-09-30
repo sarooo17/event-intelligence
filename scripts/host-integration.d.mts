@@ -140,7 +140,7 @@ export interface EventIntelligenceScopedHost {
   readonly triggerInspector: any;
   readonly triggerPlanner: any;
   readonly activationHydrator: any;
-  readonly eventSources: any[];
+  readonly eventSources: Promise<any[]> | any[];
   readonly storeCapabilities?: EventIntelligenceStoreCapabilities;
   describeTriggerLanguage(input?: {
     category?: 'predicates' | 'composition' | 'temporal' | 'pattern' | 'windows' | 'aggregates' | 'state' | 'selection' | 'semantic' | 'execution' | 'correlation' | 'timing' | 'lifecycle';
@@ -154,12 +154,12 @@ export interface EventIntelligenceScopedHost {
     warnings: any[];
     explanation: any;
   }>;
-  hydrateWake(wakeId: string): ActivationEnvelope;
+  hydrateWake(wakeId: string): Promise<ActivationEnvelope> | ActivationEnvelope;
   attachMcpClient(connection: HostMcpConnectionOptions): Promise<{
     connectionId: string;
     events: any[];
   }>;
-  mcpStatus(): any[];
+  mcpStatus(): Promise<any[]> | any[];
 }
 
 export interface EventIntelligenceHost extends EventIntelligenceScopedHost {
