@@ -60,10 +60,26 @@ interface EvaluationContext {
   semanticTrace: PatternV2SemanticTrace[];
 }
 
+function stableValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stableValue);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.keys(value as Record<string, unknown>)
+        .sort()
+        .map((key) => [
+          key,
+          stableValue((value as Record<string, unknown>)[key]),
+        ]),
+    );
+  }
+  return value;
+}
+
 function eventIdentity(event: TriggerSourceEvent): string {
   return [
     event.serverId ?? '-',
     event.sourceEventId,
+    JSON.stringify(stableValue(event.subscriptionArguments ?? {})),
   ].join(':');
 }
 
