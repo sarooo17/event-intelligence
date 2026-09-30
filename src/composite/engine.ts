@@ -562,6 +562,23 @@ export class CompositeTriggerEngine {
       now: evaluationNow,
     });
 
+    for (const semantic of evaluation.semanticTrace) {
+      await this.support.auditMatch(buffer, 'trigger.correlation', {
+        patternVersion: '2',
+        semanticNodeId: semantic.nodeId,
+        candidateSignature: semantic.candidateSignature,
+        evaluator: semantic.decision.evaluator,
+        outcome: semantic.decision.outcome,
+        probability: semantic.decision.probability,
+        matched: semantic.decision.matched,
+        shouldEscalate: semantic.decision.shouldEscalate,
+        inputFields: semantic.decision.condition.input,
+        ...(semantic.decision.metadata
+          ? { providerEvidence: semantic.decision.metadata }
+          : {}),
+      });
+    }
+
     await this.support.cancelDeadlinesForMatch(buffer.matchId);
     if (evaluation.pending.length) {
       const deadlines = evaluation.pending
