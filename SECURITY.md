@@ -2,12 +2,12 @@
 
 ## Supported versions
 
-The public package is pre-1.0. Security fixes are supported on the current 0.5.x line.
+The public package is pre-1.0. Security fixes are supported on the current 0.6.x line.
 
 | Version | Supported |
 | --- | --- |
-| 0.5.x | Yes |
-| < 0.5 | No |
+| 0.6.x | Yes |
+| < 0.6 | No |
 
 ## Reporting a vulnerability
 
@@ -26,7 +26,7 @@ Useful reports include:
 
 ## Security boundaries
 
-Event Intelligence 0.5.x is an experimental reference implementation with scoped multi-tenant host support. It is not a turnkey hardened hosted service.
+Event Intelligence 0.6.x is an experimental reference implementation with scoped multi-tenant host support. It is not a turnkey hardened hosted service.
 
 Important defaults and constraints:
 
