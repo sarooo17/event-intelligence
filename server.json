@@ -2,8 +2,8 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.sarooo17/event-intelligence",
   "title": "MCP Event Intelligence",
-  "description": "Durable temporal event intelligence: composite triggers, derived events, and runtime wakeups.",
-  "version": "0.4.0",
+  "description": "MCP-native complex event processing for durable agents: event-time patterns, semantic predicates, derived events, and runtime wakeups.",
+  "version": "0.5.0",
   "repository": {
     "url": "https://github.com/sarooo17/event-intelligence",
     "source": "github"
@@ -13,7 +13,7 @@
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "mcp-event-intelligence",
-      "version": "0.4.0",
+      "version": "0.5.0",
       "transport": {
         "type": "stdio"
       },
@@ -49,7 +49,7 @@
         },
         {
           "name": "TYPESAFE_API_KEY",
-          "description": "Optional TypeSafe Jev API key for semantic-correlation triggers.",
+          "description": "Optional TypeSafe Jev API key for semantic Pattern AST nodes and legacy semantic-correlation triggers.",
           "isRequired": false,
           "isSecret": true,
           "format": "string"
