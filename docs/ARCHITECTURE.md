@@ -229,3 +229,8 @@ The design minimizes authority propagation:
 - large/sensitive or authoritative provider state should be re-read through the host's authorized tools.
 
 See [SECURITY-MODEL.md](SECURITY-MODEL.md).
+
+
+Pattern AST v2 is bounded at two different layers: `maxCandidates` limits candidate/NFA expansion, while `maxBufferedEvents` places a hard bound on raw events retained in a single trigger partition. Exceeding the raw buffer bound fails closed with `PATTERN_V2_BUFFER_LIMIT_EXCEEDED` and an audit record rather than silently dropping potentially relevant events.
+
+When one incoming event can produce multiple matches, effect-producing triggers also honor lifecycle capacity within that same ingest. `oneShot`, `completeOnGoal`, remaining `maxFirings`, and non-zero `cooldownMs` constrain how many matches may be released to wake/derived-effect delivery before lifecycle state is updated.
