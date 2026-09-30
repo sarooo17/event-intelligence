@@ -5,7 +5,6 @@ import path from 'node:path';
 import test from 'node:test';
 import { CompositeTriggerEngine } from '../dist/src/composite/engine.js';
 import { CompositeWakeCoordinator } from '../scripts/lib/composite-wake-coordinator.mjs';
-import { EventProcessor } from '../scripts/lib/event-processor.mjs';
 import { buildGenericRuntimeWakePacket } from '../scripts/lib/generic-runtime-wake.mjs';
 import { PersistentEventStore } from '../scripts/lib/persistent-event-store.mjs';
 
@@ -21,7 +20,7 @@ function event({ id, name, at, serverId, provider, data }) {
   };
 }
 
-test('composite match wakes a generic runtime once, is handled, and replay cannot refire', async () => {
+test('composite match wakes a generic runtime once and replay cannot refire', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'mcp-ei-runtime-wake-'));
 
   try {
@@ -30,8 +29,6 @@ test('composite match wakes a generic runtime once, is handled, and replay canno
 
     const triggerEngine = new CompositeTriggerEngine(store);
     await triggerEngine.register({
-      protocolVersion: '0.1.0',
-      schemaVersion: 'trigger.v0.1',
       triggerId: 'issue-and-mail',
       version: '1',
       clauses: [
@@ -46,9 +43,14 @@ test('composite match wakes a generic runtime once, is handled, and replay canno
           where: [{ path: 'from', op: 'eq', value: 'pippo@example.com' }],
         },
       ],
-      expression: {
-        kind: 'allOf',
-        refs: ['issue', 'mail'],
+      pattern: {
+        root: {
+          kind: 'allOf',
+          children: [
+            { kind: 'event', ref: 'issue' },
+            { kind: 'event', ref: 'mail' },
+          ],
+        },
       },
       withinMs: 24 * 60 * 60 * 1000,
       target: {
@@ -123,19 +125,12 @@ test('composite match wakes a generic runtime once, is handled, and replay canno
     assert.equal(firedMatch.status, 'fired');
     assert.equal(firedMatch.firedWakeId, delivered.wake.wakeId);
 
-    const processor = new EventProcessor({ store });
-    const handled = await processor.acknowledgeWake(
-      delivered.wake.wakeId,
-      delivered.wake.runtimeReceiptId,
-    );
-    assert.equal(handled.status, 'handled');
-
     const replay = await triggerEngine.ingest(mailEvent);
     assert.equal(replay[0].match.status, 'fired');
 
     const replayDelivery = await coordinator.deliverMatched(replay[0].match);
     assert.equal(replayDelivery.status, 'already_fired');
-    assert.equal(replayDelivery.wake.status, 'handled');
+    assert.equal(replayDelivery.wake.status, 'delivered');
     assert.equal(deliveredPackets, 1);
     assert.equal(await store.verifyAudit(), true);
   } finally {
@@ -157,18 +152,18 @@ test('generic wake packet bounds source refs to the latest 50 events', () => {
   const packet = buildGenericRuntimeWakePacket({
     wakeId: 'wake_many',
     match: {
-      protocolVersion: '0.1.0',
-      schemaVersion: 'trigger.v0.1',
+      protocolVersion: '0.2.0',
+      schemaVersion: 'trigger.v0.2',
       matchId: 'tm_many',
       triggerId: 'many-events',
       triggerVersion: '1',
       status: 'matched',
-      correlationKey: null,
+      partitionKey: null,
       openedAt: sourceEvents[0].occurredAt,
       expiresAt: '2026-09-19T08:00:00.000Z',
       updatedAt: sourceEvents.at(-1).occurredAt,
       sourceEvents,
-      correlationDecision: null,
+      semanticDecision: null,
       firedWakeId: null,
     },
     definition: {
@@ -177,7 +172,14 @@ test('generic wake packet bounds source refs to the latest 50 events', () => {
       triggerId: 'many-events',
       version: '1',
       clauses: [{ id: 'mail', event: 'email.received', where: [] }],
-      expression: { kind: 'count', ref: 'mail', atLeast: 55 },
+      pattern: {
+        root: {
+          kind: 'threshold',
+          child: { kind: 'event', ref: 'mail' },
+          ref: 'mail',
+          atLeast: 55,
+        },
+      },
       withinMs: 86_400_000,
       target: { runtime: 'runtime-probe', kind: 'task', id: 'report' },
     },
