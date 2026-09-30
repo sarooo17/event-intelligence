@@ -233,7 +233,7 @@ export class TriggerPlanner {
 
   async plan(input) {
     const plan = parseTriggerPlanInput(input);
-    const activeSources = this.store.listEventSources({ enabledOnly: true });
+    const activeSources = await this.store.listEventSources({ enabledOnly: true });
     const warnings = [];
     const resolvedSources = [];
     const seenIds = new Set();
