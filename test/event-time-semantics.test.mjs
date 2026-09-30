@@ -35,7 +35,16 @@ function sequenceCondition(triggerId, withinMs) {
       { id: 'a', event: 'event.a', where: [] },
       { id: 'b', event: 'event.b', where: [] },
     ],
-    expression: { kind: 'sequence', refs: ['a', 'b'] },
+    pattern: {
+      root: {
+        kind: 'sequence',
+        contiguity: 'followedBy',
+        children: [
+          { kind: 'event', ref: 'a' },
+          { kind: 'event', ref: 'b' },
+        ],
+      },
+    },
     withinMs,
   };
 }
@@ -106,25 +115,12 @@ test('repeated sequence clauses preserve alternate valid windows', async () => {
       '2026-09-30T10:16:00.000Z',
     ));
 
-    const partials = store.listTriggerMatches('alternate-sequence-window')
-      .filter((match) => match.status === 'partial');
-    assert.equal(partials.length, 2);
-    assert.equal(
-      partials.some(
-        (match) =>
-          match.sourceEvents.length === 1 &&
-          match.sourceEvents[0].sourceEventId === 'a-late',
-      ),
-      true,
-    );
-    assert.equal(
-      partials.some(
-        (match) =>
-          match.sourceEvents.some(
-            (event) => event.sourceEventId === 'a-early',
-          ),
-      ),
-      true,
+    const buffers = store.listTriggerMatches('alternate-sequence-window')
+      .filter((match) => match.patternState?.role === 'buffer');
+    assert.equal(buffers.length, 1);
+    assert.deepEqual(
+      buffers[0].sourceEvents.map((event) => event.sourceEventId).sort(),
+      ['a-early', 'a-late'],
     );
 
     const result = await engine.ingest(sourceEvent(
@@ -362,7 +358,7 @@ test('multiple triggers share one upstream MCP subscription for identical argume
             arguments: {},
             where: [],
           }],
-          expression: { kind: 'anyOf', refs: ['shared'] },
+          pattern: { root: { kind: 'event', ref: 'shared' } },
           withinMs: 60000,
         },
         connectionIds: ['shared'],
