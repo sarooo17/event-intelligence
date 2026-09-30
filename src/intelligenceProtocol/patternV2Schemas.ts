@@ -313,7 +313,42 @@ export const PatternNodeV2Schema: z.ZodType<any> = z.lazy(() => {
         'array',
       ]).optional(),
       flags: z.string().max(10).optional(),
-    }).strict(),
+    }).strict().superRefine((value, ctx) => {
+      if (
+        ['eq', 'neq', 'gt', 'gte', 'lt', 'lte', 'contains', 'startsWith', 'endsWith', 'regex']
+          .includes(value.op) &&
+        !value.right
+      ) {
+        ctx.addIssue({
+          code: 'custom',
+          message: `compare ${value.op} requires right`,
+        });
+      }
+      if (
+        (value.op === 'in' || value.op === 'notIn') &&
+        (!value.values || value.values.length === 0)
+      ) {
+        ctx.addIssue({
+          code: 'custom',
+          message: `compare ${value.op} requires values`,
+        });
+      }
+      if (
+        value.op === 'between' &&
+        (value.lower === undefined || value.upper === undefined)
+      ) {
+        ctx.addIssue({
+          code: 'custom',
+          message: 'compare between requires lower and upper',
+        });
+      }
+      if (value.op === 'type' && !value.expectedType) {
+        ctx.addIssue({
+          code: 'custom',
+          message: 'compare type requires expectedType',
+        });
+      }
+    }),
 
     z.object({
       kind: z.literal('aggregate'),
