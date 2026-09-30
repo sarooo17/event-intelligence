@@ -555,6 +555,29 @@ export type PatternAstV2Definition =
   z.infer<typeof PatternAstV2DefinitionSchema>;
 export type PatternMeasure = z.infer<typeof PatternMeasureSchema>;
 
+export function collectPatternMeasureRefs(
+  measure: PatternMeasure,
+): string[] {
+  const refs = new Set<string>();
+  const visitValue = (value: PatternArithmeticValue) => {
+    if (value.kind === 'field' || value.kind === 'occurredAt') {
+      refs.add(value.ref);
+      return;
+    }
+    if (value.kind === 'arithmetic') {
+      value.args.forEach((arg: PatternArithmeticValue) => visitValue(arg));
+    }
+  };
+
+  if (measure.expression.kind === 'aggregate') {
+    refs.add(measure.expression.ref);
+  } else {
+    visitValue(measure.expression);
+  }
+
+  return [...refs];
+}
+
 export function collectPatternDurationsMs(
   node: PatternNodeV2,
 ): number[] {
