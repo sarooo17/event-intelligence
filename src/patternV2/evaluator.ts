@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import {
   SemanticConditionEngine,
 } from '../semantic/conditionEngine.js';
@@ -124,9 +123,7 @@ function durableSemanticCacheKey(
     })),
   });
 
-  return createHash('sha256')
-    .update(JSON.stringify(payload))
-    .digest('hex');
+  return JSON.stringify(payload);
 }
 
 function eventIdentity(event: TriggerSourceEvent): string {
