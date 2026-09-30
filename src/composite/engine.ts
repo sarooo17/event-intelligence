@@ -540,7 +540,12 @@ export class CompositeTriggerEngine {
 
     sourceEvents.sort(sourceEventOrder);
 
+    const previousMaxObserved = existing?.patternState
+      ?.maxObservedOccurredAt
+      ? Date.parse(existing.patternState.maxObservedOccurredAt)
+      : Number.NEGATIVE_INFINITY;
     const maxObserved = Math.max(
+      previousMaxObserved,
       Date.parse(event.occurredAt),
       ...sourceEvents
         .map((source) => Date.parse(source.occurredAt))
@@ -642,6 +647,7 @@ export class CompositeTriggerEngine {
       patternState: {
         version: '2',
         role: 'buffer',
+        maxObservedOccurredAt: new Date(maxObserved).toISOString(),
         semanticDecisions: [],
       },
       firedWakeId: null,
