@@ -12,6 +12,7 @@ export {
   PatternMeasureSchema,
   PatternAstV2DefinitionSchema,
   collectPatternDurationsMs,
+  collectPatternMeasureRefs,
   collectPatternRefs,
 } from './patternV2Schemas.js';
 
