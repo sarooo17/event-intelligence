@@ -1,6 +1,6 @@
 {
-  "protocolVersion": "0.1.0",
-  "schemaVersion": "trigger.v0.1",
+  "protocolVersion": "0.2.0",
+  "schemaVersion": "trigger.v0.2",
   "triggerId": "issue-and-pippo-mail",
   "version": "1",
   "description": "Wake only when an issue exists and Pippo sends a related email.",
@@ -28,16 +28,15 @@
       ]
     }
   ],
-  "expression": {
-    "kind": "allOf",
-    "refs": [
-      "issue",
-      "mail"
-    ]
-  },
-  "withinMs": 86400000,
-  "correlation": {
-    "semantic": {
+  "pattern": {
+    "version": "2",
+    "root": {
+      "kind": "semantic",
+      "id": "same-problem",
+      "refs": [
+        "issue",
+        "mail"
+      ],
       "instruction": "The email concerns the GitHub issue.",
       "input": [
         "issue.title",
@@ -46,9 +45,23 @@
       ],
       "matchThreshold": 0.8,
       "rejectThreshold": 0.2,
-      "uncertain": "escalate"
+      "uncertain": "escalate",
+      "child": {
+        "kind": "allOf",
+        "children": [
+          {
+            "kind": "event",
+            "ref": "issue"
+          },
+          {
+            "kind": "event",
+            "ref": "mail"
+          }
+        ]
+      }
     }
   },
+  "withinMs": 86400000,
   "target": {
     "runtime": "runtime-probe",
     "kind": "task",
