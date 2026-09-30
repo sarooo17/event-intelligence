@@ -689,7 +689,7 @@ export class TriggerControlPlane {
       throw error;
     }
 
-    const sources = this.listEventSources({
+    const sources = await this.listEventSources({
       connectionIds: allowedConnectionIds,
     });
 
