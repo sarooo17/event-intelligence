@@ -550,6 +550,209 @@ export const PatternMeasureSchema = z.object({
   ]),
 }).strict();
 
+function valueRefs(
+  value: PatternArithmeticValue,
+): string[] {
+  if (value.kind === 'field' || value.kind === 'occurredAt') {
+    return [value.ref];
+  }
+  if (value.kind === 'arithmetic') {
+    return [
+      ...new Set(
+        value.args.flatMap((arg: PatternArithmeticValue) =>
+          valueRefs(arg)
+        ),
+      ),
+    ];
+  }
+  return [];
+}
+
+export function collectGuaranteedPatternBindings(
+  node: PatternNodeV2,
+): string[] {
+  const visit = (current: PatternNodeV2): Set<string> => {
+    if (current.kind === 'event') return new Set([current.ref]);
+
+    if (current.kind === 'allOf' || current.kind === 'sequence') {
+      return new Set(
+        current.children.flatMap((child: PatternNodeV2) =>
+          [...visit(child)]
+        ),
+      );
+    }
+
+    if (current.kind === 'anyOf') {
+      const children = current.children.map(
+        (child: PatternNodeV2) => visit(child),
+      );
+      if (!children.length) return new Set();
+      return new Set(
+        [...children[0]!].filter((ref) =>
+          children.slice(1).every((set) => set.has(ref))
+        ),
+      );
+    }
+
+    if (current.kind === 'repeat') {
+      return current.min > 0 ? visit(current.child) : new Set();
+    }
+
+    if (current.kind === 'optional') return new Set();
+
+    if (
+      current.kind === 'threshold' ||
+      current.kind === 'rate' ||
+      current.kind === 'distinct' ||
+      current.kind === 'debounce'
+    ) {
+      const refs = visit(current.child);
+      refs.add(current.ref);
+      return refs;
+    }
+
+    if (
+      current.kind === 'notNext' ||
+      current.kind === 'notFollowedBy'
+    ) {
+      return visit(current.child);
+    }
+
+    return visit(current.child);
+  };
+
+  return [...visit(node)];
+}
+
+function validatePatternNodeBindings(
+  node: PatternNodeV2,
+  ctx: z.RefinementCtx,
+): void {
+  const requireBindings = (
+    refs: string[],
+    child: PatternNodeV2,
+    label: string,
+  ) => {
+    const guaranteed = new Set(
+      collectGuaranteedPatternBindings(child),
+    );
+    for (const ref of refs) {
+      if (!guaranteed.has(ref)) {
+        ctx.addIssue({
+          code: 'custom',
+          message:
+            `${label} requires ref to be guaranteed by child pattern: ${ref}`,
+        });
+      }
+    }
+  };
+
+  if (
+    node.kind === 'allOf' ||
+    node.kind === 'anyOf' ||
+    node.kind === 'sequence'
+  ) {
+    node.children.forEach((child: PatternNodeV2) =>
+      validatePatternNodeBindings(child, ctx)
+    );
+    return;
+  }
+
+  if (
+    node.kind === 'repeat' ||
+    node.kind === 'optional' ||
+    node.kind === 'window' ||
+    node.kind === 'notPresent' ||
+    node.kind === 'threshold' ||
+    node.kind === 'rate' ||
+    node.kind === 'distinct' ||
+    node.kind === 'debounce'
+  ) {
+    validatePatternNodeBindings(node.child, ctx);
+    return;
+  }
+
+  if (
+    node.kind === 'notNext' ||
+    node.kind === 'notFollowedBy'
+  ) {
+    validatePatternNodeBindings(node.child, ctx);
+    validatePatternNodeBindings(node.forbidden, ctx);
+    return;
+  }
+
+  if (node.kind === 'calendar') {
+    requireBindings([node.ref], node.child, 'calendar');
+    validatePatternNodeBindings(node.child, ctx);
+    return;
+  }
+
+  if (node.kind === 'absence') {
+    requireBindings([node.afterRef], node.child, 'absence');
+    validatePatternNodeBindings(node.child, ctx);
+    return;
+  }
+
+  if (node.kind === 'after') {
+    requireBindings(
+      [node.ref, node.afterRef],
+      node.child,
+      'after',
+    );
+    validatePatternNodeBindings(node.child, ctx);
+    return;
+  }
+
+  if (node.kind === 'until') {
+    requireBindings(
+      [node.ref, node.beforeRef],
+      node.child,
+      'until',
+    );
+    validatePatternNodeBindings(node.child, ctx);
+    return;
+  }
+
+  if (node.kind === 'compare') {
+    requireBindings(
+      [
+        ...valueRefs(node.left),
+        ...(node.right ? valueRefs(node.right) : []),
+      ],
+      node.child,
+      'compare',
+    );
+    validatePatternNodeBindings(node.child, ctx);
+    return;
+  }
+
+  if (node.kind === 'aggregate' || node.kind === 'state') {
+    requireBindings(
+      [node.ref],
+      node.child,
+      node.kind,
+    );
+    validatePatternNodeBindings(node.child, ctx);
+    return;
+  }
+
+  if (node.kind === 'semantic') {
+    requireBindings(node.refs, node.child, 'semantic');
+    const allowed = new Set(node.refs);
+    for (const input of node.input) {
+      const [root] = input.split('.');
+      if (!root || !allowed.has(root)) {
+        ctx.addIssue({
+          code: 'custom',
+          message:
+            `semantic input must be rooted in semantic refs: ${input}`,
+        });
+      }
+    }
+    validatePatternNodeBindings(node.child, ctx);
+  }
+}
+
 export const PatternAstV2DefinitionSchema = z.object({
   version: z.literal(PATTERN_AST_VERSION).default(PATTERN_AST_VERSION),
   root: PatternNodeV2Schema,
@@ -564,7 +767,9 @@ export const PatternAstV2DefinitionSchema = z.object({
     maxSemanticEvaluations: 16,
     maxBufferedEvents: 10000,
   }),
-}).strict();
+}).strict().superRefine((value, ctx) => {
+  validatePatternNodeBindings(value.root, ctx);
+});
 
 export type PatternAfterMatch = z.infer<typeof PatternAfterMatchSchema>;
 export type PatternAstV2Definition =
