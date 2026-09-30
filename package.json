@@ -54,7 +54,10 @@
     "mcp": "npm run build && node scripts/mcp-stdio.mjs",
     "mcp:inspect": "npm run build && npx @modelcontextprotocol/inspector node scripts/mcp-stdio.mjs",
     "registry:validate": "mcp-publisher validate server.json",
-    "pack:mcp-smoke": "node scripts/package-mcp-smoke.mjs"
+    "pack:mcp-smoke": "node scripts/package-mcp-smoke.mjs",
+    "conformance:pattern-v2": "npm run build && node scripts/evidence/pattern-v2-conformance.mjs",
+    "bench:pattern-v2": "npm run build && node scripts/evidence/pattern-v2-benchmark.mjs --profile quick",
+    "evidence:pattern-v2": "npm run build && node scripts/evidence/pattern-v2-conformance.mjs && node scripts/evidence/pattern-v2-benchmark.mjs --profile quick"
   },
   "keywords": [
     "mcp",
