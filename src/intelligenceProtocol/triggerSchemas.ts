@@ -390,7 +390,7 @@ export const TriggerSourceEventSchema = z.object({
   data: z.record(z.string(), z.unknown()),
 });
 
-export const CompositeCorrelationDecisionSchema = z.object({
+export const PatternSemanticDecisionSchema = z.object({
   evaluator: z.string().min(1),
   outcome: z.enum(['match', 'reject', 'uncertain']),
   probability: z.number().min(0).max(1),
@@ -417,7 +417,7 @@ export const PatternMatchStateSchema = z.object({
   completedAt: Timestamp.optional(),
   semanticDecisions: z.array(z.object({
     nodeId: Id,
-    decision: CompositeCorrelationDecisionSchema,
+    decision: PatternSemanticDecisionSchema,
   }).strict()).default([]),
 }).strict();
 
@@ -428,12 +428,12 @@ export const TriggerMatchRecordSchema = z.object({
   triggerId: Id,
   triggerVersion: z.string().min(1),
   status: TriggerMatchStatusSchema,
-  correlationKey: z.string().nullable(),
+  partitionKey: z.string().nullable(),
   openedAt: Timestamp,
   expiresAt: Timestamp,
   updatedAt: Timestamp,
   sourceEvents: z.array(TriggerSourceEventSchema),
-  correlationDecision: CompositeCorrelationDecisionSchema.nullable(),
+  semanticDecision: PatternSemanticDecisionSchema.nullable(),
   patternState: PatternMatchStateSchema.optional(),
   firedWakeId: Id.nullable(),
   derivedEventIds: z.array(Id).default([]),
@@ -452,7 +452,7 @@ export type CorrelatableEvent = z.infer<typeof CorrelatableEventSchema>;
 export type TriggerSourceEvent = z.infer<typeof TriggerSourceEventSchema>;
 export type PatternMatchState = z.infer<typeof PatternMatchStateSchema>;
 export type TriggerMatchRecord = z.infer<typeof TriggerMatchRecordSchema>;
-export type CompositeCorrelationDecision = z.infer<typeof CompositeCorrelationDecisionSchema>;
+export type PatternSemanticDecision = z.infer<typeof PatternSemanticDecisionSchema>;
 
 export function parseCompositeTriggerDefinition(
   value: unknown,
