@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Production/runtime hardening
+
+- add a reproducible Pattern AST v2 conformance and benchmark evidence harness;
+- define explicit shared-store capabilities and fail closed when a backend cannot guarantee strong shared state, distributed wake claims and partition leases;
+- add durable semantic-decision caching with evaluator/model, trigger revision and candidate-event identity isolation;
+- make authoritative runtime/store reads Promise-compatible so production database adapters do not require stale process-local caches;
+- align embedded host, MCP control-plane, trigger inspector and documentation surfaces with async authoritative reads;
+- keep the bundled JSONL store explicitly single-process while preserving compatibility with synchronous custom stores.
+
 ## [0.5.0] - 2026-09-30
 
 ### Pattern AST v2 / advanced CEP
