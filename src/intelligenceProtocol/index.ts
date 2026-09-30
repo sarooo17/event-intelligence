@@ -40,6 +40,7 @@ export type {
   PatternV2Candidate,
   PatternV2Evaluation,
   PatternV2SemanticDecision,
+  PatternV2SemanticTrace,
 } from '../patternV2/evaluator.js';
 
 export {
