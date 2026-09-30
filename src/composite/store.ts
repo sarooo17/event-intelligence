@@ -4,6 +4,33 @@ import type {
 } from '../intelligenceProtocol/triggerSchemas.js';
 
 export interface CompositeTriggerStore {
+  storeCapabilities?(): {
+    partitionLeases?: string;
+    [key: string]: unknown;
+  };
+  claimPartitionLease?(
+    partitionKey: string,
+    options: {
+      workerId: string;
+      now?: string;
+      leaseMs?: number;
+    },
+  ): Promise<unknown | null>;
+  renewPartitionLease?(
+    partitionKey: string,
+    options: {
+      workerId: string;
+      now?: string;
+      leaseMs?: number;
+    },
+  ): Promise<unknown | null>;
+  releasePartitionLease?(
+    partitionKey: string,
+    options: {
+      workerId: string;
+      now?: string;
+    },
+  ): Promise<boolean>;
   putTrigger(definition: CompositeTriggerDefinition): Promise<void>;
   listTriggers(): CompositeTriggerDefinition[];
   getTriggerState?(
