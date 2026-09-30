@@ -125,7 +125,7 @@ export class ActivationHydrator {
       match: {
         matchId: match.matchId,
         status: match.status,
-        correlationKey: match.correlationKey,
+        partitionKey: match.partitionKey,
         openedAt: match.openedAt,
         updatedAt: match.updatedAt,
       },
