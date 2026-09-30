@@ -569,7 +569,7 @@ export class CompositeTriggerEngine {
         details: {
           triggerVersion: definition.version,
           patternVersion: '2',
-          correlationKey: key,
+          partitionKey: key,
           bufferedEvents: bufferedPhysicalEvents,
           maxBufferedEvents:
             pattern.execution.maxBufferedEvents,
@@ -625,14 +625,14 @@ export class CompositeTriggerEngine {
       triggerId: definition.triggerId,
       triggerVersion: definition.version,
       status: 'partial',
-      correlationKey: key,
+      partitionKey: key,
       openedAt,
       expiresAt: new Date(
         Date.parse(openedAt) + definition.withinMs,
       ).toISOString(),
       updatedAt: nowIso,
       sourceEvents,
-      correlationDecision: null,
+      semanticDecision: null,
       patternState: {
         version: '2',
         role: 'buffer',
@@ -849,7 +849,7 @@ export class CompositeTriggerEngine {
         await sha256Hex([
           definition.triggerId,
           definition.version,
-          buffer.correlationKey ?? '-',
+          buffer.partitionKey ?? '-',
           signature,
           'pattern-v2-match',
         ].join(':'))
@@ -880,14 +880,14 @@ export class CompositeTriggerEngine {
         triggerId: definition.triggerId,
         triggerVersion: definition.version,
         status: 'matched',
-        correlationKey: buffer.correlationKey,
+        partitionKey: buffer.partitionKey,
         openedAt,
         expiresAt: new Date(
           Date.parse(openedAt) + definition.withinMs,
         ).toISOString(),
         updatedAt: nowIso,
         sourceEvents: candidate.events,
-        correlationDecision: lastSemantic,
+        semanticDecision: lastSemantic,
         patternState: {
           version: '2',
           role: 'match',
