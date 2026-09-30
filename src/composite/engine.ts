@@ -421,7 +421,11 @@ export class CompositeTriggerEngine {
     if (!dimensions.length) return null;
 
     const clauseIds = new Set(matchingClauses.map((clause) => clause.id));
-    const components: string[] = [];
+    const components: Array<{
+      key: string;
+      type: 'string' | 'number' | 'boolean';
+      value: string | number | boolean;
+    }> = [];
 
     for (const dimension of dimensions) {
       const fields = dimension.fields.filter((field) =>
@@ -444,15 +448,25 @@ export class CompositeTriggerEngine {
           `Pattern partition ${dimension.key} resolved to a non-scalar value`,
         );
       }
-      if (values.some((value) => value !== first)) {
+      if (
+        values.some(
+          (value) =>
+            typeof value !== typeof first ||
+            value !== first,
+        )
+      ) {
         throw new Error(
           `Pattern partition ${dimension.key} is ambiguous for incoming event ${event.name}`,
         );
       }
-      components.push(`${dimension.key}=${String(first)}`);
+      components.push({
+        key: dimension.key,
+        type: typeof first as 'string' | 'number' | 'boolean',
+        value: first as string | number | boolean,
+      });
     }
 
-    return components.join('|');
+    return JSON.stringify(components);
   }
 
   private async patternBufferId(
@@ -540,8 +554,12 @@ export class CompositeTriggerEngine {
       (source) => Date.parse(source.occurredAt) >= retentionFloor,
     );
 
+    const bufferedPhysicalEvents = new Set(
+      sourceEvents.map(patternPhysicalIdentity),
+    ).size;
+
     if (
-      sourceEvents.length > pattern.execution.maxBufferedEvents
+      bufferedPhysicalEvents > pattern.execution.maxBufferedEvents
     ) {
       await this.store.appendAudit({
         auditId: `audit_${(
@@ -558,7 +576,7 @@ export class CompositeTriggerEngine {
           triggerVersion: definition.version,
           patternVersion: '2',
           correlationKey: key,
-          bufferedEvents: sourceEvents.length,
+          bufferedEvents: bufferedPhysicalEvents,
           maxBufferedEvents:
             pattern.execution.maxBufferedEvents,
         },
