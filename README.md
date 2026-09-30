@@ -177,7 +177,7 @@ The persisted `continuation` answers a separate question from the trigger condit
 The wire wake remains deliberately small and reference-only. Embedded hosts also receive an Activation Envelope as the second wake argument. The same envelope can be reconstructed later:
 
 ```js
-const activation = ei.hydrateWake(wakeId);
+const activation = await ei.hydrateWake(wakeId);
 ```
 
 The envelope contains the configured continuation, trigger/match state, and matched evidence. Event payloads are labeled as untrusted external signals and are included only according to the trigger's `continuation.contextPolicy`.
@@ -197,7 +197,7 @@ await tenant.triggerControl.createTrigger({
   owner,
 });
 
-const acmeConnections = tenant.mcpStatus();
+const acmeConnections = await tenant.mcpStatus();
 ```
 
 The default reference store physically namespaces non-default scopes under separate persistent store partitions. Trigger IDs, match IDs, cursors, event sources, deadlines, derived events and wake delivery state are therefore resolved inside a scope rather than filtered out of a global result after the fact. The root host object is the trusted operator/control-plane capability; tenant code should receive a scoped view.
@@ -282,7 +282,7 @@ timezone normalization and deterministic occurrence IDs. The local factory in
 this package should therefore be read as a typed convenience API, not as the
 production ERP connector itself.
 
-## What v0.4 implements
+## What v0.5 implements
 
 ### Host-owned event sources
 
@@ -398,7 +398,7 @@ The agent/harness is already responsible for natural-language reasoning. It can 
 
 ## Full-system acceptance
 
-The v0.4 acceptance suite verifies:
+The v0.5 acceptance suite verifies:
 
 - host-owned MCP client → extension discovery → durable subscription → poll/push/webhook occurrence → composite match → in-process wake;
 - provider-neutral events → composite match → derived event → derived composition → signed runtime wake;
