@@ -175,10 +175,24 @@ export class CompositeTriggerEngine {
 
   async register(definitionInput: unknown): Promise<CompositeTriggerDefinition> {
     const definition = CompositeTriggerDefinitionSchema.parse(definitionInput);
+    const existingDefinitions = await this.store.listTriggers();
+    const stateByTrigger = new Map<string, { status: string } | null>();
+    if (this.store.getTriggerState) {
+      await Promise.all(existingDefinitions.map(async (existing) => {
+        stateByTrigger.set(
+          `${existing.triggerId}@${existing.version}`,
+          await this.store.getTriggerState!(
+            existing.triggerId,
+            existing.version,
+          ),
+        );
+      }));
+    }
     assertNoDerivedEventCycle(
-      this.store.listTriggers(),
+      existingDefinitions,
       definition,
-      this.store.getTriggerState?.bind(this.store),
+      (triggerId, version) =>
+        stateByTrigger.get(`${triggerId}@${version}`) ?? null,
     );
     await this.store.putTrigger(definition);
     return definition;
@@ -193,11 +207,13 @@ export class CompositeTriggerEngine {
 
     const results: CompositeIngestResult[] = [];
 
-    for (const definition of this.store.listTriggers()) {
-      const triggerState = this.store.getTriggerState?.(
-        definition.triggerId,
-        definition.version,
-      ) ?? null;
+    for (const definition of await this.store.listTriggers()) {
+      const triggerState = this.store.getTriggerState
+        ? await this.store.getTriggerState(
+          definition.triggerId,
+          definition.version,
+        )
+        : null;
       if (!(await this.support.lifecycleAllows(definition, triggerState, this.now()))) {
         continue;
       }
@@ -208,8 +224,8 @@ export class CompositeTriggerEngine {
       if (matchingClauses.length === 0) continue;
 
       if (definition.patternV2) {
-        const replayed = this.store
-          .listTriggerMatches(definition.triggerId)
+        const replayed = (await this.store
+          .listTriggerMatches(definition.triggerId))
           .filter((record) =>
             record.triggerVersion === definition.version &&
             record.sourceEvents.some(
@@ -256,8 +272,8 @@ export class CompositeTriggerEngine {
         continue;
       }
 
-      const replayed = this.store
-        .listTriggerMatches(definition.triggerId)
+      const replayed = (await this.store
+        .listTriggerMatches(definition.triggerId))
         .find((record) =>
           record.sourceEvents.some(
             (source) => sameEventIdentity(source, event),
@@ -285,7 +301,7 @@ export class CompositeTriggerEngine {
   }
 
   async markFired(matchId: string, wakeId: string): Promise<TriggerMatchRecord> {
-    const latest = this.latestMatch(matchId);
+    const latest = await this.latestMatch(matchId);
     if (!latest) throw new Error(`Unknown trigger match: ${matchId}`);
     if (latest.status === 'fired') return latest;
     if (latest.status !== 'matched') {
@@ -317,7 +333,7 @@ export class CompositeTriggerEngine {
     matchId: string,
     derivedEventId: string,
   ): Promise<TriggerMatchRecord> {
-    const latest = this.latestMatch(matchId);
+    const latest = await this.latestMatch(matchId);
     if (!latest) throw new Error(`Unknown trigger match: ${matchId}`);
     if (
       latest.status === 'emitted' &&
@@ -358,25 +374,27 @@ export class CompositeTriggerEngine {
     const deadlineId = String(event.data.deadlineId ?? '');
     if (!deadlineId || !this.store.getTemporalDeadline) return [];
 
-    const deadline = this.store.getTemporalDeadline(deadlineId);
+    const deadline = await this.store.getTemporalDeadline(deadlineId);
     if (!deadline || deadline.status !== 'pending') return [];
 
-    const definition = this.store.listTriggers().find(
+    const definition = (await this.store.listTriggers()).find(
       (candidate) =>
         candidate.triggerId === deadline.triggerId &&
         candidate.version === deadline.triggerVersion,
     );
     if (!definition) return [];
 
-    const triggerState = this.store.getTriggerState?.(
-      definition.triggerId,
-      definition.version,
-    ) ?? null;
+    const triggerState = this.store.getTriggerState
+      ? await this.store.getTriggerState(
+        definition.triggerId,
+        definition.version,
+      )
+      : null;
     if (!(await this.support.lifecycleAllows(definition, triggerState, this.now()))) {
       return [];
     }
 
-    const match = this.latestMatch(deadline.matchId);
+    const match = await this.latestMatch(deadline.matchId);
     if (
       !match ||
       match.status === 'matched' ||
@@ -601,7 +619,7 @@ export class CompositeTriggerEngine {
     const now = this.now();
     const nowIso = now.toISOString();
     const bufferId = await this.patternBufferId(definition, key);
-    const existing = this.latestMatch(bufferId);
+    const existing = await this.latestMatch(bufferId);
 
     let sourceEvents = existing?.sourceEvents
       ? [...existing.sourceEvents]
@@ -789,8 +807,8 @@ export class CompositeTriggerEngine {
     }
 
     const previouslyEmitted = new Set(
-      this.store
-        .listTriggerMatches(definition.triggerId)
+      (await this.store
+        .listTriggerMatches(definition.triggerId))
         .filter((record) =>
           record.triggerVersion === definition.version &&
           record.patternState?.version === '2' &&
@@ -818,10 +836,12 @@ export class CompositeTriggerEngine {
     let selectionLimit = pattern.selection.maxMatchesPerEvent;
     const hasEffect = Boolean(definition.target || definition.derivedEvent);
     if (hasEffect) {
-      const triggerState = this.store.getTriggerState?.(
-        definition.triggerId,
-        definition.version,
-      ) ?? null;
+      const triggerState = this.store.getTriggerState
+        ? await this.store.getTriggerState(
+          definition.triggerId,
+          definition.version,
+        )
+        : null;
       const lifecycle = definition.lifecycle ?? {};
 
       if (lifecycle.oneShot || lifecycle.completeOnGoal) {
@@ -1450,9 +1470,10 @@ export class CompositeTriggerEngine {
     });
   }
 
-  private latestMatch(matchId: string): TriggerMatchRecord | null {
-    return this.store
-      .listTriggerMatches()
+  private async latestMatch(
+    matchId: string,
+  ): Promise<TriggerMatchRecord | null> {
+    return (await this.store.listTriggerMatches())
       .filter((record) => record.matchId === matchId)
       .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))[0] ?? null;
   }
