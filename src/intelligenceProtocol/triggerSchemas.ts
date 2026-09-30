@@ -598,6 +598,7 @@ export const PatternMatchStateSchema = z.object({
   version: z.literal('2'),
   role: z.enum(['buffer', 'match']),
   signature: z.string().min(1).optional(),
+  maxObservedOccurredAt: Timestamp.optional(),
   semanticDecisions: z.array(z.object({
     nodeId: Id,
     decision: CompositeCorrelationDecisionSchema,
