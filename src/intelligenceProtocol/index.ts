@@ -144,6 +144,7 @@ export {
   TriggerSourceEventSchema,
   CompositeCorrelationDecisionSchema,
   TriggerMatchStatusSchema,
+  PatternMatchStateSchema,
   TriggerMatchRecordSchema,
   parseCompositeTriggerDefinition,
   parseCorrelatableEvent,
@@ -163,6 +164,7 @@ export type {
   CompositeTriggerDefinition,
   CorrelatableEvent,
   TriggerSourceEvent,
+  PatternMatchState,
   TriggerMatchRecord,
   CompositeCorrelationDecision,
 } from './triggerSchemas.js';
