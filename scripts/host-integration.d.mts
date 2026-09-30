@@ -83,11 +83,37 @@ export type HostWakeHandler = (
   activation?: ActivationEnvelope,
 ) => Promise<HostWakeReceipt | string> | HostWakeReceipt | string;
 
+export interface EventIntelligenceStoreCapabilities {
+  version: string;
+  sharedState: 'none' | 'single-process' | 'strong' | string;
+  scopeIsolation: 'unknown' | 'strong' | string;
+  wakeClaims: 'unknown' | 'process-atomic' | 'distributed-atomic' | string;
+  partitionLeases: 'none' | 'process-atomic' | 'distributed-atomic' | string;
+  mutableCompaction: 'none' | 'atomic-snapshot' | string;
+  readModel: string;
+}
+
 export interface EventIntelligenceStore {
   init?(): Promise<unknown>;
+  storeCapabilities?(): EventIntelligenceStoreCapabilities;
   /** Required when non-default scopes are used. Implementations should return an isolated store view. */
   forScope?(scopeId: string): Promise<EventIntelligenceStore> | EventIntelligenceStore;
   listScopeIds?(): Promise<string[]> | string[];
+  claimPartitionLease?(partitionKey: string, options: {
+    workerId: string;
+    now?: string;
+    leaseMs?: number;
+  }): Promise<unknown | null>;
+  renewPartitionLease?(partitionKey: string, options: {
+    workerId: string;
+    now?: string;
+    leaseMs?: number;
+  }): Promise<unknown | null>;
+  releasePartitionLease?(partitionKey: string, options: {
+    workerId: string;
+    now?: string;
+  }): Promise<boolean>;
+  compactMutableState?(): Promise<unknown>;
   [key: string]: any;
 }
 
@@ -115,6 +141,7 @@ export interface EventIntelligenceScopedHost {
   readonly triggerPlanner: any;
   readonly activationHydrator: any;
   readonly eventSources: any[];
+  readonly storeCapabilities?: EventIntelligenceStoreCapabilities;
   describeTriggerLanguage(input?: {
     category?: 'predicates' | 'composition' | 'temporal' | 'pattern' | 'windows' | 'aggregates' | 'state' | 'selection' | 'semantic' | 'execution' | 'correlation' | 'timing' | 'lifecycle';
     operator?: string;
