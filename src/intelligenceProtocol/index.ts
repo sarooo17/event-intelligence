@@ -32,6 +32,7 @@ export {
 export {
   evaluatePatternV2,
   evaluatePatternAggregate,
+  evaluatePatternMeasure,
   patternV2CandidateSignature,
 } from '../patternV2/evaluator.js';
 
