@@ -667,6 +667,20 @@ export class CompositeTriggerEngine {
     if (!pattern) return [];
 
     const nowIso = evaluationNow.toISOString();
+    const semanticCache =
+      typeof (this.store as any).getSemanticDecisionCache === 'function' &&
+      typeof (this.store as any).putSemanticDecisionCache === 'function'
+        ? {
+          get: (key: string) =>
+            (this.store as any).getSemanticDecisionCache(key),
+          set: (key: string, decision: unknown) =>
+            (this.store as any).putSemanticDecisionCache(
+              key,
+              decision,
+            ),
+        }
+        : null;
+
     const evaluation = await evaluatePatternV2({
       definition: pattern,
       events: buffer.sourceEvents,
@@ -674,6 +688,9 @@ export class CompositeTriggerEngine {
       now: evaluationNow,
       allowedLatenessMs:
         definition.eventTime?.allowedLatenessMs ?? 0,
+      semanticCache,
+      semanticCacheNamespace:
+        `${definition.triggerId}@${definition.version}`,
     });
 
     for (const semantic of evaluation.semanticTrace) {
@@ -686,6 +703,8 @@ export class CompositeTriggerEngine {
         probability: semantic.decision.probability,
         matched: semantic.decision.matched,
         shouldEscalate: semantic.decision.shouldEscalate,
+        semanticCacheHits: evaluation.semanticCacheHits,
+        semanticCacheMisses: evaluation.semanticCacheMisses,
         inputFields: semantic.decision.condition.input,
         ...(semantic.decision.metadata
           ? { providerEvidence: semantic.decision.metadata }
