@@ -89,6 +89,18 @@ function validatePredicateAgainstSource(source, predicate, warnings) {
       [source],
     );
   }
+
+  if (
+    ['startsWith', 'endsWith', 'regex'].includes(predicate.op) &&
+    node?.type &&
+    node.type !== 'string'
+  ) {
+    throw sourceError(
+      'TRIGGER_PLAN_STRING_FIELD_REQUIRED',
+      `Predicate ${predicate.op} requires a string field, but ${predicate.path} is ${node.type}`,
+      [source],
+    );
+  }
 }
 
 function clauseSourceForRef(ref, clauses, resolvedSources) {
@@ -133,6 +145,48 @@ function validateTemporalConditions(conditions, clauses, resolvedSources, warnin
       );
     }
   }
+}
+
+function walkPatternValue(value, visitor) {
+  if (!value || typeof value !== 'object') return;
+  if (value.kind === 'field') {
+    visitor(value.ref, value.path, 'pattern value');
+    return;
+  }
+  if (value.kind === 'arithmetic') {
+    for (const arg of value.args ?? []) walkPatternValue(arg, visitor);
+  }
+}
+
+function walkPatternNode(node, visitor) {
+  if (!node || typeof node !== 'object') return;
+
+  if (node.kind === 'compare') {
+    walkPatternValue(node.left, visitor);
+    if (node.right) walkPatternValue(node.right, visitor);
+  }
+  if (
+    (node.kind === 'aggregate' ||
+      node.kind === 'state' ||
+      node.kind === 'distinct') &&
+    node.path
+  ) {
+    visitor(node.ref, node.path, `pattern ${node.kind}`);
+  }
+  if (node.kind === 'semantic') {
+    for (const input of node.input ?? []) {
+      const [ref, ...parts] = String(input).split('.');
+      if (ref && parts.length) {
+        visitor(ref, parts.join('.'), 'pattern semantic input');
+      }
+    }
+  }
+
+  if (Array.isArray(node.children)) {
+    for (const child of node.children) walkPatternNode(child, visitor);
+  }
+  if (node.child) walkPatternNode(node.child, visitor);
+  if (node.forbidden) walkPatternNode(node.forbidden, visitor);
 }
 
 function expressionFor(match, refs) {
@@ -242,6 +296,26 @@ export class TriggerPlanner {
           throw error;
         }
       }
+
+      const sourceForRef = (ref) => {
+        const index = clauses.findIndex((candidate) => candidate.id === ref);
+        if (index < 0) {
+          const error = new Error(
+            `Pattern AST v2 references unknown event id: ${ref}`,
+          );
+          error.code = 'TRIGGER_PLAN_EVENT_REF_UNKNOWN';
+          throw error;
+        }
+        return resolvedSources[index];
+      };
+
+      walkPatternNode(plan.patternV2.root, (ref, fieldPath, purpose) => {
+        validatePredicateAgainstSource(
+          sourceForRef(ref),
+          { path: fieldPath, op: 'exists', value: true },
+          warnings,
+        );
+      });
 
       for (const dimension of plan.patternV2.partitionBy) {
         for (const field of dimension.fields) {
