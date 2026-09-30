@@ -116,7 +116,7 @@ export interface EventIntelligenceScopedHost {
   readonly activationHydrator: any;
   readonly eventSources: any[];
   describeTriggerLanguage(input?: {
-    category?: 'predicates' | 'composition' | 'temporal' | 'correlation' | 'timing' | 'lifecycle';
+    category?: 'predicates' | 'composition' | 'temporal' | 'pattern' | 'windows' | 'aggregates' | 'state' | 'selection' | 'semantic' | 'execution' | 'correlation' | 'timing' | 'lifecycle';
     operator?: string;
   }): Record<string, unknown>;
   planTrigger(input: TriggerPlanInput): Promise<{

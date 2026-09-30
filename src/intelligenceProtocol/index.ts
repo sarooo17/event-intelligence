@@ -1,4 +1,52 @@
 export {
+  PATTERN_AST_VERSION,
+  PatternValueSelectorSchema,
+  PatternArithmeticValueSchema,
+  PatternCompareOperatorSchema,
+  AggregateFunctionSchema,
+  PatternWindowSchema,
+  PatternNodeV2Schema,
+  PatternPartitionDimensionSchema,
+  PatternAfterMatchSchema,
+  PatternSelectionSchema,
+  PatternExecutionPolicySchema,
+  PatternMeasureSchema,
+  PatternAstV2DefinitionSchema,
+  collectPatternDurationsMs,
+  collectGuaranteedPatternBindings,
+  collectPatternMeasureRefs,
+  collectPatternRefs,
+} from './patternV2Schemas.js';
+
+export type {
+  PatternValueSelector,
+  PatternArithmeticValue,
+  PatternWindow,
+  PatternNodeV2,
+  PatternAfterMatch,
+  PatternAstV2Definition,
+  PatternMeasure,
+} from './patternV2Schemas.js';
+
+export {
+  compileLegacyTriggerToPatternV2,
+} from '../patternV2/legacyCompiler.js';
+
+export {
+  evaluatePatternV2,
+  evaluatePatternAggregate,
+  evaluatePatternMeasure,
+  patternV2CandidateSignature,
+} from '../patternV2/evaluator.js';
+
+export type {
+  PatternV2Candidate,
+  PatternV2Evaluation,
+  PatternV2SemanticDecision,
+  PatternV2SemanticTrace,
+} from '../patternV2/evaluator.js';
+
+export {
   TRIGGER_LANGUAGE_VERSION,
   PREDICATE_OPERATOR,
   COMPOSITION_OPERATOR,
@@ -102,6 +150,7 @@ export {
   TriggerSourceEventSchema,
   CompositeCorrelationDecisionSchema,
   TriggerMatchStatusSchema,
+  PatternMatchStateSchema,
   TriggerMatchRecordSchema,
   parseCompositeTriggerDefinition,
   parseCorrelatableEvent,
@@ -121,6 +170,7 @@ export type {
   CompositeTriggerDefinition,
   CorrelatableEvent,
   TriggerSourceEvent,
+  PatternMatchState,
   TriggerMatchRecord,
   CompositeCorrelationDecision,
 } from './triggerSchemas.js';

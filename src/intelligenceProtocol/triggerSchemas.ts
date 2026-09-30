@@ -1,5 +1,13 @@
 import { z } from 'zod';
 import { RuntimeTargetSchema } from './schemas.js';
+import {
+  PatternAstV2DefinitionSchema,
+  PatternMeasureSchema,
+  collectPatternDurationsMs,
+  collectGuaranteedPatternBindings,
+  collectPatternMeasureRefs,
+  collectPatternRefs,
+} from './patternV2Schemas.js';
 
 export const COMPOSITE_TRIGGER_PROTOCOL_VERSION = '0.1.0' as const;
 export const COMPOSITE_TRIGGER_SCHEMA_VERSION = 'trigger.v0.1' as const;
@@ -14,8 +22,28 @@ export const StructuredPredicateSchema = z.discriminatedUnion('op', [
   z.object({ path: z.string().min(1), op: z.literal('eq'), value: Scalar }),
   z.object({ path: z.string().min(1), op: z.literal('neq'), value: Scalar }),
   z.object({ path: z.string().min(1), op: z.literal('contains'), value: Scalar }),
+  z.object({ path: z.string().min(1), op: z.literal('startsWith'), value: z.string() }),
+  z.object({ path: z.string().min(1), op: z.literal('endsWith'), value: z.string() }),
+  z.object({
+    path: z.string().min(1),
+    op: z.literal('regex'),
+    value: z.string(),
+    flags: z.string().max(10).optional(),
+  }),
   z.object({ path: z.string().min(1), op: z.literal('in'), value: z.array(Scalar).min(1) }),
+  z.object({ path: z.string().min(1), op: z.literal('notIn'), value: z.array(Scalar).min(1) }),
+  z.object({
+    path: z.string().min(1),
+    op: z.literal('between'),
+    value: z.tuple([Scalar, Scalar]),
+  }),
   z.object({ path: z.string().min(1), op: z.literal('exists'), value: z.boolean().default(true) }),
+  z.object({ path: z.string().min(1), op: z.literal('isNull'), value: z.boolean().default(true) }),
+  z.object({
+    path: z.string().min(1),
+    op: z.literal('type'),
+    value: z.enum(['string', 'number', 'boolean', 'null', 'object', 'array']),
+  }),
   z.object({ path: z.string().min(1), op: z.literal('gt'), value: z.number() }),
   z.object({ path: z.string().min(1), op: z.literal('gte'), value: z.number() }),
   z.object({ path: z.string().min(1), op: z.literal('lt'), value: z.number() }),
@@ -123,6 +151,7 @@ export const DerivedEventDefinitionSchema = z.object({
   contractVersion: z.string().min(1).max(50),
   projections: z.array(DerivedEventProjectionSchema).max(32).default([]),
   constants: z.record(z.string(), Scalar).default({}),
+  measures: z.array(PatternMeasureSchema).max(32).default([]),
 }).strict();
 
 export const DerivedEventEvidenceRefSchema = z.object({
@@ -212,6 +241,7 @@ export const CompositeTriggerDefinitionSchema = z.object({
   clauses: z.array(TriggerClauseSchema).min(1),
   expression: TriggerExpressionSchema,
   temporal: z.array(TemporalConditionSchema).default([]),
+  patternV2: PatternAstV2DefinitionSchema.optional(),
   eventTime: EventTimePolicySchema.optional(),
   lifecycle: TriggerLifecyclePolicySchema.default({
     oneShot: false,
@@ -291,11 +321,52 @@ export const CompositeTriggerDefinitionSchema = z.object({
 
   if (value.derivedEvent) {
     const projectionKeys = new Set();
+    const measureKeys = new Set();
+
+    for (const measure of value.derivedEvent.measures ?? []) {
+      if (measure.key === '_derived') {
+        ctx.addIssue({
+          code: 'custom',
+          message: 'Derived event measure key _derived is reserved',
+        });
+      }
+      if (measureKeys.has(measure.key)) {
+        ctx.addIssue({
+          code: 'custom',
+          message: `Derived event measure key must be unique: ${measure.key}`,
+        });
+      }
+      if (Object.prototype.hasOwnProperty.call(
+        value.derivedEvent.constants,
+        measure.key,
+      )) {
+        ctx.addIssue({
+          code: 'custom',
+          message: `Derived event key cannot be both constant and measure: ${measure.key}`,
+        });
+      }
+      for (const ref of collectPatternMeasureRefs(measure)) {
+        if (!ids.has(ref)) {
+          ctx.addIssue({
+            code: 'custom',
+            message: `Derived event measure ${measure.key} references unknown clause: ${ref}`,
+          });
+        }
+      }
+      measureKeys.add(measure.key);
+    }
+
     for (const projection of value.derivedEvent.projections) {
       if (!ids.has(projection.ref)) {
         ctx.addIssue({
           code: 'custom',
           message: `Derived event projection references unknown clause: ${projection.ref}`,
+        });
+      }
+      if (measureKeys.has(projection.key)) {
+        ctx.addIssue({
+          code: 'custom',
+          message: `Derived event key cannot be both measure and projection: ${projection.key}`,
         });
       }
       if (projectionKeys.has(projection.key)) {
@@ -325,6 +396,84 @@ export const CompositeTriggerDefinitionSchema = z.object({
       ctx.addIssue({
         code: 'custom',
         message: 'Derived event constant key _derived is reserved',
+      });
+    }
+  }
+
+  if (value.patternV2) {
+    const patternRefs = collectPatternRefs(value.patternV2.root);
+    for (const ref of patternRefs) {
+      if (!ids.has(ref)) {
+        ctx.addIssue({
+          code: 'custom',
+          message: `Pattern AST v2 references unknown clause: ${ref}`,
+        });
+      }
+    }
+
+    for (const dimension of value.patternV2.partitionBy) {
+      const dimensionRefs = new Set();
+      for (const field of dimension.fields) {
+        if (!ids.has(field.ref)) {
+          ctx.addIssue({
+            code: 'custom',
+            message: `Pattern partition ${dimension.key} references unknown clause: ${field.ref}`,
+          });
+        }
+        if (dimensionRefs.has(field.ref)) {
+          ctx.addIssue({
+            code: 'custom',
+            message: `Pattern partition ${dimension.key} has duplicate field mapping for ${field.ref}`,
+          });
+        }
+        dimensionRefs.add(field.ref);
+      }
+
+      for (const ref of patternRefs) {
+        if (!dimensionRefs.has(ref)) {
+          ctx.addIssue({
+            code: 'custom',
+            message: `Pattern partition ${dimension.key} does not map pattern ref: ${ref}`,
+          });
+        }
+      }
+    }
+
+    const guaranteedPatternRefs =
+      collectGuaranteedPatternBindings(value.patternV2.root);
+
+    if (
+      typeof value.patternV2.selection.afterMatch === 'object' &&
+      !guaranteedPatternRefs.includes(
+        value.patternV2.selection.afterMatch.ref,
+      )
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        message:
+          `Pattern afterMatch ref is not guaranteed by every match: ${value.patternV2.selection.afterMatch.ref}`,
+      });
+    }
+
+    for (const measure of value.derivedEvent?.measures ?? []) {
+      for (const ref of collectPatternMeasureRefs(measure)) {
+        if (!guaranteedPatternRefs.includes(ref)) {
+          ctx.addIssue({
+            code: 'custom',
+            message:
+              `Derived measure ${measure.key} references non-guaranteed pattern ref: ${ref}`,
+          });
+        }
+      }
+    }
+
+    const oversized = collectPatternDurationsMs(value.patternV2.root)
+      .filter((duration) => duration > value.withinMs);
+    if (oversized.length) {
+      ctx.addIssue({
+        code: 'custom',
+        message:
+          `Pattern AST v2 duration exceeds trigger withinMs: ${Math.max(...oversized)} > ${value.withinMs}`,
       });
     }
   }
@@ -445,6 +594,17 @@ export const TriggerMatchStatusSchema = z.enum([
   'expired',
 ]);
 
+export const PatternMatchStateSchema = z.object({
+  version: z.literal('2'),
+  role: z.enum(['buffer', 'match']),
+  signature: z.string().min(1).optional(),
+  maxObservedOccurredAt: Timestamp.optional(),
+  semanticDecisions: z.array(z.object({
+    nodeId: Id,
+    decision: CompositeCorrelationDecisionSchema,
+  }).strict()).default([]),
+}).strict();
+
 export const TriggerMatchRecordSchema = z.object({
   protocolVersion: z.literal(COMPOSITE_TRIGGER_PROTOCOL_VERSION),
   schemaVersion: z.literal(COMPOSITE_TRIGGER_SCHEMA_VERSION),
@@ -458,6 +618,7 @@ export const TriggerMatchRecordSchema = z.object({
   updatedAt: Timestamp,
   sourceEvents: z.array(TriggerSourceEventSchema),
   correlationDecision: CompositeCorrelationDecisionSchema.nullable(),
+  patternState: PatternMatchStateSchema.optional(),
   firedWakeId: Id.nullable(),
   derivedEventIds: z.array(Id).default([]),
 });
@@ -474,6 +635,7 @@ export type DerivedEventRecord = z.infer<typeof DerivedEventRecordSchema>;
 export type CompositeTriggerDefinition = z.infer<typeof CompositeTriggerDefinitionSchema>;
 export type CorrelatableEvent = z.infer<typeof CorrelatableEventSchema>;
 export type TriggerSourceEvent = z.infer<typeof TriggerSourceEventSchema>;
+export type PatternMatchState = z.infer<typeof PatternMatchStateSchema>;
 export type TriggerMatchRecord = z.infer<typeof TriggerMatchRecordSchema>;
 export type CompositeCorrelationDecision = z.infer<typeof CompositeCorrelationDecisionSchema>;
 

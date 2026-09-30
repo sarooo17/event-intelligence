@@ -35,7 +35,7 @@ test('trigger language registry examples stay valid against canonical schemas', 
 
 test('trigger language can be discovered by category or operator', () => {
   const temporal = describeTriggerLanguage({ category: 'temporal' });
-  assert.equal(temporal.version, '1');
+  assert.equal(temporal.version, '2');
   assert.equal(temporal.temporal.length, 10);
   assert.equal(
     temporal.temporal.some((entry) => entry.id === 'absence'),

@@ -132,6 +132,7 @@ export const AuditKindSchema = z.enum([
   'event.received',
   'event.duplicate',
   'event.late_dropped',
+  'event.buffer_overflow',
   'decision.evaluated',
   'lifecycle.transition',
   'wake.queued',

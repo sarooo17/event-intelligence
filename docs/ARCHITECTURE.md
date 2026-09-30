@@ -163,23 +163,58 @@ Storage is injectable. Horizontally scaled custom backends must preserve scope i
 
 Not provided by the bundled JSONL backend: cross-stream ACID transactions, horizontal multi-writer safety, HA failover or external immutable audit retention.
 
-## 9. AI boundary
+## 9. Pattern AST v2 and CEP execution
+
+Pattern AST v2 is an additive execution layer above event transport. The source plane remains unchanged: clauses resolve discovered MCP event sources, subscription arguments and payload predicates; the AST references those clause aliases.
+
+```text
+host-owned MCP Events
+        ↓
+discovered event aliases
+        ↓
+partitioned durable buffers
+        ↓
+Pattern AST v2
+  ├─ nested patterns / quantifiers
+  ├─ contiguity / negative patterns
+  ├─ event-time windows
+  ├─ cross-event compare / arithmetic
+  ├─ aggregate / state operators
+  ├─ optional semantic nodes
+  └─ match-selection policy
+        ↓
+matched evidence
+        ↓
+derived event and/or runtime continuation
+```
+
+Each partition uses the existing durable trigger-match store as a bounded event buffer. `withinMs` remains the global retention/horizon bound; `allowedLatenessMs` controls event-time tolerance. Pattern-local durations cannot exceed the global horizon. Partition dimensions must map every event alias used by the pattern, which prevents unrelated business entities from sharing state accidentally.
+
+The evaluator enforces bounded candidate and semantic-evaluation budgets. Match emission has explicit overlap and after-match policies. Durable negative/debounce nodes reuse the existing temporal-deadline scheduler, so a match can progress after restart without a new provider event.
+
+The legacy v1 expression/temporal/correlation representation remains executable unchanged. `compileLegacyTriggerToPatternV2()` exists for compatibility, migration and differential verification; Pattern AST v2 is not a destructive persisted-schema migration.
+
+Derived events may include deterministic Pattern v2 measures such as `sum`, `avg`, `countDistinct`, `first`, `last`, `stddev` and `percentile`. Measure paths are validated against advertised source schemas and become part of the derived-event contract.
+
+## 10. AI boundary
 
 The deterministic runtime is model-free. Event Intelligence does not run a second agent/planner.
 
-The bundled TypeSafe Jev evaluator is used only when a trigger explicitly requests semantic correlation and `TYPESAFE_API_KEY` is configured. Embedded hosts may inject their own compatible semantic evaluator.
+The bundled TypeSafe Jev evaluator is used only when a trigger explicitly requests a legacy semantic correlation or a Pattern v2 `semantic` node and `TYPESAFE_API_KEY` is configured. Embedded hosts may inject their own compatible `SemanticEvaluator`.
+
+The semantic node is deliberately downstream of deterministic filtering/pattern construction. It receives only explicitly projected fields, has per-node timeouts plus trigger-level evaluation budgets, and every evaluated decision is audit-recorded whether it matches or rejects. Jev is an implementation detail behind the vendor-neutral evaluator interface, not a Pattern AST operator name.
 
 Natural-language interpretation belongs to the surrounding agent/harness. EI exposes a self-describing public authoring language through `describeTriggerLanguage()` and the optional `trigger_language_describe` MCP tool. The agent discovers operators on demand, then submits an agent-friendly plan to EI's deterministic planner.
 
 `TriggerPlanInput` is the normal agent authoring surface and includes predicates, composition, temporal conditions, correlation, timing and lifecycle controls. The canonical `CompositeTriggerDefinition` is the engine IR/advanced API and may still be submitted directly by trusted integrations.
 
-## 10. Observability
+## 11. Observability
 
 The Trigger Inspector renders deterministic engine state: satisfied/missing clauses, temporal conditions, pending deadlines, next evaluation, evidence refs, derived outputs, runtime wake/receipt and why-fired/why-not-fired state.
 
 Simulation runs the same trigger semantics against an isolated event sequence without mutating live state.
 
-## 11. Security model
+## 12. Security model
 
 The design minimizes authority propagation:
 
@@ -194,3 +229,8 @@ The design minimizes authority propagation:
 - large/sensitive or authoritative provider state should be re-read through the host's authorized tools.
 
 See [SECURITY-MODEL.md](SECURITY-MODEL.md).
+
+
+Pattern AST v2 is bounded at two different layers: `maxCandidates` limits candidate/NFA expansion, while `maxBufferedEvents` places a hard bound on raw events retained in a single trigger partition. Exceeding the raw buffer bound fails closed with `PATTERN_V2_BUFFER_LIMIT_EXCEEDED` and an audit record rather than silently dropping potentially relevant events.
+
+When one incoming event can produce multiple matches, effect-producing triggers also honor lifecycle capacity within that same ingest. `oneShot`, `completeOnGoal`, remaining `maxFirings`, and non-zero `cooldownMs` constrain how many matches may be released to wake/derived-effect delivery before lifecycle state is updated.

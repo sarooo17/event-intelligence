@@ -5,6 +5,9 @@ import {
 import {
   evaluateTemporalConditions,
 } from '../../dist/src/composite/temporal.js';
+import {
+  evaluatePatternMeasure,
+} from '../../dist/src/patternV2/evaluator.js';
 
 export const DERIVED_EVENT_SERVER_ID = 'event-intelligence:derived';
 export const DERIVED_EVENT_CONNECTION_ID = 'event-intelligence:derived';
@@ -62,6 +65,31 @@ function latestForClause(match, clauseId) {
       Date.parse(b.occurredAt) - Date.parse(a.occurredAt) ||
       b.sourceEventId.localeCompare(a.sourceEventId)
     )[0] ?? null;
+}
+
+function patternCandidateForMatch(match) {
+  const bindings = {};
+  for (const event of match.sourceEvents) {
+    bindings[event.clauseId] ??= [];
+    bindings[event.clauseId].push(event);
+  }
+  for (const events of Object.values(bindings)) {
+    events.sort((a, b) =>
+      Date.parse(a.occurredAt) - Date.parse(b.occurredAt) ||
+      a.sourceEventId.localeCompare(b.sourceEventId)
+    );
+  }
+  const events = [...match.sourceEvents].sort((a, b) =>
+    Date.parse(a.occurredAt) - Date.parse(b.occurredAt) ||
+    a.sourceEventId.localeCompare(b.sourceEventId)
+  );
+  return {
+    bindings,
+    events,
+    startIndex: events.length ? 0 : -1,
+    endIndex: events.length ? events.length - 1 : -1,
+    semanticDecisions: [],
+  };
 }
 
 function derivedOccurredAt(match, definition) {
@@ -171,6 +199,26 @@ export class DerivedEventCoordinator {
       }
     }
 
+    const measured = {};
+    if (spec.measures?.length) {
+      const candidate = patternCandidateForMatch(match);
+      for (const measure of spec.measures) {
+        const value = evaluatePatternMeasure(candidate, measure);
+        if (
+          value === undefined ||
+          (
+            value !== null &&
+            !['string', 'number', 'boolean'].includes(typeof value)
+          )
+        ) {
+          throw new Error(
+            `Derived event measure must resolve to scalar or null: ${measure.key}`,
+          );
+        }
+        measured[measure.key] = value;
+      }
+    }
+
     const contract = this.store.getDerivedContract(
       spec.name,
       spec.contractVersion,
@@ -186,6 +234,7 @@ export class DerivedEventCoordinator {
     const data = {
       ...(spec.constants ?? {}),
       ...projected,
+      ...measured,
       _derived: {
         triggerId: definition.triggerId,
         triggerVersion: definition.version,

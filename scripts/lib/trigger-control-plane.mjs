@@ -67,6 +67,47 @@ function scalarSchemaForConstant(value) {
   return {};
 }
 
+function walkPatternValue(value, visitor) {
+  if (!value || typeof value !== 'object') return;
+  if (value.kind === 'field') {
+    visitor(value.ref, value.path, 'pattern value');
+    return;
+  }
+  if (value.kind === 'arithmetic') {
+    for (const arg of value.args ?? []) walkPatternValue(arg, visitor);
+  }
+}
+
+function walkPatternNode(node, visitor) {
+  if (!node || typeof node !== 'object') return;
+
+  if (node.kind === 'compare') {
+    walkPatternValue(node.left, visitor);
+    if (node.right) walkPatternValue(node.right, visitor);
+  }
+  if (
+    node.kind === 'aggregate' ||
+    node.kind === 'state' ||
+    node.kind === 'distinct'
+  ) {
+    if (node.path) visitor(node.ref, node.path, `pattern ${node.kind}`);
+  }
+  if (node.kind === 'semantic') {
+    for (const input of node.input ?? []) {
+      const [ref, ...parts] = String(input).split('.');
+      if (ref && parts.length) {
+        visitor(ref, parts.join('.'), 'pattern semantic input');
+      }
+    }
+  }
+
+  if (Array.isArray(node.children)) {
+    for (const child of node.children) walkPatternNode(child, visitor);
+  }
+  if (node.child) walkPatternNode(node.child, visitor);
+  if (node.forbidden) walkPatternNode(node.forbidden, visitor);
+}
+
 function assertSubscriptionArguments(source, args, purpose) {
   const inputSchema = source?.inputSchema;
   if (
@@ -742,6 +783,59 @@ export class TriggerControlPlane {
       );
     }
 
+    if (definition.patternV2) {
+      const clauseForRef = (ref) =>
+        definition.clauses.find((candidate) => candidate.id === ref);
+      const sourceForRef = (ref) => {
+        const clause = clauseForRef(ref);
+        return clause ? resolveSource(clause) : null;
+      };
+
+      for (const dimension of definition.patternV2.partitionBy ?? []) {
+        for (const field of dimension.fields ?? []) {
+          assertAdvertisedPath(
+            sourceForRef(field.ref),
+            field.path,
+            `Pattern partition ${dimension.key}`,
+          );
+        }
+      }
+
+      walkPatternNode(definition.patternV2.root, (ref, fieldPath, purpose) => {
+        assertAdvertisedPath(
+          sourceForRef(ref),
+          fieldPath,
+          purpose,
+        );
+      });
+    }
+
+    for (const measure of definition.derivedEvent?.measures ?? []) {
+      const expression = measure.expression;
+      const clauseForRef = (ref) =>
+        definition.clauses.find((candidate) => candidate.id === ref);
+      const sourceForRef = (ref) => {
+        const clause = clauseForRef(ref);
+        return clause ? resolveSource(clause) : null;
+      };
+
+      if (expression.kind === 'aggregate' && expression.path) {
+        assertAdvertisedPath(
+          sourceForRef(expression.ref),
+          expression.path,
+          `Derived measure ${measure.key}`,
+        );
+      } else {
+        walkPatternValue(expression, (ref, fieldPath) => {
+          assertAdvertisedPath(
+            sourceForRef(ref),
+            fieldPath,
+            `Derived measure ${measure.key}`,
+          );
+        });
+      }
+    }
+
     for (const projection of definition.derivedEvent?.projections ?? []) {
       const clause = definition.clauses.find(
         (candidate) => candidate.id === projection.ref,
@@ -806,6 +900,65 @@ export class TriggerControlPlane {
     }
 
     const allSources = this.store.listEventSources();
+    const sourceSchemaForRefPath = (ref, fieldPath) => {
+      const clause = definition.clauses.find(
+        (candidate) => candidate.id === ref,
+      );
+      const source = clause
+        ? allSources.find(
+            (candidate) =>
+              candidate.eventName === clause.event &&
+              candidate.serverId === clause.serverId &&
+              (
+                !clause.contractVersion ||
+                String(candidate.metadata?.contractVersion || '') ===
+                  String(clause.contractVersion)
+              ),
+          )
+        : null;
+      return getSchemaNode(source?.payloadSchema, fieldPath) ?? {};
+    };
+
+    const schemaForMeasureExpression = (expression) => {
+      if (!expression || typeof expression !== 'object') return {};
+      if (expression.kind === 'literal') {
+        if (expression.value === null) return { type: 'null' };
+        return scalarSchemaForConstant(expression.value);
+      }
+      if (expression.kind === 'field') {
+        return sourceSchemaForRefPath(expression.ref, expression.path);
+      }
+      if (
+        expression.kind === 'occurredAt' ||
+        expression.kind === 'arithmetic'
+      ) {
+        return { type: 'number' };
+      }
+      if (expression.kind === 'aggregate') {
+        if (
+          ['count', 'countDistinct'].includes(expression.function)
+        ) {
+          return { type: 'integer' };
+        }
+        if (
+          ['sum', 'avg', 'min', 'max', 'stddev', 'percentile']
+            .includes(expression.function)
+        ) {
+          return { type: 'number' };
+        }
+        return sourceSchemaForRefPath(
+          expression.ref,
+          expression.path,
+        );
+      }
+      return {};
+    };
+
+    for (const measure of definition.derivedEvent.measures ?? []) {
+      properties[measure.key] =
+        schemaForMeasureExpression(measure.expression);
+    }
+
     for (const projection of definition.derivedEvent.projections ?? []) {
       const clause = definition.clauses.find(
         (candidate) => candidate.id === projection.ref,
@@ -832,6 +985,7 @@ export class TriggerControlPlane {
       required: [
         '_derived',
         ...Object.keys(definition.derivedEvent.constants ?? {}),
+        ...(definition.derivedEvent.measures ?? []).map((measure) => measure.key),
       ],
     };
   }
