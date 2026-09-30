@@ -176,7 +176,7 @@ const server = createServer(async (request, response) => {
         status: ready ? 'ready' : 'audit_invalid',
         auditValid,
         evaluatorConfigured,
-        wakeCallbackConfigured: Boolean(wakeDeliverer),
+        wakeCallbackConfigured: runtimeWakeTargets.size > 0,
         genericRuntimeWakeTargets: [...runtimeWakeTargets.keys()],
         eventSources: (await store.listEventSources()).length,
         pendingTemporalDeadlines:
