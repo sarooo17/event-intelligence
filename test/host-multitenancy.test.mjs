@@ -126,13 +126,13 @@ test('one host isolates tenant scopes across sources, triggers, matches, wakes a
     const tenantA = await host.scope('tenant-a');
     const tenantB = await host.scope('tenant-b');
 
-    assert.deepEqual(host.eventSources, []);
+    assert.deepEqual(await host.eventSources, []);
     assert.deepEqual(
-      tenantA.eventSources.map((source) => source.connectionId),
+      (await tenantA.eventSources).map((source) => source.connectionId),
       ['erp-a'],
     );
     assert.deepEqual(
-      tenantB.eventSources.map((source) => source.connectionId),
+      (await tenantB.eventSources).map((source) => source.connectionId),
       ['erp-b'],
     );
 
@@ -148,11 +148,11 @@ test('one host isolates tenant scopes across sources, triggers, matches, wakes a
       });
     }
 
-    assert.equal(tenantA.store.listTriggers().length, 1);
-    assert.equal(tenantB.store.listTriggers().length, 1);
-    assert.equal(host.store.listTriggers().length, 0);
-    assert.equal(tenantA.store.listTriggers()[0].triggerId, 'same-trigger-id');
-    assert.equal(tenantB.store.listTriggers()[0].triggerId, 'same-trigger-id');
+    assert.equal((await tenantA.store.listTriggers()).length, 1);
+    assert.equal((await tenantB.store.listTriggers()).length, 1);
+    assert.equal((await host.store.listTriggers()).length, 0);
+    assert.equal((await tenantA.store.listTriggers())[0].triggerId, 'same-trigger-id');
+    assert.equal((await tenantB.store.listTriggers())[0].triggerId, 'same-trigger-id');
 
     await host.runtime.mcpEventsClient.pollAll();
     await host.runtime.mcpEventsClient.pollAll();
@@ -162,21 +162,21 @@ test('one host isolates tenant scopes across sources, triggers, matches, wakes a
       ['tenant-a', 'tenant-b'],
     );
     assert.equal(
-      tenantA.store.listTriggerMatches('same-trigger-id')[0].sourceEvents[0].sourceEventId,
+      (await tenantA.store.listTriggerMatches('same-trigger-id'))[0].sourceEvents[0].sourceEventId,
       'event-a',
     );
     assert.equal(
-      tenantB.store.listTriggerMatches('same-trigger-id')[0].sourceEvents[0].sourceEventId,
+      (await tenantB.store.listTriggerMatches('same-trigger-id'))[0].sourceEvents[0].sourceEventId,
       'event-b',
     );
-    assert.equal(host.store.listTriggerMatches('same-trigger-id').length, 0);
+    assert.equal((await host.store.listTriggerMatches('same-trigger-id')).length, 0);
 
     assert.deepEqual(
-      tenantA.mcpStatus().map((entry) => entry.connectionId),
+      (await tenantA.mcpStatus()).map((entry) => entry.connectionId),
       ['erp-a'],
     );
     assert.deepEqual(
-      tenantB.mcpStatus().map((entry) => entry.connectionId),
+      (await tenantB.mcpStatus()).map((entry) => entry.connectionId),
       ['erp-b'],
     );
 
@@ -185,49 +185,49 @@ test('one host isolates tenant scopes across sources, triggers, matches, wakes a
     // owner filtering. Verify the less-obvious observability/cursor surfaces
     // cannot see across tenant boundaries either.
     assert.deepEqual(
-      tenantA.store.listEventSources().map((source) => source.connectionId),
+      (await tenantA.store.listEventSources()).map((source) => source.connectionId),
       ['erp-a'],
     );
     assert.deepEqual(
-      tenantB.store.listEventSources().map((source) => source.connectionId),
+      (await tenantB.store.listEventSources()).map((source) => source.connectionId),
       ['erp-b'],
     );
     assert.deepEqual(
-      tenantA.store.listMcpClientStates().map((state) => state.connectionId),
+      (await tenantA.store.listMcpClientStates()).map((state) => state.connectionId),
       ['erp-a'],
     );
     assert.deepEqual(
-      tenantB.store.listMcpClientStates().map((state) => state.connectionId),
+      (await tenantB.store.listMcpClientStates()).map((state) => state.connectionId),
       ['erp-b'],
     );
     assert.deepEqual(
-      tenantA.store.listMcpOccurrencesAfter(0).map((record) => record.event.eventId),
+      (await tenantA.store.listMcpOccurrencesAfter(0)).map((record) => record.event.eventId),
       ['event-a'],
     );
     assert.deepEqual(
-      tenantB.store.listMcpOccurrencesAfter(0).map((record) => record.event.eventId),
+      (await tenantB.store.listMcpOccurrencesAfter(0)).map((record) => record.event.eventId),
       ['event-b'],
     );
-    assert.equal(host.store.listEventSources().length, 0);
-    assert.equal(host.store.listMcpClientStates().length, 0);
-    assert.equal(host.store.listMcpOccurrencesAfter(0).length, 0);
+    assert.equal((await host.store.listEventSources()).length, 0);
+    assert.equal((await host.store.listMcpClientStates()).length, 0);
+    assert.equal((await host.store.listMcpOccurrencesAfter(0)).length, 0);
 
-    const tenantAAudit = JSON.stringify(tenantA.store.listAudit());
-    const tenantBAudit = JSON.stringify(tenantB.store.listAudit());
+    const tenantAAudit = JSON.stringify(await tenantA.store.listAudit());
+    const tenantBAudit = JSON.stringify(await tenantB.store.listAudit());
     assert.match(tenantAAudit, /erp-a|same-trigger-id/);
     assert.doesNotMatch(tenantAAudit, /event-b|erp-b/);
     assert.match(tenantBAudit, /erp-b|same-trigger-id/);
     assert.doesNotMatch(tenantBAudit, /event-a|erp-a/);
-    assert.equal(host.store.listAudit().length, 0);
+    assert.equal((await host.store.listAudit()).length, 0);
 
     const wakeA = wakes.find((packet) => packet.scope_id === 'tenant-a');
     const wakeB = wakes.find((packet) => packet.scope_id === 'tenant-b');
     assert.ok(wakeA);
     assert.ok(wakeB);
-    assert.ok(tenantA.store.latestWake(wakeA.wake_id));
-    assert.equal(tenantB.store.latestWake(wakeA.wake_id), null);
-    assert.ok(tenantB.store.latestWake(wakeB.wake_id));
-    assert.equal(tenantA.store.latestWake(wakeB.wake_id), null);
+    assert.ok(await tenantA.store.latestWake(wakeA.wake_id));
+    assert.equal(await tenantB.store.latestWake(wakeA.wake_id), null);
+    assert.ok(await tenantB.store.latestWake(wakeB.wake_id));
+    assert.equal(await tenantA.store.latestWake(wakeB.wake_id), null);
   } finally {
     await host.close();
   }
@@ -247,11 +247,11 @@ test('one host isolates tenant scopes across sources, triggers, matches, wakes a
       'tenant-b',
     ]);
     assert.equal(
-      (await restored.scope('tenant-a')).store.listTriggers()[0].triggerId,
+      (await (await restored.scope('tenant-a')).store.listTriggers())[0].triggerId,
       'same-trigger-id',
     );
     assert.equal(
-      (await restored.scope('tenant-b')).store.listTriggers()[0].triggerId,
+      (await (await restored.scope('tenant-b')).store.listTriggers())[0].triggerId,
       'same-trigger-id',
     );
   } finally {
