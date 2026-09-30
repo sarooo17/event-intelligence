@@ -152,7 +152,7 @@ test('agent-friendly plan compiles, fires, and delivers a hydrated activation en
       customer: 'Acme',
     });
 
-    const hydrated = host.hydrateWake(packet.wake_id);
+    const hydrated = await host.hydrateWake(packet.wake_id);
     assert.equal(hydrated.wake.status, 'delivered');
     assert.equal(hydrated.wake.runtimeReceiptId, `agent:${packet.wake_id}`);
     assert.deepEqual(hydrated.evidence[0].data, activation.evidence[0].data);
