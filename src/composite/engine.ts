@@ -614,6 +614,8 @@ export class CompositeTriggerEngine {
       events: buffer.sourceEvents,
       evaluator: this.evaluator,
       now: evaluationNow,
+      allowedLatenessMs:
+        definition.eventTime?.allowedLatenessMs ?? 0,
     });
 
     for (const semantic of evaluation.semanticTrace) {
@@ -661,16 +663,49 @@ export class CompositeTriggerEngine {
     );
 
     const fresh = evaluation.matches
-      .filter((candidate) =>
+      .map((candidate, rank) => ({ candidate, rank }))
+      .filter(({ candidate }) =>
         candidate.events.length > 0 &&
         !previouslyEmitted.has(patternV2CandidateSignature(candidate))
-      );
+      )
+      .sort((left, right) =>
+        left.candidate.startIndex - right.candidate.startIndex ||
+        left.rank - right.rank
+      )
+      .map(({ candidate }) => candidate);
 
     const selected: PatternV2Candidate[] = [];
     const occupied = new Set<string>();
+    const indexed = [...buffer.sourceEvents].sort(sourceEventOrder);
+    const indexByIdentity = new Map(
+      indexed.map((source, index) => [
+        patternPhysicalIdentity(source),
+        index,
+      ]),
+    );
+
+    let skipPastLastThrough = -1;
+    let skipBefore = -1;
+    const skipStarts = new Set<number>();
+
+    const bindingBoundary = (
+      candidate: PatternV2Candidate,
+      ref: string,
+      edge: 'first' | 'last',
+    ) => {
+      const events = [...(candidate.bindings[ref] ?? [])]
+        .sort(sourceEventOrder);
+      const event = edge === 'first' ? events[0] : events.at(-1);
+      if (!event) return null;
+      return indexByIdentity.get(patternPhysicalIdentity(event)) ?? null;
+    };
 
     for (const candidate of fresh) {
       if (selected.length >= pattern.selection.maxMatchesPerEvent) break;
+      if (candidate.startIndex <= skipPastLastThrough) continue;
+      if (candidate.startIndex < skipBefore) continue;
+      if (skipStarts.has(candidate.startIndex)) continue;
+
       const identities = candidate.events.map(patternPhysicalIdentity);
       if (
         pattern.selection.overlap === 'disallow' &&
@@ -678,8 +713,28 @@ export class CompositeTriggerEngine {
       ) {
         continue;
       }
+
       selected.push(candidate);
       identities.forEach((identity) => occupied.add(identity));
+
+      const afterMatch = pattern.selection.afterMatch;
+      if (afterMatch === 'skipPastLast') {
+        skipPastLastThrough = Math.max(
+          skipPastLastThrough,
+          candidate.endIndex,
+        );
+      } else if (afterMatch === 'skipToNext') {
+        skipStarts.add(candidate.startIndex);
+      } else if (typeof afterMatch === 'object') {
+        const boundary = bindingBoundary(
+          candidate,
+          afterMatch.ref,
+          afterMatch.kind === 'skipToFirst' ? 'first' : 'last',
+        );
+        if (boundary !== null) {
+          skipBefore = Math.max(skipBefore, boundary);
+        }
+      }
     }
 
     const results: CompositeIngestResult[] = [];
@@ -759,20 +814,27 @@ export class CompositeTriggerEngine {
         : -1;
 
       let retained = [...buffer.sourceEvents];
-      const indexed = [...buffer.sourceEvents].sort(sourceEventOrder);
 
       const shouldDropByIndex = (index: number) => {
-        if (pattern.selection.afterMatch === 'skipPastLast') {
+        const afterMatch = pattern.selection.afterMatch;
+        if (afterMatch === 'skipPastLast') {
           return index <= lastEnd;
         }
-        if (pattern.selection.afterMatch === 'skipToNext') {
+        if (afterMatch === 'skipToNext') {
           return index <= firstStart;
         }
-        if (pattern.selection.afterMatch === 'skipToFirst') {
-          return index < firstStart;
-        }
-        if (pattern.selection.afterMatch === 'skipToLast') {
-          return index < lastEnd;
+        if (typeof afterMatch === 'object') {
+          const boundaries = selected
+            .map((candidate) =>
+              bindingBoundary(
+                candidate,
+                afterMatch.ref,
+                afterMatch.kind === 'skipToFirst' ? 'first' : 'last',
+              )
+            )
+            .filter((value): value is number => value !== null);
+          if (!boundaries.length) return false;
+          return index < Math.max(...boundaries);
         }
         return false;
       };
