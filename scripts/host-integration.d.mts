@@ -197,6 +197,22 @@ export function createEventIntelligenceHost(
 ): Promise<EventIntelligenceHost>;
 
 
+export function describeStoreCapabilities(
+  store: EventIntelligenceStore,
+): EventIntelligenceStoreCapabilities;
+
+export function validateSharedStoreCapabilities(
+  store: EventIntelligenceStore,
+): {
+  ok: boolean;
+  capabilities: EventIntelligenceStoreCapabilities;
+  errors: string[];
+};
+
+export function assertSharedStoreCapabilities(
+  store: EventIntelligenceStore,
+): EventIntelligenceStoreCapabilities;
+
 export class PersistentEventStore implements EventIntelligenceStore {
   constructor(dataDir: string);
   readonly dataDir: string;
