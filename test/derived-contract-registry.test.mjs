@@ -314,7 +314,7 @@ test('explicit v1/v2 consumers receive only matching derived contract occurrence
       ['1', '2'],
     );
 
-    const sources = control.listEventSources({
+    const sources = await control.listEventSources({
       connectionIds: [DERIVED_EVENT_CONNECTION_ID],
     });
     assert.deepEqual(
