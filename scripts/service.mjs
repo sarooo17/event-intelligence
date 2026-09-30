@@ -254,11 +254,11 @@ const server = createServer(async (request, response) => {
         evaluatorConfigured,
         wakeCallbackConfigured: Boolean(wakeDeliverer),
         genericRuntimeWakeTargets: [...runtimeWakeTargets.keys()],
-        eventSources: store.listEventSources().length,
+        eventSources: (await store.listEventSources()).length,
         pendingTemporalDeadlines:
-          store.listTemporalDeadlines({ status: 'pending' }).length,
-        derivedEvents: store.listDerivedEvents().length,
-        derivedContracts: store.listDerivedContracts().length,
+          (await store.listTemporalDeadlines({ status: 'pending' })).length,
+        derivedEvents: (await store.listDerivedEvents()).length,
+        derivedContracts: (await store.listDerivedContracts()).length,
       });
     }
 
@@ -422,7 +422,7 @@ const server = createServer(async (request, response) => {
       url.pathname === '/v1/derived-contracts'
     ) {
       return sendJson(response, 200, {
-        contracts: store.listDerivedContracts(
+        contracts: await store.listDerivedContracts(
           url.searchParams.get('eventName') ?? undefined,
         ),
       });
@@ -433,7 +433,7 @@ const server = createServer(async (request, response) => {
       url.pathname === '/v1/derived-events'
     ) {
       return sendJson(response, 200, {
-        events: store.listDerivedEvents({
+        events: await store.listDerivedEvents({
           ...(url.searchParams.get('triggerId')
             ? { triggerId: url.searchParams.get('triggerId') }
             : {}),
@@ -481,7 +481,7 @@ const server = createServer(async (request, response) => {
       url.pathname === '/v1/temporal/deadlines'
     ) {
       return sendJson(response, 200, {
-        deadlines: store.listTemporalDeadlines({
+        deadlines: await store.listTemporalDeadlines({
           ...(url.searchParams.get('triggerId')
             ? { triggerId: url.searchParams.get('triggerId') }
             : {}),
@@ -507,7 +507,7 @@ const server = createServer(async (request, response) => {
     if (request.method === 'GET' && url.pathname === '/v1/event-sources') {
       const connectionIds = url.searchParams.getAll('connectionId');
       return sendJson(response, 200, {
-        eventSources: triggerControl.listEventSources({
+        eventSources: await triggerControl.listEventSources({
           ...(connectionIds.length ? { connectionIds } : {}),
         }),
       });
@@ -528,7 +528,7 @@ const server = createServer(async (request, response) => {
       const ownerId = url.searchParams.get('ownerId');
       const tenantId = url.searchParams.get('tenantId');
       return sendJson(response, 200, {
-        triggers: triggerControl.listTriggers({
+        triggers: await triggerControl.listTriggers({
           ...(ownerType && ownerId
             ? {
               owner: {
@@ -633,14 +633,14 @@ const server = createServer(async (request, response) => {
 
     if (request.method === 'GET' && url.pathname === '/v1/triggers') {
       return sendJson(response, 200, {
-        triggers: store.listTriggers(),
+        triggers: await store.listTriggers(),
       });
     }
 
     if (request.method === 'GET' && url.pathname === '/v1/trigger-matches') {
       const triggerId = url.searchParams.get('triggerId') ?? undefined;
       return sendJson(response, 200, {
-        matches: store.listTriggerMatches(triggerId),
+        matches: await store.listTriggerMatches(triggerId),
       });
     }
 
