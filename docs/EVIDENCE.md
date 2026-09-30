@@ -1,6 +1,6 @@
-# Pattern AST v2 evidence harness
+# Pattern AST evidence harness
 
-Event Intelligence v0.5 has a reproducible evidence harness for **correctness** and **performance characterization**. The harness is intentionally separate from marketing claims: it produces machine-readable JSON that can be archived and compared across commits, Node versions and storage/runtime changes.
+Event Intelligence v0.6 includes a reproducible evidence harness for **correctness** and **performance characterization**. It produces machine-readable JSON that can be archived and compared across commits, Node versions and storage/runtime changes.
 
 ## Quick evidence
 
@@ -8,7 +8,7 @@ Event Intelligence v0.5 has a reproducible evidence harness for **correctness** 
 npm run evidence:pattern-v2
 ```
 
-This builds the package, runs deterministic conformance/property checks and then executes the quick benchmark profile.
+The script builds the package, runs deterministic conformance/property checks and executes the quick benchmark profile. The script name keeps the wire-schema version visible; the runtime itself has one Pattern architecture.
 
 ## Conformance
 
@@ -21,10 +21,9 @@ The current corpus verifies:
 - delivery-order invariance where event-time semantics require it;
 - bounded candidate growth under combinatorial repeat;
 - allowed-lateness behavior for bounded negative patterns;
-- explicit/budgeted semantic evaluation;
-- representative legacy-to-v2 compilation.
+- explicit and budgeted semantic evaluation.
 
-The normal test suite remains the authoritative regression suite. This command is a compact, shareable conformance checkpoint.
+The normal test suite remains the authoritative regression suite. This command is a compact shareable checkpoint for the Pattern evaluator.
 
 ## Benchmarks
 
@@ -50,9 +49,9 @@ node scripts/evidence/pattern-v2-benchmark.mjs \
   --iterations 10
 ```
 
-The benchmark reports p50/p95/p99/max/mean evaluation latency, evaluated-event throughput, memory deltas, emitted matches and whether candidate budgets truncated an evaluation.
+The benchmark reports p50/p95/p99/max/mean evaluation latency, evaluated-event throughput, memory deltas, emitted matches and candidate-budget truncation.
 
-The included scenarios deliberately cover both ordinary and adversarial shapes:
+Included scenarios cover both ordinary and adversarial shapes:
 
 - ordered sequence;
 - aggregate + bounded count window;
@@ -60,12 +59,12 @@ The included scenarios deliberately cover both ordinary and adversarial shapes:
 
 ## Interpretation
 
-Do not compare a quick local run directly with Flink/Esper cluster throughput. Pattern AST v2 is currently an embedded agent CEP runtime, and this harness measures the EI evaluator in-process. Meaningful external comparisons must publish hardware, Node version, scenario definitions, event cardinality, partitioning and storage mode.
+Do not compare an in-process quick run directly with Flink/Esper cluster throughput. EI is currently an embedded agent CEP runtime. Meaningful external comparisons must publish hardware, Node version, scenario definitions, event cardinality, partitioning and storage mode.
 
-Future evidence should add:
+Remaining evidence work includes:
 
 - full-engine partition benchmarks at 1k/10k/100k durable triggers;
-- shared-store / multi-worker results once the async shared-state store contract lands;
+- shared-store / multi-worker results once a production transactional backend lands;
 - crash/restart and replay chaos runs;
-- semantic cache cost/hit-rate characterization;
+- semantic-cache cost/hit-rate characterization;
 - archived benchmark baselines for release commits.
