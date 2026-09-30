@@ -8,8 +8,19 @@ import {
 } from '../../dist/src/intelligenceProtocol/index.js';
 
 function latest(records) {
+  const rank = (record) => {
+    if (record.status === 'fired') return 5;
+    if (record.status === 'emitted') return 4;
+    if (record.status === 'matched') return 3;
+    if (record.status === 'partial' && record.patternState?.role === 'match') return 2;
+    if (record.status === 'partial') return 1;
+    return 0;
+  };
+
   return [...records].sort(
-    (a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt),
+    (a, b) =>
+      Date.parse(b.updatedAt) - Date.parse(a.updatedAt) ||
+      rank(b) - rank(a),
   )[0] ?? null;
 }
 
