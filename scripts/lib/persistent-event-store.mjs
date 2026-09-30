@@ -82,9 +82,6 @@ async function writeJsonLinesAtomic(filePath, records) {
 
 export class PersistentEventStore {
   #queue = Promise.resolve();
-  #eventKeys = new Set();
-  #events = [];
-  #decisions = [];
   #wakes = [];
   #wakeDeliveries = new Map();
   #triggers = new Map();
@@ -106,8 +103,6 @@ export class PersistentEventStore {
   constructor(dataDir) {
     this.dataDir = dataDir;
     this.files = {
-      events: path.join(dataDir, 'events.jsonl'),
-      decisions: path.join(dataDir, 'decisions.jsonl'),
       wakes: path.join(dataDir, 'wakes.jsonl'),
       wakeDeliveries: path.join(dataDir, 'wake-deliveries.jsonl'),
       triggers: path.join(dataDir, 'triggers.jsonl'),
@@ -168,8 +163,6 @@ export class PersistentEventStore {
     await mkdir(this.dataDir, { recursive: true });
 
     const [
-      events,
-      decisions,
       wakes,
       wakeDeliveries,
       triggers,
@@ -185,8 +178,6 @@ export class PersistentEventStore {
       partitionLeases,
       audit,
     ] = await Promise.all([
-      readJsonLines(this.files.events),
-      readJsonLines(this.files.decisions),
       readJsonLines(this.files.wakes),
       readJsonLines(this.files.wakeDeliveries),
       readJsonLines(this.files.triggers),
@@ -203,13 +194,11 @@ export class PersistentEventStore {
       readJsonLines(this.files.audit),
     ]);
 
-    this.#events = events;
-    this.#decisions = decisions;
     this.#wakes = wakes;
 
     this.#wakeDeliveries = new Map();
     for (const raw of wakeDeliveries) {
-      if (!raw?.wakeId || !raw?.runtime || (!raw?.sourceId && !raw?.matchId)) continue;
+      if (!raw?.wakeId || !raw?.runtime || !raw?.matchId) continue;
       const status = [
         'pending',
         'claimed',
@@ -221,8 +210,6 @@ export class PersistentEventStore {
         : 'pending';
       const record = {
         wakeId: String(raw.wakeId),
-        sourceType: raw.sourceType === 'event' ? 'event' : 'composite',
-        sourceId: String(raw.sourceId || raw.matchId),
         matchId: raw.matchId ? String(raw.matchId) : '',
         triggerId: String(raw.triggerId || ''),
         triggerVersion: String(raw.triggerVersion || '1'),
@@ -447,17 +434,11 @@ export class PersistentEventStore {
 
     this.#auditChain = new AuditChain(audit.map(parseAuditRecord));
 
-    for (const record of events) {
-      this.#eventKeys.add(this.#eventKey(record.lineage));
-    }
-
     if (!(await this.#auditChain.verify())) {
       throw new Error('Persistent audit chain verification failed');
     }
 
     return {
-      events: events.length,
-      decisions: decisions.length,
       wakes: wakes.length,
       wakeDeliveries: this.#wakeDeliveries.size,
       triggers: this.#triggers.size,
@@ -474,26 +455,6 @@ export class PersistentEventStore {
       partitionLeases: this.#partitionLeases.size,
       audit: audit.length,
     };
-  }
-
-  async registerEvent(record) {
-    return this.#serialized(async () => {
-      const key = this.#eventKey(record.lineage);
-      if (this.#eventKeys.has(key)) return false;
-
-      this.#eventKeys.add(key);
-      this.#events.push(record);
-      await appendFile(this.files.events, `${JSON.stringify(record)}\n`, 'utf8');
-      return true;
-    });
-  }
-
-  async appendDecision(record) {
-    return this.#serialized(async () => {
-      this.#decisions.push(record);
-      await appendFile(this.files.decisions, `${JSON.stringify(record)}\n`, 'utf8');
-      return record;
-    });
   }
 
   async appendWake(record) {
@@ -520,12 +481,7 @@ export class PersistentEventStore {
         }
         if (record.status === 'delivered') {
           const latestWake = this.latestWake(record.wakeId);
-          const wakeFinalized =
-            latestWake?.status === 'delivered' ||
-            latestWake?.status === 'handled';
-          if (record.sourceType === 'event') {
-            return !wakeFinalized;
-          }
+          const wakeFinalized = latestWake?.status === 'delivered';
           const match = this.#triggerMatches.get(record.matchId);
           return !wakeFinalized || match?.status !== 'fired';
         }
@@ -540,15 +496,10 @@ export class PersistentEventStore {
   async ensureWakeDelivery(input) {
     return this.#serialized(async () => {
       const wakeId = String(input.wakeId || '');
-      const sourceType = input.sourceType === 'event' ? 'event' : 'composite';
       const matchId = String(input.matchId || '');
-      const sourceId = String(input.sourceId || matchId || '');
       const runtime = String(input.runtime || '');
-      if (!wakeId || !sourceId || !runtime) {
-        throw new Error('Wake delivery requires wakeId, sourceId and runtime');
-      }
-      if (sourceType === 'composite' && !matchId) {
-        throw new Error('Composite wake delivery requires matchId');
+      if (!wakeId || !matchId || !runtime) {
+        throw new Error('Wake delivery requires wakeId, matchId and runtime');
       }
       const existing = this.#wakeDeliveries.get(wakeId);
       if (existing) return existing;
@@ -556,8 +507,6 @@ export class PersistentEventStore {
       const now = String(input.now ?? new Date().toISOString());
       const record = {
         wakeId,
-        sourceType,
-        sourceId,
         matchId,
         triggerId: String(input.triggerId || ''),
         triggerVersion: String(input.triggerVersion || '1'),
@@ -1318,8 +1267,6 @@ export class PersistentEventStore {
 
   trace(traceId) {
     return {
-      events: this.#events.filter((record) => record.lineage?.traceId === traceId),
-      decisions: this.#decisions.filter((record) => record.traceId === traceId),
       wakes: this.#wakes.filter((record) => record.traceId === traceId),
       triggerMatches: this.listTriggerMatches().filter((record) =>
         record.sourceEvents.some((event) => event.traceId === traceId),
@@ -1350,10 +1297,6 @@ export class PersistentEventStore {
 
   async close() {
     await this.drain();
-  }
-
-  #eventKey(lineage) {
-    return `${lineage.environmentId}:${lineage.subscriptionId}:${lineage.sourceEventId}`;
   }
 
   #triggerKey(definition) {
