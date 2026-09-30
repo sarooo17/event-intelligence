@@ -1222,3 +1222,74 @@ test('Pattern v2 raw partition buffers fail closed at maxBufferedEvents', async 
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+
+test('semantic refs must be guaranteed by the child pattern', () => {
+  assert.throws(
+    () => pattern({
+      kind: 'semantic',
+      id: 'branch-semantic',
+      refs: ['a'],
+      instruction: 'Is A interesting?',
+      input: ['a.value'],
+      matchThreshold: 0.8,
+      rejectThreshold: 0.2,
+      child: {
+        kind: 'anyOf',
+        children: [
+          { kind: 'event', ref: 'a' },
+          { kind: 'event', ref: 'b' },
+        ],
+      },
+    }),
+    /semantic requires ref to be guaranteed by child pattern: a/,
+  );
+});
+
+test('derived measures cannot depend on optional Pattern v2 bindings', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'ei-pattern-v2-measure-binding-'));
+  try {
+    const store = new PersistentEventStore(dir);
+    await store.init();
+    const engine = new CompositeTriggerEngine(store);
+
+    await assert.rejects(
+      () => engine.register({
+        triggerId: 'optional-measure',
+        version: '1',
+        clauses: [
+          { id: 'a', event: 'a.event', arguments: {}, where: [] },
+          { id: 'b', event: 'b.event', arguments: {}, where: [] },
+        ],
+        expression: { kind: 'anyOf', refs: ['a', 'b'] },
+        temporal: [],
+        patternV2: pattern({
+          kind: 'anyOf',
+          children: [
+            { kind: 'event', ref: 'a' },
+            { kind: 'event', ref: 'b' },
+          ],
+        }),
+        withinMs: 3600000,
+        derivedEvent: {
+          name: 'optional.measure',
+          contractVersion: '1',
+          constants: {},
+          projections: [],
+          measures: [{
+            key: 'aValue',
+            expression: {
+              kind: 'aggregate',
+              function: 'last',
+              ref: 'a',
+              path: 'value',
+            },
+          }],
+        },
+      }),
+      /Derived measure aValue references non-guaranteed pattern ref: a/,
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
