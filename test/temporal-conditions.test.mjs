@@ -251,3 +251,98 @@ test('timezone conversion follows Europe/Rome DST rules', () => {
     '2026-10-25T19:00:00.000Z',
   );
 });
+
+
+test('multiple due Pattern candidates keep their own completion deadlines', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'ei-multi-deadline-'));
+  let now = new Date('2026-09-30T10:00:00.000Z');
+
+  try {
+    const store = new PersistentEventStore(dir);
+    await store.init();
+    const engine = new CompositeTriggerEngine(store, null, () => now);
+
+    await engine.register({
+      triggerId: 'candidate-specific-deadlines',
+      version: '1',
+      conditionOnly: true,
+      clauses: [
+        { id: 'a', event: 'signal.a', serverId: 'test-server', where: [] },
+        { id: 'b', event: 'signal.b', serverId: 'test-server', where: [] },
+        { id: 'blocked', event: 'signal.blocked', serverId: 'test-server', where: [] },
+      ],
+      pattern: {
+        root: {
+          kind: 'anyOf',
+          children: [
+            {
+              kind: 'absence',
+              id: 'quiet-a',
+              child: { kind: 'event', ref: 'a' },
+              ref: 'blocked',
+              afterRef: 'a',
+              forMs: 60 * 1000,
+            },
+            {
+              kind: 'absence',
+              id: 'quiet-b',
+              child: { kind: 'event', ref: 'b' },
+              ref: 'blocked',
+              afterRef: 'b',
+              forMs: 2 * 60 * 1000,
+            },
+          ],
+        },
+      },
+      withinMs: 10 * 60 * 1000,
+    });
+
+    await engine.ingest(
+      event('signal.a', 'a_1', '2026-09-30T10:00:00.000Z'),
+    );
+    await engine.ingest(
+      event('signal.b', 'b_1', '2026-09-30T10:00:00.000Z'),
+    );
+
+    const pending = store.listTemporalDeadlines({ status: 'pending' })
+      .sort((left, right) => Date.parse(left.dueAt) - Date.parse(right.dueAt));
+    assert.deepEqual(
+      pending.map((deadline) => deadline.dueAt),
+      [
+        '2026-09-30T10:01:00.000Z',
+        '2026-09-30T10:02:00.000Z',
+      ],
+    );
+
+    now = new Date('2026-09-30T10:03:00.000Z');
+    const consumer = new CompositeEventConsumer({
+      store,
+      triggerEngine: engine,
+      wakeCoordinators: new Map(),
+    });
+    const scheduler = new TemporalDeadlineScheduler({
+      store,
+      compositeEventConsumer: consumer,
+      now: () => now,
+    });
+
+    await scheduler.runDue();
+
+    const matches = store.listTriggerMatches('candidate-specific-deadlines')
+      .filter((match) => match.patternState?.role === 'match');
+    assert.equal(matches.length, 2);
+
+    const completionByEvent = Object.fromEntries(
+      matches.map((match) => [
+        match.sourceEvents[0]?.sourceEventId,
+        match.patternState.completedAt,
+      ]),
+    );
+    assert.deepEqual(completionByEvent, {
+      a_1: '2026-09-30T10:01:00.000Z',
+      b_1: '2026-09-30T10:02:00.000Z',
+    });
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

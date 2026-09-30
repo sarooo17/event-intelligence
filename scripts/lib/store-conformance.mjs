@@ -28,8 +28,8 @@ export async function runStoreConformance({
 
   await check('trigger-state round trip', async () => {
     await store.putTrigger({
-      protocolVersion: '0.1.0',
-      schemaVersion: 'trigger.v0.1',
+      protocolVersion: '0.2.0',
+      schemaVersion: 'trigger.v0.2',
       triggerId: 'store-conf-trigger',
       version: '1',
       conditionOnly: true,
@@ -39,8 +39,10 @@ export async function runStoreConformance({
         arguments: {},
         where: [],
       }],
-      expression: { kind: 'anyOf', refs: ['event'] },
-      temporal: [],
+      pattern: {
+        version: '2',
+        root: { kind: 'event', ref: 'event' },
+      },
       withinMs: 60000,
       lifecycle: {
         oneShot: false,
@@ -61,10 +63,33 @@ export async function runStoreConformance({
   });
 
   await check('wake claim exclusion', async () => {
+    await store.appendTriggerMatch({
+      protocolVersion: '0.2.0',
+      schemaVersion: 'trigger.v0.2',
+      matchId: 'store-conf-match',
+      triggerId: 'store-conf-trigger',
+      triggerVersion: '1',
+      status: 'matched',
+      partitionKey: null,
+      openedAt: '2026-09-30T00:00:00.000Z',
+      expiresAt: '2026-09-30T00:01:00.000Z',
+      updatedAt: '2026-09-30T00:00:00.000Z',
+      sourceEvents: [],
+      semanticDecision: null,
+      patternState: {
+        version: '2',
+        role: 'match',
+        signature: 'store-conf-match',
+        semanticDecisions: [],
+      },
+      firedWakeId: null,
+      derivedEventIds: [],
+    });
     await store.ensureWakeDelivery({
       wakeId: 'store-conf-wake',
-      sourceType: 'event',
-      sourceId: 'source-1',
+      matchId: 'store-conf-match',
+      triggerId: 'store-conf-trigger',
+      triggerVersion: '1',
       runtime: 'conformance',
       now: '2026-09-30T00:00:00.000Z',
     });
