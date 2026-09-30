@@ -97,13 +97,13 @@ test('MCP stdio adapter exposes read-only Event Intelligence tools by default', 
 
     const language = await session.client.callTool({
       name: 'trigger_language_describe',
-      arguments: { category: 'temporal' },
+      arguments: { category: 'pattern' },
     });
     assert.equal(language.isError, undefined);
-    assert.equal(language.structuredContent.version, '2');
-    assert.equal(language.structuredContent.temporal.length, 10);
+    assert.equal(language.structuredContent.version, '3');
+    assert.ok(language.structuredContent.pattern.length >= 10);
     assert.equal(
-      language.structuredContent.temporal.some(
+      language.structuredContent.pattern.some(
         (entry) => entry.id === 'absence',
       ),
       true,
@@ -137,7 +137,7 @@ test('MCP stdio adapter exposes read-only Event Intelligence tools by default', 
               where: [],
             },
           ],
-          expression: { kind: 'anyOf', refs: ['ready'] },
+          pattern: { root: { kind: 'event', ref: 'ready' } },
           withinMs: 60000,
           target: {
             runtime: 'demo',
@@ -197,7 +197,7 @@ test('MCP stdio write tools require explicit operator opt-in', async () => {
               where: [],
             },
           ],
-          expression: { kind: 'anyOf', refs: ['ghost'] },
+          pattern: { root: { kind: 'event', ref: 'ghost' } },
           withinMs: 60000,
           target: {
             runtime: 'demo',
