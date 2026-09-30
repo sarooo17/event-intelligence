@@ -1087,3 +1087,138 @@ test('targeted after-match selection refs are validated', async () => {
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+
+test('oneShot caps multiple Pattern v2 matches produced in one ingest', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'ei-pattern-v2-one-shot-'));
+  try {
+    const store = new PersistentEventStore(dir);
+    await store.init();
+    const engine = new CompositeTriggerEngine(store);
+
+    await engine.register({
+      triggerId: 'one-shot-multi-match',
+      version: '1',
+      clauses: [
+        { id: 'a', event: 'a.event', arguments: {}, where: [] },
+        { id: 'b', event: 'b.event', arguments: {}, where: [] },
+      ],
+      expression: { kind: 'anyOf', refs: ['a', 'b'] },
+      temporal: [],
+      patternV2: pattern(
+        {
+          kind: 'sequence',
+          contiguity: 'followedByAny',
+          children: [
+            { kind: 'event', ref: 'a' },
+            { kind: 'event', ref: 'b' },
+          ],
+        },
+        {
+          selection: {
+            overlap: 'allow',
+            afterMatch: 'keepAll',
+            maxMatchesPerEvent: 10,
+          },
+        },
+      ),
+      withinMs: 3600000,
+      lifecycle: {
+        oneShot: true,
+        cooldownMs: 0,
+        completeOnGoal: false,
+      },
+      target: {
+        runtime: 'test',
+        kind: 'task',
+        id: 'one-shot',
+      },
+    });
+
+    await engine.ingest(correlatable(
+      'a-one',
+      'a.event',
+      '2026-09-30T10:00:00.000Z',
+    ));
+    await engine.ingest(correlatable(
+      'a-two',
+      'a.event',
+      '2026-09-30T10:01:00.000Z',
+    ));
+
+    const result = await engine.ingest(correlatable(
+      'b-one',
+      'b.event',
+      '2026-09-30T10:02:00.000Z',
+    ));
+
+    assert.equal(
+      result.filter((entry) => entry.matched).length,
+      1,
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('Pattern v2 raw partition buffers fail closed at maxBufferedEvents', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'ei-pattern-v2-buffer-limit-'));
+  try {
+    const store = new PersistentEventStore(dir);
+    await store.init();
+    const engine = new CompositeTriggerEngine(store);
+
+    await engine.register({
+      triggerId: 'buffer-limit',
+      version: '1',
+      conditionOnly: true,
+      clauses: [
+        { id: 'e', event: 'e.event', arguments: {}, where: [] },
+      ],
+      expression: { kind: 'anyOf', refs: ['e'] },
+      temporal: [],
+      patternV2: pattern(
+        {
+          kind: 'repeat',
+          child: { kind: 'event', ref: 'e' },
+          min: 3,
+          max: 3,
+          mode: 'greedy',
+          contiguity: 'relaxed',
+        },
+        {
+          execution: {
+            maxCandidates: 32,
+            maxSemanticEvaluations: 0,
+            maxBufferedEvents: 1,
+          },
+        },
+      ),
+      withinMs: 3600000,
+    });
+
+    await engine.ingest(correlatable(
+      'e-one',
+      'e.event',
+      '2026-09-30T10:00:00.000Z',
+    ));
+
+    await assert.rejects(
+      () => engine.ingest(correlatable(
+        'e-two',
+        'e.event',
+        '2026-09-30T10:01:00.000Z',
+      )),
+      (error) =>
+        error.code === 'PATTERN_V2_BUFFER_LIMIT_EXCEEDED',
+    );
+
+    assert.equal(
+      store.listAudit()
+        .some((entry) => entry.kind === 'event.buffer_overflow'),
+      true,
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
