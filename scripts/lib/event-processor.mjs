@@ -86,7 +86,7 @@ export class EventProcessor {
 
     if (!accepted) {
       await this.store.appendAudit({
-        auditId: await stableId('audit', `${traceId}:duplicate:${this.store.auditLength()}`),
+        auditId: await stableId('audit', `${traceId}:duplicate:${await this.store.auditLength()}`),
         traceId,
         timestamp: nowIso(this.now),
         kind: 'event.duplicate',
@@ -345,7 +345,7 @@ export class EventProcessor {
   }
 
   async deliveredWakeFromState(wake, delivery) {
-    const latest = this.store.latestWake(wake.wakeId);
+    const latest = await this.store.latestWake(wake.wakeId);
     if (latest?.status === 'handled' || latest?.status === 'delivered') {
       return latest;
     }
@@ -360,7 +360,7 @@ export class EventProcessor {
     await this.store.appendAudit({
       auditId: await stableId(
         'audit',
-        `${wake.traceId}:wake-delivered-recovered:${this.store.auditLength()}`,
+        `${wake.traceId}:wake-delivered-recovered:${await this.store.auditLength()}`,
       ),
       traceId: wake.traceId,
       timestamp: nowIso(this.now),
@@ -391,7 +391,7 @@ export class EventProcessor {
       now,
     });
 
-    const current = this.store.getWakeDelivery(wake.wakeId);
+    const current = await this.store.getWakeDelivery(wake.wakeId);
     if (current?.status === 'delivered') {
       return {
         status: 'wake_delivered',
@@ -401,7 +401,7 @@ export class EventProcessor {
     if (current?.status === 'dead_letter') {
       return {
         status: 'dead_letter',
-        wake: this.store.latestWake(wake.wakeId) ?? wake,
+        wake: await this.store.latestWake(wake.wakeId) ?? wake,
       };
     }
 
@@ -411,13 +411,13 @@ export class EventProcessor {
       leaseMs: this.leaseMs,
     });
     if (!claim) {
-      const delivery = this.store.getWakeDelivery(wake.wakeId);
+      const delivery = await this.store.getWakeDelivery(wake.wakeId);
       return {
         status:
           delivery?.status === 'claimed'
             ? 'delivery_in_progress'
             : 'retry_scheduled',
-        wake: this.store.latestWake(wake.wakeId) ?? wake,
+        wake: await this.store.latestWake(wake.wakeId) ?? wake,
       };
     }
 
@@ -451,7 +451,7 @@ export class EventProcessor {
       await this.store.appendAudit({
         auditId: await stableId(
           'audit',
-          `${wake.traceId}:wake-delivered:${this.store.auditLength()}`,
+          `${wake.traceId}:wake-delivered:${await this.store.auditLength()}`,
         ),
         traceId: wake.traceId,
         timestamp: nowIso(this.now),
@@ -488,7 +488,7 @@ export class EventProcessor {
         await this.store.appendAudit({
           auditId: await stableId(
             'audit',
-            `${wake.traceId}:wake-retry:${delivery?.attemptCount ?? claim.attemptCount}:${this.store.auditLength()}`,
+            `${wake.traceId}:wake-retry:${delivery?.attemptCount ?? claim.attemptCount}:${await this.store.auditLength()}`,
           ),
           traceId: wake.traceId,
           timestamp: nowIso(this.now),
@@ -506,7 +506,7 @@ export class EventProcessor {
         });
         return {
           status: 'retry_scheduled',
-          wake: this.store.latestWake(wake.wakeId) ?? wake,
+          wake: await this.store.latestWake(wake.wakeId) ?? wake,
         };
       }
 
@@ -519,7 +519,7 @@ export class EventProcessor {
       await this.store.appendAudit({
         auditId: await stableId(
           'audit',
-          `${wake.traceId}:wake-dead-letter:${this.store.auditLength()}`,
+          `${wake.traceId}:wake-dead-letter:${await this.store.auditLength()}`,
         ),
         traceId: wake.traceId,
         timestamp: nowIso(this.now),
@@ -544,12 +544,12 @@ export class EventProcessor {
   }
 
   async retryWake(wakeId) {
-    const delivery = this.store.getWakeDelivery(wakeId);
+    const delivery = await this.store.getWakeDelivery(wakeId);
     if (!delivery || delivery.sourceType !== 'event') {
       return { status: 'not_event_wake', wake: null };
     }
 
-    const latest = this.store.latestWake(wakeId);
+    const latest = await this.store.latestWake(wakeId);
     if (!latest) {
       throw new Error(`Unknown wake: ${wakeId}`);
     }
@@ -590,7 +590,7 @@ export class EventProcessor {
   }
 
   async acknowledgeWake(wakeId, runtimeReceiptId) {
-    const latest = this.store.latestWake(wakeId);
+    const latest = await this.store.latestWake(wakeId);
     if (!latest) throw new Error('Unknown wake');
     if (latest.status === 'handled') return latest;
     if (latest.status !== 'delivered') {
