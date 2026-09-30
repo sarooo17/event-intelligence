@@ -558,7 +558,7 @@ function valueRefs(
   }
   if (value.kind === 'arithmetic') {
     return [
-      ...new Set(
+      ...new Set<string>(
         value.args.flatMap((arg: PatternArithmeticValue) =>
           valueRefs(arg)
         ),
