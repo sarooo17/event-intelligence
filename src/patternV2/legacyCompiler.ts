@@ -150,6 +150,30 @@ export function compileLegacyTriggerToPatternV2(
 ): PatternAstV2Definition {
   let root = expressionNode(definition);
 
+  const deterministic = definition.correlation?.deterministic;
+  if (deterministic?.fields?.length) {
+    const [anchorField, ...otherFields] = deterministic.fields;
+    for (const field of otherFields) {
+      root = {
+        kind: 'compare',
+        child: root,
+        left: {
+          kind: 'field',
+          ref: anchorField.ref,
+          path: anchorField.path,
+          select: 'last',
+        },
+        op: 'eq',
+        right: {
+          kind: 'field',
+          ref: field.ref,
+          path: field.path,
+          select: 'last',
+        },
+      };
+    }
+  }
+
   for (const condition of definition.temporal ?? []) {
     root = wrapTemporal(root, condition);
   }
@@ -177,21 +201,10 @@ export function compileLegacyTriggerToPatternV2(
     };
   }
 
-  const deterministic = definition.correlation?.deterministic;
-  const partitionBy = deterministic
-    ? [{
-        key: 'legacy-correlation',
-        fields: deterministic.fields.map((field) => ({
-          ref: field.ref,
-          path: field.path,
-        })),
-      }]
-    : [];
-
   return PatternAstV2DefinitionSchema.parse({
     version: '2',
     root,
-    partitionBy,
+    partitionBy: [],
     selection: {
       overlap: 'disallow',
       afterMatch: 'skipPastLast',
