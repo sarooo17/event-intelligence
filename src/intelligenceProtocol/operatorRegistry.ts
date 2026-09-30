@@ -447,6 +447,10 @@ export const TRIGGER_LANGUAGE_CATALOG = Object.freeze({
       id: 'maxBufferedEvents',
       description: 'Hard upper bound on raw events retained in one trigger partition.',
     },
+    {
+      id: 'maxSemanticCacheEntries',
+      description: 'Maximum durable semantic decisions retained per trigger partition for cross-event/restart reuse.',
+    },
   ]),
 
   timing: Object.freeze([
