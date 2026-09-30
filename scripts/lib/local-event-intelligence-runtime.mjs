@@ -226,7 +226,7 @@ export async function createLocalEventIntelligenceRuntime({
           packetBuilder,
           ...deliveryOptions,
           deliverer: async (packet) => {
-            const activation = activationHydrator.hydrateWake(packet.wake_id);
+            const activation = await activationHydrator.hydrateWake(packet.wake_id);
             const result = await handler(packet, activation);
             if (typeof result === 'string' && result) {
               return { runtimeReceiptId: result };
@@ -255,7 +255,7 @@ export async function createLocalEventIntelligenceRuntime({
         packetBuilder,
         ...deliveryOptions,
         deliverer: async (packet) => {
-          const activation = activationHydrator.hydrateWake(packet.wake_id);
+          const activation = await activationHydrator.hydrateWake(packet.wake_id);
           const result = await wake(packet, activation);
           if (typeof result === 'string' && result) {
             return { runtimeReceiptId: result };
