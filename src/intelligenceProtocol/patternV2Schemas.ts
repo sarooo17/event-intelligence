@@ -554,7 +554,7 @@ function valueRefs(
   value: PatternArithmeticValue,
 ): string[] {
   if (value.kind === 'field' || value.kind === 'occurredAt') {
-    return [value.ref];
+    return [String(value.ref)];
   }
   if (value.kind === 'arithmetic') {
     return [
@@ -583,13 +583,15 @@ export function collectGuaranteedPatternBindings(
     }
 
     if (current.kind === 'anyOf') {
-      const children = current.children.map(
+      const children: Set<string>[] = current.children.map(
         (child: PatternNodeV2) => visit(child),
       );
       if (!children.length) return new Set();
       return new Set(
         [...children[0]!].filter((ref) =>
-          children.slice(1).every((set) => set.has(ref))
+          children.slice(1).every(
+            (set: Set<string>) => set.has(ref),
+          )
         ),
       );
     }
