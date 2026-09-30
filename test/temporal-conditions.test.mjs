@@ -172,7 +172,8 @@ test('absence until 20:00 survives restart and fires from durable timer with no 
     assert.equal(outcomes[0].status, 'fired');
 
     const latest = secondStore.listTriggerMatches('no-reply-by-20')
-      .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))[0];
+      .find((match) => match.patternState?.role === 'match');
+    assert.ok(latest);
     assert.equal(latest.status, 'matched');
     assert.equal(latest.patternState.completedAt, '2026-09-18T18:00:00.000Z');
     assert.equal(secondStore.listTemporalDeadlines()[0].status, 'fired');
