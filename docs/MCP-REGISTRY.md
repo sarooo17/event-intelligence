@@ -44,7 +44,7 @@ The npm package declares the same identity through `package.json#mcpName`.
 
 `server.json` declares:
 
-- npm package: `mcp-event-intelligence@0.4.0`;
+- npm package: `mcp-event-intelligence@0.5.0`;
 - transport: `stdio`;
 - positional package argument: `mcp`;
 - only Event Intelligence control-plane/runtime settings, including optional Jev semantic-evaluator configuration.
