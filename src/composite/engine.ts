@@ -593,12 +593,6 @@ export class CompositeTriggerEngine {
       .filter((candidate) =>
         candidate.events.length > 0 &&
         !previouslyEmitted.has(patternV2CandidateSignature(candidate))
-      )
-      .sort((a, b) =>
-        a.endIndex - b.endIndex ||
-        a.startIndex - b.startIndex ||
-        patternV2CandidateSignature(a)
-          .localeCompare(patternV2CandidateSignature(b))
       );
 
     const selected: PatternV2Candidate[] = [];
