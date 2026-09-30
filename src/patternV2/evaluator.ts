@@ -58,6 +58,7 @@ interface EvaluationContext {
   truncated: boolean;
   semanticCache: Map<string, SemanticDecision>;
   semanticTrace: PatternV2SemanticTrace[];
+  allowedLatenessMs: number;
 }
 
 function stableValue(value: unknown): unknown {
@@ -829,6 +830,7 @@ async function evaluateNode(
       }
       if (count >= max) return;
 
+      const compatibleIndexes: number[] = [];
       for (let index = start; index < units.length; index += 1) {
         const unit = units[index]!;
         if (
@@ -837,6 +839,24 @@ async function evaluateNode(
         ) {
           continue;
         }
+        if (
+          selected.events.length &&
+          node.contiguity === 'consecutive' &&
+          unit.startIndex !== selected.endIndex + 1
+        ) {
+          break;
+        }
+        compatibleIndexes.push(index);
+        if (
+          selected.events.length &&
+          node.contiguity === 'relaxed'
+        ) {
+          break;
+        }
+      }
+
+      for (const index of compatibleIndexes) {
+        const unit = units[index]!;
         const merged = mergeCandidates(selected, unit, all);
         if (!merged) continue;
         walk(index + 1, merged, count + 1);
@@ -882,7 +902,15 @@ async function evaluateNode(
   if (node.kind === 'notPresent') {
     const forbidden = eventsForRef(context, node.ref);
     return (await evaluateNode(node.child, context))
-      .filter(() => forbidden.length === 0);
+      .filter((candidate) =>
+        !forbidden.some((event) => {
+          const index = indexFor(context.events, event);
+          return (
+            index >= candidate.startIndex &&
+            index <= candidate.endIndex
+          );
+        })
+      );
   }
 
   if (node.kind === 'after') {
@@ -954,7 +982,6 @@ async function evaluateNode(
     const refEvents = eventsForRef(context, node.ref);
     if (!refEvents.length) return [];
     const latest = Math.max(
-      context.now.getTime(),
       ...refEvents.map((event) => Date.parse(event.occurredAt)),
     );
     const inWindow = refEvents.filter(
@@ -977,6 +1004,7 @@ async function evaluateNode(
     const latest = refEvents.at(-1);
     if (!latest) return [];
     const dueAt = Date.parse(latest.occurredAt) + node.forMs;
+    const finalAt = dueAt + context.allowedLatenessMs;
     return (await evaluateNode(node.child, context))
       .map((candidate) => {
         const augmented = withBindingEvents(
@@ -987,8 +1015,8 @@ async function evaluateNode(
         );
         return {
           ...augmented,
-          ...(context.now.getTime() < dueAt
-            ? { pendingUntil: new Date(dueAt).toISOString() }
+          ...(context.now.getTime() < finalAt
+            ? { pendingUntil: new Date(finalAt).toISOString() }
             : {}),
         };
       });
@@ -1003,6 +1031,7 @@ async function evaluateNode(
       const anchor = latestBoundEvent(base, node.afterRef);
       if (!anchor) continue;
       const due = absenceNodeDueAt(node, anchor);
+      const finalAt = due.getTime() + context.allowedLatenessMs;
       const anchorMs = Date.parse(anchor.occurredAt);
       const blocked = forbidden.some((event) => {
         const at = Date.parse(event.occurredAt);
@@ -1011,8 +1040,8 @@ async function evaluateNode(
       if (blocked) continue;
       output.push({
         ...base,
-        ...(context.now.getTime() < due.getTime()
-          ? { pendingUntil: due.toISOString() }
+        ...(context.now.getTime() < finalAt
+          ? { pendingUntil: new Date(finalAt).toISOString() }
           : {}),
       });
     }
@@ -1042,6 +1071,7 @@ async function evaluateNode(
       if (!base.events.length) continue;
       const anchor = Date.parse(base.events.at(-1)!.occurredAt);
       const dueAt = anchor + node.withinMs;
+      const finalAt = dueAt + context.allowedLatenessMs;
       const blocked = forbidden.some((candidate) => {
         if (!candidate.events.length) return false;
         const startedAt = Date.parse(candidate.events[0]!.occurredAt);
@@ -1054,8 +1084,8 @@ async function evaluateNode(
       if (blocked) continue;
       output.push({
         ...base,
-        ...(context.now.getTime() < dueAt
-          ? { pendingUntil: new Date(dueAt).toISOString() }
+        ...(context.now.getTime() < finalAt
+          ? { pendingUntil: new Date(finalAt).toISOString() }
           : {}),
       });
     }
@@ -1096,7 +1126,12 @@ async function evaluateNode(
 
   const output: PatternV2Candidate[] = [];
   for (const candidate of child) {
-    if (!context.evaluator) continue;
+    if (!context.evaluator) {
+      if (node.execution.onUnavailable === 'reject') continue;
+      throw new Error(
+        `Semantic node ${node.id} requires a SemanticEvaluator`,
+      );
+    }
     if (
       context.semanticEvaluations >= context.maxSemanticEvaluations
     ) {
@@ -1175,11 +1210,13 @@ export async function evaluatePatternV2({
   events,
   evaluator = null,
   now = new Date(),
+  allowedLatenessMs = 0,
 }: {
   definition: PatternAstV2Definition;
   events: TriggerSourceEvent[];
   evaluator?: SemanticEvaluator | null;
   now?: Date;
+  allowedLatenessMs?: number;
 }): Promise<PatternV2Evaluation> {
   const ordered = [...events].sort(eventOrder);
   const context: EvaluationContext = {
@@ -1192,6 +1229,7 @@ export async function evaluatePatternV2({
     truncated: false,
     semanticCache: new Map(),
     semanticTrace: [],
+    allowedLatenessMs,
   };
 
   const candidates = await evaluateNode(definition.root, context);
