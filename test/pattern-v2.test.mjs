@@ -346,6 +346,85 @@ test('semantic is a first-class operator behind SemanticEvaluator', async () => 
   assert.equal(requests.length, 1);
 });
 
+test('single-stream partitioning is valid and isolated', async () => {
+  const definition = PatternAstV2DefinitionSchema.parse({
+    version: '2',
+    root: { kind: 'event', ref: 'metric' },
+    partitionBy: [{
+      key: 'host',
+      fields: [{ ref: 'metric', path: 'host' }],
+    }],
+  });
+  assert.equal(definition.partitionBy[0].fields.length, 1);
+});
+
+test('semantic rejects are retained in the evaluation trace', async () => {
+  const definition = pattern({
+    kind: 'semantic',
+    id: 'not-related',
+    refs: ['issue', 'mail'],
+    instruction: 'Are these related?',
+    input: ['issue.title', 'mail.subject'],
+    matchThreshold: 0.8,
+    rejectThreshold: 0.2,
+    uncertain: 'reject',
+    execution: { cache: true, timeoutMs: 1000 },
+    child: {
+      kind: 'allOf',
+      children: [
+        { kind: 'event', ref: 'issue' },
+        { kind: 'event', ref: 'mail' },
+      ],
+    },
+  });
+
+  const result = await evaluatePatternV2({
+    definition,
+    evaluator: {
+      async evaluate() {
+        return { evaluator: 'test/reject', probability: 0.05 };
+      },
+    },
+    events: [
+      source('issue', 'i-reject', '2026-09-30T10:00:00.000Z', { title: 'A' }),
+      source('mail', 'm-reject', '2026-09-30T10:01:00.000Z', { subject: 'B' }),
+    ],
+  });
+
+  assert.equal(result.matches.length, 0);
+  assert.equal(result.semanticTrace.length, 1);
+  assert.equal(result.semanticTrace[0].decision.outcome, 'reject');
+});
+
+test('notFollowedBy uses forbidden-pattern completion time', async () => {
+  const definition = pattern({
+    kind: 'notFollowedBy',
+    id: 'no-completed-failure-sequence',
+    withinMs: 5 * 60 * 1000,
+    child: { kind: 'event', ref: 'deploy' },
+    forbidden: {
+      kind: 'sequence',
+      contiguity: 'followedBy',
+      children: [
+        { kind: 'event', ref: 'error_start' },
+        { kind: 'event', ref: 'error_confirmed' },
+      ],
+    },
+  });
+
+  const result = await evaluatePatternV2({
+    definition,
+    now: new Date('2026-09-30T10:06:00.000Z'),
+    events: [
+      source('deploy', 'd1', '2026-09-30T10:00:00.000Z'),
+      source('error_start', 'es1', '2026-09-30T10:02:00.000Z'),
+      source('error_confirmed', 'ec1', '2026-09-30T10:07:00.000Z'),
+    ],
+  });
+
+  assert.equal(result.matches.length, 1);
+});
+
 test('legacy composite definitions compile to Pattern AST v2', () => {
   const compiled = compileLegacyTriggerToPatternV2({
     protocolVersion: '0.1.0',
