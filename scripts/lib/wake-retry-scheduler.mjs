@@ -19,7 +19,7 @@ export class WakeRetryScheduler {
     if (this.running) return [];
     this.running = true;
     try {
-      const due = this.store.listDueWakeDeliveries(this.now().toISOString());
+      const due = await this.store.listDueWakeDeliveries(this.now().toISOString());
       const outcomes = [];
 
       for (const delivery of due) {
@@ -48,7 +48,7 @@ export class WakeRetryScheduler {
           continue;
         }
 
-        const match = this.store.listTriggerMatches(delivery.triggerId)
+        const match = (await this.store.listTriggerMatches(delivery.triggerId))
           .filter((candidate) => candidate.matchId === delivery.matchId)
           .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))[0];
 

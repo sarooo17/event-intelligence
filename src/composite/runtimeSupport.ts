@@ -41,7 +41,9 @@ export class CompositeTriggerRuntimeSupport {
           ].join(':'),
         )
       ).slice(0, 24)}`;
-      const existing = this.store.getTemporalDeadline?.(deadlineId);
+      const existing = this.store.getTemporalDeadline
+        ? await this.store.getTemporalDeadline(deadlineId)
+        : null;
       if (existing?.status === 'pending' || existing?.status === 'fired') {
         continue;
       }
@@ -64,7 +66,7 @@ export class CompositeTriggerRuntimeSupport {
       !this.store.setTemporalDeadlineStatus
     ) return;
 
-    const pending = this.store.listTemporalDeadlines({
+    const pending = await this.store.listTemporalDeadlines({
       matchId,
       status: 'pending',
     });
@@ -81,15 +83,17 @@ export class CompositeTriggerRuntimeSupport {
     effectKind: 'wake' | 'derived_event',
     effectId: string,
   ): Promise<void> {
-    const definition = this.store.listTriggers().find(
+    const definition = (await this.store.listTriggers()).find(
       (candidate) =>
         candidate.triggerId === match.triggerId &&
         candidate.version === match.triggerVersion,
     );
-    const triggerState = this.store.getTriggerState?.(
-      match.triggerId,
-      match.triggerVersion,
-    ) ?? null;
+    const triggerState = this.store.getTriggerState
+      ? await this.store.getTriggerState(
+        match.triggerId,
+        match.triggerVersion,
+      )
+      : null;
 
     if (!definition || !this.store.setTriggerState) return;
 
@@ -269,7 +273,7 @@ export class CompositeTriggerRuntimeSupport {
     await this.store.appendAudit({
       auditId: `audit_${(
         await sha256Hex(
-          `${record.matchId}:${kind}:${record.updatedAt}:${this.store.listTriggerMatches().length}`,
+          `${record.matchId}:${kind}:${record.updatedAt}:${(await this.store.listTriggerMatches()).length}`,
         )
       ).slice(0, 24)}`,
       traceId: record.sourceEvents[0]?.traceId ?? record.matchId,

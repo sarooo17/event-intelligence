@@ -32,7 +32,9 @@ export interface CompositeTriggerStore {
     },
   ): Promise<boolean>;
   putTrigger(definition: CompositeTriggerDefinition): Promise<void>;
-  listTriggers(): CompositeTriggerDefinition[];
+  listTriggers():
+    | CompositeTriggerDefinition[]
+    | Promise<CompositeTriggerDefinition[]>;
   getTriggerState?(
     triggerId: string,
     version: string,
@@ -52,7 +54,9 @@ export interface CompositeTriggerStore {
     metadata?: Record<string, unknown>,
   ): Promise<unknown>;
   appendTriggerMatch(record: TriggerMatchRecord): Promise<void>;
-  listTriggerMatches(triggerId?: string): TriggerMatchRecord[];
+  listTriggerMatches(triggerId?: string):
+    | TriggerMatchRecord[]
+    | Promise<TriggerMatchRecord[]>;
   getTemporalDeadline?(deadlineId: string): {
     deadlineId: string;
     triggerId: string;
@@ -61,20 +65,38 @@ export interface CompositeTriggerStore {
     conditionId: string;
     dueAt: string;
     status: 'pending' | 'cancelled' | 'fired';
-  } | null;
-  listTemporalDeadlines?(filter?: {
-    triggerId?: string;
-    matchId?: string;
-    status?: string;
-  }): Array<{
+  } | null | Promise<{
     deadlineId: string;
     triggerId: string;
     triggerVersion: string;
     matchId: string;
     conditionId: string;
     dueAt: string;
-    status: string;
-  }>;
+    status: 'pending' | 'cancelled' | 'fired';
+  } | null>;
+  listTemporalDeadlines?(filter?: {
+    triggerId?: string;
+    matchId?: string;
+    status?: string;
+  }):
+    | Array<{
+      deadlineId: string;
+      triggerId: string;
+      triggerVersion: string;
+      matchId: string;
+      conditionId: string;
+      dueAt: string;
+      status: string;
+    }>
+    | Promise<Array<{
+      deadlineId: string;
+      triggerId: string;
+      triggerVersion: string;
+      matchId: string;
+      conditionId: string;
+      dueAt: string;
+      status: string;
+    }>>;
   putTemporalDeadline?(input: {
     deadlineId: string;
     triggerId: string;

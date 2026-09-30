@@ -42,11 +42,11 @@ export class DerivedContractRegistry {
     return sha256Hex(canonicalize(payloadSchema ?? {}));
   }
 
-  list(eventName) {
+  async list(eventName) {
     return this.store.listDerivedContracts(eventName);
   }
 
-  get(eventName, contractVersion) {
+  async get(eventName, contractVersion) {
     return this.store.getDerivedContract(eventName, contractVersion);
   }
 
@@ -57,7 +57,7 @@ export class DerivedContractRegistry {
   }) {
     const canonicalSchema = canonicalize(payloadSchema ?? {});
     const schemaFingerprint = await this.fingerprint(canonicalSchema);
-    const existing = this.get(eventName, contractVersion);
+    const existing = await this.get(eventName, contractVersion);
     if (
       existing &&
       existing.schemaFingerprint !== schemaFingerprint
@@ -89,7 +89,7 @@ export class DerivedContractRegistry {
   }) {
     const canonicalSchema = canonicalize(payloadSchema ?? {});
     const schemaFingerprint = await this.fingerprint(canonicalSchema);
-    const existing = this.get(eventName, contractVersion);
+    const existing = await this.get(eventName, contractVersion);
 
     if (
       existing &&

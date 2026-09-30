@@ -2,21 +2,21 @@ import {
   parseActivationEnvelope,
 } from '../../dist/src/intelligenceProtocol/index.js';
 
-function latestMatchForWake(store, wake, delivery) {
+async function latestMatchForWake(store, wake, delivery) {
   const matchId =
     delivery?.matchId ||
     (wake?.subscriptionId?.startsWith('trigger:') ? wake.sourceEventId : null);
   if (!matchId) return null;
 
-  return store.listTriggerMatches()
+  return (await store.listTriggerMatches())
     .find((candidate) => candidate.matchId === matchId) ?? null;
 }
 
-function definitionForMatch(store, match, delivery) {
+async function definitionForMatch(store, match, delivery) {
   if (!match && !delivery) return null;
   const triggerId = match?.triggerId ?? delivery?.triggerId;
   const triggerVersion = match?.triggerVersion ?? delivery?.triggerVersion;
-  return store.listTriggers().find((candidate) =>
+  return (await store.listTriggers()).find((candidate) =>
     candidate.triggerId === triggerId &&
     candidate.version === triggerVersion
   ) ?? null;
@@ -42,7 +42,7 @@ export class ActivationHydrator {
     this.store = store;
   }
 
-  hydrateWake(wakeIdInput) {
+  async hydrateWake(wakeIdInput) {
     const wakeId = String(wakeIdInput || '').trim();
     if (!wakeId) {
       const error = new Error('wakeId is required');
@@ -50,7 +50,7 @@ export class ActivationHydrator {
       throw error;
     }
 
-    const wake = this.store.latestWake(wakeId);
+    const wake = await this.store.latestWake(wakeId);
     if (!wake) {
       const error = new Error(`Unknown wake: ${wakeId}`);
       error.code = 'ACTIVATION_WAKE_NOT_FOUND';
@@ -59,9 +59,9 @@ export class ActivationHydrator {
 
     const delivery =
       typeof this.store.getWakeDelivery === 'function'
-        ? this.store.getWakeDelivery(wakeId)
+        ? await this.store.getWakeDelivery(wakeId)
         : null;
-    const match = latestMatchForWake(this.store, wake, delivery);
+    const match = await latestMatchForWake(this.store, wake, delivery);
     if (!match) {
       const error = new Error(
         `Wake ${wakeId} is not backed by a composite trigger match`,
@@ -70,7 +70,7 @@ export class ActivationHydrator {
       throw error;
     }
 
-    const definition = definitionForMatch(this.store, match, delivery);
+    const definition = await definitionForMatch(this.store, match, delivery);
     if (!definition?.target) {
       const error = new Error(
         `Trigger definition missing for wake ${wakeId}`,

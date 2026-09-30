@@ -60,7 +60,7 @@ export class CompositeEventConsumer {
     for (const result of results) {
       if (!result.matched || !result.match) continue;
 
-      const definition = this.store.listTriggers().find(
+      const definition = (await this.store.listTriggers()).find(
         (candidate) =>
           candidate.triggerId === result.match.triggerId &&
           candidate.version === result.match.triggerVersion,

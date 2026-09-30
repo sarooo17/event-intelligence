@@ -163,23 +163,24 @@ export class TriggerControlPlane {
     });
   }
 
-  listEventSources({ connectionIds } = {}) {
+  async listEventSources({ connectionIds } = {}) {
     return this.store.listEventSources({
       connectionIds,
       enabledOnly: true,
     });
   }
 
-  listTriggers({ owner: ownerInput } = {}) {
+  async listTriggers({ owner: ownerInput } = {}) {
     const owner = ownerInput ? actorIdentity(ownerInput) : null;
-    return this.store.listTriggers()
-      .map((definition) => ({
-        definition,
-        state: this.store.getTriggerState(
-          definition.triggerId,
-          definition.version,
-        ),
-      }))
+    const definitions = await this.store.listTriggers();
+    const entries = await Promise.all(definitions.map(async (definition) => ({
+      definition,
+      state: await this.store.getTriggerState(
+        definition.triggerId,
+        definition.version,
+      ),
+    })));
+    return entries
       .filter((entry) => !owner || samePrincipal(entry.state.owner, owner));
   }
 
@@ -236,9 +237,9 @@ export class TriggerControlPlane {
       throw error;
     }
 
-    this.assertSourcesAvailable(definition, allowedConnectionIds);
+    await this.assertSourcesAvailable(definition, allowedConnectionIds);
 
-    if (this.store.listTriggers().some((candidate) =>
+    if ((await this.store.listTriggers()).some((candidate) =>
       candidate.triggerId === definition.triggerId &&
       candidate.version === definition.version
     )) {
@@ -321,7 +322,7 @@ export class TriggerControlPlane {
       throw error;
     }
 
-    const current = this.store.listTriggers().find(
+    const current = (await this.store.listTriggers()).find(
       (candidate) =>
         candidate.triggerId === triggerId &&
         candidate.version === expectedVersion,
@@ -334,7 +335,7 @@ export class TriggerControlPlane {
       throw error;
     }
 
-    const currentState = this.store.getTriggerState(
+    const currentState = await this.store.getTriggerState(
       triggerId,
       expectedVersion,
     );
@@ -351,16 +352,19 @@ export class TriggerControlPlane {
       throw error;
     }
 
-    const competing = this.store.listTriggers()
-      .filter((candidate) => candidate.triggerId === triggerId)
-      .find((candidate) => {
-        if (candidate.version === expectedVersion) return false;
-        const state = this.store.getTriggerState(
-          candidate.triggerId,
-          candidate.version,
-        );
-        return state.status === 'active' || state.status === 'paused';
-      });
+    let competing = null;
+    for (const candidate of (await this.store.listTriggers())
+      .filter((item) => item.triggerId === triggerId)) {
+      if (candidate.version === expectedVersion) continue;
+      const state = await this.store.getTriggerState(
+        candidate.triggerId,
+        candidate.version,
+      );
+      if (state.status === 'active' || state.status === 'paused') {
+        competing = candidate;
+        break;
+      }
+    }
     if (competing) {
       const error = new Error(
         `Another trigger version is current: ${triggerId}@${competing.version}`,
@@ -380,7 +384,7 @@ export class TriggerControlPlane {
       error.code = 'TRIGGER_NEW_VERSION_REQUIRED';
       throw error;
     }
-    if (this.store.listTriggers().some((candidate) =>
+    if ((await this.store.listTriggers()).some((candidate) =>
       candidate.triggerId === triggerId &&
       candidate.version === definition.version
     )) {
@@ -395,7 +399,7 @@ export class TriggerControlPlane {
       ? [...new Set(connectionIds.map(String).filter(Boolean))]
       : currentState.connectionIds;
 
-    this.assertSourcesAvailable(definition, allowedConnectionIds);
+    await this.assertSourcesAvailable(definition, allowedConnectionIds);
 
     await this.retireMatches(
       triggerId,
@@ -486,7 +490,7 @@ export class TriggerControlPlane {
       throw error;
     }
 
-    const definition = this.store.listTriggers().find(
+    const definition = (await this.store.listTriggers()).find(
       (candidate) =>
         candidate.triggerId === triggerId &&
         candidate.version === version,
@@ -497,7 +501,7 @@ export class TriggerControlPlane {
       throw error;
     }
 
-    const currentState = this.store.getTriggerState(triggerId, version);
+    const currentState = await this.store.getTriggerState(triggerId, version);
     if (!samePrincipal(currentState.owner, owner)) {
       const error = new Error('Trigger owner mismatch');
       error.code = 'TRIGGER_OWNER_MISMATCH';
@@ -606,7 +610,7 @@ export class TriggerControlPlane {
       throw error;
     }
 
-    const definition = this.store.listTriggers().find(
+    const definition = (await this.store.listTriggers()).find(
       (candidate) =>
         candidate.triggerId === triggerId &&
         candidate.version === version,
@@ -617,7 +621,7 @@ export class TriggerControlPlane {
       throw error;
     }
 
-    const currentState = this.store.getTriggerState(triggerId, version);
+    const currentState = await this.store.getTriggerState(triggerId, version);
     if (!samePrincipal(currentState.owner, owner)) {
       const error = new Error('Trigger owner mismatch');
       error.code = 'TRIGGER_OWNER_MISMATCH';
@@ -673,7 +677,7 @@ export class TriggerControlPlane {
     };
   }
 
-  assertSourcesAvailable(definition, connectionIds) {
+  async assertSourcesAvailable(definition, connectionIds) {
     const allowedConnectionIds = Array.isArray(connectionIds)
       ? [...new Set(connectionIds.map(String).filter(Boolean))]
       : [];
@@ -685,7 +689,7 @@ export class TriggerControlPlane {
       throw error;
     }
 
-    const sources = this.listEventSources({
+    const sources = await this.listEventSources({
       connectionIds: allowedConnectionIds,
     });
 
@@ -869,7 +873,7 @@ export class TriggerControlPlane {
     return allowedConnectionIds;
   }
 
-  buildDerivedOutputPayloadSchema(definition) {
+  async buildDerivedOutputPayloadSchema(definition) {
     if (!definition.derivedEvent) return null;
 
     const properties = {
@@ -899,7 +903,7 @@ export class TriggerControlPlane {
       properties[key] = scalarSchemaForConstant(value);
     }
 
-    const allSources = this.store.listEventSources();
+    const allSources = await this.store.listEventSources();
     const sourceSchemaForRefPath = (ref, fieldPath) => {
       const clause = definition.clauses.find(
         (candidate) => candidate.id === ref,
@@ -992,7 +996,7 @@ export class TriggerControlPlane {
 
   async assertDerivedOutputContract(definition) {
     if (!definition.derivedEvent) return null;
-    const payloadSchema = this.buildDerivedOutputPayloadSchema(definition);
+    const payloadSchema = await this.buildDerivedOutputPayloadSchema(definition);
     try {
       return await this.contractRegistry.assertCompatible({
         eventName: definition.derivedEvent.name,
@@ -1023,7 +1027,7 @@ export class TriggerControlPlane {
     if (!definition.derivedEvent) return null;
 
     const contractVersion = String(definition.derivedEvent.contractVersion);
-    const payloadSchema = this.buildDerivedOutputPayloadSchema(definition);
+    const payloadSchema = await this.buildDerivedOutputPayloadSchema(definition);
 
     const contract = await this.contractRegistry.registerProducer({
       eventName: definition.derivedEvent.name,
@@ -1066,7 +1070,7 @@ export class TriggerControlPlane {
 
   async retireMatches(triggerId, version, reason) {
     const now = this.now().toISOString();
-    const matches = this.store.listTriggerMatches(triggerId)
+    const matches = (await this.store.listTriggerMatches(triggerId))
       .filter((record) =>
         record.triggerVersion === version &&
         (record.status === 'partial' || record.status === 'matched')
@@ -1078,10 +1082,12 @@ export class TriggerControlPlane {
         status: 'expired',
         updatedAt: now,
       });
-      for (const deadline of this.store.listTemporalDeadlines?.({
-        matchId: record.matchId,
-        status: 'pending',
-      }) ?? []) {
+      for (const deadline of this.store.listTemporalDeadlines
+        ? await this.store.listTemporalDeadlines({
+          matchId: record.matchId,
+          status: 'pending',
+        })
+        : []) {
         await this.store.setTemporalDeadlineStatus?.(
           deadline.deadlineId,
           'cancelled',
@@ -1106,7 +1112,7 @@ export class TriggerControlPlane {
     await this.store.appendAudit({
       auditId: await stableId(
         'audit',
-        `${kind}:${entityType}:${entityId}:${timestamp}:${this.store.auditLength()}`,
+        `${kind}:${entityType}:${entityId}:${timestamp}:${await this.store.auditLength()}`,
       ),
       traceId,
       timestamp,

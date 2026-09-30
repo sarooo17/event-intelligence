@@ -115,9 +115,9 @@ test('derived events compose triggers end-to-end without intermediate runtime wa
       owner: user,
     });
 
-    const releaseSource = control.listEventSources({
+    const releaseSource = (await control.listEventSources({
       connectionIds: [DERIVED_EVENT_CONNECTION_ID],
-    }).find((candidate) => candidate.eventName === 'release.ready');
+    })).find((candidate) => candidate.eventName === 'release.ready');
     assert.ok(releaseSource);
     assert.equal(releaseSource.serverId, DERIVED_EVENT_SERVER_ID);
     assert.equal(

@@ -72,8 +72,8 @@ import {
 
 The harness verifies state round-trip, wake-claim exclusion, partition-lease exclusion when supported, compaction when supported, and shared-capability declarations.
 
-## Why there is no fake Postgres adapter yet
+## Async authoritative reads and the Postgres boundary
 
-The current runtime still exposes several synchronous materialized reads such as `listTriggers()`, `getTriggerState()`, and `listTriggerMatches()`. A real multi-process Postgres backend must not hide network/database reads behind stale process-local caches while claiming strong shared state.
+Runtime consumers now accept Promise-backed authoritative reads such as `listTriggers()`, `getTriggerState()`, `listTriggerMatches()`, event-source reads and wake-state reads. The bundled JSONL store remains compatible because synchronous values can still be awaited.
 
-The next storage milestone is therefore an async read-contract migration followed by a transactional Postgres adapter. Until that lands, shared-store mode intentionally fails closed rather than overstating HA guarantees.
+This removes the need for a production adapter to fake synchronous database access through stale process-local caches. The next storage milestone is a transactional Postgres adapter with distributed-atomic wake claims and partition leases, followed by multi-worker chaos validation. Until a backend satisfies those capabilities, shared-store mode intentionally fails closed rather than overstating HA guarantees.

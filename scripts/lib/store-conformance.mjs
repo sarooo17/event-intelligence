@@ -55,7 +55,7 @@ export async function runStoreConformance({
       { type: 'system', principal_id: 'conformance' },
     );
     assert.equal(
-      store.getTriggerState('store-conf-trigger', '1').status,
+      (await store.getTriggerState('store-conf-trigger', '1')).status,
       'paused',
     );
   });
