@@ -70,7 +70,7 @@ function triggerDefinition() {
       serverId: 'shared-erp',
       where: [],
     }],
-    expression: { kind: 'anyOf', refs: ['invoice'] },
+    pattern: { root: { kind: 'event', ref: 'invoice' } },
     withinMs: 60000,
     lifecycle: { oneShot: true },
     target: {
