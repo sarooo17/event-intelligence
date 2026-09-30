@@ -62,6 +62,13 @@ const evaluator = process.env.TYPESAFE_API_KEY
   ? TypeSafeJevEvaluator.fromEnvironment(process.env)
   : null;
 
+const deliveryOptions = {
+  leaseMs: Number(process.env.WAKE_DELIVERY_LEASE_MS ?? 30000),
+  maxAttempts: Number(process.env.WAKE_DELIVERY_MAX_ATTEMPTS ?? 5),
+  retryBaseDelayMs: Number(process.env.WAKE_RETRY_BASE_DELAY_MS ?? 1000),
+  retryMaxDelayMs: Number(process.env.WAKE_RETRY_MAX_DELAY_MS ?? 60000),
+};
+
 const compositeTriggers = new CompositeTriggerEngine(store, evaluator);
 const runtimeWakeTargets = readRuntimeWakeTargets(
   process.env.RUNTIME_WAKE_TARGETS_JSON,
