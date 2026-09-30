@@ -63,12 +63,7 @@ export {
 
 export {
   RuntimeTargetSchema,
-  EventSourceSchema,
-  EventLineageSchema,
   McpEventOccurrenceSchema,
-  SemanticConditionWireSchema,
-  EventIngestRequestSchema,
-  SemanticDecisionRecordSchema,
   WakeRecordSchema,
   LifecycleStateSchema,
   AuditKindSchema,
@@ -83,10 +78,6 @@ export {
 export type {
   RuntimeTarget,
   McpEventOccurrence,
-  SemanticConditionWire,
-  EventIngestRequest,
-  EventLineage,
-  SemanticDecisionRecord,
   WakeRecord,
   LifecycleState,
   AuditRecord,
@@ -110,20 +101,6 @@ export {
 export type {
   AppendAuditInput,
 } from './audit.js';
-
-export {
-  mapMcpEventToLineage,
-} from './mapper.js';
-
-export type {
-  MapMcpEventInput,
-} from './mapper.js';
-
-export {
-  assertDecisionLineage,
-  assertWakeLineage,
-} from './invariants.js';
-
 
 export {
   COMPOSITE_TRIGGER_PROTOCOL_VERSION,
