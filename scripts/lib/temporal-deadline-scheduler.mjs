@@ -19,14 +19,14 @@ export class TemporalDeadlineScheduler {
 
     try {
       const now = this.now();
-      const due = this.store.listDueTemporalDeadlines(now.toISOString());
+      const due = await this.store.listDueTemporalDeadlines(now.toISOString());
       const outcomes = [];
 
       for (const deadline of due) {
-        const latest = this.store.getTemporalDeadline(deadline.deadlineId);
+        const latest = await this.store.getTemporalDeadline(deadline.deadlineId);
         if (!latest || latest.status !== 'pending') continue;
 
-        const match = this.store.listTriggerMatches(deadline.triggerId)
+        const match = (await this.store.listTriggerMatches(deadline.triggerId))
           .filter((record) => record.matchId === deadline.matchId)
           .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))[0];
 
