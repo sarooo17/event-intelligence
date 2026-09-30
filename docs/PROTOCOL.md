@@ -114,3 +114,14 @@ The implementation claims effectively-once activation only for the validated ref
 - the bundled JSONL persistence backend is single-process reference infrastructure, not HA storage;
 
 Executable schemas and invariants live under `src/intelligenceProtocol/`; end-to-end behavior is verified by the test suite.
+
+
+### Pattern AST v2 consumption semantics
+
+Pattern v2 separates sequence contiguity from repeat-internal contiguity. Sequence supports `next`, `followedBy` and `followedByAny`; repeat supports `consecutive`, `relaxed` and `combinations`.
+
+Match selection prefers the earliest start row, preserving evaluator greedy/lazy preference for candidates with the same start. `skipToFirst` and `skipToLast` require an explicit pattern ref and advance relative to that binding.
+
+Bounded negative/debounce patterns finalize only after their semantic deadline plus `eventTime.allowedLatenessMs`. Events arriving beyond that bound do not retroactively retract an emitted match.
+
+`rate` is evaluated in event-time only and is independent from processing-time/restart delay.
