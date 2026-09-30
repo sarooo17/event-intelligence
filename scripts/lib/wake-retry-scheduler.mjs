@@ -2,13 +2,11 @@ export class WakeRetryScheduler {
   constructor({
     store,
     resolveCoordinator,
-    eventProcessor = null,
     intervalMs = 1000,
     now = () => new Date(),
   }) {
     this.store = store;
     this.resolveCoordinator = resolveCoordinator;
-    this.eventProcessor = eventProcessor;
     this.intervalMs = Math.max(100, Number(intervalMs) || 1000);
     this.now = now;
     this.timer = null;
@@ -23,21 +21,6 @@ export class WakeRetryScheduler {
       const outcomes = [];
 
       for (const delivery of due) {
-        if (delivery.sourceType === 'event') {
-          if (!this.eventProcessor || typeof this.eventProcessor.retryWake !== 'function') {
-            outcomes.push({
-              wakeId: delivery.wakeId,
-              status: 'event_processor_unconfigured',
-            });
-            continue;
-          }
-          const result = await this.eventProcessor.retryWake(delivery.wakeId);
-          outcomes.push({
-            wakeId: delivery.wakeId,
-            status: result.status,
-          });
-          continue;
-        }
 
         const coordinator = this.resolveCoordinator(delivery.runtime);
         if (!coordinator) {
