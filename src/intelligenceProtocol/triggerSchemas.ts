@@ -4,6 +4,7 @@ import {
   PatternAstV2DefinitionSchema,
   PatternMeasureSchema,
   collectPatternDurationsMs,
+  collectGuaranteedPatternBindings,
   collectPatternMeasureRefs,
   collectPatternRefs,
 } from './patternV2Schemas.js';
@@ -438,15 +439,32 @@ export const CompositeTriggerDefinitionSchema = z.object({
       }
     }
 
+    const guaranteedPatternRefs =
+      collectGuaranteedPatternBindings(value.patternV2.root);
+
     if (
       typeof value.patternV2.selection.afterMatch === 'object' &&
-      !patternRefs.includes(value.patternV2.selection.afterMatch.ref)
+      !guaranteedPatternRefs.includes(
+        value.patternV2.selection.afterMatch.ref,
+      )
     ) {
       ctx.addIssue({
         code: 'custom',
         message:
-          `Pattern afterMatch references unknown pattern ref: ${value.patternV2.selection.afterMatch.ref}`,
+          `Pattern afterMatch ref is not guaranteed by every match: ${value.patternV2.selection.afterMatch.ref}`,
       });
+    }
+
+    for (const measure of value.derivedEvent?.measures ?? []) {
+      for (const ref of collectPatternMeasureRefs(measure)) {
+        if (!guaranteedPatternRefs.includes(ref)) {
+          ctx.addIssue({
+            code: 'custom',
+            message:
+              `Derived measure ${measure.key} references non-guaranteed pattern ref: ${ref}`,
+          });
+        }
+      }
     }
 
     const oversized = collectPatternDurationsMs(value.patternV2.root)
