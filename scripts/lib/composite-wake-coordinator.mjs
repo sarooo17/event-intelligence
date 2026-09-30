@@ -64,7 +64,7 @@ export class CompositeWakeCoordinator {
   }
 
   async deliveredResult({ match, wakeId, definition, delivery }) {
-    const existing = this.store.latestWake(wakeId);
+    const existing = await this.store.latestWake(wakeId);
     let delivered = existing;
     if (
       !delivered ||
@@ -85,7 +85,7 @@ export class CompositeWakeCoordinator {
       await this.store.appendAudit({
         auditId: await stableId(
           'audit',
-          `${wakeId}:delivered-recovered:${this.store.auditLength()}`,
+          `${wakeId}:delivered-recovered:${await this.store.auditLength()}`,
         ),
         traceId: delivered.traceId,
         timestamp: this.now().toISOString(),
@@ -120,7 +120,7 @@ export class CompositeWakeCoordinator {
 
     if (match.status === 'fired') {
       const existing = match.firedWakeId
-        ? this.store.latestWake(match.firedWakeId)
+        ? await this.store.latestWake(match.firedWakeId)
         : null;
       return {
         status: 'already_fired',
@@ -128,7 +128,7 @@ export class CompositeWakeCoordinator {
       };
     }
 
-    const definition = this.store.listTriggers().find(
+    const definition = (await this.store.listTriggers()).find(
       (candidate) =>
         candidate.triggerId === match.triggerId &&
         candidate.version === match.triggerVersion,
@@ -148,7 +148,7 @@ export class CompositeWakeCoordinator {
       `composite:${match.matchId}:${definition.target.runtime}:${definition.target.id}`,
     );
 
-    const existingWake = this.store.latestWake(wakeId);
+    const existingWake = await this.store.latestWake(wakeId);
     if (existingWake?.status === 'handled' || existingWake?.status === 'delivered') {
       if (match.status !== 'fired') {
         await this.triggerEngine.markFired(match.matchId, wakeId);
@@ -179,7 +179,7 @@ export class CompositeWakeCoordinator {
         await this.store.appendAudit({
           auditId: await stableId(
             'audit',
-            `${wakeId}:queued:${this.store.auditLength()}`,
+            `${wakeId}:queued:${await this.store.auditLength()}`,
           ),
           traceId: queued.traceId,
           timestamp: this.now().toISOString(),
@@ -196,7 +196,7 @@ export class CompositeWakeCoordinator {
       }
       return {
         status: 'wake_queued',
-        wake: this.store.latestWake(wakeId) ?? queued,
+        wake: await this.store.latestWake(wakeId) ?? queued,
       };
     }
 
@@ -210,7 +210,7 @@ export class CompositeWakeCoordinator {
       now: nowIso,
     });
 
-    const currentDelivery = this.store.getWakeDelivery(wakeId);
+    const currentDelivery = await this.store.getWakeDelivery(wakeId);
     if (currentDelivery?.status === 'delivered') {
       return this.deliveredResult({
         match,
@@ -240,25 +240,25 @@ export class CompositeWakeCoordinator {
     });
 
     if (!claim) {
-      const delivery = this.store.getWakeDelivery(wakeId);
+      const delivery = await this.store.getWakeDelivery(wakeId);
       return {
         status:
           delivery?.status === 'claimed'
             ? 'delivery_in_progress'
             : 'retry_scheduled',
-        wake: this.store.latestWake(wakeId) ?? queued,
+        wake: await this.store.latestWake(wakeId) ?? queued,
         delivery,
       };
     }
 
-    let persistedQueued = this.store.latestWake(wakeId);
+    let persistedQueued = await this.store.latestWake(wakeId);
     if (!persistedQueued) {
       await this.store.appendWake(queued);
       persistedQueued = queued;
       await this.store.appendAudit({
         auditId: await stableId(
           'audit',
-          `${wakeId}:queued:${this.store.auditLength()}`,
+          `${wakeId}:queued:${await this.store.auditLength()}`,
         ),
         traceId: queued.traceId,
         timestamp: this.now().toISOString(),
@@ -305,7 +305,7 @@ export class CompositeWakeCoordinator {
       await this.store.appendAudit({
         auditId: await stableId(
           'audit',
-          `${wakeId}:delivered:${this.store.auditLength()}`,
+          `${wakeId}:delivered:${await this.store.auditLength()}`,
         ),
         traceId: delivered.traceId,
         timestamp: this.now().toISOString(),
@@ -350,7 +350,7 @@ export class CompositeWakeCoordinator {
         await this.store.appendAudit({
           auditId: await stableId(
             'audit',
-            `${wakeId}:retry:${delivery?.attemptCount ?? claim.attemptCount}:${this.store.auditLength()}`,
+            `${wakeId}:retry:${delivery?.attemptCount ?? claim.attemptCount}:${await this.store.auditLength()}`,
           ),
           traceId: queued.traceId,
           timestamp: this.now().toISOString(),
@@ -382,7 +382,7 @@ export class CompositeWakeCoordinator {
       await this.store.appendAudit({
         auditId: await stableId(
           'audit',
-          `${wakeId}:dead-letter:${this.store.auditLength()}`,
+          `${wakeId}:dead-letter:${await this.store.auditLength()}`,
         ),
         traceId: deadLetter.traceId,
         timestamp: this.now().toISOString(),
