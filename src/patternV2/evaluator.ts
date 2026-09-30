@@ -40,10 +40,20 @@ export interface PatternV2SemanticTrace {
   decision: SemanticDecision;
 }
 
+export interface PatternV2SemanticCache {
+  get(key: string): Promise<SemanticDecision | null> | SemanticDecision | null;
+  set(
+    key: string,
+    decision: SemanticDecision,
+  ): Promise<void> | void;
+}
+
 export interface PatternV2Evaluation {
   matches: PatternV2Candidate[];
   pending: PatternV2Candidate[];
   semanticEvaluations: number;
+  semanticCacheHits: number;
+  semanticCacheMisses: number;
   semanticTrace: PatternV2SemanticTrace[];
   truncated: boolean;
 }
@@ -55,8 +65,12 @@ interface EvaluationContext {
   maxCandidates: number;
   maxSemanticEvaluations: number;
   semanticEvaluations: number;
+  semanticCacheHits: number;
+  semanticCacheMisses: number;
   truncated: boolean;
   semanticCache: Map<string, SemanticDecision>;
+  durableSemanticCache: PatternV2SemanticCache | null;
+  semanticCacheNamespace: string;
   semanticTrace: PatternV2SemanticTrace[];
   allowedLatenessMs: number;
 }
@@ -74,6 +88,42 @@ function stableValue(value: unknown): unknown {
     );
   }
   return value;
+}
+
+function durableSemanticCacheKey(
+  context: EvaluationContext,
+  node: Extract<PatternNodeV2, { kind: 'semantic' }>,
+  candidate: PatternV2Candidate,
+): string | null {
+  const evaluatorIdentity = String(
+    context.evaluator?.cacheIdentity ?? '',
+  ).trim();
+  if (!evaluatorIdentity || !context.semanticCacheNamespace) {
+    return null;
+  }
+
+  const payload = stableValue({
+    schema: 'pattern-v2-semantic-cache.v1',
+    namespace: context.semanticCacheNamespace,
+    evaluator: evaluatorIdentity,
+    node: {
+      id: node.id,
+      refs: node.refs,
+      instruction: node.instruction,
+      input: node.input,
+      matchThreshold: node.matchThreshold,
+      rejectThreshold: node.rejectThreshold,
+      uncertain: node.uncertain,
+    },
+    candidate: candidate.events.map((event) => ({
+      clauseId: event.clauseId,
+      serverId: event.serverId ?? null,
+      sourceEventId: event.sourceEventId,
+      subscriptionArguments: event.subscriptionArguments ?? {},
+    })),
+  });
+
+  return JSON.stringify(payload);
 }
 
 function eventIdentity(event: TriggerSourceEvent): string {
@@ -1169,13 +1219,40 @@ async function evaluateNode(
       break;
     }
 
-    const cacheKey = [
+    const localCacheKey = [
       node.id,
       candidateSignature(candidate),
       node.instruction,
+      JSON.stringify(node.input),
+      node.matchThreshold,
+      node.rejectThreshold,
+      node.uncertain,
     ].join(':');
-    let decision = context.semanticCache.get(cacheKey);
+    const durableCacheKey = node.execution.cache
+      ? durableSemanticCacheKey(context, node, candidate)
+      : null;
+
+    let decision = context.semanticCache.get(localCacheKey);
+    if (decision) {
+      context.semanticCacheHits += 1;
+    }
+
+    if (
+      !decision &&
+      durableCacheKey &&
+      context.durableSemanticCache
+    ) {
+      decision =
+        await context.durableSemanticCache.get(durableCacheKey) ??
+        undefined;
+      if (decision) {
+        context.semanticCacheHits += 1;
+        context.semanticCache.set(localCacheKey, decision);
+      }
+    }
+
     if (!decision) {
+      context.semanticCacheMisses += 1;
       context.semanticEvaluations += 1;
       decision = await withTimeout(
         new SemanticConditionEngine(
@@ -1195,7 +1272,16 @@ async function evaluateNode(
         `Semantic node ${node.id}`,
       );
       if (node.execution.cache) {
-        context.semanticCache.set(cacheKey, decision);
+        context.semanticCache.set(localCacheKey, decision);
+        if (
+          durableCacheKey &&
+          context.durableSemanticCache
+        ) {
+          await context.durableSemanticCache.set(
+            durableCacheKey,
+            decision,
+          );
+        }
       }
     }
 
@@ -1241,12 +1327,16 @@ export async function evaluatePatternV2({
   evaluator = null,
   now = new Date(),
   allowedLatenessMs = 0,
+  semanticCache = null,
+  semanticCacheNamespace = '',
 }: {
   definition: PatternAstV2Definition;
   events: TriggerSourceEvent[];
   evaluator?: SemanticEvaluator | null;
   now?: Date;
   allowedLatenessMs?: number;
+  semanticCache?: PatternV2SemanticCache | null;
+  semanticCacheNamespace?: string;
 }): Promise<PatternV2Evaluation> {
   const ordered = [...events].sort(eventOrder);
   const context: EvaluationContext = {
@@ -1256,8 +1346,12 @@ export async function evaluatePatternV2({
     maxCandidates: definition.execution.maxCandidates,
     maxSemanticEvaluations: definition.execution.maxSemanticEvaluations,
     semanticEvaluations: 0,
+    semanticCacheHits: 0,
+    semanticCacheMisses: 0,
     truncated: false,
     semanticCache: new Map(),
+    durableSemanticCache: semanticCache,
+    semanticCacheNamespace,
     semanticTrace: [],
     allowedLatenessMs,
   };
@@ -1281,6 +1375,8 @@ export async function evaluatePatternV2({
     matches,
     pending,
     semanticEvaluations: context.semanticEvaluations,
+    semanticCacheHits: context.semanticCacheHits,
+    semanticCacheMisses: context.semanticCacheMisses,
     semanticTrace: context.semanticTrace,
     truncated: context.truncated,
   };
