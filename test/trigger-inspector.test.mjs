@@ -62,7 +62,7 @@ test('inspector explains the exact missing clause without exposing raw event dat
       store,
       now: () => new Date('2026-09-18T12:01:00.000Z'),
     });
-    const view = inspector.inspect({
+    const view = await inspector.inspect({
       triggerId: 'release-check',
       version: '1',
     });
@@ -124,7 +124,7 @@ test('inspector exposes absence deadline, remaining state and next evaluation', 
       ),
     );
 
-    const view = new TriggerInspector({
+    const view = await new TriggerInspector({
       store,
       now: () => new Date('2026-09-18T17:30:00.000Z'),
     }).inspect({
@@ -180,7 +180,7 @@ test('inspector traces a fired trigger to refs and runtime receipt', async () =>
     });
     await coordinator.deliverMatched(result[0].match);
 
-    const view = new TriggerInspector({ store, now }).inspect({
+    const view = await new TriggerInspector({ store, now }).inspect({
       triggerId: 'fired-proof',
       version: '1',
     });
