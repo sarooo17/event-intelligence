@@ -48,7 +48,7 @@ function producer({
       serverId: 'inputs',
       where: [],
     }],
-    expression: { kind: 'anyOf', refs: ['input'] },
+    pattern: { root: { kind: 'event', ref: 'input' } },
     withinMs: 3600000,
     derivedEvent: {
       name: 'release.ready',
@@ -75,7 +75,7 @@ function consumer({
       ...(contractVersion ? { contractVersion } : {}),
       where: [],
     }],
-    expression: { kind: 'anyOf', refs: ['release'] },
+    pattern: { root: { kind: 'event', ref: 'release' } },
     withinMs: 3600000,
     target: {
       runtime: 'unconfigured-test-runtime',
@@ -170,18 +170,18 @@ test('contract registry accepts compatible producers, rejects incompatible same-
       .filter((record) => record.kind === 'derived_contract.conflict');
     assert.equal(conflictAudit.length, 1);
 
-    // With one contract version, a legacy unversioned consumer resolves to @1
+    // With one contract version, a unversioned consumer resolves to @1
     await control.createTrigger({
       definition: consumer({
-        triggerId: 'legacy-consumer',
+        triggerId: 'unversioned-consumer',
       }),
       connectionIds: [DERIVED_EVENT_CONNECTION_ID],
       actor,
       owner: actor,
     });
-    const storedLegacy = store.listTriggers()
-      .find((definition) => definition.triggerId === 'legacy-consumer');
-    assert.equal(storedLegacy.clauses[0].contractVersion, '1');
+    const storedUnversioned = store.listTriggers()
+      .find((definition) => definition.triggerId === 'unversioned-consumer');
+    assert.equal(storedUnversioned.clauses[0].contractVersion, '1');
 
     await control.createTrigger({
       definition: producer({
