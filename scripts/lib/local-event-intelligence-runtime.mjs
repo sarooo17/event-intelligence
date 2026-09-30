@@ -27,6 +27,10 @@ import {
   normalizeEventScopeId,
 } from './persistent-event-store.mjs';
 import {
+  assertSharedStoreCapabilities,
+  describeStoreCapabilities,
+} from './store-capabilities.mjs';
+import {
   TriggerInspector,
 } from './trigger-inspector.mjs';
 import {
@@ -114,6 +118,10 @@ export async function createLocalEventIntelligenceRuntime({
   const dataDir = env.DATA_DIR ?? './data';
   const rootStore = providedStore ?? new PersistentEventStore(dataDir);
   const restored = await initializeStore(rootStore);
+  const storeCapabilities = describeStoreCapabilities(rootStore);
+  if (env.EVENT_INTELLIGENCE_REQUIRE_SHARED_STORE === 'true') {
+    assertSharedStoreCapabilities(rootStore);
+  }
 
   const evaluator =
     semanticEvaluator !== undefined
@@ -330,6 +338,7 @@ export async function createLocalEventIntelligenceRuntime({
 
   return {
     restored,
+    storeCapabilities,
     store: defaultContext.store,
     evaluator,
     triggerEngine: defaultContext.triggerEngine,
