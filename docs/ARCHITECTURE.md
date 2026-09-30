@@ -234,3 +234,17 @@ See [SECURITY-MODEL.md](SECURITY-MODEL.md).
 Pattern AST v2 is bounded at two different layers: `maxCandidates` limits candidate/NFA expansion, while `maxBufferedEvents` places a hard bound on raw events retained in a single trigger partition. Exceeding the raw buffer bound fails closed with `PATTERN_V2_BUFFER_LIMIT_EXCEEDED` and an audit record rather than silently dropping potentially relevant events.
 
 When one incoming event can produce multiple matches, effect-producing triggers also honor lifecycle capacity within that same ingest. `oneShot`, `completeOnGoal`, remaining `maxFirings`, and non-zero `cooldownMs` constrain how many matches may be released to wake/derived-effect delivery before lifecycle state is updated.
+
+
+## Durable semantic decision cache
+
+Pattern AST v2 semantic nodes use two cache layers:
+
+1. an evaluation-pass cache that removes duplicate semantic calls inside one evaluator pass;
+2. an optional durable, scope-local cache supplied by the Event Intelligence store.
+
+Durable reuse is deliberately fail-safe. It is enabled only when the configured `SemanticEvaluator` exposes a stable `cacheIdentity`. The durable key fingerprints the trigger/version namespace, evaluator identity, semantic-node policy and immutable candidate event identities. Changing a trigger revision, model/evaluator identity, semantic instruction, selected inputs or thresholds therefore produces a cache miss rather than reusing an incompatible decision.
+
+The bundled `TypeSafeJevEvaluator` exposes an identity derived from its endpoint and requested model. `PersistentEventStore` persists both matching and rejecting semantic decisions in the tenant/scoped data directory so restarts do not repeat identical semantic work.
+
+Evaluators without a stable identity remain eligible only for evaluation-pass caching.
