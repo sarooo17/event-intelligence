@@ -3,9 +3,6 @@ import {
   sha256Hex,
 } from '../../dist/src/intelligenceProtocol/index.js';
 import {
-  evaluateTemporalConditions,
-} from '../../dist/src/composite/temporal.js';
-import {
   evaluatePatternMeasure,
 } from '../../dist/src/patternV2/evaluator.js';
 
@@ -92,22 +89,14 @@ function patternCandidateForMatch(match) {
   };
 }
 
-function derivedOccurredAt(match, definition) {
+function derivedOccurredAt(match) {
+  if (match.patternState?.completedAt) {
+    return match.patternState.completedAt;
+  }
+
   const candidates = match.sourceEvents
     .map((event) => Date.parse(event.occurredAt))
     .filter(Number.isFinite);
-
-  const temporal = evaluateTemporalConditions(
-    definition,
-    match,
-    new Date(match.updatedAt),
-  );
-  for (const state of temporal.conditionStates) {
-    if (state.status !== 'satisfied' || !state.dueAt) continue;
-    const dueAt = Date.parse(state.dueAt);
-    if (Number.isFinite(dueAt)) candidates.push(dueAt);
-  }
-
   if (!candidates.length) return match.updatedAt;
   return new Date(Math.max(...candidates)).toISOString();
 }
@@ -249,7 +238,7 @@ export class DerivedEventCoordinator {
       traceId: `derived:${eventId}`,
       sourceEventId: eventId,
       name: spec.name,
-      occurredAt: derivedOccurredAt(match, definition),
+      occurredAt: derivedOccurredAt(match),
       receivedAt: this.now().toISOString(),
       provider: 'event-intelligence',
       serverId: DERIVED_EVENT_SERVER_ID,
