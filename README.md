@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/sarooo17/event-intelligence/actions/workflows/ci.yml/badge.svg)](https://github.com/sarooo17/event-intelligence/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/mcp-event-intelligence.svg)](https://www.npmjs.com/package/mcp-event-intelligence)
-[![MCP Registry](https://img.shields.io/badge/MCP%20Registry-v0.4.0-5b5bd6)](https://registry.modelcontextprotocol.io/?q=io.github.sarooo17%2Fevent-intelligence)
+[![MCP Registry](https://img.shields.io/badge/MCP%20Registry-v0.5.0-5b5bd6)](https://registry.modelcontextprotocol.io/?q=io.github.sarooo17%2Fevent-intelligence)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 MCP Event Intelligence is an experimental event runtime for agents that need to react to **future conditions over multiple event sources** without keeping an LLM or agent loop alive.
@@ -446,13 +446,13 @@ The standalone service supports manual/provider-native event ingress. It does no
 ### Docker
 
 ```bash
-docker build -t mcp-event-intelligence:0.4.0 .
+docker build -t mcp-event-intelligence:0.5.0 .
 
 docker run --rm \
   -p 3000:3000 \
   -v mcp-event-intelligence-data:/data \
   -e SERVICE_AUTH_TOKEN="$(openssl rand -hex 32)" \
-  mcp-event-intelligence:0.4.0
+  mcp-event-intelligence:0.5.0
 ```
 
 ## Optional MCP control plane
@@ -545,7 +545,7 @@ io.github.sarooo17/event-intelligence
 
 ## Project status
 
-**v0.4.x reference implementation / experimental.**
+**v0.5.x reference implementation / experimental.**
 
 The architecture is implemented and exercised end-to-end. Storage is now injectable and scoped, while the bundled JSONL backend remains a single-process reference implementation. Remaining work is primarily production database adapters/HA validation, scale benchmarks and upstream feedback.
 
