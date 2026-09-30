@@ -1,15 +1,45 @@
 # Changelog
 
-## Unreleased
+## [0.6.0] - 2026-09-30
 
-### Production/runtime hardening
+Breaking architecture cleanup: Pattern AST is now the single trigger model.
 
-- add a reproducible Pattern AST v2 conformance and benchmark evidence harness;
-- define explicit shared-store capabilities and fail closed when a backend cannot guarantee strong shared state, distributed wake claims and partition leases;
-- add durable semantic-decision caching with evaluator/model, trigger revision and candidate-event identity isolation;
-- make authoritative runtime/store reads Promise-compatible so production database adapters do not require stale process-local caches;
-- align embedded host, MCP control-plane, trigger inspector and documentation surfaces with async authoritative reads;
-- keep the bundled JSONL store explicitly single-process while preserving compatibility with synchronous custom stores.
+### Single canonical execution model
+
+- remove the pre-Pattern `expression + temporal + correlation` trigger representation;
+- remove `semanticCorrelation` and route semantic reasoning exclusively through explicit Pattern `semantic` nodes;
+- remove the legacy compiler and the parallel legacy execution path;
+- remove the direct single-event `EventProcessor`/semantic-condition wake path;
+- make persisted triggers `clauses + pattern + lifecycle/effect`;
+- make `TriggerPlanInput.pattern` the only advanced authoring surface, with simple plans deterministically compiling to Pattern automatically;
+- expose Pattern directly through activation and inspection surfaces.
+
+### Protocol and runtime
+
+- bump internal Event Intelligence protocol/schema to `0.2.0` / `ei.v0.2`;
+- bump composite trigger schema to `trigger.v0.2`;
+- Activation Envelope v2 carries canonical Pattern and partition state;
+- rename match correlation state to partition state where it represents Pattern partition identity;
+- keep Pattern wire grammar `version: "2"` as a schema version, not a second runtime architecture.
+
+### Production hardening
+
+- add reproducible Pattern conformance and benchmark evidence;
+- define explicit shared-store capabilities and fail closed when a backend cannot guarantee required distributed semantics;
+- add durable semantic-decision caching tied to evaluator identity, trigger revision and immutable candidate-event identity;
+- make authoritative runtime/store reads Promise-compatible for real database adapters;
+- align embedded host, MCP control-plane and inspector surfaces with async authoritative reads;
+- keep the bundled JSONL store explicitly single-process and reference-grade.
+
+### Documentation and release surface
+
+- rewrite README, Quickstart, Architecture and Protocol around the single Pattern runtime;
+- remove current documentation claims of legacy trigger compatibility;
+- align CLI, npm package metadata and MCP Registry metadata on v0.6.0.
+
+### Breaking change
+
+Persisted pre-v0.6 trigger definitions are intentionally not accepted by the v0.6 runtime. Historical release notes remain unchanged as history; runtime compatibility code does not.
 
 ## [0.5.0] - 2026-09-30
 
