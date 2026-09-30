@@ -1,4 +1,4 @@
-export const TRIGGER_LANGUAGE_VERSION = '2' as const;
+export const TRIGGER_LANGUAGE_VERSION = '3' as const;
 
 export const PREDICATE_OPERATOR = {
   EQ: 'eq',
@@ -17,26 +17,6 @@ export const PREDICATE_OPERATOR = {
   GTE: 'gte',
   LT: 'lt',
   LTE: 'lte',
-} as const;
-
-export const COMPOSITION_OPERATOR = {
-  ALL: 'all',
-  ANY: 'any',
-  SEQUENCE: 'sequence',
-  COUNT: 'count',
-} as const;
-
-export const TEMPORAL_OPERATOR = {
-  CALENDAR: 'calendar',
-  ABSENCE: 'absence',
-  NOT: 'not',
-  UNLESS: 'unless',
-  AFTER: 'after',
-  UNTIL: 'until',
-  DEBOUNCE: 'debounce',
-  THRESHOLD: 'threshold',
-  RATE: 'rate',
-  DISTINCT: 'distinct',
 } as const;
 
 export const TRIGGER_LANGUAGE_CATALOG = Object.freeze({
@@ -143,112 +123,6 @@ export const TRIGGER_LANGUAGE_CATALOG = Object.freeze({
     },
   ]),
 
-  composition: Object.freeze([
-    {
-      id: COMPOSITION_OPERATOR.ALL,
-      canonicalKind: 'allOf',
-      description: 'All referenced events must satisfy the legacy trigger.',
-      example: { match: 'all' },
-    },
-    {
-      id: COMPOSITION_OPERATOR.ANY,
-      canonicalKind: 'anyOf',
-      description: 'Any referenced event may satisfy the legacy trigger.',
-      example: { match: 'any' },
-    },
-    {
-      id: COMPOSITION_OPERATOR.SEQUENCE,
-      canonicalKind: 'sequence',
-      description: 'Referenced events must occur in event-time order.',
-      example: { match: 'sequence' },
-    },
-    {
-      id: COMPOSITION_OPERATOR.COUNT,
-      canonicalKind: 'count',
-      description: 'One referenced event must occur at least N times.',
-      example: { match: { kind: 'count', eventId: 'comment', atLeast: 3 } },
-    },
-  ]),
-
-  temporal: Object.freeze([
-    {
-      id: TEMPORAL_OPERATOR.CALENDAR,
-      description: 'Calendar/timezone constraint.',
-      fields: ['id', 'kind', 'ref', 'timezone'],
-      optionalFields: ['before', 'after', 'weekdays', 'dates', 'dateRange', 'dayOfMonth'],
-      example: {
-        id: 'business-hours',
-        kind: 'calendar',
-        ref: 'order',
-        timezone: 'Europe/Rome',
-        after: '09:00',
-        before: '18:00',
-        weekdays: [1, 2, 3, 4, 5],
-      },
-    },
-    {
-      id: TEMPORAL_OPERATOR.ABSENCE,
-      description: 'Referenced event must remain absent after an anchor for a durable period.',
-      fields: ['id', 'kind', 'ref', 'afterRef'],
-      oneOf: [['forMs'], ['untilLocalTime', 'timezone']],
-      example: {
-        id: 'no-errors',
-        kind: 'absence',
-        ref: 'error',
-        afterRef: 'deploy',
-        forMs: 600000,
-      },
-    },
-    {
-      id: TEMPORAL_OPERATOR.NOT,
-      description: 'Referenced event must not be present.',
-      fields: ['id', 'kind', 'ref'],
-      example: { id: 'not-cancelled', kind: 'not', ref: 'cancelled' },
-    },
-    {
-      id: TEMPORAL_OPERATOR.UNLESS,
-      description: 'Condition remains valid unless the referenced event occurs.',
-      fields: ['id', 'kind', 'ref'],
-      example: { id: 'unless-blocked', kind: 'unless', ref: 'blocked' },
-    },
-    {
-      id: TEMPORAL_OPERATOR.AFTER,
-      description: 'ref must occur after afterRef.',
-      fields: ['id', 'kind', 'ref', 'afterRef'],
-      example: { id: 'deploy-after-merge', kind: 'after', ref: 'deploy', afterRef: 'merge' },
-    },
-    {
-      id: TEMPORAL_OPERATOR.UNTIL,
-      description: 'ref must occur no later than beforeRef.',
-      fields: ['id', 'kind', 'ref', 'beforeRef'],
-      example: { id: 'approve-before-expiry', kind: 'until', ref: 'approval', beforeRef: 'expiry' },
-    },
-    {
-      id: TEMPORAL_OPERATOR.DEBOUNCE,
-      description: 'Wait for a quiet period after the latest referenced event.',
-      fields: ['id', 'kind', 'ref', 'forMs'],
-      example: { id: 'quiet', kind: 'debounce', ref: 'change', forMs: 300000 },
-    },
-    {
-      id: TEMPORAL_OPERATOR.THRESHOLD,
-      description: 'At least N occurrences are required.',
-      fields: ['id', 'kind', 'ref', 'atLeast'],
-      example: { id: 'three-comments', kind: 'threshold', ref: 'comment', atLeast: 3 },
-    },
-    {
-      id: TEMPORAL_OPERATOR.RATE,
-      description: 'At least N occurrences are required within a duration.',
-      fields: ['id', 'kind', 'ref', 'atLeast', 'perMs'],
-      example: { id: 'order-spike', kind: 'rate', ref: 'order', atLeast: 5, perMs: 600000 },
-    },
-    {
-      id: TEMPORAL_OPERATOR.DISTINCT,
-      description: 'At least N distinct values are required.',
-      fields: ['id', 'kind', 'ref', 'path', 'atLeast'],
-      example: { id: 'three-customers', kind: 'distinct', ref: 'order', path: 'customer', atLeast: 3 },
-    },
-  ]),
-
   pattern: Object.freeze([
     {
       id: 'event',
@@ -312,11 +186,11 @@ export const TRIGGER_LANGUAGE_CATALOG = Object.freeze({
     },
     {
       id: 'calendar',
-      description: 'Calendar/timezone filter as a v2 wrapper node.',
+      description: 'Calendar/timezone filter as a Pattern AST wrapper node.',
     },
     {
       id: 'absence',
-      description: 'Durable absence condition as a v2 wrapper node.',
+      description: 'Durable absence condition as a Pattern AST wrapper node.',
     },
     {
       id: 'notPresent',
@@ -416,24 +290,6 @@ export const TRIGGER_LANGUAGE_CATALOG = Object.freeze({
     },
   ]),
 
-  correlation: Object.freeze([
-    {
-      id: 'same_value',
-      description: 'Legacy deterministic same-value correlation.',
-      authoringField: 'correlateBy',
-    },
-    {
-      id: 'semantic',
-      description: 'Legacy semantic-correlation compatibility field.',
-      authoringField: 'semanticCorrelation',
-    },
-    {
-      id: 'partitionBy',
-      description: 'Pattern AST v2 partitions stream state by one or more named dimensions.',
-      authoringField: 'patternV2.partitionBy',
-    },
-  ]),
-
   execution: Object.freeze([
     {
       id: 'maxCandidates',
@@ -473,8 +329,6 @@ export const TRIGGER_LANGUAGE_CATALOG = Object.freeze({
 
 export type TriggerLanguageCategory =
   | 'predicates'
-  | 'composition'
-  | 'temporal'
   | 'pattern'
   | 'windows'
   | 'aggregates'
@@ -482,7 +336,6 @@ export type TriggerLanguageCategory =
   | 'selection'
   | 'semantic'
   | 'execution'
-  | 'correlation'
   | 'timing'
   | 'lifecycle';
 
@@ -500,8 +353,8 @@ export function describeTriggerLanguage(input: {
     version: TRIGGER_LANGUAGE_VERSION,
     authoringSurface: 'TriggerPlanInput',
     planner: 'trigger_plan',
-    preferredAuthoring: 'TriggerPlanInput.patternV2',
-    canonicalRepresentation: 'CompositeTriggerDefinition + PatternAstV2',
+    preferredAuthoring: 'TriggerPlanInput.pattern',
+    canonicalRepresentation: 'CompositeTriggerDefinition.pattern',
   };
 
   for (const key of categories) {
