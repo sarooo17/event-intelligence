@@ -141,7 +141,7 @@ export class DerivedEventCoordinator {
       })
     ).slice(0, 24)}`;
 
-    const existing = this.store.getDerivedEvent(
+    const existing = await this.store.getDerivedEvent(
       eventId,
       DERIVED_EVENT_SERVER_ID,
     );
@@ -162,7 +162,7 @@ export class DerivedEventCoordinator {
     const rootEvidence = [];
     for (const source of match.sourceEvents) {
       if (source.serverId === DERIVED_EVENT_SERVER_ID) {
-        const parent = this.store.getDerivedEvent(
+        const parent = await this.store.getDerivedEvent(
           source.sourceEventId,
           DERIVED_EVENT_SERVER_ID,
         );
@@ -219,7 +219,7 @@ export class DerivedEventCoordinator {
       }
     }
 
-    const contract = this.store.getDerivedContract(
+    const contract = await this.store.getDerivedContract(
       spec.name,
       spec.contractVersion,
     );
@@ -296,7 +296,7 @@ export class DerivedEventCoordinator {
         await sha256Hex({
           kind,
           sourceEventId: record.event.sourceEventId,
-          sequence: this.store.auditLength(),
+          sequence: await this.store.auditLength(),
         })
       ).slice(0, 24)}`,
       traceId: record.event.traceId,
