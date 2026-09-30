@@ -881,7 +881,9 @@ export class CompositeTriggerEngine {
         .map((item) => Date.parse(item.occurredAt))
         .filter(Number.isFinite)
         .sort((a, b) => b - a)[0] ?? evaluationNow.getTime();
+      const deadlineConditionId = `pattern-v2:${signature}`;
       const deadlineCompletionAt = reachedDeadlines
+        .filter((deadline) => deadline.conditionId === deadlineConditionId)
         .map((deadline) => Date.parse(deadline.dueAt))
         .filter(Number.isFinite)
         .sort((a, b) => b - a)[0];
