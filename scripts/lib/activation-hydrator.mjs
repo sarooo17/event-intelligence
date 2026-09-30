@@ -2,21 +2,21 @@ import {
   parseActivationEnvelope,
 } from '../../dist/src/intelligenceProtocol/index.js';
 
-function latestMatchForWake(store, wake, delivery) {
+async function latestMatchForWake(store, wake, delivery) {
   const matchId =
     delivery?.matchId ||
     (wake?.subscriptionId?.startsWith('trigger:') ? wake.sourceEventId : null);
   if (!matchId) return null;
 
-  return store.listTriggerMatches()
+  return (await store.listTriggerMatches())
     .find((candidate) => candidate.matchId === matchId) ?? null;
 }
 
-function definitionForMatch(store, match, delivery) {
+async function definitionForMatch(store, match, delivery) {
   if (!match && !delivery) return null;
   const triggerId = match?.triggerId ?? delivery?.triggerId;
   const triggerVersion = match?.triggerVersion ?? delivery?.triggerVersion;
-  return store.listTriggers().find((candidate) =>
+  return (await store.listTriggers()).find((candidate) =>
     candidate.triggerId === triggerId &&
     candidate.version === triggerVersion
   ) ?? null;
