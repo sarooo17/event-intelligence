@@ -270,9 +270,10 @@ export const TRIGGER_LANGUAGE_CATALOG = Object.freeze({
     },
     {
       id: 'repeat',
-      description: 'Quantifier with min/max and greedy/lazy mode; expresses *, +, exactly, ranges and atLeast.',
+      description: 'Quantifier with min/max, greedy/lazy preference and explicit internal contiguity.',
       fields: ['child', 'min'],
-      optionalFields: ['max', 'mode'],
+      optionalFields: ['max', 'mode', 'contiguity'],
+      contiguity: ['consecutive', 'relaxed', 'combinations'],
     },
     {
       id: 'optional',
@@ -390,8 +391,14 @@ export const TRIGGER_LANGUAGE_CATALOG = Object.freeze({
     },
     {
       id: 'afterMatch',
-      values: ['skipPastLast', 'skipToNext', 'skipToFirst', 'skipToLast', 'keepAll'],
-      description: 'How the partition buffer advances after a match.',
+      values: [
+        'skipPastLast',
+        'skipToNext',
+        'keepAll',
+        { kind: 'skipToFirst', ref: '<pattern-ref>' },
+        { kind: 'skipToLast', ref: '<pattern-ref>' },
+      ],
+      description: 'How candidate matching and the partition buffer advance after a match. skipToFirst/skipToLast require an explicit pattern ref.',
     },
     {
       id: 'greedyLazy',
@@ -405,7 +412,7 @@ export const TRIGGER_LANGUAGE_CATALOG = Object.freeze({
       id: 'semantic',
       description: 'First-class semantic predicate. The configured SemanticEvaluator executes it; TypeSafe Jev is the bundled optional evaluator.',
       fields: ['id', 'child', 'refs', 'instruction', 'input', 'matchThreshold', 'rejectThreshold'],
-      optionalFields: ['uncertain', 'execution'],
+      optionalFields: ['uncertain', 'execution.cache', 'execution.timeoutMs', 'execution.onUnavailable'],
     },
   ]),
 
