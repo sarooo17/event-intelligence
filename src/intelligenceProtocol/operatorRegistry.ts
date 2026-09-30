@@ -434,6 +434,21 @@ export const TRIGGER_LANGUAGE_CATALOG = Object.freeze({
     },
   ]),
 
+  execution: Object.freeze([
+    {
+      id: 'maxCandidates',
+      description: 'Maximum candidate pattern states evaluated per pass.',
+    },
+    {
+      id: 'maxSemanticEvaluations',
+      description: 'Maximum semantic evaluator calls per evaluation pass.',
+    },
+    {
+      id: 'maxBufferedEvents',
+      description: 'Hard upper bound on raw events retained in one trigger partition.',
+    },
+  ]),
+
   timing: Object.freeze([
     {
       id: 'withinMs',
@@ -466,6 +481,7 @@ export type TriggerLanguageCategory =
   | 'state'
   | 'selection'
   | 'semantic'
+  | 'execution'
   | 'correlation'
   | 'timing'
   | 'lifecycle';
