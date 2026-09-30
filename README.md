@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/sarooo17/event-intelligence/actions/workflows/ci.yml/badge.svg)](https://github.com/sarooo17/event-intelligence/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/mcp-event-intelligence.svg)](https://www.npmjs.com/package/mcp-event-intelligence)
-[![MCP Registry](https://img.shields.io/badge/MCP%20Registry-v0.5.0-5b5bd6)](https://registry.modelcontextprotocol.io/?q=io.github.sarooo17%2Fevent-intelligence)
+[![MCP Registry](https://img.shields.io/badge/MCP%20Registry-v0.6.0-5b5bd6)](https://registry.modelcontextprotocol.io/?q=io.github.sarooo17%2Fevent-intelligence)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 MCP Event Intelligence is an experimental event runtime for agents that need to react to **future conditions over multiple event sources** without keeping an LLM or agent loop alive.
@@ -59,17 +59,23 @@ Event Intelligence enumerates the host registry automatically. GitHub, Gmail, pr
 
 ### Agent-first trigger flow
 
-Agents do not need to construct the low-level trigger DSL directly. The public authoring flow is self-describing: discover the live event sources, inspect the trigger language only when needed, then ask EI to compile an agent-friendly plan against the sources that are actually available:
+Agents do not need a second DSL or a model-specific planner. The public authoring path is:
 
-```js
-const temporalLanguage = ei.describeTriggerLanguage({
-  category: 'temporal',
-});
-
-// returns the supported temporal operators, required fields and examples
+```text
+event_sources_list
+        ↓
+trigger_language_describe   (only when grammar discovery is useful)
+        ↓
+trigger_plan
+        ↓
+Pattern AST definition
+        ↓
+trigger_create
 ```
 
-The same catalog is available through the optional MCP control plane as `trigger_language_describe`. This keeps operator discovery out of the agent's permanent prompt/context and makes new operators discoverable on demand.
+`planTrigger()` is deterministic: it resolves live event sources, fills `serverId`, validates subscription arguments and predicate/pattern field paths against advertised schemas, and returns the canonical trigger definition plus the required connection IDs.
+
+For a simple condition, omitting `pattern` produces an `allOf` Pattern over the declared events:
 
 ```js
 const plan = await ei.planTrigger({
@@ -80,7 +86,6 @@ const plan = await ei.planTrigger({
       { path: 'grand_total', op: 'gt', value: 10000 },
     ],
   }],
-  match: 'all',
   withinMs: 60 * 60 * 1000,
   target: {
     runtime: 'agent',
@@ -92,24 +97,13 @@ const plan = await ei.planTrigger({
       'Check the submitted invoice for anomalies and report back in this conversation.',
   },
 });
-
-await ei.triggerControl.createTrigger({
-  definition: plan.definition,
-  connectionIds: plan.connectionIds,
-  actor,
-  owner,
-});
 ```
 
-`planTrigger()` is deterministic. It does not call a model. It resolves event names to live source/server IDs, validates predicate paths against advertised payload schemas, compiles `all` / `any` / `sequence` / `count`, accepts the canonical temporal operator set (`calendar`, `absence`, `not`, `unless`, `after`, `until`, `debounce`, `threshold`, `rate`, `distinct`), and returns the canonical trigger definition plus the required connection IDs.
-
-The canonical trigger definition remains the engine IR/advanced API. Agents should normally author through `planTrigger()` / `trigger_plan`, using `describeTriggerLanguage()` / `trigger_language_describe` for operator discovery.
-
-### Pattern AST v2: advanced CEP
-
-For advanced event programs, `TriggerPlanInput.patternV2` is the preferred authoring surface. Event declarations still describe discovered MCP event sources once; the recursive AST refers to those aliases and composes them without duplicating transport/provider configuration.
+For advanced CEP, author the same canonical `pattern` directly:
 
 ```js
+const language = ei.describeTriggerLanguage({ category: 'pattern' });
+
 const plan = await ei.planTrigger({
   events: [
     { id: 'order', event: 'erpnext.sales_order.created' },
@@ -117,7 +111,7 @@ const plan = await ei.planTrigger({
     { id: 'ticket', event: 'support.ticket.created' },
   ],
   withinMs: 30 * 60 * 1000,
-  patternV2: {
+  pattern: {
     version: '2',
     partitionBy: [{
       key: 'customer',
@@ -166,11 +160,11 @@ const plan = await ei.planTrigger({
 });
 ```
 
-Pattern AST v2 adds nested boolean/sequence patterns, strict and relaxed contiguity, repeat/optional quantifiers, negative look-ahead, streaming windows, cross-event comparisons, aggregates, state-transition operators, partitioning, overlap/after-match policies and deterministic derived measures.
+Pattern AST is the **single canonical trigger execution model**. It covers nested boolean and sequence patterns, contiguity, repeat/optional quantifiers, bounded negative patterns, calendar/absence/debounce/rate/distinct semantics, event-time windows, cross-event comparisons and arithmetic, aggregates, state transitions, partitioning, match-selection policy and deterministic derived measures.
 
-The runtime is **deterministic first**. A first-class `semantic` node is available only when structural data cannot express the condition reliably. It is vendor-neutral and calls the configured `SemanticEvaluator`; the bundled TypeSafe Jev adapter is optional when `TYPESAFE_API_KEY` is present. Semantic calls are explicit, bounded, timed out and audit-recorded; ordinary CEP execution requires no model API.
+The wire schema currently identifies this grammar as `version: "2"`; that is a schema version, not a second execution architecture.
 
-Legacy `expression + temporal + correlation` triggers remain supported. `compileLegacyTriggerToPatternV2()` provides an additive compatibility path rather than forcing stored v1 triggers to migrate synchronously.
+The runtime is **deterministic first**. A first-class `semantic` node is available only when structural data cannot express the condition reliably. It is vendor-neutral and calls the configured `SemanticEvaluator`; the bundled TypeSafe Jev adapter is optional when `TYPESAFE_API_KEY` is present. Semantic calls are explicit, bounded, timed out, cacheable and audit-recorded; ordinary CEP execution requires no model API.
 
 The persisted `continuation` answers a separate question from the trigger condition: **what should the agent do after the future condition becomes true?** A trigger can instead set `conditionOnly: true` and persist only the condition state, with no runtime target or continuation.
 
@@ -180,8 +174,7 @@ The wire wake remains deliberately small and reference-only. Embedded hosts also
 const activation = await ei.hydrateWake(wakeId);
 ```
 
-The envelope contains the configured continuation, trigger/match state, and matched evidence. Event payloads are labeled as untrusted external signals and are included only according to the trigger's `continuation.contextPolicy`.
-
+The envelope contains the configured continuation, canonical Pattern, match state, and matched evidence. Event payloads are labeled as untrusted external signals and are included only according to the trigger's `continuation.contextPolicy`.
 
 ### Shared hosts, tenant isolation and storage
 
@@ -282,7 +275,7 @@ timezone normalization and deterministic occurrence IDs. The local factory in
 this package should therefore be read as a typed convenience API, not as the
 production ERP connector itself.
 
-## What v0.5 implements
+## What v0.6 implements
 
 ### Host-owned event sources
 
@@ -388,7 +381,7 @@ This project does **not** propose a replacement for MCP Events and does not clai
 
 Event Intelligence has one optional AI boundary: **explicit semantic evaluation**.
 
-- Pattern AST v2 exposes a vendor-neutral `semantic` node; legacy `semanticCorrelation` is the compatibility form.
+- Pattern AST exposes a vendor-neutral `semantic` node as the only semantic condition form.
 - `TYPESAFE_API_KEY` enables the bundled TypeSafe Jev evaluator when a trigger explicitly requests semantic evaluation.
 - embedded hosts may inject a compatible `semanticEvaluator` instead.
 - deterministic predicates, patterns, windows, aggregations, state changes, deadlines and derived measures never require an AI evaluator.
@@ -398,7 +391,7 @@ The agent/harness is already responsible for natural-language reasoning. It can 
 
 ## Full-system acceptance
 
-The v0.5 acceptance suite verifies:
+The v0.6 acceptance suite verifies:
 
 - host-owned MCP client → extension discovery → durable subscription → poll/push/webhook occurrence → composite match → in-process wake;
 - provider-neutral events → composite match → derived event → derived composition → signed runtime wake;
@@ -446,13 +439,13 @@ The standalone service supports manual/provider-native event ingress. It does no
 ### Docker
 
 ```bash
-docker build -t mcp-event-intelligence:0.5.0 .
+docker build -t mcp-event-intelligence:0.6.0 .
 
 docker run --rm \
   -p 3000:3000 \
   -v mcp-event-intelligence-data:/data \
   -e SERVICE_AUTH_TOKEN="$(openssl rand -hex 32)" \
-  mcp-event-intelligence:0.5.0
+  mcp-event-intelligence:0.6.0
 ```
 
 ## Optional MCP control plane
@@ -545,7 +538,7 @@ io.github.sarooo17/event-intelligence
 
 ## Project status
 
-**v0.5.x reference implementation / experimental.**
+**v0.6.x reference implementation / experimental.**
 
 The architecture is implemented and exercised end-to-end. Storage is now injectable and scoped, while the bundled JSONL backend remains a single-process reference implementation. Remaining work is primarily production database adapters/HA validation, scale benchmarks and upstream feedback.
 
