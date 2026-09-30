@@ -95,12 +95,14 @@ test('host registry auto-discovers event MCPs, ignores tools-only MCPs and wakes
   });
 
   try {
+    const initialEventSources = await host.eventSources;
     assert.deepEqual(
-      host.eventSources.map((source) => source.eventName),
+      initialEventSources.map((source) => source.eventName),
       ['build.completed'],
     );
-    assert.equal(host.mcpStatus().length, 1);
-    assert.equal(host.mcpStatus()[0].connectionId, 'github');
+    const initialMcpStatus = await host.mcpStatus();
+    assert.equal(initialMcpStatus.length, 1);
+    assert.equal(initialMcpStatus[0].connectionId, 'github');
 
     for (const agentId of ['agent-a', 'agent-b']) {
       await host.triggerControl.createTrigger({
@@ -137,11 +139,11 @@ test('host registry auto-discovers event MCPs, ignores tools-only MCPs and wakes
       ['agent-a', 'agent-b'],
     );
     assert.equal(
-      host.store.listTriggerMatches('host-build-done-agent-a')[0].status,
+      (await host.store.listTriggerMatches('host-build-done-agent-a'))[0].status,
       'fired',
     );
     assert.equal(
-      host.store.listTriggerMatches('host-build-done-agent-b')[0].status,
+      (await host.store.listTriggerMatches('host-build-done-agent-b'))[0].status,
       'fired',
     );
 
@@ -156,7 +158,7 @@ test('host registry auto-discovers event MCPs, ignores tools-only MCPs and wakes
           entry.status === 'reattached',
       ),
     );
-    assert.equal(host.eventSources.length, 1);
+    assert.equal((await host.eventSources).length, 1);
 
     registryEntries = [];
     const refresh = await host.refreshMcpRegistry();
@@ -167,8 +169,8 @@ test('host registry auto-discovers event MCPs, ignores tools-only MCPs and wakes
           entry.status === 'detached',
       ),
     );
-    assert.equal(host.mcpStatus().length, 0);
-    assert.equal(host.eventSources.length, 0);
+    assert.equal((await host.mcpStatus()).length, 0);
+    assert.equal((await host.eventSources).length, 0);
   } finally {
     await host.close();
     await rm(dataDir, { recursive: true, force: true });
