@@ -124,6 +124,7 @@ test('real service delivers one GitHub open+close composite wake to a generic ru
   });
 
   const at = new Date().toISOString();
+  const closedAt = new Date(Date.parse(at) + 1000).toISOString();
   const opened = {
     traceId: 'trace_open',
     sourceEventId: 'gh_open_1',
@@ -139,7 +140,7 @@ test('real service delivers one GitHub open+close composite wake to a generic ru
     name: 'github.issue.closed',
     serverId: 'github-mcp-events',
     provider: 'github',
-    occurredAt: at,
+    occurredAt: closedAt,
     data: { repository: 'example/test', number: 42, title: 'FC-014 proof' },
   };
 
