@@ -114,6 +114,7 @@ export function asSourceEvent(
     sourceEventId: event.sourceEventId,
     eventName: event.name,
     occurredAt: event.occurredAt,
+    ...(event.receivedAt ? { receivedAt: event.receivedAt } : {}),
     ...(event.provider ? { provider: event.provider } : {}),
     ...(event.serverId ? { serverId: event.serverId } : {}),
     subscriptionArguments: event.subscriptionArguments ?? {},

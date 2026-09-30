@@ -238,6 +238,8 @@ test('derived events compose triggers end-to-end without intermediate runtime wa
     const release = store.listDerivedEvents({ name: 'release.ready' })[0];
     assert.equal(release.event.data.repository, 'acme/app');
     assert.equal(release.event.data.readiness, 'stable');
+    assert.equal(release.event.occurredAt, '2026-09-18T20:05:00.000Z');
+    assert.ok(release.event.receivedAt);
     assert.equal(release.rootEvidence.length, 2);
     assert.equal(JSON.stringify(release.rootEvidence).includes('secretBody'), false);
     assert.equal(
@@ -257,6 +259,7 @@ test('derived events compose triggers end-to-end without intermediate runtime wa
     const rollout = store.listDerivedEvents({ name: 'rollout.allowed' });
     assert.equal(rollout.length, 1);
     assert.equal(rollout[0].event.data.repository, 'acme/app');
+    assert.equal(rollout[0].event.occurredAt, '2026-09-18T20:10:00.000Z');
     assert.equal(rollout[0].rootEvidence.length, 3);
     assert.deepEqual(
       rollout[0].rootEvidence.map((item) => item.sourceEventId).sort(),

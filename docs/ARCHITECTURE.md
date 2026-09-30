@@ -37,11 +37,12 @@ The host passes a registry/manager for its already-connected MCP clients into th
 For each discovered client, Event Intelligence:
 
 1. reads the already-negotiated MCP server capabilities from the host-owned client;
-2. checks `capabilities.extensions["io.modelcontextprotocol/events"]`;
-3. loads all descriptor pages through `events/list`;
-4. materializes only the durable subscriptions required by active triggers;
-5. selects a compatible delivery mode (poll, push or webhook) from the descriptor and host adapters;
-6. persists per-subscription cursor/delivery state plus event deduplication state.
+2. resolves a versioned MCP Events compatibility profile (currently the 2026-09-25 experimental extension snapshot);
+3. checks the capability required by that profile;
+4. loads all descriptor pages through the profile's discovery method;
+5. materializes only the durable subscriptions required by active triggers;
+6. selects a compatible delivery mode (poll, push or webhook) from the descriptor and host adapters;
+7. persists per-subscription cursor/delivery state plus event deduplication state.
 
 No provider URL, OAuth token or API key is copied into Event Intelligence. A tools-only MCP connection is ignored by the Events layer and remains fully available to the host/agent.
 
@@ -53,7 +54,7 @@ An `EventSource` is the descriptor discovered from `events/list`: event name, de
 
 An `EventSubscription` is the durable client-side interest in one source. Its stable identity is derived from the host connection, event name and canonical subscription `arguments`. Cursor, selected delivery mode, truncation/gap state and scheduling metadata belong to the subscription, not to the source.
 
-This distinction is required because two durable intents can consume the same event type with different MCP arguments and therefore have independent cursors. MCP subscription `arguments` are validated against the source `inputSchema`; EI `where` predicates remain a separate application-layer condition over delivered payloads.
+This distinction is required because two durable intents can consume the same event type with different MCP arguments and therefore have independent cursors. Conversely, active trigger clauses with the same `(connection, event name, arguments)` tuple share one upstream EventSubscription and fan out locally. MCP subscription `arguments` are validated against the source `inputSchema`; EI `where` predicates remain a separate application-layer condition over delivered payloads.
 
 All delivery modes converge before trigger evaluation:
 
@@ -69,7 +70,7 @@ Transport and correlation remain separate.
 
 ### Provider-native adapters
 
-Standalone or legacy deployments may still ingest native push events. The GitHub webhook adapter maps provider deliveries into a provider-neutral event occurrence before the composite engine sees them.
+Provider-native adapters remain compatibility and testing surfaces. The product architecture is host-owned/embedded: EI should reuse the host's existing MCP clients rather than duplicate provider connections or credentials. Native webhook adapters map deliveries into the same provider-neutral event occurrence when an existing integration requires them.
 
 Transport and correlation remain separate.
 
@@ -86,12 +87,13 @@ A trigger is a versioned typed program containing:
 - temporal conditions;
 - lifecycle policy;
 - optional continuation contract describing what the runtime should do after activation;
+- optional explicit `conditionOnly` mode with no activation effect;
 - zero or one runtime target;
 - zero or one derived-event output.
 
 For common agent-authored cases, `planTrigger()` compiles a simpler plan into this canonical program. Planning is deterministic: it resolves live scoped event sources, fills server IDs, validates predicate paths against advertised payload schemas, and returns the canonical definition plus required connection IDs.
 
-A trigger must produce at least one effect: runtime wake, derived event, or both.
+A trigger normally produces a runtime wake, a derived event, or both. An explicitly declared `conditionOnly: true` trigger may instead persist only condition state; it cannot carry a target, continuation or derived-event effect. Because it has no effect delivery, effect-count lifecycle controls (`oneShot`, `maxFirings`, `cooldownMs`, `completeOnGoal`) are invalid for condition-only programs; expiry/lease controls remain valid.
 
 ## 3. Temporal state
 
@@ -99,7 +101,11 @@ Supported temporal operators include calendar windows, absence, not/unless, afte
 
 ### Two clocks
 
-Event windows are based on event-time (`occurredAt`).
+Event windows are based on event-time (`occurredAt`). MCP ingress separately records host receive-time (`receivedAt`) when available. Sequence/order semantics are evaluated from event-time, not delivery order.
+
+Partial matches may coexist for the same trigger/correlation key. An out-of-order event joins only a partial match whose complete event-time span fits `withinMs`; if it arrives earlier than the current anchor, the window is re-anchored to the earliest event-time.
+
+Each trigger may declare `eventTime.allowedLatenessMs` (default `0`). EI derives a watermark from the greatest observed event-time minus that allowance. A partial is expired only once its event-time window ends before the watermark. An event older than the watermark may close a still-retained compatible partial, but it cannot open a new stale window.
 
 Absence/deadline progression is based on Event Intelligence processing-time. Pending deadlines are persisted and later materialized as internal `event-intelligence.timer.reached` events.
 
@@ -115,7 +121,7 @@ pr.merged + deploy.succeeded
     release.ready@1
 ```
 
-Derived occurrences receive deterministic IDs, project only explicitly configured fields/constants, preserve direct-parent refs and flattened root evidence, persist before fan-out and re-enter the same composite engine.
+Derived occurrences receive deterministic IDs, project only explicitly configured fields/constants, preserve direct-parent refs and flattened root evidence, persist before fan-out and re-enter the same composite engine. Their `occurredAt` is derived from event-time semantics (latest contributing source event or satisfied temporal `dueAt`), while `receivedAt` records when EI materialized the derived occurrence.
 
 Cycles are rejected and runtime recursion has a hard depth guard.
 
@@ -133,7 +139,7 @@ The wire wake stays small and reference-only. For composite-trigger wakes, Event
 
 Matched event payloads are explicitly untrusted external evidence. Hydration supplies context, not authority; the runtime remains responsible for re-reading authoritative state through its normal authenticated capabilities before performing writes.
 
-Standalone deployments may instead configure signed HMAC callback targets.
+Signed HMAC callback targets remain a compatibility surface, but the primary integration is an in-process host wake/resume callback.
 
 ## 7. Lifecycle
 
@@ -163,7 +169,9 @@ The deterministic runtime is model-free. Event Intelligence does not run a secon
 
 The bundled TypeSafe Jev evaluator is used only when a trigger explicitly requests semantic correlation and `TYPESAFE_API_KEY` is configured. Embedded hosts may inject their own compatible semantic evaluator.
 
-Natural-language interpretation belongs to the surrounding agent/harness. For common cases it can submit an agent-friendly plan to EI's deterministic planner; advanced integrations may submit the canonical trigger definition directly.
+Natural-language interpretation belongs to the surrounding agent/harness. EI exposes a self-describing public authoring language through `describeTriggerLanguage()` and the optional `trigger_language_describe` MCP tool. The agent discovers operators on demand, then submits an agent-friendly plan to EI's deterministic planner.
+
+`TriggerPlanInput` is the normal agent authoring surface and includes predicates, composition, temporal conditions, correlation, timing and lifecycle controls. The canonical `CompositeTriggerDefinition` is the engine IR/advanced API and may still be submitted directly by trusted integrations.
 
 ## 10. Observability
 

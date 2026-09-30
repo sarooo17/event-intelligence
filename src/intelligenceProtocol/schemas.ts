@@ -131,6 +131,7 @@ export const LifecycleStateSchema = z.enum([
 export const AuditKindSchema = z.enum([
   'event.received',
   'event.duplicate',
+  'event.late_dropped',
   'decision.evaluated',
   'lifecycle.transition',
   'wake.queued',

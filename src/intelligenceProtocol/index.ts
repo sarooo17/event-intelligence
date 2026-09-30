@@ -1,4 +1,17 @@
 export {
+  TRIGGER_LANGUAGE_VERSION,
+  PREDICATE_OPERATOR,
+  COMPOSITION_OPERATOR,
+  TEMPORAL_OPERATOR,
+  TRIGGER_LANGUAGE_CATALOG,
+  describeTriggerLanguage,
+} from './operatorRegistry.js';
+
+export type {
+  TriggerLanguageCategory,
+} from './operatorRegistry.js';
+
+export {
   EVENT_INTELLIGENCE_PROTOCOL,
   EVENT_INTELLIGENCE_PROTOCOL_VERSION,
   EVENT_INTELLIGENCE_SCHEMA_VERSION,
@@ -74,8 +87,10 @@ export {
   COMPOSITE_TRIGGER_SCHEMA_VERSION,
   StructuredPredicateSchema,
   TriggerClauseSchema,
+  TemporalConditionSchema,
   ContinuationContextPolicySchema,
   ContinuationContractSchema,
+  EventTimePolicySchema,
   DerivedEventProjectionSchema,
   DerivedEventDefinitionSchema,
   DerivedEventEvidenceRefSchema,
@@ -97,8 +112,10 @@ export {
 export type {
   StructuredPredicate,
   TriggerClause,
+  TemporalCondition,
   ContinuationContextPolicy,
   ContinuationContract,
+  EventTimePolicy,
   DerivedEventDefinition,
   DerivedEventRecord,
   CompositeTriggerDefinition,

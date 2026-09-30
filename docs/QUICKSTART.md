@@ -140,6 +140,7 @@ The default surface is non-mutating and includes:
 
 ```text
 event_sources_list
+trigger_language_describe
 trigger_plan
 trigger_list
 trigger_inspect
@@ -148,6 +149,20 @@ wake_hydrate
 derived_contracts_list
 runtime_status
 ```
+
+An agent can use:
+
+```text
+event_sources_list
+        ↓
+trigger_language_describe   (only when operator discovery is needed)
+        ↓
+trigger_plan
+        ↓
+trigger_create
+```
+
+`trigger_plan` exposes the full public authoring language, including the canonical temporal conditions. The raw canonical `definition` remains available as an advanced/internal representation, but normal agent authoring should go through the planner.
 
 With writes enabled, `trigger_create` accepts either a raw canonical `definition`
 or an agent-friendly `plan`. In the latter case EI compiles the plan before

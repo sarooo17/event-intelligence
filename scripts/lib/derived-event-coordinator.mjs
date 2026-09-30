@@ -2,6 +2,9 @@ import {
   parseDerivedEventRecord,
   sha256Hex,
 } from '../../dist/src/intelligenceProtocol/index.js';
+import {
+  evaluateTemporalConditions,
+} from '../../dist/src/composite/temporal.js';
 
 export const DERIVED_EVENT_SERVER_ID = 'event-intelligence:derived';
 export const DERIVED_EVENT_CONNECTION_ID = 'event-intelligence:derived';
@@ -26,6 +29,7 @@ function evidenceRef(source) {
     sourceEventId: source.sourceEventId,
     traceId: source.traceId,
     occurredAt: source.occurredAt,
+    ...(source.receivedAt ? { receivedAt: source.receivedAt } : {}),
     payloadHash: source.payloadHash ?? null,
     contractVersion:
       source.data?._derived?.contractVersion ?? null,
@@ -58,6 +62,26 @@ function latestForClause(match, clauseId) {
       Date.parse(b.occurredAt) - Date.parse(a.occurredAt) ||
       b.sourceEventId.localeCompare(a.sourceEventId)
     )[0] ?? null;
+}
+
+function derivedOccurredAt(match, definition) {
+  const candidates = match.sourceEvents
+    .map((event) => Date.parse(event.occurredAt))
+    .filter(Number.isFinite);
+
+  const temporal = evaluateTemporalConditions(
+    definition,
+    match,
+    new Date(match.updatedAt),
+  );
+  for (const state of temporal.conditionStates) {
+    if (state.status !== 'satisfied' || !state.dueAt) continue;
+    const dueAt = Date.parse(state.dueAt);
+    if (Number.isFinite(dueAt)) candidates.push(dueAt);
+  }
+
+  if (!candidates.length) return match.updatedAt;
+  return new Date(Math.max(...candidates)).toISOString();
 }
 
 export class DerivedEventCoordinator {
@@ -176,7 +200,8 @@ export class DerivedEventCoordinator {
       traceId: `derived:${eventId}`,
       sourceEventId: eventId,
       name: spec.name,
-      occurredAt: match.updatedAt,
+      occurredAt: derivedOccurredAt(match, definition),
+      receivedAt: this.now().toISOString(),
       provider: 'event-intelligence',
       serverId: DERIVED_EVENT_SERVER_ID,
       payloadHash,

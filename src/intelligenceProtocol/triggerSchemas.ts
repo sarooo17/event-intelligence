@@ -131,9 +131,15 @@ export const DerivedEventEvidenceRefSchema = z.object({
   sourceEventId: Id,
   traceId: Id,
   occurredAt: Timestamp,
+  receivedAt: Timestamp.optional(),
   payloadHash: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
   contractVersion: z.string().min(1).nullable().optional(),
   schemaFingerprint: z.string().regex(/^[a-f0-9]{64}$/).nullable().optional(),
+}).strict();
+
+export const EventTimePolicySchema = z.object({
+  allowedLatenessMs: z.number().int().nonnegative()
+    .max(1000 * 60 * 60 * 24 * 30),
 }).strict();
 
 export const TriggerLifecyclePolicySchema = z.object({
@@ -201,10 +207,12 @@ export const CompositeTriggerDefinitionSchema = z.object({
   triggerId: Id,
   version: z.string().min(1),
   description: z.string().max(500).optional(),
+  conditionOnly: z.boolean().default(false),
   continuation: ContinuationContractSchema.optional(),
   clauses: z.array(TriggerClauseSchema).min(1),
   expression: TriggerExpressionSchema,
   temporal: z.array(TemporalConditionSchema).default([]),
+  eventTime: EventTimePolicySchema.optional(),
   lifecycle: TriggerLifecyclePolicySchema.default({
     oneShot: false,
     cooldownMs: 0,
@@ -218,10 +226,33 @@ export const CompositeTriggerDefinitionSchema = z.object({
   target: RuntimeTargetSchema.optional(),
   derivedEvent: DerivedEventDefinitionSchema.optional(),
 }).superRefine((value, ctx) => {
-  if (!value.target && !value.derivedEvent) {
+  if (!value.target && !value.derivedEvent && !value.conditionOnly) {
     ctx.addIssue({
       code: 'custom',
-      message: 'Trigger requires target, derivedEvent, or both',
+      message: 'Trigger requires target, derivedEvent, or conditionOnly=true',
+    });
+  }
+  if (
+    value.conditionOnly &&
+    (value.target || value.derivedEvent || value.continuation)
+  ) {
+    ctx.addIssue({
+      code: 'custom',
+      message: 'conditionOnly triggers cannot declare target, derivedEvent, or continuation',
+    });
+  }
+  if (
+    value.conditionOnly &&
+    (
+      value.lifecycle.oneShot ||
+      value.lifecycle.maxFirings !== undefined ||
+      value.lifecycle.cooldownMs > 0 ||
+      value.lifecycle.completeOnGoal
+    )
+  ) {
+    ctx.addIssue({
+      code: 'custom',
+      message: 'conditionOnly triggers cannot use effect-based lifecycle fields',
     });
   }
   if (value.continuation && !value.target) {
@@ -363,6 +394,7 @@ export const CorrelatableEventSchema = z.object({
   sourceEventId: Id,
   name: z.string().min(1),
   occurredAt: Timestamp,
+  receivedAt: Timestamp.optional(),
   provider: z.string().min(1).optional(),
   serverId: Id.optional(),
   subscriptionArguments: z.record(z.string(), z.unknown()).default({}),
@@ -386,6 +418,7 @@ export const TriggerSourceEventSchema = z.object({
   sourceEventId: Id,
   eventName: z.string().min(1),
   occurredAt: Timestamp,
+  receivedAt: Timestamp.optional(),
   provider: z.string().min(1).optional(),
   serverId: Id.optional(),
   subscriptionArguments: z.record(z.string(), z.unknown()).default({}),
@@ -432,6 +465,7 @@ export const TriggerMatchRecordSchema = z.object({
 export type StructuredPredicate = z.infer<typeof StructuredPredicateSchema>;
 export type TriggerClause = z.infer<typeof TriggerClauseSchema>;
 export type TemporalCondition = z.infer<typeof TemporalConditionSchema>;
+export type EventTimePolicy = z.infer<typeof EventTimePolicySchema>;
 export type TriggerLifecyclePolicy = z.infer<typeof TriggerLifecyclePolicySchema>;
 export type ContinuationContextPolicy = z.infer<typeof ContinuationContextPolicySchema>;
 export type ContinuationContract = z.infer<typeof ContinuationContractSchema>;

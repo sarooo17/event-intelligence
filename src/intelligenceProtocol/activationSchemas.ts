@@ -11,6 +11,7 @@ export const ActivationEvidenceSchema = z.object({
   eventName: z.string().min(1),
   traceId: Id,
   occurredAt: Timestamp,
+  receivedAt: Timestamp.optional(),
   payloadHash: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
   data: z.record(z.string(), z.unknown()).optional(),
 }).strict();

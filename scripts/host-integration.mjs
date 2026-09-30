@@ -1,4 +1,7 @@
 import {
+  describeTriggerLanguage,
+} from '../dist/src/intelligenceProtocol/index.js';
+import {
   createLocalEventIntelligenceRuntime,
 } from './lib/local-event-intelligence-runtime.mjs';
 import {
@@ -78,6 +81,9 @@ function scopedHostView(runtime, context) {
     activationHydrator: context.activationHydrator,
     planTrigger(input) {
       return context.triggerPlanner.plan(input);
+    },
+    describeTriggerLanguage(input = {}) {
+      return describeTriggerLanguage(input);
     },
     hydrateWake(wakeId) {
       return context.activationHydrator.hydrateWake(wakeId);
@@ -239,6 +245,9 @@ export async function createEventIntelligenceHost({
     },
     planTrigger(input) {
       return runtime.triggerPlanner.plan(input);
+    },
+    describeTriggerLanguage(input = {}) {
+      return describeTriggerLanguage(input);
     },
     hydrateWake(wakeId) {
       return runtime.activationHydrator.hydrateWake(wakeId);

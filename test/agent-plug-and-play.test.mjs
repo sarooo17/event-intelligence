@@ -24,6 +24,14 @@ test('agent-friendly plan compiles, fires, and delivers a hydrated activation en
   });
 
   try {
+    const language = host.describeTriggerLanguage({
+      category: 'predicates',
+      operator: 'gt',
+    });
+    assert.equal(language.version, '1');
+    assert.equal(language.predicates.length, 1);
+    assert.equal(language.predicates[0].id, 'gt');
+
     await host.triggerControl.registerEventSource({
       sourceId: 'erp:invoice-submitted',
       connectionId: 'erp-connection',

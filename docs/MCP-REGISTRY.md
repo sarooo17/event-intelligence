@@ -12,10 +12,11 @@ Run the optional control plane with:
 npx mcp-event-intelligence mcp
 ```
 
-The stdio process exposes non-mutating tools by default. `trigger_plan` compiles an agent-friendly plan into the canonical trigger DSL without calling a model; `wake_hydrate` reconstructs the configured continuation plus matched evidence:
+The stdio process exposes non-mutating tools by default. `trigger_language_describe` exposes the supported authoring operators, fields and examples on demand; `trigger_plan` compiles that public authoring language into the canonical trigger DSL without calling a model; `wake_hydrate` reconstructs the configured continuation plus matched evidence:
 
 ```text
 event_sources_list
+trigger_language_describe
 trigger_plan
 trigger_list
 trigger_inspect

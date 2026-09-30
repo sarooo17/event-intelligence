@@ -19,7 +19,7 @@ An agent can express an intent such as:
 
 > When this PR is merged, the production deploy succeeds, and no error is observed for 10 minutes, wake this task and review the release.
 
-Event Intelligence persists that continuation independently of the model, waits for the world to satisfy it, and wakes the host only when necessary.
+Event Intelligence persists the future condition independently of the model, waits for the world to satisfy it, and wakes the host only when the condition has an activation target. Conditions may also exist without an agent continuation; higher-level facts are composed separately through derived-event triggers.
 
 ## Embed it in an existing agent host
 
@@ -59,7 +59,17 @@ Event Intelligence enumerates the host registry automatically. GitHub, Gmail, pr
 
 ### Agent-first trigger flow
 
-Agents no longer need to construct the low-level trigger DSL directly for common cases. Ask EI to compile an agent-friendly plan against the event sources that are actually available:
+Agents do not need to construct the low-level trigger DSL directly. The public authoring flow is self-describing: discover the live event sources, inspect the trigger language only when needed, then ask EI to compile an agent-friendly plan against the sources that are actually available:
+
+```js
+const temporalLanguage = ei.describeTriggerLanguage({
+  category: 'temporal',
+});
+
+// returns the supported temporal operators, required fields and examples
+```
+
+The same catalog is available through the optional MCP control plane as `trigger_language_describe`. This keeps operator discovery out of the agent's permanent prompt/context and makes new operators discoverable on demand.
 
 ```js
 const plan = await ei.planTrigger({
@@ -91,9 +101,11 @@ await ei.triggerControl.createTrigger({
 });
 ```
 
-`planTrigger()` is deterministic. It does not call a model. It resolves event names to live source/server IDs, validates predicate paths against advertised payload schemas, compiles `all` / `any` / `sequence` / `count`, and returns the canonical trigger definition plus the required connection IDs.
+`planTrigger()` is deterministic. It does not call a model. It resolves event names to live source/server IDs, validates predicate paths against advertised payload schemas, compiles `all` / `any` / `sequence` / `count`, accepts the canonical temporal operator set (`calendar`, `absence`, `not`, `unless`, `after`, `until`, `debounce`, `threshold`, `rate`, `distinct`), and returns the canonical trigger definition plus the required connection IDs.
 
-The persisted `continuation` answers a separate question from the trigger condition: **what should the agent do after the future condition becomes true?**
+The canonical trigger definition remains the engine IR/advanced API. Agents should normally author through `planTrigger()` / `trigger_plan`, using `describeTriggerLanguage()` / `trigger_language_describe` for operator discovery.
+
+The persisted `continuation` answers a separate question from the trigger condition: **what should the agent do after the future condition becomes true?** A trigger can instead set `conditionOnly: true` and persist only the condition state, with no runtime target or continuation.
 
 The wire wake remains deliberately small and reference-only. Embedded hosts also receive an Activation Envelope as the second wake argument. The same envelope can be reconstructed later:
 
@@ -215,6 +227,7 @@ production ERP connector itself.
 - `events/poll` with server-directed `nextPollMs`, nullable cursors and bounded page draining;
 - host-owned push and webhook delivery adapters feeding the same EventOccurrence pipeline;
 - persistent opaque cursors and per-subscription delivery state;
+- shared upstream subscriptions fan out to every active trigger using the same `(connection, event, arguments)` tuple;
 - per-scope source/cursor isolation for shared hosts;
 - single-flight polling per connection plus bounded `hasMore` batch draining;
 - automatic event-source registration;
@@ -334,7 +347,9 @@ The v0.4 acceptance suite verifies:
 
 A separate live regression also verified real GitHub webhook ingress into the MCP EventOccurrence / composite fan-in path.
 
-## Standalone reference service
+## Reference/debug service
+
+The HTTP service remains useful for local development, conformance work and provider-native regression tests. It is **not** the primary integration model and does not replace the embedded host-owned package path above.
 
 ### Requirements
 
@@ -414,7 +429,11 @@ The detailed execution model, clocks, lifecycle, persistence and trust boundarie
 
 ### Event-time vs processing-time
 
-Normal event windows use event `occurredAt`.
+Normal event windows use event `occurredAt`; MCP ingress also preserves host `receivedAt` when available. Delivery order does not define event order.
+
+Out-of-order events are matched against compatible event-time windows. A late event may re-anchor a partial match to an earlier `occurredAt` only when the complete event-time span still fits `withinMs`; otherwise it starts a separate partial window and cannot create a false sequence.
+
+Triggers may set `eventTime.allowedLatenessMs` (default `0`). EI maintains an event-time watermark per trigger/correlation stream: old partial windows are retained until their expiry falls behind `maxObservedEventTime - allowedLatenessMs`. An event older than the watermark can still complete a retained compatible partial, but cannot seed a new stale window.
 
 Absence/deadline progression uses Event Intelligence processing time. This separation is explicit and tested.
 

@@ -90,6 +90,50 @@ function validatePredicateAgainstSource(source, predicate, warnings) {
   }
 }
 
+function clauseSourceForRef(ref, clauses, resolvedSources) {
+  const index = clauses.findIndex((clause) => clause.id === ref);
+  if (index < 0) {
+    const error = new Error(`Temporal condition references unknown event id: ${ref}`);
+    error.code = 'TRIGGER_PLAN_EVENT_REF_UNKNOWN';
+    throw error;
+  }
+  return resolvedSources[index];
+}
+
+function validateTemporalConditions(conditions, clauses, resolvedSources, warnings) {
+  const refs = new Set(clauses.map((clause) => clause.id));
+
+  for (const condition of conditions) {
+    const referenced = [];
+    if ('ref' in condition) referenced.push(condition.ref);
+    if ('afterRef' in condition) referenced.push(condition.afterRef);
+    if ('beforeRef' in condition) referenced.push(condition.beforeRef);
+
+    for (const ref of referenced) {
+      if (!refs.has(ref)) {
+        const error = new Error(
+          `Temporal condition ${condition.id} references unknown event id: ${ref}`,
+        );
+        error.code = 'TRIGGER_PLAN_EVENT_REF_UNKNOWN';
+        throw error;
+      }
+    }
+
+    if (condition.kind === 'distinct') {
+      const source = clauseSourceForRef(
+        condition.ref,
+        clauses,
+        resolvedSources,
+      );
+      validatePredicateAgainstSource(
+        source,
+        { path: condition.path, op: 'exists', value: true },
+        warnings,
+      );
+    }
+  }
+}
+
 function expressionFor(match, refs) {
   if (typeof match === 'object' && match?.kind === 'count') {
     if (!refs.includes(match.eventId)) {
@@ -185,6 +229,13 @@ export class TriggerPlanner {
     });
 
     const refs = clauses.map((clause) => clause.id);
+    validateTemporalConditions(
+      plan.temporal,
+      clauses,
+      resolvedSources,
+      warnings,
+    );
+
     const correlation = {};
     if (plan.correlateBy) {
       for (const field of plan.correlateBy) {
@@ -217,26 +268,36 @@ export class TriggerPlanner {
 
     const triggerId = plan.triggerId || `planned_${(
       await sha256Hex(canonicalJson({
-        target: plan.target,
+        target: plan.target ?? null,
         events: plan.events,
         match: plan.match,
-        continuation: plan.continuation.instruction,
+        temporal: plan.temporal,
+        eventTime: plan.eventTime ?? null,
+        conditionOnly: plan.conditionOnly,
+        continuation: plan.continuation?.instruction ?? null,
       }))
     ).slice(0, 24)}`;
 
     const definition = parseCompositeTriggerDefinition({
       triggerId,
       version: plan.version,
-      description:
-        plan.description ||
-        plan.continuation.instruction.slice(0, 500),
-      continuation: plan.continuation,
+      ...(plan.description || plan.continuation?.instruction
+        ? {
+            description:
+              plan.description ||
+              plan.continuation.instruction.slice(0, 500),
+          }
+        : {}),
+      conditionOnly: plan.conditionOnly,
+      ...(plan.continuation ? { continuation: plan.continuation } : {}),
       clauses,
       expression: expressionFor(plan.match, refs),
+      temporal: plan.temporal,
       withinMs: plan.withinMs,
+      ...(plan.eventTime ? { eventTime: plan.eventTime } : {}),
       lifecycle: lifecycleFor(plan.lifecycle),
       ...(Object.keys(correlation).length ? { correlation } : {}),
-      target: plan.target,
+      ...(plan.target ? { target: plan.target } : {}),
     });
 
     return {
@@ -255,12 +316,15 @@ export class TriggerPlanner {
             arguments: clause.arguments,
             where: clause.where,
           })),
+          temporal: definition.temporal,
           withinMs: definition.withinMs,
+          eventTime: definition.eventTime ?? { allowedLatenessMs: 0 },
         },
         then: {
-          target: definition.target,
+          conditionOnly: definition.conditionOnly,
+          target: definition.target ?? null,
           instruction: definition.continuation?.instruction ?? null,
-          evidence: definition.continuation?.contextPolicy?.evidence ?? 'matched_events',
+          evidence: definition.continuation?.contextPolicy?.evidence ?? null,
         },
       },
     };
