@@ -9,8 +9,6 @@ import { TriggerControlPlane } from '../scripts/lib/trigger-control-plane.mjs';
 
 function definition() {
   return {
-    protocolVersion: '0.1.0',
-    schemaVersion: 'trigger.v0.1',
     triggerId: 'gmail-and-github-agent-authored',
     version: '1',
     clauses: [
@@ -29,7 +27,15 @@ function definition() {
         ],
       },
     ],
-    expression: { kind: 'allOf', refs: ['issue', 'mail'] },
+    pattern: {
+      root: {
+        kind: 'allOf',
+        children: [
+          { kind: 'event', ref: 'issue' },
+          { kind: 'event', ref: 'mail' },
+        ],
+      },
+    },
     withinMs: 86_400_000,
     target: {
       runtime: 'runtime-probe',
@@ -283,7 +289,7 @@ test('control plane rejects agent-authored predicate fields not advertised by th
             serverId: 'schema-server',
             where: [{ path: 'secretField', op: 'exists', value: true }],
           }],
-          expression: { kind: 'anyOf', refs: ['issue'] },
+          pattern: { root: { kind: 'event', ref: 'issue' } },
           withinMs: 60000,
           target: { runtime: 'agent', kind: 'task', id: 'agent-1' },
         },

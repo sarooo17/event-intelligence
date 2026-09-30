@@ -97,8 +97,6 @@ test('mutable-state compaction preserves current state across restart', async ()
     await store.init();
 
     await store.putTrigger({
-      protocolVersion: '0.1.0',
-      schemaVersion: 'trigger.v0.1',
       triggerId: 'compact-trigger',
       version: '1',
       conditionOnly: true,
@@ -108,8 +106,7 @@ test('mutable-state compaction preserves current state across restart', async ()
         arguments: {},
         where: [],
       }],
-      expression: { kind: 'anyOf', refs: ['e'] },
-      temporal: [],
+      pattern: { root: { kind: 'event', ref: 'e' } },
       withinMs: 60000,
       lifecycle: {
         oneShot: false,
@@ -165,7 +162,7 @@ test('mutable-state compaction preserves current state across restart', async ()
   }
 });
 
-test('Pattern v2 engine claims and releases distributed partition ownership', async () => {
+test('Pattern engine claims and releases distributed partition ownership', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'ei-engine-partition-lease-'));
   try {
     const store = new PersistentEventStore(dir);
@@ -212,9 +209,7 @@ test('Pattern v2 engine claims and releases distributed partition ownership', as
         arguments: {},
         where: [],
       }],
-      expression: { kind: 'anyOf', refs: ['order'] },
-      temporal: [],
-      patternV2: {
+      pattern: {
         version: '2',
         root: { kind: 'event', ref: 'order' },
         partitionBy: [{

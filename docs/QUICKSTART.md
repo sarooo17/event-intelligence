@@ -38,8 +38,9 @@ The host keeps transports, OAuth/API keys and ordinary tool calls. EI never need
 
 ## 2. Let the agent compile a trigger plan
 
-For common agent-authored triggers, use the deterministic planner instead of asking
-the model to produce the internal DSL directly:
+Use the deterministic planner instead of asking the model to emit a second or legacy DSL.
+
+For a simple trigger, declare events and predicates; when `pattern` is omitted EI compiles an `allOf` Pattern over the declared events:
 
 ```js
 const plan = await ei.planTrigger({
@@ -50,7 +51,6 @@ const plan = await ei.planTrigger({
       { path: 'grand_total', op: 'gt', value: 10000 },
     ],
   }],
-  match: 'all',
   withinMs: 60 * 60 * 1000,
   target: {
     runtime: 'agent',
@@ -64,27 +64,26 @@ const plan = await ei.planTrigger({
 });
 ```
 
-The planner resolves the event against live discovered sources, fills the
-`serverId`, validates predicate fields against the advertised payload schema,
-compiles the expression and returns both the canonical definition and the
-connection IDs needed by the control plane.
+The planner resolves the event against live discovered sources, fills `serverId`, validates subscription arguments and payload paths, and returns both the canonical definition and the connection IDs required by the control plane. It does **not** call another model.
 
-It does **not** call another model.
+### Pattern AST
 
-### Advanced Pattern AST v2
-
-For advanced CEP, discover the `pattern`, `windows`, `aggregates`, `state`, `selection` or `semantic` language categories on demand and submit `patternV2` through the same planner:
+Pattern AST is the single canonical execution model. Discover its grammar on demand:
 
 ```js
 const language = ei.describeTriggerLanguage({ category: 'pattern' });
+```
 
+Then author advanced CEP through the same `pattern` field:
+
+```js
 const plan = await ei.planTrigger({
   events: [
     { id: 'deploy', event: 'deployment.succeeded' },
     { id: 'error', event: 'production.error' },
   ],
   withinMs: 30 * 60 * 1000,
-  patternV2: {
+  pattern: {
     version: '2',
     root: {
       kind: 'notFollowedBy',
@@ -105,7 +104,7 @@ const plan = await ei.planTrigger({
 });
 ```
 
-The same source-schema validation, source scoping and mutation controls apply. Pattern v2 adds partitioning, nested patterns, quantifiers, contiguity, windows, aggregations, state operators, negative patterns, match-selection policies and deterministic derived measures.
+The same source-schema validation, source scoping and mutation controls apply. Pattern AST supports partitioning, nested patterns, quantifiers, contiguity, windows, aggregates, state operators, negative patterns, calendar/absence/debounce/rate/distinct semantics, match-selection policy and deterministic derived measures.
 
 A `semantic` node is optional and explicit. It calls the configured `SemanticEvaluator`; `TYPESAFE_API_KEY` only selects the bundled Jev adapter. Deterministic CEP does not require Jev or any other model API.
 
@@ -161,7 +160,7 @@ is included or only refs are returned.
 
 No TypeSafe/Jev key is required for deterministic Event Intelligence behavior.
 
-Pattern AST v2 exposes a vendor-neutral `semantic` node; legacy `semanticCorrelation` remains supported. `TYPESAFE_API_KEY` enables the bundled Jev evaluator only for explicit semantic evaluation. Hosts may inject their own `semanticEvaluator`.
+Pattern AST exposes a vendor-neutral `semantic` node. `TYPESAFE_API_KEY` enables the bundled Jev evaluator only for explicit semantic evaluation; hosts may inject their own `semanticEvaluator`.
 
 There is no OpenAI dependency in EI. The surrounding agent/harness does the reasoning; EI owns durable event semantics.
 
@@ -200,7 +199,7 @@ trigger_plan
 trigger_create
 ```
 
-`trigger_plan` exposes the full public authoring language, including Pattern AST v2. Use `trigger_language_describe` to discover only the categories/operators needed for the current intent rather than placing the whole CEP grammar in the agent prompt. The raw canonical `definition` remains available as an advanced/internal representation, but normal agent authoring should go through the planner.
+`trigger_plan` exposes the full public Pattern authoring language. Use `trigger_language_describe` to discover only the categories/operators needed for the current intent rather than placing the whole CEP grammar in the agent prompt. The raw canonical `definition` remains available as an advanced/internal representation, but normal agent authoring should go through the planner.
 
 With writes enabled, `trigger_create` accepts either a raw canonical `definition`
 or an agent-friendly `plan`. In the latter case EI compiles the plan before

@@ -364,7 +364,15 @@ test('full-system black-box acceptance after FC-021', {
           where: [],
         },
       ],
-      expression: { kind: 'allOf', refs: ['pr', 'deploy'] },
+      pattern: {
+        root: {
+          kind: 'allOf',
+          children: [
+            { kind: 'event', ref: 'pr' },
+            { kind: 'event', ref: 'deploy' },
+          ],
+        },
+      },
       withinMs: 60000,
       derivedEvent: {
         name: 'release.ready',
@@ -394,7 +402,15 @@ test('full-system black-box acceptance after FC-021', {
           where: [],
         },
       ],
-      expression: { kind: 'allOf', refs: ['release', 'approval'] },
+      pattern: {
+        root: {
+          kind: 'allOf',
+          children: [
+            { kind: 'event', ref: 'release' },
+            { kind: 'event', ref: 'approval' },
+          ],
+        },
+      },
       withinMs: 60000,
       derivedEvent: {
         name: 'rollout.allowed',
@@ -416,7 +432,7 @@ test('full-system black-box acceptance after FC-021', {
         contractVersion: '1',
         where: [],
       }],
-      expression: { kind: 'anyOf', refs: ['rollout'] },
+      pattern: { root: { kind: 'event', ref: 'rollout' } },
       withinMs: 60000,
       lifecycle: { oneShot: true },
       target: {
@@ -557,7 +573,7 @@ test('full-system black-box acceptance after FC-021', {
         serverId: 'github-compatible',
         where: [],
       }],
-      expression: { kind: 'anyOf', refs: ['pr'] },
+      pattern: { root: { kind: 'event', ref: 'pr' } },
       withinMs: 60000,
       derivedEvent: {
         name: 'release.ready',
@@ -596,7 +612,7 @@ test('full-system black-box acceptance after FC-021', {
             serverId: 'github-conflict',
             where: [],
           }],
-          expression: { kind: 'anyOf', refs: ['pr'] },
+          pattern: { root: { kind: 'event', ref: 'pr' } },
           withinMs: 60000,
           derivedEvent: {
             name: 'release.ready',
@@ -646,7 +662,7 @@ test('full-system black-box acceptance after FC-021', {
         serverId: 'github-v2',
         where: [],
       }],
-      expression: { kind: 'anyOf', refs: ['pr'] },
+      pattern: { root: { kind: 'event', ref: 'pr' } },
       withinMs: 60000,
       derivedEvent: {
         name: 'release.ready',
@@ -683,7 +699,7 @@ test('full-system black-box acceptance after FC-021', {
             serverId: 'event-intelligence:derived',
             where: [],
           }],
-          expression: { kind: 'anyOf', refs: ['release'] },
+          pattern: { root: { kind: 'event', ref: 'release' } },
           withinMs: 60000,
           target: {
             runtime: 'runtime-e2e',
@@ -733,14 +749,23 @@ test('full-system black-box acceptance after FC-021', {
           where: [],
         },
       ],
-      expression: { kind: 'anyOf', refs: ['mail'] },
-      temporal: [{
-        id: 'no-reply-for-1s',
-        kind: 'absence',
-        ref: 'reply',
-        afterRef: 'mail',
-        forMs: 1000,
-      }],
+      pattern: {
+        root: {
+          kind: 'absence',
+          id: 'no-reply-for-1s',
+          child: { kind: 'event', ref: 'mail' },
+          ref: 'reply',
+          afterRef: 'mail',
+          forMs: 1000,
+        },
+        partitionBy: [{
+          key: 'thread',
+          fields: [
+            { ref: 'mail', path: 'threadId' },
+            { ref: 'reply', path: 'threadId' },
+          ],
+        }],
+      },
       withinMs: 10000,
       lifecycle: { oneShot: true },
       derivedEvent: {
@@ -763,7 +788,7 @@ test('full-system black-box acceptance after FC-021', {
         contractVersion: '1',
         where: [{ path: 'overdue', op: 'eq', value: true }],
       }],
-      expression: { kind: 'anyOf', refs: ['overdue'] },
+      pattern: { root: { kind: 'event', ref: 'overdue' } },
       withinMs: 10000,
       lifecycle: { oneShot: true },
       target: {

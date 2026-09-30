@@ -106,7 +106,7 @@ export class ActivationHydrator {
     }));
 
     return parseActivationEnvelope({
-      activationVersion: '1',
+      activationVersion: '2',
       wake: {
         wakeId,
         status: wake.status,
@@ -118,14 +118,14 @@ export class ActivationHydrator {
         triggerId: definition.triggerId,
         version: definition.version,
         description: definition.description ?? null,
-        expression: definition.expression,
+        pattern: definition.pattern,
         lifecycle: definition.lifecycle ?? {},
       },
       continuation,
       match: {
         matchId: match.matchId,
         status: match.status,
-        correlationKey: match.correlationKey,
+        partitionKey: match.partitionKey,
         openedAt: match.openedAt,
         updatedAt: match.updatedAt,
       },

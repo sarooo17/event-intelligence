@@ -7,7 +7,6 @@ import test from 'node:test';
 import {
   PatternAstV2DefinitionSchema,
   StructuredPredicateSchema,
-  compileLegacyTriggerToPatternV2,
   evaluatePatternMeasure,
   evaluatePatternV2,
 } from '../dist/src/intelligenceProtocol/index.js';
@@ -494,77 +493,7 @@ test('notFollowedBy uses forbidden-pattern completion time', async () => {
   assert.equal(result.matches.length, 1);
 });
 
-test('legacy composite definitions compile to Pattern AST v2', () => {
-  const compiled = compileLegacyTriggerToPatternV2({
-    protocolVersion: '0.1.0',
-    schemaVersion: 'trigger.v0.1',
-    triggerId: 'legacy',
-    version: '1',
-    clauses: [
-      { id: 'deploy', event: 'deploy.succeeded', arguments: {}, where: [] },
-      { id: 'error', event: 'production.error', arguments: {}, where: [] },
-    ],
-    expression: { kind: 'anyOf', refs: ['deploy'] },
-    temporal: [{
-      id: 'quiet',
-      kind: 'absence',
-      ref: 'error',
-      afterRef: 'deploy',
-      forMs: 600000,
-    }],
-    lifecycle: {
-      oneShot: false,
-      cooldownMs: 0,
-      completeOnGoal: false,
-    },
-    withinMs: 3600000,
-    target: { runtime: 'test', kind: 'task', id: 'legacy' },
-  });
-
-  assert.equal(compiled.version, '2');
-  assert.equal(compiled.root.kind, 'absence');
-  assert.equal(compiled.root.child.kind, 'anyOf');
-});
-
-test('legacy same-value correlation compiles to cross-event equality, not partitioning', () => {
-  const compiled = compileLegacyTriggerToPatternV2({
-    protocolVersion: '0.1.0',
-    schemaVersion: 'trigger.v0.1',
-    triggerId: 'legacy-correlation',
-    version: '1',
-    clauses: [
-      { id: 'order', event: 'order.created', arguments: {}, where: [] },
-      { id: 'payment', event: 'payment.completed', arguments: {}, where: [] },
-      { id: 'notice', event: 'notice.received', arguments: {}, where: [] },
-    ],
-    expression: { kind: 'allOf', refs: ['order', 'payment', 'notice'] },
-    temporal: [],
-    correlation: {
-      deterministic: {
-        kind: 'same_value',
-        fields: [
-          { ref: 'order', path: 'customer' },
-          { ref: 'payment', path: 'customer' },
-        ],
-      },
-    },
-    lifecycle: {
-      oneShot: false,
-      cooldownMs: 0,
-      completeOnGoal: false,
-    },
-    withinMs: 3600000,
-    target: { runtime: 'test', kind: 'task', id: 'legacy' },
-  });
-
-  assert.deepEqual(compiled.partitionBy, []);
-  assert.equal(compiled.root.kind, 'compare');
-  assert.equal(compiled.root.left.ref, 'order');
-  assert.equal(compiled.root.right.ref, 'payment');
-  assert.equal(compiled.root.child.kind, 'allOf');
-});
-
-test('Pattern AST v2 partitions durable state by business key', async () => {
+test('Pattern AST partitions durable state by business key', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'ei-pattern-v2-partition-'));
   try {
     const store = new PersistentEventStore(dir);
@@ -578,9 +507,7 @@ test('Pattern AST v2 partitions durable state by business key', async () => {
         { id: 'order', event: 'order.created', arguments: {}, where: [] },
         { id: 'payment', event: 'payment.completed', arguments: {}, where: [] },
       ],
-      expression: { kind: 'anyOf', refs: ['order', 'payment'] },
-      temporal: [],
-      patternV2: pattern(
+      pattern: pattern(
         {
           kind: 'sequence',
           contiguity: 'followedBy',
@@ -634,7 +561,7 @@ test('Pattern AST v2 partitions durable state by business key', async () => {
   }
 });
 
-test('consumed Pattern v2 events remain replay-safe after buffer pruning', async () => {
+test('consumed Pattern events remain replay-safe after buffer pruning', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'ei-pattern-v2-replay-'));
   try {
     const store = new PersistentEventStore(dir);
@@ -648,9 +575,7 @@ test('consumed Pattern v2 events remain replay-safe after buffer pruning', async
         { id: 'a', event: 'a.event', arguments: {}, where: [] },
         { id: 'b', event: 'b.event', arguments: {}, where: [] },
       ],
-      expression: { kind: 'anyOf', refs: ['a', 'b'] },
-      temporal: [],
-      patternV2: pattern({
+      pattern: pattern({
         kind: 'sequence',
         contiguity: 'followedBy',
         children: [
@@ -696,7 +621,7 @@ test('consumed Pattern v2 events remain replay-safe after buffer pruning', async
   }
 });
 
-test('Pattern v2 event identity includes subscription arguments', async () => {
+test('Pattern event identity includes subscription arguments', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'ei-pattern-v2-subscription-id-'));
   try {
     const store = new PersistentEventStore(dir);
@@ -722,9 +647,7 @@ test('Pattern v2 event identity includes subscription arguments', async () => {
           where: [],
         },
       ],
-      expression: { kind: 'anyOf', refs: ['left', 'right'] },
-      temporal: [],
-      patternV2: pattern({
+      pattern: pattern({
         kind: 'allOf',
         children: [
           { kind: 'event', ref: 'left' },
@@ -782,9 +705,7 @@ test('bounded notFollowedBy survives as a durable deadline', async () => {
         { id: 'deploy', event: 'deploy.succeeded', arguments: {}, where: [] },
         { id: 'error', event: 'production.error', arguments: {}, where: [] },
       ],
-      expression: { kind: 'anyOf', refs: ['deploy', 'error'] },
-      temporal: [],
-      patternV2: pattern({
+      pattern: pattern({
         kind: 'notFollowedBy',
         id: 'quiet',
         child: { kind: 'event', ref: 'deploy' },
@@ -825,7 +746,7 @@ test('bounded notFollowedBy survives as a durable deadline', async () => {
   }
 });
 
-test('derived events can emit aggregate Pattern v2 measures', async () => {
+test('derived events can emit aggregate Pattern measures', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'ei-pattern-v2-measures-'));
   try {
     const store = new PersistentEventStore(dir);
@@ -873,9 +794,7 @@ test('derived events can emit aggregate Pattern v2 measures', async () => {
           arguments: {},
           where: [],
         }],
-        expression: { kind: 'anyOf', refs: ['order'] },
-        temporal: [],
-        patternV2: pattern({
+        pattern: pattern({
           kind: 'aggregate',
           function: 'sum',
           ref: 'order',
@@ -1138,9 +1057,7 @@ test('targeted after-match selection refs are validated', async () => {
           { id: 'a', event: 'a.event', arguments: {}, where: [] },
           { id: 'b', event: 'b.event', arguments: {}, where: [] },
         ],
-        expression: { kind: 'anyOf', refs: ['a', 'b'] },
-        temporal: [],
-        patternV2: pattern(
+        pattern: pattern(
           {
             kind: 'sequence',
             children: [
@@ -1166,7 +1083,7 @@ test('targeted after-match selection refs are validated', async () => {
 });
 
 
-test('oneShot caps multiple Pattern v2 matches produced in one ingest', async () => {
+test('oneShot caps multiple Pattern matches produced in one ingest', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'ei-pattern-v2-one-shot-'));
   try {
     const store = new PersistentEventStore(dir);
@@ -1180,9 +1097,7 @@ test('oneShot caps multiple Pattern v2 matches produced in one ingest', async ()
         { id: 'a', event: 'a.event', arguments: {}, where: [] },
         { id: 'b', event: 'b.event', arguments: {}, where: [] },
       ],
-      expression: { kind: 'anyOf', refs: ['a', 'b'] },
-      temporal: [],
-      patternV2: pattern(
+      pattern: pattern(
         {
           kind: 'sequence',
           contiguity: 'followedByAny',
@@ -1238,7 +1153,7 @@ test('oneShot caps multiple Pattern v2 matches produced in one ingest', async ()
   }
 });
 
-test('Pattern v2 raw partition buffers fail closed at maxBufferedEvents', async () => {
+test('Pattern raw partition buffers fail closed at maxBufferedEvents', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'ei-pattern-v2-buffer-limit-'));
   try {
     const store = new PersistentEventStore(dir);
@@ -1252,9 +1167,7 @@ test('Pattern v2 raw partition buffers fail closed at maxBufferedEvents', async 
       clauses: [
         { id: 'e', event: 'e.event', arguments: {}, where: [] },
       ],
-      expression: { kind: 'anyOf', refs: ['e'] },
-      temporal: [],
-      patternV2: pattern(
+      pattern: pattern(
         {
           kind: 'repeat',
           child: { kind: 'event', ref: 'e' },
@@ -1323,7 +1236,7 @@ test('semantic refs must be guaranteed by the child pattern', () => {
   );
 });
 
-test('derived measures cannot depend on optional Pattern v2 bindings', async () => {
+test('derived measures cannot depend on optional Pattern bindings', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'ei-pattern-v2-measure-binding-'));
   try {
     const store = new PersistentEventStore(dir);
@@ -1338,9 +1251,7 @@ test('derived measures cannot depend on optional Pattern v2 bindings', async () 
           { id: 'a', event: 'a.event', arguments: {}, where: [] },
           { id: 'b', event: 'b.event', arguments: {}, where: [] },
         ],
-        expression: { kind: 'anyOf', refs: ['a', 'b'] },
-        temporal: [],
-        patternV2: pattern({
+        pattern: pattern({
           kind: 'anyOf',
           children: [
             { kind: 'event', ref: 'a' },
@@ -1372,7 +1283,7 @@ test('derived measures cannot depend on optional Pattern v2 bindings', async () 
 });
 
 
-test('Pattern v2 watermark remains monotonic after match pruning', async () => {
+test('Pattern watermark remains monotonic after match pruning', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'ei-pattern-v2-watermark-'));
   try {
     const store = new PersistentEventStore(dir);
@@ -1386,9 +1297,7 @@ test('Pattern v2 watermark remains monotonic after match pruning', async () => {
       clauses: [
         { id: 'e', event: 'e.event', arguments: {}, where: [] },
       ],
-      expression: { kind: 'anyOf', refs: ['e'] },
-      temporal: [],
-      patternV2: pattern({
+      pattern: pattern({
         kind: 'event',
         ref: 'e',
       }),

@@ -29,10 +29,6 @@ export type {
 } from './patternV2Schemas.js';
 
 export {
-  compileLegacyTriggerToPatternV2,
-} from '../patternV2/legacyCompiler.js';
-
-export {
   evaluatePatternV2,
   evaluatePatternAggregate,
   evaluatePatternMeasure,
@@ -50,8 +46,6 @@ export type {
 export {
   TRIGGER_LANGUAGE_VERSION,
   PREDICATE_OPERATOR,
-  COMPOSITION_OPERATOR,
-  TEMPORAL_OPERATOR,
   TRIGGER_LANGUAGE_CATALOG,
   describeTriggerLanguage,
 } from './operatorRegistry.js';
@@ -69,19 +63,11 @@ export {
 
 export {
   RuntimeTargetSchema,
-  EventSourceSchema,
-  EventLineageSchema,
   McpEventOccurrenceSchema,
-  SemanticConditionWireSchema,
-  EventIngestRequestSchema,
-  SemanticDecisionRecordSchema,
   WakeRecordSchema,
   LifecycleStateSchema,
   AuditKindSchema,
   AuditRecordSchema,
-  parseEventIngestRequest,
-  parseEventLineage,
-  parseSemanticDecisionRecord,
   parseWakeRecord,
   parseAuditRecord,
 } from './schemas.js';
@@ -89,10 +75,6 @@ export {
 export type {
   RuntimeTarget,
   McpEventOccurrence,
-  SemanticConditionWire,
-  EventIngestRequest,
-  EventLineage,
-  SemanticDecisionRecord,
   WakeRecord,
   LifecycleState,
   AuditRecord,
@@ -118,25 +100,10 @@ export type {
 } from './audit.js';
 
 export {
-  mapMcpEventToLineage,
-} from './mapper.js';
-
-export type {
-  MapMcpEventInput,
-} from './mapper.js';
-
-export {
-  assertDecisionLineage,
-  assertWakeLineage,
-} from './invariants.js';
-
-
-export {
   COMPOSITE_TRIGGER_PROTOCOL_VERSION,
   COMPOSITE_TRIGGER_SCHEMA_VERSION,
   StructuredPredicateSchema,
   TriggerClauseSchema,
-  TemporalConditionSchema,
   ContinuationContextPolicySchema,
   ContinuationContractSchema,
   EventTimePolicySchema,
@@ -144,12 +111,10 @@ export {
   DerivedEventDefinitionSchema,
   DerivedEventEvidenceRefSchema,
   DerivedEventRecordSchema,
-  DeterministicCorrelationSchema,
-  SemanticCorrelationSchema,
   CompositeTriggerDefinitionSchema,
   CorrelatableEventSchema,
   TriggerSourceEventSchema,
-  CompositeCorrelationDecisionSchema,
+  PatternSemanticDecisionSchema,
   TriggerMatchStatusSchema,
   PatternMatchStateSchema,
   TriggerMatchRecordSchema,
@@ -162,7 +127,6 @@ export {
 export type {
   StructuredPredicate,
   TriggerClause,
-  TemporalCondition,
   ContinuationContextPolicy,
   ContinuationContract,
   EventTimePolicy,
@@ -173,20 +137,18 @@ export type {
   TriggerSourceEvent,
   PatternMatchState,
   TriggerMatchRecord,
-  CompositeCorrelationDecision,
+  PatternSemanticDecision,
 } from './triggerSchemas.js';
 
 
 export {
   TriggerPlanEventSchema,
-  TriggerPlanMatchSchema,
   TriggerPlanInputSchema,
   parseTriggerPlanInput,
 } from './triggerPlanSchemas.js';
 
 export type {
   TriggerPlanEvent,
-  TriggerPlanMatch,
   TriggerPlanInput,
 } from './triggerPlanSchemas.js';
 

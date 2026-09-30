@@ -23,7 +23,7 @@ A trigger may only reference active event sources available in its scoped connec
 
 Agent-authored persistent mutations require a confirmation identifier. For common cases, the surrounding agent can submit an agent-friendly plan to `trigger_plan` / `planTrigger()`; Event Intelligence deterministically resolves live sources, validates advertised fields, and compiles the canonical trigger definition before persistence. Advanced callers may still submit canonical definitions directly.
 
-Planning does not grant authority. Source scope and advertised predicate/correlation/projection paths fail closed when the source provides a payload schema. The embedding host remains responsible for deciding which user/agent may create or mutate triggers.
+Planning does not grant authority. Source scope and advertised predicate, Pattern, partition and projection paths fail closed when the source provides a payload schema. The embedding host remains responsible for deciding which user/agent may create or mutate triggers.
 
 ## Derived events
 
@@ -63,6 +63,6 @@ Production hardening should use:
 
 ## AI boundary
 
-Event Intelligence does not contain a general-purpose agent or natural-language model planner. The surrounding harness/agent performs natural-language reasoning. Event Intelligence can then deterministically compile an agent-friendly trigger plan into the canonical trigger program.
+Event Intelligence does not contain a general-purpose agent or natural-language model planner. The surrounding harness/agent performs natural-language reasoning. Event Intelligence can then deterministically compile an agent-friendly trigger plan into the canonical Pattern trigger.
 
-The only bundled AI adapter is the optional TypeSafe Jev semantic evaluator, used when a trigger explicitly requests semantic correlation. A model cannot gain authority by inventing an event source, field, runtime target or contract version because the deterministic control plane validates the submitted program against scoped live sources and schemas.
+The only bundled AI adapter is the optional TypeSafe Jev semantic evaluator, used only by an explicit Pattern `semantic` node. A model cannot gain authority by inventing an event source, field, runtime target or contract version because the deterministic control plane validates the submitted program against scoped live sources and schemas.

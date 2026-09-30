@@ -9,7 +9,6 @@ export class CompositeEventConsumer {
     wakeCoordinator = null,
     wakeCoordinators = null,
     derivedEventCoordinator = null,
-    processor = null,
     maxDerivedDepth = 16,
   }) {
     this.store = store;
@@ -19,7 +18,6 @@ export class CompositeEventConsumer {
       ? wakeCoordinators
       : new Map();
     this.derivedEventCoordinator = derivedEventCoordinator;
-    this.processor = processor;
     this.maxDerivedDepth = Math.max(1, Number(maxDerivedDepth) || 16);
   }
 
@@ -139,31 +137,13 @@ export class CompositeEventConsumer {
       const delivery = await coordinator.deliverMatched(result.match);
       const persistedWake = delivery.wake;
 
-      if (
-        persistedWake?.status === 'delivered' &&
-        persistedWake.runtimeReceiptId &&
-        this.processor
-      ) {
-        const handled = await this.processor.acknowledgeWake(
-          persistedWake.wakeId,
-          persistedWake.runtimeReceiptId,
-        );
-        deliveries.push({
-          triggerId: result.triggerId,
-          matchId: result.match.matchId,
-          wakeId: handled.wakeId,
-          status: handled.status,
-          runtimeReceiptId: handled.runtimeReceiptId ?? null,
-        });
-      } else {
-        deliveries.push({
-          triggerId: result.triggerId,
-          matchId: result.match.matchId,
-          wakeId: persistedWake?.wakeId ?? null,
-          status: delivery.status,
-          runtimeReceiptId: persistedWake?.runtimeReceiptId ?? null,
-        });
-      }
+      deliveries.push({
+        triggerId: result.triggerId,
+        matchId: result.match.matchId,
+        wakeId: persistedWake?.wakeId ?? null,
+        status: delivery.status,
+        runtimeReceiptId: persistedWake?.runtimeReceiptId ?? null,
+      });
     }
 
     return {

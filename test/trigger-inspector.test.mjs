@@ -46,7 +46,15 @@ test('inspector explains the exact missing clause without exposing raw event dat
         { id: 'merged', event: 'pr.merged', serverId: 'server', where: [] },
         { id: 'deployed', event: 'deploy.succeeded', serverId: 'server', where: [] },
       ],
-      expression: { kind: 'allOf', refs: ['merged', 'deployed'] },
+      pattern: {
+        root: {
+          kind: 'allOf',
+          children: [
+            { kind: 'event', ref: 'merged' },
+            { kind: 'event', ref: 'deployed' },
+          ],
+        },
+      },
       withinMs: 3600000,
       target,
     });
@@ -67,11 +75,10 @@ test('inspector explains the exact missing clause without exposing raw event dat
       version: '1',
     });
 
-    assert.equal(view.why.code, 'waiting_for_event_clauses');
-    assert.deepEqual(view.why.missingClauses, ['deployed']);
+    assert.equal(view.why.code, 'pattern_waiting');
     assert.equal(
       view.clauses.find((clause) => clause.clauseId === 'merged').status,
-      'satisfied',
+      'observed',
     );
     assert.equal(
       view.clauses.find((clause) => clause.clauseId === 'deployed').status,
@@ -102,15 +109,17 @@ test('inspector exposes absence deadline, remaining state and next evaluation', 
         { id: 'mail', event: 'email.received', serverId: 'server', where: [] },
         { id: 'reply', event: 'email.replied', serverId: 'server', where: [] },
       ],
-      expression: { kind: 'anyOf', refs: ['mail'] },
-      temporal: [{
-        id: 'wait-until-20',
-        kind: 'absence',
-        ref: 'reply',
-        afterRef: 'mail',
-        untilLocalTime: '20:00',
-        timezone: 'Europe/Rome',
-      }],
+      pattern: {
+        root: {
+          kind: 'absence',
+          id: 'wait-until-20',
+          child: { kind: 'event', ref: 'mail' },
+          ref: 'reply',
+          afterRef: 'mail',
+          untilLocalTime: '20:00',
+          timezone: 'Europe/Rome',
+        },
+      },
       withinMs: 4 * 3600000,
       target,
     });
@@ -132,9 +141,8 @@ test('inspector exposes absence deadline, remaining state and next evaluation', 
       version: '1',
     });
 
-    assert.equal(view.why.code, 'waiting_for_temporal_conditions');
+    assert.equal(view.why.code, 'pattern_waiting');
     assert.equal(view.nextEvaluationAt, '2026-09-18T18:00:00.000Z');
-    assert.equal(view.temporal.conditions[0].status, 'pending');
     assert.equal(view.deadlines[0].status, 'pending');
   } finally {
     await rm(dir, { recursive: true, force: true });
@@ -155,7 +163,7 @@ test('inspector traces a fired trigger to refs and runtime receipt', async () =>
       clauses: [
         { id: 'ready', event: 'release.ready', serverId: 'server', where: [] },
       ],
-      expression: { kind: 'anyOf', refs: ['ready'] },
+      pattern: { root: { kind: 'event', ref: 'ready' } },
       withinMs: 3600000,
       target,
     });
@@ -207,14 +215,16 @@ test('simulation deterministically advances durable time without mutating live s
       { id: 'mail', event: 'email.received', serverId: 'server', where: [] },
       { id: 'reply', event: 'email.replied', serverId: 'server', where: [] },
     ],
-    expression: { kind: 'anyOf', refs: ['mail'] },
-    temporal: [{
-      id: 'absence-30m',
-      kind: 'absence',
-      ref: 'reply',
-      afterRef: 'mail',
-      forMs: 30 * 60 * 1000,
-    }],
+    pattern: {
+      root: {
+        kind: 'absence',
+        id: 'absence-30m',
+        child: { kind: 'event', ref: 'mail' },
+        ref: 'reply',
+        afterRef: 'mail',
+        forMs: 30 * 60 * 1000,
+      },
+    },
     withinMs: 2 * 3600000,
     target,
   };

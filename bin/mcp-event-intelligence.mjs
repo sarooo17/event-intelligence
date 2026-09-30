@@ -4,12 +4,12 @@ const args = process.argv.slice(2);
 const flags = new Set(args);
 
 if (flags.has('--version') || flags.has('-v')) {
-  console.log('0.5.0');
+  console.log('0.6.0');
   process.exit(0);
 }
 
 if (flags.has('--help') || flags.has('-h')) {
-  console.log(`MCP Event Intelligence v0.5
+  console.log(`MCP Event Intelligence v0.6
 
 MCP-native complex event processing for durable agents.
 

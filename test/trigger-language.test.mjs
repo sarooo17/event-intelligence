@@ -2,9 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  PatternNodeV2Schema,
   StructuredPredicateSchema,
-  TemporalConditionSchema,
-  TriggerPlanMatchSchema,
   TRIGGER_LANGUAGE_CATALOG,
   describeTriggerLanguage,
 } from '../dist/src/intelligenceProtocol/index.js';
@@ -18,42 +17,41 @@ test('trigger language registry examples stay valid against canonical schemas', 
     );
   }
 
-  for (const entry of TRIGGER_LANGUAGE_CATALOG.temporal) {
+  for (const entry of TRIGGER_LANGUAGE_CATALOG.pattern) {
+    if (!entry.example) continue;
     assert.doesNotThrow(
-      () => TemporalConditionSchema.parse(entry.example),
-      `invalid temporal registry example: ${entry.id}`,
-    );
-  }
-
-  for (const entry of TRIGGER_LANGUAGE_CATALOG.composition) {
-    assert.doesNotThrow(
-      () => TriggerPlanMatchSchema.parse(entry.example.match),
-      `invalid composition registry example: ${entry.id}`,
+      () => PatternNodeV2Schema.parse(entry.example),
+      `invalid Pattern registry example: ${entry.id}`,
     );
   }
 });
 
-test('trigger language can be discovered by category or operator', () => {
-  const temporal = describeTriggerLanguage({ category: 'temporal' });
-  assert.equal(temporal.version, '2');
-  assert.equal(temporal.temporal.length, 10);
+test('trigger language exposes one Pattern category', () => {
+  const pattern = describeTriggerLanguage({ category: 'pattern' });
+  assert.equal(pattern.version, '3');
+  assert.ok(pattern.pattern.length >= 20);
   assert.equal(
-    temporal.temporal.some((entry) => entry.id === 'absence'),
+    pattern.pattern.some((entry) => entry.id === 'absence'),
     true,
   );
 
   const absence = describeTriggerLanguage({
-    category: 'temporal',
+    category: 'pattern',
     operator: 'absence',
   });
-  assert.equal(absence.temporal.length, 1);
-  assert.equal(absence.temporal[0].id, 'absence');
+  assert.equal(absence.pattern.length, 1);
+  assert.equal(absence.pattern[0].id, 'absence');
 
   const missing = describeTriggerLanguage({
-    category: 'temporal',
+    category: 'pattern',
     operator: 'does-not-exist',
   });
-  assert.deepEqual(missing.temporal, []);
+  assert.deepEqual(missing.pattern, []);
+  assert.equal(pattern.preferredAuthoring, 'TriggerPlanInput.pattern');
+  assert.equal(
+    pattern.canonicalRepresentation,
+    'CompositeTriggerDefinition.pattern',
+  );
 });
 
 function eventSource(id, eventName, properties = {}) {
@@ -72,21 +70,10 @@ function eventSource(id, eventName, properties = {}) {
   };
 }
 
-test('agent-friendly planner compiles the full temporal operator set', async () => {
+test('agent-friendly planner persists temporal semantics inside Pattern AST', async () => {
   const sources = [
-    eventSource('order', 'order.created', {
-      customer: { type: 'string' },
-      grand_total: { type: 'number' },
-    }),
-    eventSource('deploy', 'deploy.succeeded'),
-    eventSource('error', 'production.error'),
-    eventSource('merge', 'pr.merged'),
-    eventSource('approval', 'manager.approved'),
-    eventSource('expiry', 'release.expired'),
-    eventSource('change', 'config.changed'),
-    eventSource('comment', 'issue.commented'),
-    eventSource('blocked', 'release.blocked'),
-    eventSource('cancelled', 'order.cancelled'),
+    eventSource('mail', 'email.received', { threadId: { type: 'string' } }),
+    eventSource('reply', 'email.replied', { threadId: { type: 'string' } }),
   ];
 
   const planner = new TriggerPlanner({
@@ -100,102 +87,37 @@ test('agent-friendly planner compiles the full temporal operator set', async () 
   const planned = await planner.plan({
     conditionOnly: true,
     events: [
-      { id: 'order', event: 'order.created' },
-      { id: 'deploy', event: 'deploy.succeeded' },
-      { id: 'error', event: 'production.error' },
-      { id: 'merge', event: 'pr.merged' },
-      { id: 'approval', event: 'manager.approved' },
-      { id: 'expiry', event: 'release.expired' },
-      { id: 'change', event: 'config.changed' },
-      { id: 'comment', event: 'issue.commented' },
-      { id: 'blocked', event: 'release.blocked' },
-      { id: 'cancelled', event: 'order.cancelled' },
+      { id: 'mail', event: 'email.received' },
+      { id: 'reply', event: 'email.replied' },
     ],
-    match: 'any',
-    temporal: [
-      {
-        id: 'business-hours',
-        kind: 'calendar',
-        ref: 'order',
-        timezone: 'Europe/Rome',
-        after: '09:00',
-        before: '18:00',
-        weekdays: [1, 2, 3, 4, 5],
-      },
-      {
-        id: 'no-errors',
+    pattern: {
+      root: {
         kind: 'absence',
-        ref: 'error',
-        afterRef: 'deploy',
+        id: 'no-reply',
+        child: { kind: 'event', ref: 'mail' },
+        ref: 'reply',
+        afterRef: 'mail',
         forMs: 600000,
       },
-      { id: 'not-cancelled', kind: 'not', ref: 'cancelled' },
-      { id: 'unless-blocked', kind: 'unless', ref: 'blocked' },
-      {
-        id: 'deploy-after-merge',
-        kind: 'after',
-        ref: 'deploy',
-        afterRef: 'merge',
-      },
-      {
-        id: 'approval-before-expiry',
-        kind: 'until',
-        ref: 'approval',
-        beforeRef: 'expiry',
-      },
-      {
-        id: 'quiet-config',
-        kind: 'debounce',
-        ref: 'change',
-        forMs: 300000,
-      },
-      {
-        id: 'three-comments',
-        kind: 'threshold',
-        ref: 'comment',
-        atLeast: 3,
-      },
-      {
-        id: 'order-spike',
-        kind: 'rate',
-        ref: 'order',
-        atLeast: 5,
-        perMs: 600000,
-      },
-      {
-        id: 'three-customers',
-        kind: 'distinct',
-        ref: 'order',
-        path: 'customer',
-        atLeast: 3,
-      },
-    ],
+      partitionBy: [{
+        key: 'thread',
+        fields: [
+          { ref: 'mail', path: 'threadId' },
+          { ref: 'reply', path: 'threadId' },
+        ],
+      }],
+    },
   });
 
-  assert.equal(planned.definition.temporal.length, 10);
-  assert.deepEqual(
-    planned.definition.temporal.map((condition) => condition.kind),
-    [
-      'calendar',
-      'absence',
-      'not',
-      'unless',
-      'after',
-      'until',
-      'debounce',
-      'threshold',
-      'rate',
-      'distinct',
-    ],
-  );
-  assert.deepEqual(
-    planned.explanation.when.temporal,
-    planned.definition.temporal,
-  );
+  assert.equal(planned.planVersion, '2');
+  assert.equal(planned.definition.pattern.root.kind, 'absence');
   assert.equal(planned.definition.conditionOnly, true);
+  assert.equal('temporal' in planned.definition, false);
+  assert.equal('expression' in planned.definition, false);
+  assert.equal('correlation' in planned.definition, false);
 });
 
-test('planner validates temporal refs and distinct payload paths', async () => {
+test('planner rejects unknown Pattern refs and unavailable partition fields', async () => {
   const planner = new TriggerPlanner({
     store: {
       listEventSources() {
@@ -212,12 +134,15 @@ test('planner validates temporal refs and distinct payload paths', async () => {
     () => planner.plan({
       conditionOnly: true,
       events: [{ id: 'order', event: 'order.created' }],
-      temporal: [{
-        id: 'bad-ref',
-        kind: 'after',
-        ref: 'order',
-        afterRef: 'missing',
-      }],
+      pattern: {
+        root: {
+          kind: 'allOf',
+          children: [
+            { kind: 'event', ref: 'order' },
+            { kind: 'event', ref: 'missing' },
+          ],
+        },
+      },
     }),
     (error) => error.code === 'TRIGGER_PLAN_EVENT_REF_UNKNOWN',
   );
@@ -226,13 +151,13 @@ test('planner validates temporal refs and distinct payload paths', async () => {
     () => planner.plan({
       conditionOnly: true,
       events: [{ id: 'order', event: 'order.created' }],
-      temporal: [{
-        id: 'bad-path',
-        kind: 'distinct',
-        ref: 'order',
-        path: 'secretField',
-        atLeast: 2,
-      }],
+      pattern: {
+        root: { kind: 'event', ref: 'order' },
+        partitionBy: [{
+          key: 'secret',
+          fields: [{ ref: 'order', path: 'secretField' }],
+        }],
+      },
     }),
     (error) => error.code === 'TRIGGER_PLAN_FIELD_UNAVAILABLE',
   );

@@ -1,127 +1,170 @@
-# Event Intelligence Protocol v0.1
+# Event Intelligence Protocol v0.2
 
-This document describes the current **internal persisted protocol/schema compatibility line**. Package releases are versioned independently; the 0.5.x package still emits the v0.1 internal protocol identifiers for backward compatibility.
+This document describes the current **internal persisted protocol/schema line** used by Event Intelligence v0.6.x. Package and internal protocol versions are independent, but v0.6 intentionally introduces a breaking persisted-trigger boundary: the pre-Pattern trigger representation is no longer accepted.
 
-Event Intelligence defines a small internal protocol above event transport and below agent execution. It is **not** an MCP specification.
+Event Intelligence defines a runtime protocol above event transport and below agent execution. It is **not** an MCP specification.
 
-## Layers
+## Pipeline
 
 ```text
-event source
-  → canonical event occurrence
-  → composite + temporal trigger program
-  → derived semantic event / versioned contract
-  → signed runtime wake
+EventSource / EventSubscription
+        ↓
+canonical event occurrence
+        ↓
+Pattern AST
+        ↓
+matched evidence
+   ↙            ↘
+derived event    runtime wake
+        ↓              ↓
+same event graph   Activation Envelope
 ```
+
+There is one trigger execution model: **Pattern AST**.
 
 ## MCP boundaries
 
-Two boundaries are intentionally separate:
+Two MCP-facing boundaries remain separate:
 
-- **event ingress:** versioned compatibility profiles isolate the experimental MCP Events wire assumptions; the current profile covers `capabilities.extensions["io.modelcontextprotocol/events"]`, paginated `events/list`, `events/poll`, durable per-argument subscriptions and host-owned poll/push/webhook delivery adapters;
-- **control plane:** standard MCP stdio server using the official TypeScript SDK v2, targeting MCP 2026-07-28.
+- **event ingress:** a versioned compatibility profile isolates experimental MCP Events wire assumptions. Host-owned poll, push and webhook delivery normalize into the same occurrence path;
+- **control plane:** an optional standard MCP stdio server built with the official TypeScript SDK v2 and targeting MCP 2026-07-28.
 
-The project does not define a competing base MCP Events protocol.
+Event Intelligence does not define a competing MCP Events base protocol.
 
-## Canonical lineage
+## Event sources and subscriptions
 
-Accepted source events preserve stable identifiers and payload hashes. Decisions, trigger matches, derived events and wakes remain linked to their source evidence.
+An `EventSource` describes an event exposed by a provider: name, delivery modes, `inputSchema`, `payloadSchema` and metadata.
 
-Audit records are append-only and hash-linked. This is tamper-evident, not tamper-proof.
+An `EventSubscription` is durable client-side interest in one source. Its identity includes the host connection, event name and canonical subscription `arguments`. Cursor and delivery state belong to the subscription.
 
-## Event subscriptions
+Trigger clauses refer to discovered sources and contain:
 
-MCP Events discovery and EI trigger semantics remain separate. `events/list` yields source descriptors. For an active trigger clause, EI derives a durable subscription keyed by connection, event name and canonical MCP `arguments`. The subscription owns cursor/delivery state; the trigger clause owns the EI `where` predicate.
+- a stable clause id;
+- event name and resolved `serverId`;
+- provider-side subscription `arguments`;
+- EI payload predicates in `where`;
+- optional derived-event `contractVersion`.
 
-This preserves two independent contracts:
+Subscription arguments are validated against `inputSchema`. EI predicates and Pattern field references are validated against `payloadSchema`.
 
-- MCP `arguments` are validated against the source `inputSchema` and define the provider-side subscription;
-- EI predicates are validated against `payloadSchema` and evaluate delivered event data.
+## Canonical trigger
 
-Poll, push and webhook all normalize into the same EventOccurrence path before composite evaluation. Active clauses with an identical `(connection, event name, arguments)` tuple share one upstream subscription and fan out locally. Existing persisted trigger definitions without `arguments` read as `arguments: {}`.
+A persisted trigger contains:
 
-## Pattern AST v2
-
-Pattern AST v2 is the preferred advanced CEP representation. It is additive to the legacy composite-trigger fields and reuses the same discovered event-source clauses.
-
-A v2 program contains a recursive `root` pattern, optional `partitionBy` dimensions, match-selection policy (`overlap`, `afterMatch`, `maxMatchesPerEvent`) and execution budgets (`maxCandidates`, `maxSemanticEvaluations`).
-
-The node set includes nested boolean patterns, `sequence` with `next` / `followedBy` / `followedByAny`, `repeat` / `optional` with greedy/lazy preference, bounded negative patterns, event-time windows, cross-event comparisons and arithmetic, aggregates, state transitions, the existing temporal operators, and a vendor-neutral `semantic` node.
-
-`partitionBy` fields are validated against live provider payload schemas and every dimension must map all aliases used by the pattern. The runtime persists one bounded buffer per trigger/version/partition. `withinMs` is the global maximum horizon; Pattern v2 duration-bearing nodes cannot exceed it.
-
-Semantic evaluation is never implicit. A `semantic` node declares projected inputs, thresholds, uncertainty policy and timeout. It runs through `SemanticEvaluator`; TypeSafe Jev is only the optional bundled implementation. Every evaluated semantic decision is audit-recorded whether it matches or rejects.
-
-Legacy triggers remain valid. `compileLegacyTriggerToPatternV2()` translates legacy expression/temporal/correlation semantics into the new AST for migration and differential verification.
-
-## Composite programs
-
-A trigger contains:
-
-- event clauses with MCP subscription arguments and structured EI predicates;
-- `allOf`, `anyOf`, `sequence` or `count`;
-- optional deterministic same-value correlation;
-- optional semantic correlation;
-- temporal conditions;
+- `clauses`;
+- required `pattern`;
+- global retention bound `withinMs`;
+- optional `eventTime.allowedLatenessMs`;
 - lifecycle policy;
-- optional continuation metadata for the runtime activation;
-- a runtime target, a derived-event output, both, or explicit `conditionOnly: true`.
+- optional continuation;
+- a runtime target, derived-event output, or explicit `conditionOnly: true`.
 
-Agent-facing trigger plans are a package-level convenience API. They compile deterministically into this canonical trigger protocol and do not introduce a second persisted protocol.
+The current trigger identifiers are:
 
-Unbounded joins and arbitrary code predicates are intentionally excluded.
+```text
+protocolVersion: 0.2.0
+schemaVersion:   trigger.v0.2
+```
 
-## Temporal semantics
+The old `expression`, `temporal`, `correlation` and `semanticCorrelation` trigger fields are not part of this protocol.
 
-Normal trigger windows use event time. Source `occurredAt` and host `receivedAt` are separate fields when receive-time is available; delivery order is never treated as event order. Out-of-order events can re-anchor a compatible partial match to an earlier event-time.
+## Pattern AST
 
-`eventTime.allowedLatenessMs` defaults to zero and controls the event-time watermark. Partial windows remain eligible until their expiry is behind `maxObservedEventTime - allowedLatenessMs`. Events older than that watermark can complete a retained compatible partial but cannot seed a new stale window.
+The canonical field is `pattern`. The wire grammar currently uses `version: "2"`; that version identifies the Pattern schema and does not imply a second runtime architecture.
 
-Absence and durable deadline progression use processing time. Pending deadlines are persisted so a process restart does not erase the wait.
+The recursive node set includes:
+
+- `event`, `allOf`, `anyOf`, `sequence`;
+- `repeat`, `optional`;
+- `notNext`, `notFollowedBy`, `notPresent`;
+- `calendar`, `absence`, `after`, `until`, `debounce`, `threshold`, `rate`, `distinct`;
+- `window`;
+- `compare` with cross-event arithmetic;
+- `aggregate`;
+- `state`;
+- explicit `semantic`.
+
+Pattern definitions also carry optional `partitionBy`, match-selection policy and execution budgets.
+
+The runtime persists bounded state per trigger/version/partition. `withinMs` is the outer retention horizon; duration-bearing Pattern nodes cannot exceed it.
+
+## Event time
+
+Provider event time and host receive time are kept separate.
+
+- `occurredAt` drives sequence, windows, rate, state and matching order;
+- `receivedAt` records host observation time when available;
+- `allowedLatenessMs` defines bounded out-of-order tolerance and the watermark.
+
+Delivery order is never treated as event order.
+
+## Durable time
+
+Negative/debounce/absence patterns may need to become true without another provider event. EI persists temporal deadlines and later evaluates them through internal timer occurrences.
+
+A restart therefore does not erase a pending wait.
+
+## Semantic nodes
+
+Semantic reasoning is explicit. A `semantic` node declares its child pattern, projected refs/fields, instruction, thresholds, uncertainty policy and execution policy.
+
+Semantic evaluation runs through the vendor-neutral `SemanticEvaluator` interface. TypeSafe Jev is the optional bundled implementation. Calls are bounded, timed out, cacheable and audit-recorded. Deterministic CEP does not require a model API.
 
 ## Derived events
 
-Derived events are immutable semantic boundaries. They:
+A matched trigger may emit an immutable derived event.
 
-- have deterministic IDs;
+Derived events:
+
+- receive deterministic IDs;
+- declare `eventName@contractVersion`;
+- project only configured fields/constants/measures;
+- preserve direct-parent and flattened root evidence;
 - re-enter the same event graph;
-- project only explicitly configured scalar fields/constants;
-- carry direct-parent refs and flattened root evidence;
-- propagate semantic event-time: `occurredAt` is the latest contributing source event / satisfied temporal deadline, while `receivedAt` is materialization time;
-- are guarded against cycles and excessive recursion.
+- are protected by cycle and recursion-depth guards.
 
-## Versioned contracts
+Within one derived-event contract version, producer schemas must be structurally compatible. Ambiguous unversioned consumers fail closed.
 
-Every derived-event producer declares `eventName@contractVersion`.
+## Runtime wake
 
-Within one version, producers must have the same canonical payload schema. The contract registry stores the schema fingerprint and producers. Ambiguous unversioned consumers fail closed.
+A trigger with a runtime target can enqueue a durable wake. Delivery uses stable IDs, persisted delivery state, claim leases, bounded retry and runtime receipts.
 
-## Runtime wake and Activation Envelope
+The wire wake remains reference-oriented. Embedded hosts can hydrate the wake into **Activation Envelope v2**, containing:
 
-Runtime targets are operator-configured.
+- target;
+- canonical Pattern;
+- lifecycle state;
+- continuation;
+- match/partition state;
+- bounded matched evidence.
 
-Wire wake packets use stable IDs, refs-first evidence, HMAC signatures where applicable, and runtime receipts. A composite wake may be hydrated locally into an Activation Envelope containing the persisted continuation and matched event evidence. The envelope is a runtime convenience contract; it does not grant authority and labels matched event data as untrusted external evidence.
+Delivered event payloads remain untrusted external evidence. Hydration supplies context, not authority.
 
-The implementation claims effectively-once activation only for the validated reference scenarios; it does not claim theoretical distributed exactly-once delivery.
+## Lifecycle
 
-## Governance and security invariants
+Trigger lifecycle supports:
 
-- a model cannot invent authority by inventing a source, field, runtime target or contract;
-- persistent agent-authored mutations remain confirmation-gated;
-- event receipt grants no new downstream authorization;
-- semantic correlation is optional and probabilistic;
-- replay must not produce a second logical wake for an already-fired match;
-- the bundled JSONL persistence backend is single-process reference infrastructure, not HA storage;
+```text
+active ↔ paused
+   ↓
+completed | expired | deleted
+```
 
-Executable schemas and invariants live under `src/intelligenceProtocol/`; end-to-end behavior is verified by the test suite.
+Policies include one-shot, maximum firings, cooldown, expiry, lease and completion-on-goal. Updates create a new immutable trigger version.
 
+## Storage contract
 
-### Pattern AST v2 consumption semantics
+Authoritative reads may be synchronous or Promise-backed. A custom backend advertises capabilities explicitly.
 
-Pattern v2 separates sequence contiguity from repeat-internal contiguity. Sequence supports `next`, `followedBy` and `followedByAny`; repeat supports `consecutive`, `relaxed` and `combinations`.
+The bundled JSONL backend is single-process reference storage. Shared-store mode fails closed unless the backend declares strong shared state, strong scope isolation, distributed-atomic wake claims and distributed-atomic partition leases.
 
-Match selection prefers the earliest start row, preserving evaluator greedy/lazy preference for candidates with the same start. `skipToFirst` and `skipToLast` require an explicit pattern ref and advance relative to that binding.
+## Security invariants
 
-Bounded negative/debounce patterns finalize only after their semantic deadline plus `eventTime.allowedLatenessMs`. Events arriving beyond that bound do not retroactively retract an emitted match.
+- a model cannot invent event-source, field, target or derived-contract authority;
+- agent-authored persistent mutations remain confirmation-gated;
+- event receipt grants no downstream write authorization;
+- semantic matching is evidence, not authorization;
+- replay cannot create a second logical effect for an already-consumed match;
+- tenant/workspace scope is part of the storage boundary.
 
-`rate` is evaluated in event-time only and is independent from processing-time/restart delay.
+Executable schemas and tests are authoritative when prose and code disagree.

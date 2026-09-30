@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { ContinuationContractSchema } from './triggerSchemas.js';
+import { PatternAstV2DefinitionSchema } from './patternV2Schemas.js';
 
 const Id = z.string().min(1).max(200);
 const Timestamp = z.string().datetime({ offset: true });
@@ -17,7 +18,7 @@ export const ActivationEvidenceSchema = z.object({
 }).strict();
 
 export const ActivationEnvelopeSchema = z.object({
-  activationVersion: z.literal('1'),
+  activationVersion: z.literal('2'),
   wake: z.object({
     wakeId: Id,
     status: z.string().min(1),
@@ -33,14 +34,14 @@ export const ActivationEnvelopeSchema = z.object({
     triggerId: Id,
     version: z.string().min(1),
     description: z.string().nullable(),
-    expression: z.record(z.string(), z.unknown()),
+    pattern: PatternAstV2DefinitionSchema,
     lifecycle: z.record(z.string(), z.unknown()),
   }).strict(),
   continuation: ContinuationContractSchema.nullable(),
   match: z.object({
     matchId: Id,
     status: z.string().min(1),
-    correlationKey: z.string().nullable(),
+    partitionKey: z.string().nullable(),
     openedAt: Timestamp,
     updatedAt: Timestamp,
   }).strict(),

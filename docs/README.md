@@ -5,13 +5,14 @@ Current package documentation:
 - [Quickstart](QUICKSTART.md)
 - [Architecture](ARCHITECTURE.md)
 - [Internal protocol](PROTOCOL.md)
+- [Evidence harness](EVIDENCE.md)
 - [Security model](SECURITY-MODEL.md)
 - [MCP Registry](MCP-REGISTRY.md)
 - [Release-gate example](examples/release-gate.md)
-- [Latest release notes](releases/v0.5.0.md)
+- [Latest release notes](releases/v0.6.0.md)
 - [Release history](releases/)
 
-The package release version and the internal persisted protocol version are intentionally separate. Internal protocol/schema identifiers therefore do not necessarily match the npm package version; release notes call out compatibility changes explicitly.
+Event Intelligence v0.6 uses one canonical Pattern trigger architecture. The Pattern wire grammar is currently versioned as `2`; package, Pattern-schema and internal protocol versions are intentionally separate.
 
 The executable implementation, schemas and tests are authoritative when prose and code disagree.
 

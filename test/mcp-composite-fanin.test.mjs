@@ -37,8 +37,6 @@ test('accepted MCP GitHub occurrences automatically satisfy a composite trigger'
 
     const triggerEngine = new CompositeTriggerEngine(store);
     await triggerEngine.register({
-      protocolVersion: '0.1.0',
-      schemaVersion: 'trigger.v0.1',
       triggerId: 'github-open-close-same-issue',
       version: '1',
       clauses: [
@@ -65,20 +63,23 @@ test('accepted MCP GitHub occurrences automatically satisfy a composite trigger'
           ],
         },
       ],
-      expression: {
-        kind: 'allOf',
-        refs: ['opened', 'closed'],
-      },
-      withinMs: 60 * 60 * 1000,
-      correlation: {
-        deterministic: {
-          kind: 'same_value',
+      pattern: {
+        root: {
+          kind: 'allOf',
+          children: [
+            { kind: 'event', ref: 'opened' },
+            { kind: 'event', ref: 'closed' },
+          ],
+        },
+        partitionBy: [{
+          key: 'issue',
           fields: [
             { ref: 'opened', path: 'number' },
             { ref: 'closed', path: 'number' },
           ],
-        },
+        }],
       },
+      withinMs: 60 * 60 * 1000,
       target: {
         runtime: 'test',
         kind: 'goal',
@@ -123,7 +124,10 @@ test('accepted MCP GitHub occurrences automatically satisfy a composite trigger'
     assert.equal(closed.results.length, 1);
     assert.equal(closed.results[0].matched, true);
     assert.equal(closed.results[0].match.status, 'matched');
-    assert.equal(closed.results[0].match.correlationKey, '123');
+    assert.deepEqual(
+      JSON.parse(closed.results[0].match.partitionKey),
+      [{ key: 'issue', type: 'number', value: 123 }],
+    );
     assert.deepEqual(
       closed.results[0].match.sourceEvents.map((event) => event.eventName),
       ['github.issue.opened', 'github.issue.closed'],
@@ -145,7 +149,11 @@ test('accepted MCP GitHub occurrences automatically satisfy a composite trigger'
 
     assert.equal(replay.results.length, 1);
     assert.equal(replay.results[0].match.matchId, closed.results[0].match.matchId);
-    assert.equal(store.listTriggerMatches('github-open-close-same-issue').length, 1);
+    assert.equal(
+      store.listTriggerMatches('github-open-close-same-issue')
+        .filter((match) => match.patternState?.role === 'match').length,
+      1,
+    );
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -159,25 +167,29 @@ test('same event type for another issue cannot join the existing correlation key
     await store.init();
     const triggerEngine = new CompositeTriggerEngine(store);
     await triggerEngine.register({
-      protocolVersion: '0.1.0',
-      schemaVersion: 'trigger.v0.1',
       triggerId: 'same-issue-only',
       version: '1',
       clauses: [
         { id: 'opened', event: 'github.issue.opened', where: [] },
         { id: 'closed', event: 'github.issue.closed', where: [] },
       ],
-      expression: { kind: 'allOf', refs: ['opened', 'closed'] },
-      withinMs: 60 * 60 * 1000,
-      correlation: {
-        deterministic: {
-          kind: 'same_value',
+      pattern: {
+        root: {
+          kind: 'allOf',
+          children: [
+            { kind: 'event', ref: 'opened' },
+            { kind: 'event', ref: 'closed' },
+          ],
+        },
+        partitionBy: [{
+          key: 'issue',
           fields: [
             { ref: 'opened', path: 'number' },
             { ref: 'closed', path: 'number' },
           ],
-        },
+        }],
       },
+      withinMs: 60 * 60 * 1000,
       target: { runtime: 'test', kind: 'goal', id: 'same-issue' },
     });
 

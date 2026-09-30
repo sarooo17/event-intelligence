@@ -28,7 +28,7 @@ test('agent-friendly plan compiles, fires, and delivers a hydrated activation en
       category: 'predicates',
       operator: 'gt',
     });
-    assert.equal(language.version, '2');
+    assert.equal(language.version, '3');
     assert.equal(language.predicates.length, 1);
     assert.equal(language.predicates[0].id, 'gt');
 
@@ -65,7 +65,6 @@ test('agent-friendly plan compiles, fires, and delivers a hydrated activation en
           value: 10000,
         }],
       }],
-      match: 'all',
       withinMs: 3600000,
       lifecycle: { oneShot: false },
       target: {
@@ -78,12 +77,12 @@ test('agent-friendly plan compiles, fires, and delivers a hydrated activation en
       },
     });
 
-    assert.equal(planned.planVersion, '1');
+    assert.equal(planned.planVersion, '2');
     assert.deepEqual(planned.connectionIds, ['erp-connection']);
     assert.equal(planned.definition.clauses[0].serverId, 'erpnext');
-    assert.deepEqual(planned.definition.expression, {
-      kind: 'anyOf',
-      refs: ['invoice'],
+    assert.deepEqual(planned.definition.pattern.root, {
+      kind: 'event',
+      ref: 'invoice',
     });
     assert.equal(
       planned.definition.continuation.instruction,
@@ -140,7 +139,7 @@ test('agent-friendly plan compiles, fires, and delivers a hydrated activation en
     assert.equal(packet.source_event_refs[0].event_id, 'invoice-high');
     assert.equal('data' in packet.source_event_refs[0], false);
 
-    assert.equal(activation.activationVersion, '1');
+    assert.equal(activation.activationVersion, '2');
     assert.equal(
       activation.continuation.instruction,
       'Check the submitted invoice for anomalies and report back in this conversation.',

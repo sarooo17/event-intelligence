@@ -59,7 +59,6 @@ test('real service delivers one GitHub open+close composite wake to a generic ru
         },
       }),
       TYPESAFE_API_KEY: '',
-      SEMANTIC_INSTRUCTION: '',
     },
     stdio: 'ignore',
   });
@@ -98,29 +97,34 @@ test('real service delivers one GitHub open+close composite wake to a generic ru
   };
 
   await request('POST', '/v1/triggers', {
-    protocolVersion: '0.1.0',
-    schemaVersion: 'trigger.v0.1',
     triggerId: 'generic-live-shape',
     version: '1',
     clauses: [
       { id: 'opened', event: 'github.issue.opened', serverId: 'github-mcp-events', where: [] },
       { id: 'closed', event: 'github.issue.closed', serverId: 'github-mcp-events', where: [] },
     ],
-    expression: { kind: 'allOf', refs: ['opened', 'closed'] },
-    withinMs: 3600_000,
-    correlation: {
-      deterministic: {
-        kind: 'same_value',
+    pattern: {
+      root: {
+        kind: 'allOf',
+        children: [
+          { kind: 'event', ref: 'opened' },
+          { kind: 'event', ref: 'closed' },
+        ],
+      },
+      partitionBy: [{
+        key: 'issue',
         fields: [
           { ref: 'opened', path: 'number' },
           { ref: 'closed', path: 'number' },
         ],
-      },
+      }],
     },
+    withinMs: 3600_000,
     target: { runtime: 'mini-agent', kind: 'task', id: 'issue-report' },
   });
 
   const at = new Date().toISOString();
+  const closedAt = new Date(Date.parse(at) + 1000).toISOString();
   const opened = {
     traceId: 'trace_open',
     sourceEventId: 'gh_open_1',
@@ -136,7 +140,7 @@ test('real service delivers one GitHub open+close composite wake to a generic ru
     name: 'github.issue.closed',
     serverId: 'github-mcp-events',
     provider: 'github',
-    occurredAt: at,
+    occurredAt: closedAt,
     data: { repository: 'example/test', number: 42, title: 'FC-014 proof' },
   };
 
@@ -146,7 +150,7 @@ test('real service delivers one GitHub open+close composite wake to a generic ru
 
   const completed = await request('POST', '/v1/composite/events/ingest', closed);
   assert.equal(completed.results[0].matched, true);
-  assert.equal(completed.deliveries[0].status, 'handled');
+  assert.equal(completed.deliveries[0].status, 'wake_delivered');
   assert.match(completed.deliveries[0].runtimeReceiptId, /^mini-agent:/);
   assert.equal(deliveries, 1);
 

@@ -1,4 +1,3 @@
-import { SemanticConditionEngine } from '../semantic/conditionEngine.js';
 import {
   evaluatePatternV2,
   patternV2CandidateSignature,
@@ -18,16 +17,9 @@ import {
   type TriggerMatchRecord,
 } from '../intelligenceProtocol/triggerSchemas.js';
 import {
-  evaluateTemporalConditions,
-} from './temporal.js';
-import {
   asSourceEvent,
   clauseMatches,
-  deterministicKeyForClause,
-  expressionSatisfied,
-  matchesCorrelationKey,
   sameEventIdentity,
-  semanticSource,
 } from './matching.js';
 import { assertNoDerivedEventCycle } from './derivedGraph.js';
 import {
@@ -48,30 +40,6 @@ export interface CompositeIngestResult {
   match: TriggerMatchRecord | null;
   matched: boolean;
   fired: boolean;
-}
-
-function clauseAccumulatesOccurrences(
-  definition: CompositeTriggerDefinition,
-  clauseId: string,
-): boolean {
-  if (definition.correlation?.semantic) return true;
-
-  if (
-    definition.expression.kind === 'count' &&
-    definition.expression.ref === clauseId
-  ) {
-    return true;
-  }
-
-  return definition.temporal.some((condition) =>
-    (
-      condition.kind === 'threshold' ||
-      condition.kind === 'rate' ||
-      condition.kind === 'distinct' ||
-      condition.kind === 'debounce'
-    ) &&
-    condition.ref === clauseId
-  );
 }
 
 function getByPath(source: unknown, path: string): unknown {
@@ -121,31 +89,6 @@ function patternPhysicalIdentity(
     event.sourceEventId,
     JSON.stringify(stablePatternValue(event.subscriptionArguments ?? {})),
   ].join(':');
-}
-
-function prospectiveEventWindow(
-  record: Pick<TriggerMatchRecord, 'sourceEvents'>,
-  event: CorrelatableEvent,
-  withinMs: number,
-): {
-  openedAt: string;
-  expiresAt: string;
-  spanMs: number;
-  fits: boolean;
-} {
-  const eventTimes = [
-    ...record.sourceEvents.map((source) => Date.parse(source.occurredAt)),
-    Date.parse(event.occurredAt),
-  ];
-  const openedMs = Math.min(...eventTimes);
-  const latestMs = Math.max(...eventTimes);
-  const spanMs = latestMs - openedMs;
-  return {
-    openedAt: new Date(openedMs).toISOString(),
-    expiresAt: new Date(openedMs + withinMs).toISOString(),
-    spanMs,
-    fits: spanMs <= withinMs,
-  };
 }
 
 export interface CompositeTriggerEngineOptions {
@@ -223,62 +166,30 @@ export class CompositeTriggerEngine {
       );
       if (matchingClauses.length === 0) continue;
 
-      if (definition.patternV2) {
-        const replayed = (await this.store
-          .listTriggerMatches(definition.triggerId))
-          .filter((record) =>
-            record.triggerVersion === definition.version &&
-            record.sourceEvents.some(
-              (source) => sameEventIdentity(source, event),
-            )
-          )
-          .sort((a, b) => {
-            const rank = (status: TriggerMatchRecord['status']) =>
-              status === 'fired'
-                ? 4
-                : status === 'emitted'
-                  ? 3
-                  : status === 'matched'
-                    ? 2
-                    : status === 'partial'
-                      ? 1
-                      : 0;
-            return (
-              rank(b.status) - rank(a.status) ||
-              Date.parse(b.updatedAt) - Date.parse(a.updatedAt)
-            );
-          })[0];
-
-        if (replayed) {
-          results.push({
-            triggerId: definition.triggerId,
-            match: replayed,
-            matched:
-              replayed.status === 'matched' ||
-              replayed.status === 'emitted' ||
-              replayed.status === 'fired',
-            fired: replayed.status === 'fired',
-          });
-          continue;
-        }
-
-        results.push(
-          ...await this.applyPatternV2(
-            definition,
-            matchingClauses,
-            event,
-          ),
-        );
-        continue;
-      }
-
       const replayed = (await this.store
         .listTriggerMatches(definition.triggerId))
-        .find((record) =>
+        .filter((record) =>
+          record.triggerVersion === definition.version &&
           record.sourceEvents.some(
             (source) => sameEventIdentity(source, event),
-          ),
-        );
+          )
+        )
+        .sort((a, b) => {
+          const rank = (status: TriggerMatchRecord['status']) =>
+            status === 'fired'
+              ? 4
+              : status === 'emitted'
+                ? 3
+                : status === 'matched'
+                  ? 2
+                  : status === 'partial'
+                    ? 1
+                    : 0;
+          return (
+            rank(b.status) - rank(a.status) ||
+            Date.parse(b.updatedAt) - Date.parse(a.updatedAt)
+          );
+        })[0];
 
       if (replayed) {
         results.push({
@@ -293,8 +204,13 @@ export class CompositeTriggerEngine {
         continue;
       }
 
-      const clause = matchingClauses[0]!;
-      results.push(await this.applyEvent(definition, clause, event));
+      results.push(
+        ...await this.applyPattern(
+          definition,
+          matchingClauses,
+          event,
+        ),
+      );
     }
 
     return results;
@@ -406,42 +322,17 @@ export class CompositeTriggerEngine {
     }
 
     if (
-      definition.patternV2 &&
       match.patternState?.version === '2' &&
       match.patternState.role === 'buffer'
     ) {
-      return this.evaluatePatternV2Buffer(
+      return this.evaluatePatternBuffer(
         definition,
         match,
         new Date(event.occurredAt),
       );
     }
 
-    if (Date.parse(event.occurredAt) > Date.parse(match.expiresAt)) {
-      const expired = TriggerMatchRecordSchema.parse({
-        ...match,
-        status: 'expired',
-        updatedAt: event.occurredAt,
-      });
-      await this.store.appendTriggerMatch(expired);
-      await this.support.cancelDeadlinesForMatch(expired.matchId);
-      await this.support.auditMatch(expired, 'trigger.expired', {
-        reason: 'temporal_deadline_after_event_window',
-      });
-      return [{
-        triggerId: definition.triggerId,
-        match: expired,
-        matched: false,
-        fired: false,
-      }];
-    }
-
-    const result = await this.finalizeEligible(
-      definition,
-      match,
-      new Date(event.occurredAt),
-    );
-    return [result];
+    return [];
   }
 
   private patternPartitionKey(
@@ -449,7 +340,7 @@ export class CompositeTriggerEngine {
     matchingClauses: TriggerClause[],
     event: CorrelatableEvent,
   ): string | null {
-    const dimensions = definition.patternV2?.partitionBy ?? [];
+    const dimensions = definition.pattern?.partitionBy ?? [];
     if (!dimensions.length) return null;
 
     const clauseIds = new Set(matchingClauses.map((clause) => clause.id));
@@ -537,7 +428,7 @@ export class CompositeTriggerEngine {
     };
   }
 
-  private async applyPatternV2(
+  private async applyPattern(
     definition: CompositeTriggerDefinition,
     matchingClauses: TriggerClause[],
     event: CorrelatableEvent,
@@ -552,7 +443,7 @@ export class CompositeTriggerEngine {
       capabilities?.partitionLeases === 'distributed-atomic';
 
     if (!distributedLeases) {
-      return this.applyPatternV2WithPartition(
+      return this.applyPatternWithPartition(
         definition,
         matchingClauses,
         event,
@@ -593,7 +484,7 @@ export class CompositeTriggerEngine {
     }
 
     try {
-      return await this.applyPatternV2WithPartition(
+      return await this.applyPatternWithPartition(
         definition,
         matchingClauses,
         event,
@@ -607,13 +498,13 @@ export class CompositeTriggerEngine {
     }
   }
 
-  private async applyPatternV2WithPartition(
+  private async applyPatternWithPartition(
     definition: CompositeTriggerDefinition,
     matchingClauses: TriggerClause[],
     event: CorrelatableEvent,
     key: string | null,
   ): Promise<CompositeIngestResult[]> {
-    const pattern = definition.patternV2;
+    const pattern = definition.pattern;
     if (!pattern) return [];
 
     const now = this.now();
@@ -678,7 +569,7 @@ export class CompositeTriggerEngine {
         details: {
           triggerVersion: definition.version,
           patternVersion: '2',
-          correlationKey: key,
+          partitionKey: key,
           bufferedEvents: bufferedPhysicalEvents,
           maxBufferedEvents:
             pattern.execution.maxBufferedEvents,
@@ -734,14 +625,14 @@ export class CompositeTriggerEngine {
       triggerId: definition.triggerId,
       triggerVersion: definition.version,
       status: 'partial',
-      correlationKey: key,
+      partitionKey: key,
       openedAt,
       expiresAt: new Date(
         Date.parse(openedAt) + definition.withinMs,
       ).toISOString(),
       updatedAt: nowIso,
       sourceEvents,
-      correlationDecision: null,
+      semanticDecision: null,
       patternState: {
         version: '2',
         role: 'buffer',
@@ -753,15 +644,27 @@ export class CompositeTriggerEngine {
     });
 
     await this.store.appendTriggerMatch(buffer);
-    return this.evaluatePatternV2Buffer(definition, buffer, now);
+    return this.evaluatePatternBuffer(definition, buffer, now);
   }
 
-  private async evaluatePatternV2Buffer(
+  private candidateFitsTriggerWindow(
+    candidate: PatternV2Candidate,
+    withinMs: number,
+  ): boolean {
+    if (candidate.events.length < 2) return true;
+    const times = candidate.events
+      .map((event) => Date.parse(event.occurredAt))
+      .filter(Number.isFinite);
+    if (times.length < 2) return true;
+    return Math.max(...times) - Math.min(...times) <= withinMs;
+  }
+
+  private async evaluatePatternBuffer(
     definition: CompositeTriggerDefinition,
     buffer: TriggerMatchRecord,
     evaluationNow: Date,
   ): Promise<CompositeIngestResult[]> {
-    const pattern = definition.patternV2;
+    const pattern = definition.pattern;
     if (!pattern) return [];
 
     const nowIso = evaluationNow.toISOString();
@@ -778,6 +681,17 @@ export class CompositeTriggerEngine {
             ),
         }
         : null;
+
+    const reachedDeadlines =
+      this.store.listTemporalDeadlines
+        ? (await this.store.listTemporalDeadlines({
+            matchId: buffer.matchId,
+            status: 'pending',
+          }))
+            .filter((deadline) =>
+              Date.parse(deadline.dueAt) <= evaluationNow.getTime()
+            )
+        : [];
 
     const evaluation = await evaluatePatternV2({
       definition: pattern,
@@ -813,7 +727,10 @@ export class CompositeTriggerEngine {
     await this.support.cancelDeadlinesForMatch(buffer.matchId);
     if (evaluation.pending.length) {
       const deadlines = evaluation.pending
-        .filter((candidate) => candidate.pendingUntil)
+        .filter((candidate) =>
+          candidate.pendingUntil &&
+          this.candidateFitsTriggerWindow(candidate, definition.withinMs)
+        )
         .map((candidate) => ({
           conditionId: `pattern-v2:${patternV2CandidateSignature(candidate)}`,
           dueAt: candidate.pendingUntil!,
@@ -838,6 +755,9 @@ export class CompositeTriggerEngine {
     );
 
     const fresh = evaluation.matches
+      .filter((candidate) =>
+        this.candidateFitsTriggerWindow(candidate, definition.withinMs)
+      )
       .map((candidate, rank) => ({ candidate, rank }))
       .filter(({ candidate }) =>
         candidate.events.length > 0 &&
@@ -947,7 +867,7 @@ export class CompositeTriggerEngine {
         await sha256Hex([
           definition.triggerId,
           definition.version,
-          buffer.correlationKey ?? '-',
+          buffer.partitionKey ?? '-',
           signature,
           'pattern-v2-match',
         ].join(':'))
@@ -957,6 +877,17 @@ export class CompositeTriggerEngine {
       const semanticDecisions = candidate.semanticDecisions.map((item) =>
         this.patternDecisionRecord(item, nowIso)
       );
+      const sourceCompletionAt = candidate.events
+        .map((item) => Date.parse(item.occurredAt))
+        .filter(Number.isFinite)
+        .sort((a, b) => b - a)[0] ?? evaluationNow.getTime();
+      const deadlineCompletionAt = reachedDeadlines
+        .map((deadline) => Date.parse(deadline.dueAt))
+        .filter(Number.isFinite)
+        .sort((a, b) => b - a)[0];
+      const completedAt = new Date(
+        deadlineCompletionAt ?? sourceCompletionAt,
+      ).toISOString();
       const lastSemantic =
         semanticDecisions.at(-1)?.decision ?? null;
 
@@ -967,18 +898,19 @@ export class CompositeTriggerEngine {
         triggerId: definition.triggerId,
         triggerVersion: definition.version,
         status: 'matched',
-        correlationKey: buffer.correlationKey,
+        partitionKey: buffer.partitionKey,
         openedAt,
         expiresAt: new Date(
           Date.parse(openedAt) + definition.withinMs,
         ).toISOString(),
         updatedAt: nowIso,
         sourceEvents: candidate.events,
-        correlationDecision: lastSemantic,
+        semanticDecision: lastSemantic,
         patternState: {
           version: '2',
           role: 'match',
           signature,
+          completedAt,
           semanticDecisions,
         },
         firedWakeId: null,
@@ -1087,406 +1019,6 @@ export class CompositeTriggerEngine {
     }
 
     return results;
-  }
-
-  private async applyEvent(
-    definition: CompositeTriggerDefinition,
-    clause: TriggerClause,
-    event: CorrelatableEvent,
-  ): Promise<CompositeIngestResult> {
-    const nowIso = this.now().toISOString();
-    const eventTime = Date.parse(event.occurredAt);
-    const key = deterministicKeyForClause(definition, clause.id, event);
-
-    const relatedMatches = (
-      await this.store.listTriggerMatches(definition.triggerId)
-    ).filter((record) =>
-      record.triggerVersion === definition.version &&
-      matchesCorrelationKey(record, key),
-    );
-
-    const activeMatches = relatedMatches.filter(
-      (record) =>
-        record.status === 'partial' || record.status === 'matched',
-    );
-
-    const alreadyMatched = activeMatches
-      .filter((record) => record.status === 'matched')
-      .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))[0];
-
-    if (alreadyMatched) {
-      return {
-        triggerId: definition.triggerId,
-        match: alreadyMatched,
-        matched: true,
-        fired: false,
-      };
-    }
-
-    const partials = activeMatches.filter(
-      (record) => record.status === 'partial',
-    );
-
-    const observedEventTimes = relatedMatches.flatMap((record) =>
-      record.sourceEvents.map((source) => Date.parse(source.occurredAt))
-    );
-    const maxObservedEventTime = Math.max(
-      eventTime,
-      ...observedEventTimes.filter(Number.isFinite),
-    );
-    const allowedLatenessMs =
-      definition.eventTime?.allowedLatenessMs ?? 0;
-    const watermarkMs = maxObservedEventTime - allowedLatenessMs;
-
-    // The watermark is the point before which new standalone windows are too
-    // late to open. Existing partials are retained until their event-time
-    // expiry falls strictly behind it, allowing a late event to complete a
-    // still-valid in-window pattern.
-    const staleIds = new Set<string>();
-    for (const candidate of partials) {
-      if (Date.parse(candidate.expiresAt) >= watermarkMs) continue;
-      staleIds.add(candidate.matchId);
-      const expired = TriggerMatchRecordSchema.parse({
-        ...candidate,
-        status: 'expired',
-        updatedAt: nowIso,
-      });
-      await this.store.appendTriggerMatch(expired);
-      await this.support.cancelDeadlinesForMatch(expired.matchId);
-      await this.support.auditMatch(expired, 'trigger.expired', {
-        reason: 'event_time_watermark_advanced',
-        watermarkAt: new Date(watermarkMs).toISOString(),
-        allowedLatenessMs,
-        incomingSourceEventId: event.sourceEventId,
-        incomingOccurredAt: event.occurredAt,
-      });
-    }
-
-    const accumulatesOccurrences = clauseAccumulatesOccurrences(
-      definition,
-      clause.id,
-    );
-    const compatible = partials
-      .filter((record) => !staleIds.has(record.matchId))
-      .map((record) => ({
-        record,
-        window: prospectiveEventWindow(record, event, definition.withinMs),
-        hasClause: record.sourceEvents.some(
-          (source) => source.clauseId === clause.id,
-        ),
-      }))
-      .filter(({ window }) => window.fits)
-      .sort((a, b) =>
-        (
-          accumulatesOccurrences
-            ? 0
-            : Number(a.hasClause) - Number(b.hasClause)
-        ) ||
-        a.window.spanMs - b.window.spanMs ||
-        Date.parse(b.record.updatedAt) - Date.parse(a.record.updatedAt)
-      );
-
-    let record = compatible[0]?.record;
-    if (
-      record &&
-      !accumulatesOccurrences &&
-      compatible[0]?.hasClause
-    ) {
-      // Repeated non-aggregating occurrences represent alternate paths through
-      // the same partial match. Branch the candidate so the new occurrence can
-      // advance the expression without destroying the pre-existing window.
-      record = await this.branchMatch(definition, record, event);
-    }
-
-    if (!record && eventTime < watermarkMs) {
-      await this.store.appendAudit({
-        auditId: `audit_${(
-          await sha256Hex(
-            `${definition.triggerId}:${definition.version}:late_event_dropped:${event.sourceEventId}:${nowIso}`,
-          )
-        ).slice(0, 24)}`,
-        traceId: event.traceId,
-        timestamp: nowIso,
-        kind: 'event.late_dropped',
-        entityType: 'trigger',
-        entityId: definition.triggerId,
-        details: {
-          triggerVersion: definition.version,
-          sourceEventId: event.sourceEventId,
-          occurredAt: event.occurredAt,
-          receivedAt: event.receivedAt ?? null,
-          watermarkAt: new Date(watermarkMs).toISOString(),
-          allowedLatenessMs,
-        },
-      });
-      return {
-        triggerId: definition.triggerId,
-        match: null,
-        matched: false,
-        fired: false,
-      };
-    }
-
-    record ??= await this.newMatch(definition, key, event);
-
-    const duplicate = record.sourceEvents.some(
-      (candidate) => sameEventIdentity(candidate, event),
-    );
-
-    if (!duplicate) {
-      const window = prospectiveEventWindow(
-        record,
-        event,
-        definition.withinMs,
-      );
-      if (!window.fits) {
-        // This can only happen for a newly-created incompatible candidate race.
-        // Keep the existing partial intact and seed a fresh event-time window.
-        record = await this.newMatch(definition, key, event);
-      }
-      const selectedWindow = prospectiveEventWindow(
-        record,
-        event,
-        definition.withinMs,
-      );
-      record = TriggerMatchRecordSchema.parse({
-        ...record,
-        correlationKey: record.correlationKey ?? key,
-        openedAt: selectedWindow.openedAt,
-        expiresAt: selectedWindow.expiresAt,
-        updatedAt: nowIso,
-        sourceEvents: [
-          ...record.sourceEvents,
-          asSourceEvent(clause.id, event),
-        ],
-      });
-    }
-
-    if (!expressionSatisfied(definition, record)) {
-      await this.store.appendTriggerMatch(record);
-      await this.support.auditMatch(record, 'trigger.partial', {
-        clauseId: clause.id,
-        sourceEventId: event.sourceEventId,
-        occurredAt: event.occurredAt,
-        receivedAt: event.receivedAt ?? null,
-        eventTimeWindow: {
-          openedAt: record.openedAt,
-          expiresAt: record.expiresAt,
-        },
-      });
-      return {
-        triggerId: definition.triggerId,
-        match: record,
-        matched: false,
-        fired: false,
-      };
-    }
-
-    return this.finalizeEligible(definition, record, this.now());
-  }
-
-  private async finalizeEligible(
-    definition: CompositeTriggerDefinition,
-    record: TriggerMatchRecord,
-    evaluationNow: Date,
-  ): Promise<CompositeIngestResult> {
-    const nowIso = evaluationNow.toISOString();
-
-    const temporal = evaluateTemporalConditions(
-      definition,
-      record,
-      evaluationNow,
-    );
-
-    if (temporal.outcome === 'blocked') {
-      const expired = TriggerMatchRecordSchema.parse({
-        ...record,
-        status: 'expired',
-        updatedAt: nowIso,
-      });
-      await this.store.appendTriggerMatch(expired);
-      await this.support.cancelDeadlinesForMatch(expired.matchId);
-      await this.support.auditMatch(expired, 'trigger.expired', {
-        reason: 'temporal_condition_blocked',
-        temporal: temporal.conditionStates,
-      });
-      return {
-        triggerId: definition.triggerId,
-        match: expired,
-        matched: false,
-        fired: false,
-      };
-    }
-
-    if (temporal.outcome === 'pending') {
-      await this.store.appendTriggerMatch(
-        TriggerMatchRecordSchema.parse({
-          ...record,
-          status: 'partial',
-          updatedAt: nowIso,
-        }),
-      );
-      await this.support.scheduleDeadlines(
-        definition,
-        record,
-        temporal.pendingDeadlines,
-      );
-      await this.support.auditMatch(record, 'trigger.partial', {
-        reason: 'temporal_wait',
-        temporal: temporal.conditionStates,
-      });
-      return {
-        triggerId: definition.triggerId,
-        match: record,
-        matched: false,
-        fired: false,
-      };
-    }
-
-    await this.support.cancelDeadlinesForMatch(record.matchId);
-
-    if (definition.correlation?.semantic) {
-      if (!this.evaluator) {
-        await this.store.appendTriggerMatch(record);
-        await this.support.auditMatch(record, 'trigger.partial', {
-          reason: 'semantic_evaluator_unavailable',
-        });
-        return {
-          triggerId: definition.triggerId,
-          match: record,
-          matched: false,
-          fired: false,
-        };
-      }
-
-      const semantic = definition.correlation.semantic;
-      const decision = await new SemanticConditionEngine(this.evaluator).evaluate(
-        semanticSource(record),
-        {
-          type: 'semantic_boolean',
-          instruction: semantic.instruction,
-          input: semantic.input,
-          matchThreshold: semantic.matchThreshold,
-          rejectThreshold: semantic.rejectThreshold,
-          uncertain: semantic.uncertain,
-        },
-      );
-
-      record = TriggerMatchRecordSchema.parse({
-        ...record,
-        correlationDecision: {
-          evaluator: decision.evaluator,
-          outcome: decision.outcome,
-          probability: decision.probability,
-          matched: decision.matched,
-          shouldEscalate: decision.shouldEscalate,
-          inputFields: semantic.input,
-          ...(decision.metadata ? { providerEvidence: decision.metadata } : {}),
-          evaluatedAt: nowIso,
-        },
-        updatedAt: nowIso,
-      });
-
-      await this.store.appendTriggerMatch(record);
-      await this.support.auditMatch(record, 'trigger.correlation', {
-        outcome: decision.outcome,
-        probability: decision.probability,
-        evaluator: decision.evaluator,
-      });
-
-      if (!decision.matched) {
-        return {
-          triggerId: definition.triggerId,
-          match: record,
-          matched: false,
-          fired: false,
-        };
-      }
-    }
-
-    const matched = TriggerMatchRecordSchema.parse({
-      ...record,
-      status: 'matched',
-      updatedAt: nowIso,
-    });
-    await this.store.appendTriggerMatch(matched);
-    await this.support.auditMatch(matched, 'trigger.matched', {
-      sourceEventIds: matched.sourceEvents.map((item) => item.sourceEventId),
-      temporal: temporal.conditionStates,
-    });
-
-    return {
-      triggerId: definition.triggerId,
-      match: matched,
-      matched: true,
-      fired: false,
-    };
-  }
-
-  private async branchMatch(
-    definition: CompositeTriggerDefinition,
-    source: TriggerMatchRecord,
-    event: CorrelatableEvent,
-  ): Promise<TriggerMatchRecord> {
-    const matchId = `tm_${(
-      await sha256Hex(
-        [
-          definition.triggerId,
-          definition.version,
-          source.matchId,
-          event.sourceEventId,
-          'branch',
-        ].join(':'),
-      )
-    ).slice(0, 24)}`;
-
-    return TriggerMatchRecordSchema.parse({
-      ...source,
-      matchId,
-      status: 'partial',
-      updatedAt: this.now().toISOString(),
-      correlationDecision: null,
-      firedWakeId: null,
-      derivedEventIds: [],
-    });
-  }
-
-  private async newMatch(
-    definition: CompositeTriggerDefinition,
-    key: string | null,
-    event: CorrelatableEvent,
-  ): Promise<TriggerMatchRecord> {
-    const openedAt = event.occurredAt;
-    const expiresAt = new Date(
-      Date.parse(openedAt) + definition.withinMs,
-    ).toISOString();
-    const matchId = `tm_${(
-      await sha256Hex(
-        [
-          definition.triggerId,
-          definition.version,
-          key ?? '-',
-          event.sourceEventId,
-        ].join(':'),
-      )
-    ).slice(0, 24)}`;
-
-    return TriggerMatchRecordSchema.parse({
-      protocolVersion: COMPOSITE_TRIGGER_PROTOCOL_VERSION,
-      schemaVersion: COMPOSITE_TRIGGER_SCHEMA_VERSION,
-      matchId,
-      triggerId: definition.triggerId,
-      triggerVersion: definition.version,
-      status: 'partial',
-      correlationKey: key,
-      openedAt,
-      expiresAt,
-      updatedAt: this.now().toISOString(),
-      sourceEvents: [],
-      correlationDecision: null,
-      firedWakeId: null,
-      derivedEventIds: [],
-    });
   }
 
   private async latestMatch(

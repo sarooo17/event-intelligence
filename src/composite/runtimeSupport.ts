@@ -285,7 +285,7 @@ export class CompositeTriggerRuntimeSupport {
         triggerId: record.triggerId,
         triggerVersion: record.triggerVersion,
         status: record.status,
-        correlationKey: record.correlationKey,
+        partitionKey: record.partitionKey,
         ...details,
       },
     });

@@ -28,7 +28,7 @@ function definition({
     triggerId,
     version,
     clauses: [{ id: 'signal', event: 'signal', serverId: 'server', where: [] }],
-    expression: { kind: 'anyOf', refs: ['signal'] },
+    pattern: { root: { kind: 'event', ref: 'signal' } },
     withinMs: 3600000,
     lifecycle,
     target: { runtime: 'runtime-probe', kind: 'task', id: 'task' },
@@ -205,14 +205,16 @@ test('versioned update retires partial state and deadlines; stale expectedVersio
         { id: 'mail', event: 'mail.received', serverId: 'server', where: [] },
         { id: 'reply', event: 'mail.replied', serverId: 'server', where: [] },
       ],
-      expression: { kind: 'anyOf', refs: ['mail'] },
-      temporal: [{
-        id: 'no-reply',
-        kind: 'absence',
-        ref: 'reply',
-        afterRef: 'mail',
-        forMs: 30 * 60 * 1000,
-      }],
+      pattern: {
+        root: {
+          kind: 'absence',
+          id: 'no-reply',
+          child: { kind: 'event', ref: 'mail' },
+          ref: 'reply',
+          afterRef: 'mail',
+          forMs: 30 * 60 * 1000,
+        },
+      },
       withinMs: 3600000,
       target: { runtime: 'runtime-probe', kind: 'task', id: 'task' },
     };
@@ -233,7 +235,7 @@ test('versioned update retires partial state and deadlines; stale expectedVersio
     const v2 = {
       ...v1,
       version: '2',
-      temporal: [],
+      pattern: { root: { kind: 'event', ref: 'mail' } },
     };
 
     const updated = await control.updateTrigger({

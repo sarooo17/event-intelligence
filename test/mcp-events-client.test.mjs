@@ -161,25 +161,29 @@ test('two host-owned MCP clients auto-discover, correlate and resume cursors aft
 
     await first.control.createTrigger({
       definition: {
-        protocolVersion: '0.1.0',
-        schemaVersion: 'trigger.v0.1',
         triggerId: 'generic-cross-server',
         version: '1',
         clauses: [
           { id: 'alpha', event: 'alpha.opened', serverId: 'alpha-mcp', where: [] },
           { id: 'beta', event: 'beta.confirmed', serverId: 'beta-mcp', where: [] },
         ],
-        expression: { kind: 'allOf', refs: ['alpha', 'beta'] },
-        withinMs: 3600000,
-        correlation: {
-          deterministic: {
-            kind: 'same_value',
+        pattern: {
+          root: {
+            kind: 'allOf',
+            children: [
+              { kind: 'event', ref: 'alpha' },
+              { kind: 'event', ref: 'beta' },
+            ],
+          },
+          partitionBy: [{
+            key: 'entity',
             fields: [
               { ref: 'alpha', path: 'entityId' },
               { ref: 'beta', path: 'entityId' },
             ],
-          },
+          }],
         },
+        withinMs: 3600000,
         target: { runtime: 'test-runtime', kind: 'task', id: 'proof' },
       },
       connectionIds: ['conn_alpha', 'conn_beta'],
@@ -195,7 +199,8 @@ test('two host-owned MCP clients auto-discover, correlate and resume cursors aft
     assert.equal(ingest[0].results[0].accepted, 1);
     assert.equal(ingest[1].results[0].accepted, 1);
 
-    const matches = await first.store.listTriggerMatches('generic-cross-server');
+    const matches = (await first.store.listTriggerMatches('generic-cross-server'))
+      .filter((match) => match.patternState?.role === 'match');
     assert.equal(matches.length, 1);
     assert.equal(matches[0].status, 'matched');
 
@@ -231,7 +236,11 @@ test('two host-owned MCP clients auto-discover, correlate and resume cursors aft
     const afterRestart = await second.manager.pollAll();
     assert.equal(afterRestart[0].results[0].accepted, 0);
     assert.equal(afterRestart[1].results[0].accepted, 0);
-    assert.equal((await second.store.listTriggerMatches('generic-cross-server')).length, 1);
+    assert.equal(
+      (await second.store.listTriggerMatches('generic-cross-server'))
+        .filter((match) => match.patternState?.role === 'match').length,
+      1,
+    );
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -340,7 +349,7 @@ test('subscription arguments create independent durable cursor state', async () 
             arguments: { mailbox },
             where: [],
           }],
-          expression: { kind: 'anyOf', refs: ['mail'] },
+          pattern: { root: { kind: 'event', ref: 'mail' } },
           withinMs: 60000,
           target: { runtime: 'test-runtime', kind: 'task', id: mailbox },
         },
@@ -378,8 +387,10 @@ test('subscription arguments create independent durable cursor state', async () 
     assert.equal(calls.filter((call) => call.mailbox === 'sales').length, 2);
     assert.equal(calls.filter((call) => call.mailbox === 'support').length, 2);
 
-    const salesMatches = await runtime.store.listTriggerMatches('mail-sales');
-    const supportMatches = await runtime.store.listTriggerMatches('mail-support');
+    const salesMatches = (await runtime.store.listTriggerMatches('mail-sales'))
+      .filter((match) => match.patternState?.role === 'match');
+    const supportMatches = (await runtime.store.listTriggerMatches('mail-support'))
+      .filter((match) => match.patternState?.role === 'match');
     assert.equal(salesMatches.length, 1);
     assert.equal(supportMatches.length, 1);
     assert.equal(
@@ -489,7 +500,7 @@ for (const delivery of ['push', 'webhook']) {
             arguments: { environment: 'staging' },
             where: [],
           }],
-          expression: { kind: 'anyOf', refs: ['deploy'] },
+          pattern: { root: { kind: 'event', ref: 'deploy' } },
           withinMs: 60000,
           target: { runtime: 'test-runtime', kind: 'task', id: delivery },
         },
@@ -501,10 +512,11 @@ for (const delivery of ['push', 'webhook']) {
       const result = await runtime.manager.pollConnection(`${delivery}-conn`);
       assert.equal(result[0].delivery, delivery);
       assert.equal(result[0].status, 'active');
-      assert.equal(
-        (await runtime.store.listTriggerMatches(`${delivery}-trigger`))[0].status,
-        'matched',
-      );
+      const deliveryMatch = (
+        await runtime.store.listTriggerMatches(`${delivery}-trigger`)
+      ).find((match) => match.patternState?.role === 'match');
+      assert.ok(deliveryMatch);
+      assert.equal(deliveryMatch.status, 'matched');
       const state = await runtime.store.getMcpClientState(
         `${delivery}-conn`,
         'deploy.completed',

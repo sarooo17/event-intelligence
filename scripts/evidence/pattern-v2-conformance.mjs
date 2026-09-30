@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import {
   PatternAstV2DefinitionSchema,
-  compileLegacyTriggerToPatternV2,
   evaluatePatternV2,
 } from '../../dist/src/intelligenceProtocol/index.js';
 
@@ -208,38 +207,9 @@ await check('semantic node is explicit and budgeted', async () => {
   assert.equal(result.semanticEvaluations, 1);
 });
 
-await check('legacy compiler preserves representative sequence semantics', async () => {
-  const compiled = compileLegacyTriggerToPatternV2({
-    protocolVersion: '0.1.0',
-    schemaVersion: 'trigger.v0.1',
-    triggerId: 'legacy-sequence',
-    version: '1',
-    clauses: [
-      { id: 'a', event: 'a.event', arguments: {}, where: [] },
-      { id: 'b', event: 'b.event', arguments: {}, where: [] },
-    ],
-    expression: { kind: 'sequence', refs: ['a', 'b'] },
-    temporal: [],
-    lifecycle: {
-      oneShot: false,
-      cooldownMs: 0,
-      completeOnGoal: false,
-    },
-    withinMs: 60_000,
-    conditionOnly: true,
-  });
-  const result = await evaluatePatternV2({
-    definition: compiled,
-    events: [
-      event('a', 'legacy-a', '2026-09-30T10:00:00.000Z'),
-      event('b', 'legacy-b', '2026-09-30T10:00:30.000Z'),
-    ],
-  });
-  assert.equal(result.matches.length, 1);
-});
 
 console.log(JSON.stringify({
-  schema: 'event-intelligence.pattern-v2-conformance.v1',
+  schema: 'event-intelligence.pattern-conformance.v2',
   generatedAt: new Date().toISOString(),
   checks,
   passed: checks.length,

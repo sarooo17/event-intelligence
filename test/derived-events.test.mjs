@@ -99,7 +99,15 @@ test('derived events compose triggers end-to-end without intermediate runtime wa
             where: [],
           },
         ],
-        expression: { kind: 'allOf', refs: ['pr', 'deploy'] },
+        pattern: {
+          root: {
+            kind: 'allOf',
+            children: [
+              { kind: 'event', ref: 'pr' },
+              { kind: 'event', ref: 'deploy' },
+            ],
+          },
+        },
         withinMs: 60 * 60 * 1000,
         derivedEvent: {
           name: 'release.ready',
@@ -145,7 +153,15 @@ test('derived events compose triggers end-to-end without intermediate runtime wa
             where: [],
           },
         ],
-        expression: { kind: 'allOf', refs: ['release', 'approval'] },
+        pattern: {
+          root: {
+            kind: 'allOf',
+            children: [
+              { kind: 'event', ref: 'release' },
+              { kind: 'event', ref: 'approval' },
+            ],
+          },
+        },
         withinMs: 60 * 60 * 1000,
         derivedEvent: {
           name: 'rollout.allowed',
@@ -173,7 +189,7 @@ test('derived events compose triggers end-to-end without intermediate runtime wa
             where: [],
           },
         ],
-        expression: { kind: 'anyOf', refs: ['rollout'] },
+        pattern: { root: { kind: 'event', ref: 'rollout' } },
         withinMs: 60 * 60 * 1000,
         lifecycle: { oneShot: true },
         target: {
@@ -266,7 +282,9 @@ test('derived events compose triggers end-to-end without intermediate runtime wa
       ['approval_218', 'deploy_218', 'pr_218'],
     );
 
-    const finalMatch = store.listTriggerMatches('runtime-final')[0];
+    const finalMatch = store.listTriggerMatches('runtime-final')
+      .find((match) => match.status === 'fired');
+    assert.ok(finalMatch);
     assert.equal(finalMatch.status, 'fired');
     assert.equal(
       store.getTriggerState('runtime-final', '1').status,
@@ -327,7 +345,7 @@ test('derived event graph rejects A -> B -> A cycles', async () => {
         serverId: DERIVED_EVENT_SERVER_ID,
         where: [],
       }],
-      expression: { kind: 'anyOf', refs: ['a'] },
+      pattern: { root: { kind: 'event', ref: 'a' } },
       withinMs: 3600000,
       derivedEvent: {
         name: 'fact.b',
@@ -345,7 +363,7 @@ test('derived event graph rejects A -> B -> A cycles', async () => {
           serverId: DERIVED_EVENT_SERVER_ID,
           where: [],
         }],
-        expression: { kind: 'anyOf', refs: ['b'] },
+        pattern: { root: { kind: 'event', ref: 'b' } },
         withinMs: 3600000,
         derivedEvent: {
           name: 'fact.a',
@@ -375,7 +393,7 @@ test('derived fan-out has a hard recursion depth guard', async () => {
         serverId: 'provider',
         where: [],
       }],
-      expression: { kind: 'anyOf', refs: ['start'] },
+      pattern: { root: { kind: 'event', ref: 'start' } },
       withinMs: 3600000,
       derivedEvent: { name: 'depth.one', contractVersion: '1' },
     });
@@ -388,7 +406,7 @@ test('derived fan-out has a hard recursion depth guard', async () => {
         serverId: DERIVED_EVENT_SERVER_ID,
         where: [],
       }],
-      expression: { kind: 'anyOf', refs: ['one'] },
+      pattern: { root: { kind: 'event', ref: 'one' } },
       withinMs: 3600000,
       derivedEvent: { name: 'depth.two', contractVersion: '1' },
     });

@@ -115,7 +115,7 @@ test('host registry auto-discovers event MCPs, ignores tools-only MCPs and wakes
             serverId: 'github-mcp',
             where: [],
           }],
-          expression: { kind: 'anyOf', refs: ['build'] },
+          pattern: { root: { kind: 'event', ref: 'build' } },
           withinMs: 60000,
           lifecycle: { oneShot: true },
           target: {
@@ -138,14 +138,14 @@ test('host registry auto-discovers event MCPs, ignores tools-only MCPs and wakes
       wakes.map((packet) => packet.target.id).sort(),
       ['agent-a', 'agent-b'],
     );
-    assert.equal(
-      (await host.store.listTriggerMatches('host-build-done-agent-a'))[0].status,
-      'fired',
-    );
-    assert.equal(
-      (await host.store.listTriggerMatches('host-build-done-agent-b'))[0].status,
-      'fired',
-    );
+    const firedA = (await host.store.listTriggerMatches(
+      'host-build-done-agent-a',
+    )).find((match) => match.status === 'fired');
+    const firedB = (await host.store.listTriggerMatches(
+      'host-build-done-agent-b',
+    )).find((match) => match.status === 'fired');
+    assert.ok(firedA);
+    assert.ok(firedB);
 
     registryEntries = [
       { id: 'github', serverId: 'github-mcp', client: eventClient(), pollIntervalMs: 300000 },

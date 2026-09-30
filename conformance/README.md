@@ -1,15 +1,16 @@
 # Conformance
 
-The fixtures in this directory exercise the internal Event Intelligence Protocol, not official MCP conformance.
+The fixtures in this directory exercise Event Intelligence's internal runtime contracts, not official MCP conformance.
 
 A conforming adapter in this repository must:
 
 1. produce values accepted by the canonical runtime schemas;
-2. preserve `traceId`, `subscriptionId`, and `sourceEventId` across event -> decision -> wake;
-3. reject invalid lifecycle transitions;
-4. deduplicate a repeated `environmentId + subscriptionId + sourceEventId`;
-5. produce a verifiable audit chain;
-6. avoid treating semantic match as authorization for downstream actions.
+2. normalize provider deliveries into stable event occurrences;
+3. preserve source evidence through Pattern matches, derived events and wakes;
+4. reject invalid lifecycle transitions;
+5. deduplicate replayed occurrences using stable provider/subscription identity;
+6. produce a verifiable hash-linked audit chain;
+7. treat semantic matches and external event payloads as evidence, never as downstream authorization.
 
 Run:
 
@@ -17,4 +18,4 @@ Run:
 npm run check
 ```
 
-The official MCP Events draft remains upstream and experimental. This conformance suite is intentionally scoped to the project's internal control-plane contracts.
+The MCP Events draft remains upstream and experimental. This suite is intentionally scoped to Event Intelligence's own contracts.

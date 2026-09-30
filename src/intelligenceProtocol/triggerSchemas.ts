@@ -9,14 +9,12 @@ import {
   collectPatternRefs,
 } from './patternV2Schemas.js';
 
-export const COMPOSITE_TRIGGER_PROTOCOL_VERSION = '0.1.0' as const;
-export const COMPOSITE_TRIGGER_SCHEMA_VERSION = 'trigger.v0.1' as const;
+export const COMPOSITE_TRIGGER_PROTOCOL_VERSION = '0.2.0' as const;
+export const COMPOSITE_TRIGGER_SCHEMA_VERSION = 'trigger.v0.2' as const;
 
 const Id = z.string().min(1).max(200);
 const Timestamp = z.string().datetime({ offset: true });
 const Scalar = z.union([z.string(), z.number(), z.boolean()]);
-const ClockTime = z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/);
-const CalendarDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 
 export const StructuredPredicateSchema = z.discriminatedUnion('op', [
   z.object({ path: z.string().min(1), op: z.literal('eq'), value: Scalar }),
@@ -58,87 +56,6 @@ export const TriggerClauseSchema = z.object({
   arguments: z.record(z.string(), z.unknown()).default({}),
   where: z.array(StructuredPredicateSchema).default([]),
 });
-
-const TriggerExpressionSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('allOf'), refs: z.array(Id).min(2) }),
-  z.object({ kind: z.literal('anyOf'), refs: z.array(Id).min(1) }),
-  z.object({ kind: z.literal('sequence'), refs: z.array(Id).min(2) }),
-  z.object({ kind: z.literal('count'), ref: Id, atLeast: z.number().int().min(1) }),
-]);
-
-export const CalendarTemporalConditionSchema = z.object({
-  id: Id,
-  kind: z.literal('calendar'),
-  ref: Id,
-  timezone: z.string().min(1),
-  before: ClockTime.optional(),
-  after: ClockTime.optional(),
-  weekdays: z.array(z.number().int().min(1).max(7)).min(1).optional(),
-  dates: z.array(CalendarDate).min(1).optional(),
-  dateRange: z.object({
-    start: CalendarDate,
-    end: CalendarDate,
-  }).optional(),
-  dayOfMonth: z.array(z.number().int().min(1).max(31)).min(1).optional(),
-}).strict();
-
-export const AbsenceTemporalConditionSchema = z.object({
-  id: Id,
-  kind: z.literal('absence'),
-  ref: Id,
-  afterRef: Id,
-  forMs: z.number().int().positive().optional(),
-  untilLocalTime: ClockTime.optional(),
-  timezone: z.string().min(1).optional(),
-}).superRefine((value, ctx) => {
-  if (!value.forMs && !value.untilLocalTime) {
-    ctx.addIssue({
-      code: 'custom',
-      message: 'absence requires forMs or untilLocalTime',
-    });
-  }
-  if (value.untilLocalTime && !value.timezone) {
-    ctx.addIssue({
-      code: 'custom',
-      message: 'absence untilLocalTime requires timezone',
-    });
-  }
-});
-
-export const TemporalConditionSchema = z.discriminatedUnion('kind', [
-  CalendarTemporalConditionSchema,
-  AbsenceTemporalConditionSchema,
-  z.object({ id: Id, kind: z.literal('not'), ref: Id }),
-  z.object({ id: Id, kind: z.literal('unless'), ref: Id }),
-  z.object({ id: Id, kind: z.literal('after'), ref: Id, afterRef: Id }),
-  z.object({ id: Id, kind: z.literal('until'), ref: Id, beforeRef: Id }),
-  z.object({
-    id: Id,
-    kind: z.literal('debounce'),
-    ref: Id,
-    forMs: z.number().int().positive(),
-  }),
-  z.object({
-    id: Id,
-    kind: z.literal('threshold'),
-    ref: Id,
-    atLeast: z.number().int().min(1),
-  }),
-  z.object({
-    id: Id,
-    kind: z.literal('rate'),
-    ref: Id,
-    atLeast: z.number().int().min(1),
-    perMs: z.number().int().positive(),
-  }),
-  z.object({
-    id: Id,
-    kind: z.literal('distinct'),
-    ref: Id,
-    path: z.string().min(1),
-    atLeast: z.number().int().min(1),
-  }),
-]);
 
 export const DerivedEventProjectionSchema = z.object({
   key: z.string().regex(/^[A-Za-z_][A-Za-z0-9_-]{0,63}$/),
@@ -212,22 +129,6 @@ export const ContinuationContractSchema = z.object({
   }),
 }).strict();
 
-export const DeterministicCorrelationSchema = z.object({
-  kind: z.literal('same_value'),
-  fields: z.array(z.object({
-    ref: Id,
-    path: z.string().min(1),
-  })).min(2),
-});
-
-export const SemanticCorrelationSchema = z.object({
-  instruction: z.string().min(1),
-  input: z.array(z.string().min(1)).min(1),
-  matchThreshold: z.number().min(0).max(1),
-  rejectThreshold: z.number().min(0).max(1),
-  uncertain: z.enum(['escalate', 'reject', 'match']).default('escalate'),
-});
-
 export const CompositeTriggerDefinitionSchema = z.object({
   protocolVersion: z.literal(COMPOSITE_TRIGGER_PROTOCOL_VERSION)
     .default(COMPOSITE_TRIGGER_PROTOCOL_VERSION),
@@ -239,9 +140,7 @@ export const CompositeTriggerDefinitionSchema = z.object({
   conditionOnly: z.boolean().default(false),
   continuation: ContinuationContractSchema.optional(),
   clauses: z.array(TriggerClauseSchema).min(1),
-  expression: TriggerExpressionSchema,
-  temporal: z.array(TemporalConditionSchema).default([]),
-  patternV2: PatternAstV2DefinitionSchema.optional(),
+  pattern: PatternAstV2DefinitionSchema,
   eventTime: EventTimePolicySchema.optional(),
   lifecycle: TriggerLifecyclePolicySchema.default({
     oneShot: false,
@@ -249,10 +148,6 @@ export const CompositeTriggerDefinitionSchema = z.object({
     completeOnGoal: false,
   }),
   withinMs: z.number().int().positive().max(1000 * 60 * 60 * 24 * 30),
-  correlation: z.object({
-    deterministic: DeterministicCorrelationSchema.optional(),
-    semantic: SemanticCorrelationSchema.optional(),
-  }).optional(),
   target: RuntimeTargetSchema.optional(),
   derivedEvent: DerivedEventDefinitionSchema.optional(),
 }).superRefine((value, ctx) => {
@@ -294,29 +189,6 @@ export const CompositeTriggerDefinitionSchema = z.object({
   const ids = new Set(value.clauses.map((clause) => clause.id));
   if (ids.size !== value.clauses.length) {
     ctx.addIssue({ code: 'custom', message: 'Trigger clause ids must be unique' });
-  }
-
-  const refs =
-    value.expression.kind === 'count'
-      ? [value.expression.ref]
-      : value.expression.refs;
-
-  for (const ref of refs) {
-    if (!ids.has(ref)) {
-      ctx.addIssue({
-        code: 'custom',
-        message: `Expression references unknown clause: ${ref}`,
-      });
-    }
-  }
-
-  for (const field of value.correlation?.deterministic?.fields ?? []) {
-    if (!ids.has(field.ref)) {
-      ctx.addIssue({
-        code: 'custom',
-        message: `Correlation references unknown clause: ${field.ref}`,
-      });
-    }
   }
 
   if (value.derivedEvent) {
@@ -400,18 +272,18 @@ export const CompositeTriggerDefinitionSchema = z.object({
     }
   }
 
-  if (value.patternV2) {
-    const patternRefs = collectPatternRefs(value.patternV2.root);
+  {
+    const patternRefs = collectPatternRefs(value.pattern.root);
     for (const ref of patternRefs) {
       if (!ids.has(ref)) {
         ctx.addIssue({
           code: 'custom',
-          message: `Pattern AST v2 references unknown clause: ${ref}`,
+          message: `Pattern AST references unknown clause: ${ref}`,
         });
       }
     }
 
-    for (const dimension of value.patternV2.partitionBy) {
+    for (const dimension of value.pattern.partitionBy) {
       const dimensionRefs = new Set();
       for (const field of dimension.fields) {
         if (!ids.has(field.ref)) {
@@ -440,18 +312,18 @@ export const CompositeTriggerDefinitionSchema = z.object({
     }
 
     const guaranteedPatternRefs =
-      collectGuaranteedPatternBindings(value.patternV2.root);
+      collectGuaranteedPatternBindings(value.pattern.root);
 
     if (
-      typeof value.patternV2.selection.afterMatch === 'object' &&
+      typeof value.pattern.selection.afterMatch === 'object' &&
       !guaranteedPatternRefs.includes(
-        value.patternV2.selection.afterMatch.ref,
+        value.pattern.selection.afterMatch.ref,
       )
     ) {
       ctx.addIssue({
         code: 'custom',
         message:
-          `Pattern afterMatch ref is not guaranteed by every match: ${value.patternV2.selection.afterMatch.ref}`,
+          `Pattern afterMatch ref is not guaranteed by every match: ${value.pattern.selection.afterMatch.ref}`,
       });
     }
 
@@ -467,75 +339,18 @@ export const CompositeTriggerDefinitionSchema = z.object({
       }
     }
 
-    const oversized = collectPatternDurationsMs(value.patternV2.root)
+    const oversized = collectPatternDurationsMs(value.pattern.root)
       .filter((duration) => duration > value.withinMs);
     if (oversized.length) {
       ctx.addIssue({
         code: 'custom',
         message:
-          `Pattern AST v2 duration exceeds trigger withinMs: ${Math.max(...oversized)} > ${value.withinMs}`,
+          `Pattern AST duration exceeds trigger withinMs: ${Math.max(...oversized)} > ${value.withinMs}`,
       });
     }
   }
 
-  const conditionIds = new Set();
-  for (const condition of value.temporal) {
-    if (conditionIds.has(condition.id)) {
-      ctx.addIssue({
-        code: 'custom',
-        message: `Temporal condition id must be unique: ${condition.id}`,
-      });
-    }
-    conditionIds.add(condition.id);
 
-    const conditionRefs = [];
-    if ('ref' in condition) conditionRefs.push(condition.ref);
-    if ('afterRef' in condition) conditionRefs.push(condition.afterRef);
-    if ('beforeRef' in condition) conditionRefs.push(condition.beforeRef);
-    for (const ref of conditionRefs) {
-      if (!ids.has(ref)) {
-        ctx.addIssue({
-          code: 'custom',
-          message: `Temporal condition ${condition.id} references unknown clause: ${ref}`,
-        });
-      }
-    }
-
-    if (condition.kind === 'calendar') {
-      try {
-        new Intl.DateTimeFormat('en-US', { timeZone: condition.timezone });
-      } catch {
-        ctx.addIssue({
-          code: 'custom',
-          message: `Invalid IANA timezone: ${condition.timezone}`,
-        });
-      }
-      if (
-        condition.before &&
-        condition.after &&
-        condition.before === condition.after
-      ) {
-        ctx.addIssue({
-          code: 'custom',
-          message: 'calendar before and after cannot be identical',
-        });
-      }
-    }
-
-    if (
-      condition.kind === 'absence' &&
-      condition.timezone
-    ) {
-      try {
-        new Intl.DateTimeFormat('en-US', { timeZone: condition.timezone });
-      } catch {
-        ctx.addIssue({
-          code: 'custom',
-          message: `Invalid IANA timezone: ${condition.timezone}`,
-        });
-      }
-    }
-  }
 });
 
 export const CorrelatableEventSchema = z.object({
@@ -575,7 +390,7 @@ export const TriggerSourceEventSchema = z.object({
   data: z.record(z.string(), z.unknown()),
 });
 
-export const CompositeCorrelationDecisionSchema = z.object({
+export const PatternSemanticDecisionSchema = z.object({
   evaluator: z.string().min(1),
   outcome: z.enum(['match', 'reject', 'uncertain']),
   probability: z.number().min(0).max(1),
@@ -599,9 +414,10 @@ export const PatternMatchStateSchema = z.object({
   role: z.enum(['buffer', 'match']),
   signature: z.string().min(1).optional(),
   maxObservedOccurredAt: Timestamp.optional(),
+  completedAt: Timestamp.optional(),
   semanticDecisions: z.array(z.object({
     nodeId: Id,
-    decision: CompositeCorrelationDecisionSchema,
+    decision: PatternSemanticDecisionSchema,
   }).strict()).default([]),
 }).strict();
 
@@ -612,12 +428,12 @@ export const TriggerMatchRecordSchema = z.object({
   triggerId: Id,
   triggerVersion: z.string().min(1),
   status: TriggerMatchStatusSchema,
-  correlationKey: z.string().nullable(),
+  partitionKey: z.string().nullable(),
   openedAt: Timestamp,
   expiresAt: Timestamp,
   updatedAt: Timestamp,
   sourceEvents: z.array(TriggerSourceEventSchema),
-  correlationDecision: CompositeCorrelationDecisionSchema.nullable(),
+  semanticDecision: PatternSemanticDecisionSchema.nullable(),
   patternState: PatternMatchStateSchema.optional(),
   firedWakeId: Id.nullable(),
   derivedEventIds: z.array(Id).default([]),
@@ -625,7 +441,6 @@ export const TriggerMatchRecordSchema = z.object({
 
 export type StructuredPredicate = z.infer<typeof StructuredPredicateSchema>;
 export type TriggerClause = z.infer<typeof TriggerClauseSchema>;
-export type TemporalCondition = z.infer<typeof TemporalConditionSchema>;
 export type EventTimePolicy = z.infer<typeof EventTimePolicySchema>;
 export type TriggerLifecyclePolicy = z.infer<typeof TriggerLifecyclePolicySchema>;
 export type ContinuationContextPolicy = z.infer<typeof ContinuationContextPolicySchema>;
@@ -637,7 +452,7 @@ export type CorrelatableEvent = z.infer<typeof CorrelatableEventSchema>;
 export type TriggerSourceEvent = z.infer<typeof TriggerSourceEventSchema>;
 export type PatternMatchState = z.infer<typeof PatternMatchStateSchema>;
 export type TriggerMatchRecord = z.infer<typeof TriggerMatchRecordSchema>;
-export type CompositeCorrelationDecision = z.infer<typeof CompositeCorrelationDecisionSchema>;
+export type PatternSemanticDecision = z.infer<typeof PatternSemanticDecisionSchema>;
 
 export function parseCompositeTriggerDefinition(
   value: unknown,

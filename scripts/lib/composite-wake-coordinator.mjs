@@ -68,7 +68,7 @@ export class CompositeWakeCoordinator {
     let delivered = existing;
     if (
       !delivered ||
-      (delivered.status !== 'delivered' && delivered.status !== 'handled')
+      delivered.status !== 'delivered'
     ) {
       delivered = WakeRecordSchema.parse({
         wakeId,
@@ -108,7 +108,7 @@ export class CompositeWakeCoordinator {
     }
 
     return {
-      status: delivered.status === 'handled' ? 'handled' : 'wake_delivered',
+      status: 'wake_delivered',
       wake: delivered,
     };
   }
@@ -149,12 +149,12 @@ export class CompositeWakeCoordinator {
     );
 
     const existingWake = await this.store.latestWake(wakeId);
-    if (existingWake?.status === 'handled' || existingWake?.status === 'delivered') {
+    if (existingWake?.status === 'delivered') {
       if (match.status !== 'fired') {
         await this.triggerEngine.markFired(match.matchId, wakeId);
       }
       return {
-        status: existingWake.status === 'handled' ? 'handled' : 'wake_delivered',
+        status: 'wake_delivered',
         wake: existingWake,
       };
     }
