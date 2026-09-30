@@ -442,7 +442,6 @@ export const TriggerMatchRecordSchema = z.object({
 
 export type StructuredPredicate = z.infer<typeof StructuredPredicateSchema>;
 export type TriggerClause = z.infer<typeof TriggerClauseSchema>;
-export type TemporalCondition = z.infer<typeof TemporalConditionSchema>;
 export type EventTimePolicy = z.infer<typeof EventTimePolicySchema>;
 export type TriggerLifecyclePolicy = z.infer<typeof TriggerLifecyclePolicySchema>;
 export type ContinuationContextPolicy = z.infer<typeof ContinuationContextPolicySchema>;
