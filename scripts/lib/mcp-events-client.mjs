@@ -486,9 +486,9 @@ export class McpEventsClientManager {
     for (const normalized of descriptors) {
       const sourceId =
         `mcp:${connection.connectionId}:${normalized.name}`;
-      const existing = context.store
-        .listEventSources()
-        .find((source) => source.sourceId === sourceId);
+      const existing = (
+        await context.store.listEventSources()
+      ).find((source) => source.sourceId === sourceId);
       const same =
         existing &&
         existing.enabled !== false &&
