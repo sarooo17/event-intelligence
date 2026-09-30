@@ -72,6 +72,7 @@ const triggerLanguageDescribeInputSchema = z.object({
     'state',
     'selection',
     'semantic',
+    'execution',
     'correlation',
     'timing',
     'lifecycle',
