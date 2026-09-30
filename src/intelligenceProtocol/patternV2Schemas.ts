@@ -507,6 +507,7 @@ export const PatternSelectionSchema = z.object({
 export const PatternExecutionPolicySchema = z.object({
   maxCandidates: z.number().int().min(1).max(10000).default(512),
   maxSemanticEvaluations: z.number().int().min(0).max(1000).default(16),
+  maxBufferedEvents: z.number().int().min(1).max(1000000).default(10000),
 }).strict();
 
 export const PatternMeasureSchema = z.object({
@@ -561,6 +562,7 @@ export const PatternAstV2DefinitionSchema = z.object({
   execution: PatternExecutionPolicySchema.default({
     maxCandidates: 512,
     maxSemanticEvaluations: 16,
+    maxBufferedEvents: 10000,
   }),
 }).strict();
 
