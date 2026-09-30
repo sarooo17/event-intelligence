@@ -647,6 +647,18 @@ export class CompositeTriggerEngine {
     return this.evaluatePatternBuffer(definition, buffer, now);
   }
 
+  private candidateFitsTriggerWindow(
+    candidate: PatternV2Candidate,
+    withinMs: number,
+  ): boolean {
+    if (candidate.events.length < 2) return true;
+    const times = candidate.events
+      .map((event) => Date.parse(event.occurredAt))
+      .filter(Number.isFinite);
+    if (times.length < 2) return true;
+    return Math.max(...times) - Math.min(...times) <= withinMs;
+  }
+
   private async evaluatePatternBuffer(
     definition: CompositeTriggerDefinition,
     buffer: TriggerMatchRecord,
@@ -715,7 +727,10 @@ export class CompositeTriggerEngine {
     await this.support.cancelDeadlinesForMatch(buffer.matchId);
     if (evaluation.pending.length) {
       const deadlines = evaluation.pending
-        .filter((candidate) => candidate.pendingUntil)
+        .filter((candidate) =>
+          candidate.pendingUntil &&
+          this.candidateFitsTriggerWindow(candidate, definition.withinMs)
+        )
         .map((candidate) => ({
           conditionId: `pattern-v2:${patternV2CandidateSignature(candidate)}`,
           dueAt: candidate.pendingUntil!,
@@ -740,6 +755,9 @@ export class CompositeTriggerEngine {
     );
 
     const fresh = evaluation.matches
+      .filter((candidate) =>
+        this.candidateFitsTriggerWindow(candidate, definition.withinMs)
+      )
       .map((candidate, rank) => ({ candidate, rank }))
       .filter(({ candidate }) =>
         candidate.events.length > 0 &&
