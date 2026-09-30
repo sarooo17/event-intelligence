@@ -527,6 +527,134 @@ test('Pattern AST v2 partitions durable state by business key', async () => {
   }
 });
 
+test('consumed Pattern v2 events remain replay-safe after buffer pruning', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'ei-pattern-v2-replay-'));
+  try {
+    const store = new PersistentEventStore(dir);
+    await store.init();
+    const engine = new CompositeTriggerEngine(store);
+    await engine.register({
+      triggerId: 'replay-safe-sequence',
+      version: '1',
+      conditionOnly: true,
+      clauses: [
+        { id: 'a', event: 'a.event', arguments: {}, where: [] },
+        { id: 'b', event: 'b.event', arguments: {}, where: [] },
+      ],
+      expression: { kind: 'anyOf', refs: ['a', 'b'] },
+      temporal: [],
+      patternV2: pattern({
+        kind: 'sequence',
+        contiguity: 'followedBy',
+        children: [
+          { kind: 'event', ref: 'a' },
+          { kind: 'event', ref: 'b' },
+        ],
+      }),
+      withinMs: 3600000,
+    });
+
+    const a = correlatable(
+      'a1',
+      'a.event',
+      '2026-09-30T10:00:00.000Z',
+    );
+    await engine.ingest(a);
+
+    const firstMatch = await engine.ingest(correlatable(
+      'b1',
+      'b.event',
+      '2026-09-30T10:01:00.000Z',
+    ));
+    assert.equal(firstMatch.some((result) => result.matched), true);
+
+    const replay = await engine.ingest(a);
+    assert.equal(replay[0].matched, true);
+
+    const laterB = await engine.ingest(correlatable(
+      'b2',
+      'b.event',
+      '2026-09-30T10:02:00.000Z',
+    ));
+    assert.equal(laterB.some((result) => result.matched), false);
+
+    const matches = store.listTriggerMatches('replay-safe-sequence')
+      .filter((record) =>
+        record.patternState?.role === 'match' &&
+        record.status === 'matched'
+      );
+    assert.equal(matches.length, 1);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('Pattern v2 event identity includes subscription arguments', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'ei-pattern-v2-subscription-id-'));
+  try {
+    const store = new PersistentEventStore(dir);
+    await store.init();
+    const engine = new CompositeTriggerEngine(store);
+    await engine.register({
+      triggerId: 'subscription-identity',
+      version: '1',
+      conditionOnly: true,
+      clauses: [
+        {
+          id: 'left',
+          event: 'shared.event',
+          serverId: 'shared',
+          arguments: { scope: 'left' },
+          where: [],
+        },
+        {
+          id: 'right',
+          event: 'shared.event',
+          serverId: 'shared',
+          arguments: { scope: 'right' },
+          where: [],
+        },
+      ],
+      expression: { kind: 'anyOf', refs: ['left', 'right'] },
+      temporal: [],
+      patternV2: pattern({
+        kind: 'allOf',
+        children: [
+          { kind: 'event', ref: 'left' },
+          { kind: 'event', ref: 'right' },
+        ],
+      }),
+      withinMs: 3600000,
+    });
+
+    await engine.ingest({
+      ...correlatable(
+        'same-id',
+        'shared.event',
+        '2026-09-30T10:00:00.000Z',
+        {},
+        { serverId: 'shared' },
+      ),
+      subscriptionArguments: { scope: 'left' },
+    });
+
+    const second = await engine.ingest({
+      ...correlatable(
+        'same-id',
+        'shared.event',
+        '2026-09-30T10:01:00.000Z',
+        {},
+        { serverId: 'shared' },
+      ),
+      subscriptionArguments: { scope: 'right' },
+    });
+
+    assert.equal(second.some((result) => result.matched), true);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('bounded notFollowedBy survives as a durable deadline', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'ei-pattern-v2-negative-'));
   let now = new Date('2026-09-30T10:01:00.000Z');
