@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.1] - 2026-10-04
+
+### Fixed
+
+- serialize and coalesce concurrent host MCP registry refreshes so an embedded runtime cannot observe a half-attached Events connection while `events/list` is still in flight;
+- add a regression test for the subscribe + explicit-refresh race found while integrating Artemis.
+
 ## [0.7.0] - 2026-10-04
 
 Embedded-host integration release.
