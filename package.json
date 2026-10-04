@@ -63,7 +63,8 @@
     "pack:mcp-smoke": "node scripts/package-mcp-smoke.mjs",
     "conformance:pattern-v2": "npm run build && node scripts/evidence/pattern-v2-conformance.mjs",
     "bench:pattern-v2": "npm run build && node scripts/evidence/pattern-v2-benchmark.mjs --profile quick",
-    "evidence:pattern-v2": "npm run build && node scripts/evidence/pattern-v2-conformance.mjs && node scripts/evidence/pattern-v2-benchmark.mjs --profile quick"
+    "evidence:pattern-v2": "npm run build && node scripts/evidence/pattern-v2-conformance.mjs && node scripts/evidence/pattern-v2-benchmark.mjs --profile quick",
+    "prepare": "npm run build"
   },
   "keywords": [
     "mcp",
