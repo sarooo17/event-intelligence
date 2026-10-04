@@ -58,3 +58,8 @@ export type ActivationEnvelope = z.infer<typeof ActivationEnvelopeSchema>;
 export function parseActivationEnvelope(value: unknown): ActivationEnvelope {
   return ActivationEnvelopeSchema.parse(value);
 }
+/** Runtime-neutral public names for embedded-host integrations. */
+export const EventEvidenceSchema = ActivationEvidenceSchema;
+export const EventActivationSchema = ActivationEnvelopeSchema;
+export type EventEvidence = ActivationEvidence;
+export type EventActivation = ActivationEnvelope;
