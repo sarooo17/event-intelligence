@@ -10,7 +10,9 @@ const Timestamp = z.string().datetime({ offset: true });
 
 export const RuntimeTargetSchema = z.object({
   runtime: z.string().min(1),
-  kind: z.enum(['goal', 'session', 'conversation', 'task', 'spawn_template']),
+  // Host-owned continuation kind. Event Intelligence persists and returns
+  // this opaque discriminator; it must not encode one runtime's task model.
+  kind: z.string().min(1).max(100),
   id: Id,
 });
 
