@@ -144,8 +144,10 @@ export async function createEventIntelligenceHost({
 
   const registryManaged = new Set();
   let unsubscribe = null;
+  let registryRefreshPromise = null;
+  let registryRefreshRequested = false;
 
-  const refreshMcpRegistry = async () => {
+  const refreshMcpRegistryOnce = async () => {
     const entries = await listRegistryConnections(mcpRegistry);
     const desired = new Map();
 
@@ -211,6 +213,26 @@ export async function createEventIntelligenceHost({
     }
 
     return outcomes;
+  };
+
+  const refreshMcpRegistry = () => {
+    if (registryRefreshPromise) {
+      registryRefreshRequested = true;
+      return registryRefreshPromise;
+    }
+
+    registryRefreshPromise = (async () => {
+      const outcomes = [];
+      do {
+        registryRefreshRequested = false;
+        outcomes.push(...await refreshMcpRegistryOnce());
+      } while (registryRefreshRequested);
+      return outcomes;
+    })().finally(() => {
+      registryRefreshPromise = null;
+    });
+
+    return registryRefreshPromise;
   };
 
   if (mcpRegistry) {
