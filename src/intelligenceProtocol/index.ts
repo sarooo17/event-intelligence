@@ -156,10 +156,14 @@ export type {
 export {
   ActivationEvidenceSchema,
   ActivationEnvelopeSchema,
+  EventEvidenceSchema,
+  EventActivationSchema,
   parseActivationEnvelope,
 } from './activationSchemas.js';
 
 export type {
   ActivationEvidence,
   ActivationEnvelope,
+  EventEvidence,
+  EventActivation,
 } from './activationSchemas.js';
