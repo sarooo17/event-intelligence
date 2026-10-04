@@ -50,7 +50,12 @@ jobs:
           done
           test "$FOUND" = "$VERSION"
 
-          TARGET="$(git log -1 --format=%H -- package.json)"
+          # Tag the exact verified release source checked out by this
+          # workflow. Using the package.json-changing commit can point at an
+          # intermediate tree that still contains temporary workflow files,
+          # which GitHub correctly refuses to expose through a new ref without
+          # the workflows permission.
+          TARGET="$(git rev-parse HEAD)"
           test -n "$TARGET"
 
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
