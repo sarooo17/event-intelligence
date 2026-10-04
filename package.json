@@ -22,6 +22,10 @@
     "./provider/erpnext": {
       "types": "./dist/src/mcpEvents/erpnextProvider.d.ts",
       "import": "./dist/src/mcpEvents/erpnextProvider.js"
+    },
+    "./embedded": {
+      "types": "./scripts/embedded-host-kit.d.mts",
+      "import": "./scripts/embedded-host-kit.mjs"
     }
   },
   "bin": {
@@ -41,7 +45,9 @@
     "scripts/mcp-stdio-server.mjs",
     "scripts/host-integration.mjs",
     "scripts/host-integration.d.mts",
-    "scripts/run-tests.mjs"
+    "scripts/run-tests.mjs",
+    "scripts/embedded-host-kit.mjs",
+    "scripts/embedded-host-kit.d.mts"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
