@@ -98,10 +98,20 @@ jobs:
           TAG="v$VERSION"
           NOTES="docs/releases/$TAG.md"
           TARGET="${{ steps.version.outputs.target }}"
+
+          # Create the Git ref explicitly. GitHub Apps can be denied when the
+          # Releases API tries to create the tag implicitly, even with
+          # contents:write. A normal authenticated ref push keeps the two
+          # operations separate and makes the failure mode observable.
+          if ! git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            git tag "$TAG" "$TARGET"
+            git push origin "refs/tags/$TAG"
+          fi
+
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "GitHub Release $TAG already exists"
           elif [ -f "$NOTES" ]; then
-            gh release create "$TAG" --target "$TARGET" --title "MCP Event Intelligence $TAG" --notes-file "$NOTES"
+            gh release create "$TAG" --verify-tag --title "MCP Event Intelligence $TAG" --notes-file "$NOTES"
           else
-            gh release create "$TAG" --target "$TARGET" --title "MCP Event Intelligence $TAG" --generate-notes
+            gh release create "$TAG" --verify-tag --title "MCP Event Intelligence $TAG" --generate-notes
           fi
