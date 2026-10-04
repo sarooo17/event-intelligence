@@ -2,6 +2,11 @@ import type {
   ActivationEnvelope,
   RuntimeTarget,
 } from '../dist/src/intelligenceProtocol/index.js';
+
+export type {
+  ActivationEnvelope as EventActivation,
+  RuntimeTarget as ContinuationTarget,
+};
 import type {
   EventIntelligenceHost,
   EventIntelligenceHostOptions,
