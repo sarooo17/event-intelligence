@@ -1,0 +1,22 @@
+name: Registry refresh fix
+
+on:
+  push:
+    branches:
+      - fix/mcp-registry-refresh-singleflight
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm run check
+      - run: npm run conformance:pattern-v2
