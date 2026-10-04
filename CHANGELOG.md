@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.7.0] - 2026-10-04
+
+Embedded-host integration release.
+
+### Runtime-neutral embedded host kit
+
+- add `mcp-event-intelligence/embedded` as the high-level in-process integration surface;
+- add `createEmbeddedEventIntelligence()` to compose host-owned MCP connections, lifecycle, activation delivery and optional portable agent tools;
+- add `createActivationDispatcher()` for runtime-neutral target resolution, host-side receipt/idempotency checks and activation delivery;
+- add `createEventIntelligenceAgentTools()` with portable tool descriptors independent of OpenAI, Anthropic, MCP tool objects, Muffin, Artemis or any other runtime;
+- make continuation target `kind` host-defined rather than constrained to Event Intelligence's historical task vocabulary;
+- expose runtime-neutral `EventActivation`, `EventEvidence` and `ContinuationTarget` type aliases.
+
+### Host ownership boundaries
+
+- Event Intelligence remains embedded: it does not become a separate MCP server or own agent-runtime credentials;
+- MCP transports, OAuth/API credentials and connection lifecycle remain host-owned;
+- authorization, tenant policy and continuation semantics remain host-owned;
+- EI persists and evaluates future conditions, then returns the opaque continuation target and activation evidence to the host.
+
+### Packaging and verification
+
+- build `dist/` during git-based installs through `prepare`, so pinned GitHub revisions are usable by embedded hosts;
+- add generic host-kit tests with a third-party runtime-shaped target to guard against Muffin/Artemis coupling;
+- validate the packed npm surface including the new `./embedded` export.
+
 ## [0.6.1] - 2026-09-30
 
 Patch release for post-merge v0.6 review findings.
