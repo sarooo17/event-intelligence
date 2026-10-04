@@ -176,3 +176,98 @@ test('host registry auto-discovers event MCPs, ignores tools-only MCPs and wakes
     await rm(dataDir, { recursive: true, force: true });
   }
 });
+
+test('concurrent registry refreshes wait for event discovery instead of exposing a half-attached connection', async () => {
+  const dataDir = await mkdtemp(path.join(os.tmpdir(), 'ei-host-registry-race-'));
+  let entries = [];
+  let listener = null;
+  let releaseList;
+  let listStartedResolve;
+  const listStarted = new Promise((resolve) => {
+    listStartedResolve = resolve;
+  });
+  const listGate = new Promise((resolve) => {
+    releaseList = resolve;
+  });
+
+  const client = {
+    getServerCapabilities() {
+      return {
+        extensions: {
+          'io.modelcontextprotocol/events': { listChanged: false },
+        },
+      };
+    },
+    async request(message) {
+      if (message.method === 'events/list') {
+        listStartedResolve();
+        await listGate;
+        return {
+          events: [{
+            name: 'invoice.submitted',
+            delivery: ['poll'],
+            payloadSchema: { type: 'object' },
+          }],
+        };
+      }
+      if (message.method === 'events/poll') {
+        return { events: [], cursor: 'ready', hasMore: false };
+      }
+      throw new Error(`Unexpected method ${message.method}`);
+    },
+  };
+
+  const registry = {
+    listConnections() {
+      return entries;
+    },
+    subscribe(callback) {
+      listener = callback;
+      return () => {
+        listener = null;
+      };
+    },
+  };
+
+  const host = await createEventIntelligenceHost({
+    dataDir,
+    mcpRegistry: registry,
+    env: {
+      TYPESAFE_API_KEY: '',
+      RUNTIME_WAKE_TARGETS_JSON: '{}',
+      TEMPORAL_TICK_MS: '100000',
+    },
+  });
+
+  try {
+    entries = [{
+      id: 'erp',
+      serverId: 'erpnext',
+      scopeId: 'tenant-1',
+      client,
+      pollIntervalMs: 300000,
+    }];
+
+    listener();
+    await listStarted;
+
+    const explicitRefresh = host.refreshMcpRegistry();
+    releaseList();
+    await explicitRefresh;
+
+    const tenant = await host.scope('tenant-1');
+    assert.deepEqual(
+      (await tenant.eventSources).map((source) => source.eventName),
+      ['invoice.submitted'],
+    );
+    assert.deepEqual(
+      (await tenant.mcpStatus()).map((entry) => entry.connectionId),
+      ['erp'],
+    );
+  } finally {
+    releaseList?.();
+    await host.close();
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
