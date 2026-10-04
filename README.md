@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/sarooo17/event-intelligence/actions/workflows/ci.yml/badge.svg)](https://github.com/sarooo17/event-intelligence/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/mcp-event-intelligence.svg)](https://www.npmjs.com/package/mcp-event-intelligence)
-[![MCP Registry](https://img.shields.io/badge/MCP%20Registry-v0.6.1-5b5bd6)](https://registry.modelcontextprotocol.io/?q=io.github.sarooo17%2Fevent-intelligence)
+[![MCP Registry](https://img.shields.io/badge/MCP%20Registry-v0.7.0-5b5bd6)](https://registry.modelcontextprotocol.io/?q=io.github.sarooo17%2Fevent-intelligence)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 MCP Event Intelligence is an experimental event runtime for agents that need to react to **future conditions over multiple event sources** without keeping an LLM or agent loop alive.
@@ -30,6 +30,56 @@ npm install mcp-event-intelligence
 ```
 
 Published package: [npm](https://www.npmjs.com/package/mcp-event-intelligence) · [Official MCP Registry](https://registry.modelcontextprotocol.io/?q=io.github.sarooo17%2Fevent-intelligence)
+
+For most runtimes, start with the runtime-neutral embedded host kit:
+
+```js
+import {
+  createEmbeddedEventIntelligence,
+} from 'mcp-event-intelligence/embedded';
+
+const ei = await createEmbeddedEventIntelligence({
+  dataDir: './data/event-intelligence',
+
+  // The host keeps ownership of MCP transports, auth and connection lifecycle.
+  mcp: {
+    listConnections: () => runtime.mcp.connections(),
+    subscribe: (refresh) => runtime.mcp.onConnectionsChanged(refresh),
+  },
+
+  // EI produces an activation; the host decides how its own work resumes.
+  activation: {
+    resolveTarget: (target) => runtime.resolveContinuation(target),
+    hasReceipt: (receiptId) => runtime.hasWakeReceipt(receiptId),
+    deliver: ({ activation, target, receiptId }) =>
+      runtime.resumeFromEvent({ activation, target, receiptId }),
+  },
+});
+```
+
+The continuation target is intentionally opaque to EI apart from
+`{ runtime, kind, id }`. A host may map it to a Turn, Execution, thread,
+graph checkpoint, workflow, Case, or any other durable continuation primitive.
+The package contains no `runtime === "muffin"` / `"artemis"` branches.
+
+Portable agent-facing trigger tools are optional:
+
+```js
+const tools = ei.createAgentTools({
+  resolveContext: (ctx) => ({
+    target: runtime.currentContinuation(ctx),
+    actor: runtime.currentActor(ctx),
+    owner: runtime.currentOwner(ctx),
+  }),
+  authorize: (request) => runtime.policy.authorize(request),
+});
+```
+
+Each tool is a neutral `{ name, description, inputSchema, execute }`
+descriptor. Adapt that descriptor to OpenAI, Anthropic, an internal capability
+graph, or any other host SDK without changing EI core.
+
+The lower-level host API remains available when a runtime needs direct control:
 
 Pass the harness-level MCP registry once — not every MCP one by one:
 
@@ -275,7 +325,7 @@ timezone normalization and deterministic occurrence IDs. The local factory in
 this package should therefore be read as a typed convenience API, not as the
 production ERP connector itself.
 
-## What v0.6 implements
+## What v0.7 implements
 
 ### Host-owned event sources
 
