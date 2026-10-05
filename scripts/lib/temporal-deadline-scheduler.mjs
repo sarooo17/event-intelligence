@@ -4,11 +4,13 @@ export class TemporalDeadlineScheduler {
     compositeEventConsumer,
     now = () => new Date(),
     intervalMs = 1000,
+    observability = null,
   }) {
     this.store = store;
     this.compositeEventConsumer = compositeEventConsumer;
     this.now = now;
     this.intervalMs = Math.max(250, Number(intervalMs) || 1000);
+    this.observability = observability;
     this.timer = null;
     this.running = false;
   }
@@ -94,6 +96,14 @@ export class TemporalDeadlineScheduler {
     if (this.timer) return;
     this.timer = setInterval(() => {
       this.runDue().catch((error) => {
+        if (this.observability?.enabled) {
+          void this.observability.emit({
+            event: 'ei.scheduler.temporal_deadline_failed',
+            level: 'error',
+            error,
+          });
+          return;
+        }
         console.error(JSON.stringify({
           message: 'temporal_deadline_scheduler_error',
           error: error instanceof Error ? error.message : String(error),
