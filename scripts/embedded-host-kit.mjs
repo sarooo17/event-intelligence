@@ -12,6 +12,12 @@ import {
 const DEFAULT_TOOL_NAMES = Object.freeze({
   sources: 'event_sources_list',
   create: 'trigger_create',
+  list: 'trigger_list',
+  inspect: 'trigger_inspect',
+  pause: 'trigger_pause',
+  resume: 'trigger_resume',
+  delete: 'trigger_delete',
+  update: 'trigger_update',
 });
 
 export const EVENT_INTELLIGENCE_CAPABILITIES = Object.freeze({
@@ -26,6 +32,54 @@ export const EVENT_INTELLIGENCE_CAPABILITIES = Object.freeze({
   triggerCreate: Object.freeze({
     id: 'event-intelligence.trigger.create',
     operation: 'create',
+    resource: 'trigger',
+    effect: 'durable-state',
+    durability: 'durable',
+    hostControl: 'required',
+  }),
+  triggerList: Object.freeze({
+    id: 'event-intelligence.trigger.list',
+    operation: 'read',
+    resource: 'trigger',
+    effect: 'none',
+    durability: 'ephemeral',
+    hostControl: 'none',
+  }),
+  triggerInspect: Object.freeze({
+    id: 'event-intelligence.trigger.inspect',
+    operation: 'read',
+    resource: 'trigger',
+    effect: 'none',
+    durability: 'ephemeral',
+    hostControl: 'none',
+  }),
+  triggerPause: Object.freeze({
+    id: 'event-intelligence.trigger.pause',
+    operation: 'update',
+    resource: 'trigger',
+    effect: 'durable-state',
+    durability: 'durable',
+    hostControl: 'required',
+  }),
+  triggerResume: Object.freeze({
+    id: 'event-intelligence.trigger.resume',
+    operation: 'update',
+    resource: 'trigger',
+    effect: 'durable-state',
+    durability: 'durable',
+    hostControl: 'required',
+  }),
+  triggerDelete: Object.freeze({
+    id: 'event-intelligence.trigger.delete',
+    operation: 'delete',
+    resource: 'trigger',
+    effect: 'durable-state',
+    durability: 'durable',
+    hostControl: 'required',
+  }),
+  triggerUpdate: Object.freeze({
+    id: 'event-intelligence.trigger.update',
+    operation: 'update',
     resource: 'trigger',
     effect: 'durable-state',
     durability: 'durable',
@@ -122,6 +176,103 @@ const CREATE_INPUT_SCHEMA = Object.freeze({
     expires_at: { type: 'string' },
     lease_until: { type: 'string' },
     complete_on_goal: { type: 'boolean' },
+  },
+});
+
+
+const TriggerListInput = z.object({
+  status: z.union([z.string().min(1), z.array(z.string().min(1)).min(1).max(16)]).optional(),
+  trigger_id: z.string().min(1).max(200).optional(),
+  version: z.string().min(1).max(100).optional(),
+  connection_id: z.string().min(1).max(200).optional(),
+  event: z.string().min(1).max(200).optional(),
+  target_runtime: z.string().min(1).max(200).optional(),
+  target_kind: z.string().min(1).max(200).optional(),
+  target_id: z.string().min(1).max(500).optional(),
+  one_shot: z.boolean().optional(),
+  remaining_only: z.boolean().optional(),
+  include_definition: z.boolean().optional(),
+  limit: z.number().int().min(1).max(200).optional(),
+}).strict();
+
+const TriggerInspectInput = z.object({
+  trigger_id: z.string().min(1).max(200),
+  version: z.string().min(1).max(100).optional(),
+  match_id: z.string().min(1).max(200).optional(),
+}).strict();
+
+const TriggerLifecycleInput = z.object({
+  trigger_id: z.string().min(1).max(200),
+  version: z.string().min(1).max(100).optional(),
+}).strict();
+
+const TriggerUpdateInput = TriggerCreateInput.omit({
+  trigger_id: true,
+  version: true,
+}).extend({
+  trigger_id: z.string().min(1).max(200),
+  expected_version: z.string().min(1).max(100).optional(),
+  version: z.string().min(1).max(100).optional(),
+}).strict();
+
+const LIST_INPUT_SCHEMA = Object.freeze({
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    status: {
+      oneOf: [
+        { type: 'string', minLength: 1 },
+        {
+          type: 'array',
+          minItems: 1,
+          maxItems: 16,
+          items: { type: 'string', minLength: 1 },
+        },
+      ],
+    },
+    trigger_id: { type: 'string', minLength: 1, maxLength: 200 },
+    version: { type: 'string', minLength: 1, maxLength: 100 },
+    connection_id: { type: 'string', minLength: 1, maxLength: 200 },
+    event: { type: 'string', minLength: 1, maxLength: 200 },
+    target_runtime: { type: 'string', minLength: 1, maxLength: 200 },
+    target_kind: { type: 'string', minLength: 1, maxLength: 200 },
+    target_id: { type: 'string', minLength: 1, maxLength: 500 },
+    one_shot: { type: 'boolean' },
+    remaining_only: { type: 'boolean' },
+    include_definition: { type: 'boolean' },
+    limit: { type: 'integer', minimum: 1, maximum: 200 },
+  },
+});
+
+const INSPECT_INPUT_SCHEMA = Object.freeze({
+  type: 'object',
+  additionalProperties: false,
+  required: ['trigger_id'],
+  properties: {
+    trigger_id: { type: 'string', minLength: 1, maxLength: 200 },
+    version: { type: 'string', minLength: 1, maxLength: 100 },
+    match_id: { type: 'string', minLength: 1, maxLength: 200 },
+  },
+});
+
+const LIFECYCLE_INPUT_SCHEMA = Object.freeze({
+  type: 'object',
+  additionalProperties: false,
+  required: ['trigger_id'],
+  properties: {
+    trigger_id: { type: 'string', minLength: 1, maxLength: 200 },
+    version: { type: 'string', minLength: 1, maxLength: 100 },
+  },
+});
+
+const UPDATE_INPUT_SCHEMA = Object.freeze({
+  ...CREATE_INPUT_SCHEMA,
+  required: ['trigger_id', 'events', 'instruction'],
+  properties: {
+    ...CREATE_INPUT_SCHEMA.properties,
+    trigger_id: { type: 'string', minLength: 1, maxLength: 200 },
+    expected_version: { type: 'string', minLength: 1, maxLength: 100 },
+    version: { type: 'string', minLength: 1, maxLength: 100 },
   },
 });
 
@@ -642,6 +793,139 @@ function buildPlanInput(parsed, target) {
       },
     },
   };
+}
+
+
+function compactTriggerEntry(entry, includeDefinition = false) {
+  const definition = entry?.definition ?? {};
+  const state = entry?.state ?? {};
+  const lifecycle = definition.lifecycle ?? {};
+  const maxFirings = lifecycle.maxFirings ?? null;
+  const fireCount = Number(state.fireCount ?? 0);
+  return {
+    triggerId: definition.triggerId ?? null,
+    version: definition.version ?? null,
+    description: definition.description ?? null,
+    status: state.status ?? null,
+    fireCount,
+    maxFirings,
+    remainingFirings:
+      Number.isFinite(Number(maxFirings))
+        ? Math.max(0, Number(maxFirings) - fireCount)
+        : null,
+    oneShot: Boolean(lifecycle.oneShot),
+    connectionIds: Array.isArray(state.connectionIds) ? state.connectionIds : [],
+    target: definition.target ?? null,
+    events: Array.isArray(definition.clauses)
+      ? definition.clauses.map((clause) => ({
+          id: clause.id,
+          serverId: clause.serverId,
+          event: clause.event,
+        }))
+      : [],
+    updatedAt: state.updatedAt ?? null,
+    ...(includeDefinition ? { definition } : {}),
+  };
+}
+
+function filterOwnedTriggerEntries(entries, input = {}) {
+  const statuses = input.status == null
+    ? null
+    : new Set((Array.isArray(input.status) ? input.status : [input.status]).map(String));
+  return entries.filter((entry) => {
+    const definition = entry?.definition ?? {};
+    const state = entry?.state ?? {};
+    const lifecycle = definition.lifecycle ?? {};
+    const target = definition.target ?? {};
+    if (statuses && !statuses.has(String(state.status ?? ''))) return false;
+    if (input.trigger_id && definition.triggerId !== input.trigger_id) return false;
+    if (input.version && definition.version !== input.version) return false;
+    if (
+      input.connection_id &&
+      !(Array.isArray(state.connectionIds) && state.connectionIds.includes(input.connection_id))
+    ) return false;
+    if (
+      input.event &&
+      !(Array.isArray(definition.clauses) && definition.clauses.some(
+        (clause) => clause?.event === input.event,
+      ))
+    ) return false;
+    if (input.target_runtime && target.runtime !== input.target_runtime) return false;
+    if (input.target_kind && target.kind !== input.target_kind) return false;
+    if (input.target_id && target.id !== input.target_id) return false;
+    if (
+      input.one_shot !== undefined &&
+      Boolean(lifecycle.oneShot) !== input.one_shot
+    ) return false;
+    if (input.remaining_only) {
+      if (!['active', 'paused'].includes(String(state.status ?? ''))) return false;
+      if (
+        lifecycle.maxFirings !== undefined &&
+        Number(state.fireCount ?? 0) >= Number(lifecycle.maxFirings)
+      ) return false;
+    }
+    return true;
+  });
+}
+
+async function ownedTriggerEntries(scoped, resolved) {
+  const owner = normalizeIdentity(resolved?.owner, 'owner');
+  const entries = await scoped.triggerControl.listTriggers({ owner });
+  return { owner, entries: Array.isArray(entries) ? entries : [] };
+}
+
+function selectOwnedTrigger(entries, triggerId, version, allowedStatuses) {
+  let candidates = entries.filter(
+    (entry) => entry?.definition?.triggerId === triggerId,
+  );
+  if (version) {
+    candidates = candidates.filter(
+      (entry) => entry?.definition?.version === version,
+    );
+  }
+  if (allowedStatuses?.length) {
+    const allowed = new Set(allowedStatuses);
+    candidates = candidates.filter(
+      (entry) => allowed.has(String(entry?.state?.status ?? '')),
+    );
+  }
+  if (candidates.length === 0) {
+    const error = new Error(
+      version
+        ? `Unknown owned trigger ${triggerId}@${version}`
+        : `No current owned trigger found for ${triggerId}`,
+    );
+    error.code = 'TRIGGER_NOT_FOUND';
+    throw error;
+  }
+  if (!version && candidates.length > 1) {
+    const error = new Error(
+      `Trigger ${triggerId} has multiple matching versions; specify version`,
+    );
+    error.code = 'TRIGGER_VERSION_AMBIGUOUS';
+    throw error;
+  }
+  return candidates[0];
+}
+
+function nextPortableVersion(entries, triggerId, currentVersion) {
+  const used = new Set(
+    entries
+      .filter((entry) => entry?.definition?.triggerId === triggerId)
+      .map((entry) => String(entry?.definition?.version ?? '')),
+  );
+  if (/^\d+$/.test(currentVersion)) {
+    let candidate = String(Number(currentVersion) + 1);
+    while (used.has(candidate)) candidate = String(Number(candidate) + 1);
+    return candidate;
+  }
+  let revision = 2;
+  let candidate = `${currentVersion}-r${revision}`;
+  while (used.has(candidate)) {
+    revision += 1;
+    candidate = `${currentVersion}-r${revision}`;
+  }
+  return candidate;
 }
 
 /**
