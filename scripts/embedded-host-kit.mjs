@@ -447,6 +447,7 @@ export function createActivationDispatcher({
   resolveTarget,
   hasReceipt,
   receiptId,
+  receiptNamespace,
   deliver,
 } = {}) {
   if (resolveTarget !== undefined && typeof resolveTarget !== 'function') {
@@ -457,6 +458,15 @@ export function createActivationDispatcher({
   }
   if (receiptId !== undefined && typeof receiptId !== 'function') {
     throw new Error('receiptId must be a function');
+  }
+  if (
+    receiptNamespace !== undefined &&
+    (typeof receiptNamespace !== 'string' || !receiptNamespace.trim())
+  ) {
+    throw new Error('receiptNamespace must be a non-empty string');
+  }
+  if (receiptId !== undefined && receiptNamespace !== undefined) {
+    throw new Error('Provide receiptId or receiptNamespace, not both');
   }
   if (typeof deliver !== 'function') {
     throw new Error('Activation dispatcher requires deliver()');
@@ -474,9 +484,16 @@ export function createActivationDispatcher({
     }
 
     const candidateReceiptId = String(
-      await (receiptId
-        ? receiptId({ packet, activation })
-        : activation.wake.wakeId),
+      await (
+        receiptId
+          ? receiptId({ packet, activation })
+          : receiptNamespace
+            ? createDeterministicReceiptId(
+                receiptNamespace,
+                activation.wake.wakeId,
+              )
+            : activation.wake.wakeId
+      ),
     ).trim();
     if (!candidateReceiptId) {
       const error = new Error('Activation receipt id must be non-empty');
