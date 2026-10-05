@@ -134,6 +134,8 @@ export interface ActivationDispatcherOptions<Target = RuntimeTarget> {
     packet: Record<string, unknown>;
     activation: ActivationEnvelope;
   }) => string | Promise<string>;
+  /** Optional deterministic SHA-256 receipt namespace. Mutually exclusive with receiptId. */
+  receiptNamespace?: string;
   deliver(
     input: ActivationDeliveryInput<Target>,
   ): HostWakeReceipt | string | void | Promise<HostWakeReceipt | string | void>;
@@ -158,6 +160,27 @@ export interface PortableToolCatalog<RuntimeContext = unknown> {
     capabilityIds?: Iterable<string>;
   }): PortableAgentTool<RuntimeContext>[];
   capabilities(): EventIntelligenceCapabilityMetadata[];
+}
+
+export interface EventSourceDiagnostics {
+  readonly connections: number;
+  readonly eventsCapable: number;
+  readonly eventDefinitions: number;
+  readonly errors: number;
+  readonly statuses: readonly any[];
+  readonly refreshOutcomes: readonly any[];
+}
+
+export interface EmbeddedRuntimeBindOptions<
+  RuntimeContext = unknown,
+  HostTool = unknown,
+> {
+  adapt(tool: PortableAgentTool<RuntimeContext>): HostTool;
+  register(
+    tool: HostTool,
+    portableTool: PortableAgentTool<RuntimeContext>,
+  ): void;
+  onClose?(close: () => Promise<void>): void;
 }
 
 export interface EventIntelligenceAgentToolsOptions<RuntimeContext = unknown> {
@@ -197,6 +220,19 @@ export interface EventIntelligenceAgentToolsOptions<RuntimeContext = unknown> {
     context: EmbeddedToolContext;
     value: unknown;
   }): PortableProjectedResult | void | Promise<PortableProjectedResult | void>;
+
+  /**
+   * Optional host-owned projection for canonical EI failures. Returning null
+   * keeps the canonical error; projection failures also fall back to it.
+   */
+  projectError?(input: {
+    capability: EventIntelligenceCapabilityMetadata;
+    runtimeContext: RuntimeContext;
+    context?: EmbeddedToolContext;
+    phase: string;
+    error?: PortableToolResult['error'];
+    result: PortableToolResult;
+  }): PortableToolResult | void | Promise<PortableToolResult | void>;
 
   /**
    * @deprecated Compatibility only. New integrations should use control().
@@ -249,6 +285,7 @@ export interface EmbeddedRuntimeTooling<RuntimeContext = unknown> {
   resolveContext: EventIntelligenceAgentToolsOptions<RuntimeContext>['resolveContext'];
   control: NonNullable<EventIntelligenceAgentToolsOptions<RuntimeContext>['control']>;
   projectResult?: EventIntelligenceAgentToolsOptions<RuntimeContext>['projectResult'];
+  projectError?: EventIntelligenceAgentToolsOptions<RuntimeContext>['projectError'];
   names?: {
     sources?: string;
     create?: string;
@@ -260,7 +297,10 @@ export interface EmbeddedRuntimeIntegrationOptions<RuntimeContext = unknown>
     EmbeddedEventIntelligenceOptions<RuntimeContext>,
     'mcpRegistry' | 'mcp' | 'agentTools'
   > {
-  eventSources?: EventSourceRegistry | EventSourceRegistryOptions;
+  eventSources?:
+    | EventSourceRegistry
+    | EventSourceRegistryOptions
+    | Iterable<EventSourceConnection>;
   tooling?: EmbeddedRuntimeTooling<RuntimeContext>;
 }
 
@@ -270,7 +310,33 @@ export interface EmbeddedRuntimeIntegration<RuntimeContext = unknown>
   readonly toolCatalog: PortableToolCatalog<RuntimeContext>;
   readonly capabilities: readonly EventIntelligenceCapabilityMetadata[];
   readonly eventSources: EventSourceRegistry | null;
+  diagnostics(): Promise<EventSourceDiagnostics>;
+  bind<HostTool>(
+    options: EmbeddedRuntimeBindOptions<RuntimeContext, HostTool>,
+  ): readonly HostTool[];
 }
+
+export function createDeterministicReceiptId(
+  namespace: string,
+  wakeId: string,
+  options?: { length?: number },
+): string;
+
+export function summarizeEventSourceStatus(
+  statuses?: readonly any[],
+  refreshOutcomes?: readonly any[],
+): EventSourceDiagnostics;
+
+export function bindEmbeddedRuntimeIntegration<
+  RuntimeContext = unknown,
+  HostTool = unknown,
+>(
+  integration: Pick<
+    EmbeddedRuntimeIntegration<RuntimeContext>,
+    'tools' | 'close'
+  >,
+  options: EmbeddedRuntimeBindOptions<RuntimeContext, HostTool>,
+): readonly HostTool[];
 
 export function createResultReference(
   input: PortableResultReference,

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import {
   RuntimeTargetSchema,
@@ -242,6 +243,24 @@ export function createResultReference(reference) {
   };
 }
 
+async function projectPortableFailure(projectError, input, canonical) {
+  if (typeof projectError !== 'function') return canonical;
+  try {
+    const projected = await projectError({
+      ...input,
+      error: canonical.error,
+      result: canonical,
+    });
+    if (projected == null) return canonical;
+    if (typeof projected !== 'object' || projected.ok !== false) {
+      throw new Error('projectError() must return a PortableToolResult with ok:false');
+    }
+    return projected;
+  } catch {
+    return canonical;
+  }
+}
+
 async function projectPortableResult(projectResult, input) {
   if (typeof projectResult !== 'function') {
     return { ok: true, data: input.value };
@@ -301,11 +320,33 @@ function wakeIdFromPacket(packet) {
   return typeof value === 'string' && value.trim() ? value : null;
 }
 
+export function createDeterministicReceiptId(
+  namespace,
+  wakeId,
+  { length = 32 } = {},
+) {
+  const normalizedNamespace = String(namespace ?? '').trim();
+  const normalizedWakeId = String(wakeId ?? '').trim();
+  if (!normalizedNamespace) {
+    throw new Error('receipt namespace is required');
+  }
+  if (!normalizedWakeId) {
+    throw new Error('wake id is required');
+  }
+  if (!Number.isInteger(length) || length < 8 || length > 64) {
+    throw new Error('receipt id length must be an integer between 8 and 64');
+  }
+  return createHash('sha256')
+    .update(JSON.stringify([normalizedNamespace, normalizedWakeId]))
+    .digest('hex')
+    .slice(0, length);
+}
+
 /**
  * Runtime-neutral registry over host-owned event connections.
  *
- * The host keeps credentials, transport and lifecycle ownership. EI only asks
- * for the currently available connections and listens for topology changes.
+ * Static iterables are accepted directly by createEmbeddedRuntimeIntegration();
+ * use this explicit factory when the host has dynamic discovery/subscription.
  */
 export function createEventSourceRegistry({
   list,
@@ -328,6 +369,83 @@ export function createEventSourceRegistry({
  * Neutral catalog for host tool exposure. It does not decide policy or adapt
  * descriptors to any vendor SDK; the embedding runtime owns both.
  */
+export function summarizeEventSourceStatus(
+  statuses = [],
+  refreshOutcomes = [],
+) {
+  const rows = Array.isArray(statuses) ? statuses : [];
+  const refresh = Array.isArray(refreshOutcomes) ? refreshOutcomes : [];
+  const connectionIds = new Set();
+  const errorIds = new Set();
+  let anonymousErrors = 0;
+  let eventsCapable = 0;
+  let eventDefinitions = 0;
+
+  for (const outcome of refresh) {
+    if (!outcome || typeof outcome !== 'object') continue;
+    const id = String(outcome.connectionId ?? '').trim();
+    if (outcome.status !== 'detached' && id) connectionIds.add(id);
+    if (outcome.status === 'error' || outcome.error != null) {
+      if (id) errorIds.add(id);
+      else anonymousErrors += 1;
+    }
+  }
+
+  for (const row of rows) {
+    if (!row || typeof row !== 'object') continue;
+    const id = String(row.connectionId ?? row.id ?? '').trim();
+    if (id) connectionIds.add(id);
+    if (row.error != null) {
+      if (id) errorIds.add(id);
+      else anonymousErrors += 1;
+      continue;
+    }
+    if (Array.isArray(row.events) && row.events.length > 0) {
+      eventsCapable += 1;
+      eventDefinitions += row.events.length;
+    }
+  }
+
+  return Object.freeze({
+    connections: connectionIds.size || rows.length,
+    eventsCapable,
+    eventDefinitions,
+    errors: errorIds.size + anonymousErrors,
+    statuses: rows,
+    refreshOutcomes: refresh,
+  });
+}
+
+export function bindEmbeddedRuntimeIntegration(
+  integration,
+  { adapt, register, onClose } = {},
+) {
+  if (!integration || typeof integration !== 'object') {
+    throw new Error('embedded integration is required');
+  }
+  if (typeof adapt !== 'function') {
+    throw new Error('bind adapt() is required');
+  }
+  if (typeof register !== 'function') {
+    throw new Error('bind register() is required');
+  }
+  if (onClose !== undefined && typeof onClose !== 'function') {
+    throw new Error('bind onClose must be a function');
+  }
+
+  const adapted = integration.tools.map((portableTool) => {
+    const hostTool = adapt(portableTool);
+    register(hostTool, portableTool);
+    return hostTool;
+  });
+
+  if (onClose) {
+    onClose(() => integration.close());
+  }
+
+  return Object.freeze(adapted);
+}
+
 export function createPortableToolCatalog(tools = []) {
   const all = Object.freeze([...tools]);
   const byName = new Map(all.map((tool) => [tool.name, tool]));
@@ -367,6 +485,7 @@ export function createActivationDispatcher({
   resolveTarget,
   hasReceipt,
   receiptId,
+  receiptNamespace,
   deliver,
 } = {}) {
   if (resolveTarget !== undefined && typeof resolveTarget !== 'function') {
@@ -377,6 +496,15 @@ export function createActivationDispatcher({
   }
   if (receiptId !== undefined && typeof receiptId !== 'function') {
     throw new Error('receiptId must be a function');
+  }
+  if (
+    receiptNamespace !== undefined &&
+    (typeof receiptNamespace !== 'string' || !receiptNamespace.trim())
+  ) {
+    throw new Error('receiptNamespace must be a non-empty string');
+  }
+  if (receiptId !== undefined && receiptNamespace !== undefined) {
+    throw new Error('Provide receiptId or receiptNamespace, not both');
   }
   if (typeof deliver !== 'function') {
     throw new Error('Activation dispatcher requires deliver()');
@@ -394,9 +522,16 @@ export function createActivationDispatcher({
     }
 
     const candidateReceiptId = String(
-      await (receiptId
-        ? receiptId({ packet, activation })
-        : activation.wake.wakeId),
+      await (
+        receiptId
+          ? receiptId({ packet, activation })
+          : receiptNamespace
+            ? createDeterministicReceiptId(
+                receiptNamespace,
+                activation.wake.wakeId,
+              )
+            : activation.wake.wakeId
+      ),
     ).trim();
     if (!candidateReceiptId) {
       const error = new Error('Activation receipt id must be non-empty');
@@ -518,6 +653,7 @@ export function createEventIntelligenceAgentTools({
   resolveContext,
   control,
   projectResult,
+  projectError,
   authorize,
   names = {},
 } = {}) {
@@ -540,6 +676,9 @@ export function createEventIntelligenceAgentTools({
   }
   if (projectResult !== undefined && typeof projectResult !== 'function') {
     throw new Error('Agent tools projectResult must be a function');
+  }
+  if (projectError !== undefined && typeof projectError !== 'function') {
+    throw new Error('Agent tools projectError must be a function');
   }
 
   const toolNames = {
@@ -582,7 +721,13 @@ export function createEventIntelligenceAgentTools({
             value,
           });
         } catch (error) {
-          return fail(error, 'EVENT_SOURCES_LIST_FAILED');
+          const canonical = fail(error, 'EVENT_SOURCES_LIST_FAILED');
+          return projectPortableFailure(projectError, {
+            capability: sourcesCapability,
+            runtimeContext,
+            context: undefined,
+            phase: 'event.sources.list',
+          }, canonical);
         }
       },
     },
@@ -596,7 +741,7 @@ export function createEventIntelligenceAgentTools({
         const parsed = TriggerCreateInput.safeParse(args ?? {});
         if (!parsed.success) {
           const issue = parsed.error.issues[0];
-          return {
+          const canonical = {
             ok: false,
             error: {
               code: 'EVENT_TRIGGER_INPUT_INVALID',
@@ -604,6 +749,12 @@ export function createEventIntelligenceAgentTools({
                 `${issue?.path?.join('.') || 'input'} — ${issue?.message || 'invalid'}`,
             },
           };
+          return projectPortableFailure(projectError, {
+            capability: createCapability,
+            runtimeContext,
+            context: undefined,
+            phase: 'trigger.input',
+          }, canonical);
         }
 
         let resolved;
@@ -624,7 +775,13 @@ export function createEventIntelligenceAgentTools({
             buildPlanInput(parsed.data, target),
           );
         } catch (error) {
-          return fail(error, 'EVENT_TRIGGER_PLAN_FAILED');
+          const canonical = fail(error, 'EVENT_TRIGGER_PLAN_FAILED');
+          return projectPortableFailure(projectError, {
+            capability: createCapability,
+            runtimeContext,
+            context: resolved,
+            phase: 'trigger.plan',
+          }, canonical);
         }
 
         // Host control is intentionally outside EI's error-normalization
@@ -656,7 +813,13 @@ export function createEventIntelligenceAgentTools({
               }),
             );
           } catch (error) {
-            return fail(error, 'EVENT_TRIGGER_CREATE_FAILED');
+            const canonical = fail(error, 'EVENT_TRIGGER_CREATE_FAILED');
+            return projectPortableFailure(projectError, {
+              capability: createCapability,
+              runtimeContext,
+              context: resolved,
+              phase: 'trigger.control',
+            }, canonical);
           }
         }
         const decision = normalizeHostControlDecision(rawDecision);
@@ -700,7 +863,13 @@ export function createEventIntelligenceAgentTools({
             warnings: plan.warnings ?? [],
           };
         } catch (error) {
-          return fail(error, 'EVENT_TRIGGER_CREATE_FAILED');
+          const canonical = fail(error, 'EVENT_TRIGGER_CREATE_FAILED');
+          return projectPortableFailure(projectError, {
+            capability: createCapability,
+            runtimeContext,
+            context: resolved,
+            phase: 'trigger.create',
+          }, canonical);
         }
 
         // Trigger creation is already durable at this point. Projection is a
@@ -837,9 +1006,24 @@ export async function createEmbeddedRuntimeIntegration({
   ) {
     throw new Error('tooling.projectResult must be a function');
   }
+  if (
+    tooling?.projectError !== undefined &&
+    typeof tooling.projectError !== 'function'
+  ) {
+    throw new Error('tooling.projectError must be a function');
+  }
 
   const sourceRegistry = eventSources
-    ? createEventSourceRegistry(eventSources)
+    ? (
+        typeof eventSources?.list === 'function'
+          ? createEventSourceRegistry(eventSources)
+          : (() => {
+              const staticSources = Object.freeze([...eventSources]);
+              return createEventSourceRegistry({
+                list: () => staticSources,
+              });
+            })()
+      )
     : null;
 
   const embedded = await createEmbeddedEventIntelligence({
@@ -872,6 +1056,9 @@ export async function createEmbeddedRuntimeIntegration({
         ...(tooling.projectResult
           ? { projectResult: tooling.projectResult }
           : {}),
+        ...(tooling.projectError
+          ? { projectError: tooling.projectError }
+          : {}),
         names: tooling.names ?? {},
       })
     : [];
@@ -883,6 +1070,22 @@ export async function createEmbeddedRuntimeIntegration({
     toolCatalog,
     capabilities: Object.freeze(toolCatalog.capabilities()),
     eventSources: sourceRegistry,
+    async diagnostics() {
+      const refreshOutcomes = sourceRegistry ? await embedded.refresh() : [];
+      return summarizeEventSourceStatus(
+        await embedded.status(),
+        refreshOutcomes,
+      );
+    },
+    bind(options) {
+      return bindEmbeddedRuntimeIntegration(
+        {
+          ...embedded,
+          tools: toolCatalog.all,
+        },
+        options,
+      );
+    },
   });
 }
 
