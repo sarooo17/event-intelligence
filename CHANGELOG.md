@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.8.2] - 2026-10-05
+
+### Embedded integration
+
+- add deterministic namespaced activation receipts without ambiguous component encoding;
+- allow static host-owned event connection iterables directly, snapshotting one-shot iterators safely;
+- add normalized event-source diagnostics including registry attach failures and raw refresh outcomes;
+- add generic tool/lifecycle binding for embedded runtime integrations;
+- add host-owned error projection with canonical EI fallback semantics;
+- document the reusable runtime-neutral host glue and keep named-runtime adapters out of EI core.
+
+### Fixed
+
+- prevent one-shot event iterables from disappearing on the second registry refresh;
+- preserve failed source attachment information in diagnostics instead of reporting a clean empty setup;
+- prevent receipt namespace/wake-id tuple collisions.
+
 ## [0.8.1] - 2026-10-05
 
 ### Fixed
