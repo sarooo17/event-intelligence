@@ -183,12 +183,22 @@ export interface EmbeddedRuntimeBindOptions<
   onClose?(close: () => Promise<void>): void;
 }
 
+export type EmbeddedToolAction =
+  | 'event.sources.list'
+  | 'trigger.create'
+  | 'trigger.list'
+  | 'trigger.inspect'
+  | 'trigger.pause'
+  | 'trigger.resume'
+  | 'trigger.delete'
+  | 'trigger.update';
+
 export interface EventIntelligenceAgentToolsOptions<RuntimeContext = unknown> {
   host: EventIntelligenceHost;
   resolveContext(
     runtimeContext: RuntimeContext,
     request: {
-      action: 'event.sources.list' | 'trigger.create';
+      action: EmbeddedToolAction;
       capability: EventIntelligenceCapabilityMetadata;
       input?: unknown;
     },
@@ -203,11 +213,17 @@ export interface EventIntelligenceAgentToolsOptions<RuntimeContext = unknown> {
    */
   control?(input: {
     capability: EventIntelligenceCapabilityMetadata;
-    action: 'trigger.create';
+    action:
+      | 'trigger.create'
+      | 'trigger.pause'
+      | 'trigger.resume'
+      | 'trigger.delete'
+      | 'trigger.update';
     runtimeContext: RuntimeContext;
     context: EmbeddedToolContext;
     input: unknown;
-    plan: any;
+    plan?: any;
+    resource?: unknown;
   }): HostControlDecision | Promise<HostControlDecision>;
 
   /**
@@ -251,6 +267,12 @@ export interface EventIntelligenceAgentToolsOptions<RuntimeContext = unknown> {
   names?: {
     sources?: string;
     create?: string;
+    list?: string;
+    inspect?: string;
+    pause?: string;
+    resume?: string;
+    delete?: string;
+    update?: string;
   };
 }
 
@@ -289,6 +311,12 @@ export interface EmbeddedRuntimeTooling<RuntimeContext = unknown> {
   names?: {
     sources?: string;
     create?: string;
+    list?: string;
+    inspect?: string;
+    pause?: string;
+    resume?: string;
+    delete?: string;
+    update?: string;
   };
 }
 
@@ -375,9 +403,21 @@ export function createEmbeddedRuntimeIntegration<RuntimeContext = unknown>(
 export const EVENT_INTELLIGENCE_CAPABILITIES: Readonly<{
   eventSourcesList: Readonly<EventIntelligenceCapabilityMetadata>;
   triggerCreate: Readonly<EventIntelligenceCapabilityMetadata>;
+  triggerList: Readonly<EventIntelligenceCapabilityMetadata>;
+  triggerInspect: Readonly<EventIntelligenceCapabilityMetadata>;
+  triggerPause: Readonly<EventIntelligenceCapabilityMetadata>;
+  triggerResume: Readonly<EventIntelligenceCapabilityMetadata>;
+  triggerDelete: Readonly<EventIntelligenceCapabilityMetadata>;
+  triggerUpdate: Readonly<EventIntelligenceCapabilityMetadata>;
 }>;
 
 export const PORTABLE_EVENT_INTELLIGENCE_TOOL_NAMES: Readonly<{
   sources: 'event_sources_list';
   create: 'trigger_create';
+  list: 'trigger_list';
+  inspect: 'trigger_inspect';
+  pause: 'trigger_pause';
+  resume: 'trigger_resume';
+  delete: 'trigger_delete';
+  update: 'trigger_update';
 }>;

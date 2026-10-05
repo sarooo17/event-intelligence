@@ -88,6 +88,13 @@ for (const tool of ei.toolCatalog.all) {
 }
 ```
 
+The embedded catalog includes source discovery plus the complete durable trigger
+lifecycle: `trigger_create`, `trigger_list`, `trigger_inspect`,
+`trigger_pause`, `trigger_resume`, `trigger_update` and
+`trigger_delete`. Trigger reads are owner-scoped through the identity returned
+by `resolveContext()`; durable mutations still pass through the host's
+`control()` boundary.
+
 EI intentionally ships **no per-runtime adapter matrix** such as
 `toOpenAI()`, `toAnthropic()`, `toMuffin()` or `toArtemis()`.
 There are too many runtimes, and adding one runtime must never require changing

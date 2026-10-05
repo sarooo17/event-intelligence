@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.10.0] - 2026-10-05
+
+### Complete embedded trigger management
+
+- extend the runtime-neutral embedded tool surface from source discovery/create to owner-scoped `trigger_list`, `trigger_inspect`, `trigger_pause`, `trigger_resume`, `trigger_delete` and `trigger_update`;
+- keep every durable mutation behind the host-owned `control()` contract instead of embedding approval, policy or runtime semantics in Event Intelligence;
+- add compact trigger summaries and deterministic filters for lifecycle status, trigger/version, connection, event, target, consumption mode and remaining firings;
+- keep update immutable/versioned while preserving the original opaque continuation target;
+- fail closed when a legacy host lacks the newer control contract for lifecycle mutations.
+
+### Host conformance v2
+
+- add an opt-in `management` conformance profile while keeping the default `core` profile for existing hosts;
+- verify create → list → pause → no wake → resume → wake → update → new-condition behavior → delete → no wake;
+- emit machine-readable `event-intelligence.host-conformance.v2` reports with the exercised profile;
+- update the reference embedded host to pass the full management profile.
+
+
 ## [0.9.0] - 2026-10-05
 
 ### Runtime-neutral observability

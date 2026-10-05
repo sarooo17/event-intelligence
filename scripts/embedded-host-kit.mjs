@@ -12,6 +12,12 @@ import {
 const DEFAULT_TOOL_NAMES = Object.freeze({
   sources: 'event_sources_list',
   create: 'trigger_create',
+  list: 'trigger_list',
+  inspect: 'trigger_inspect',
+  pause: 'trigger_pause',
+  resume: 'trigger_resume',
+  delete: 'trigger_delete',
+  update: 'trigger_update',
 });
 
 export const EVENT_INTELLIGENCE_CAPABILITIES = Object.freeze({
@@ -26,6 +32,54 @@ export const EVENT_INTELLIGENCE_CAPABILITIES = Object.freeze({
   triggerCreate: Object.freeze({
     id: 'event-intelligence.trigger.create',
     operation: 'create',
+    resource: 'trigger',
+    effect: 'durable-state',
+    durability: 'durable',
+    hostControl: 'required',
+  }),
+  triggerList: Object.freeze({
+    id: 'event-intelligence.trigger.list',
+    operation: 'read',
+    resource: 'trigger',
+    effect: 'none',
+    durability: 'ephemeral',
+    hostControl: 'none',
+  }),
+  triggerInspect: Object.freeze({
+    id: 'event-intelligence.trigger.inspect',
+    operation: 'read',
+    resource: 'trigger',
+    effect: 'none',
+    durability: 'ephemeral',
+    hostControl: 'none',
+  }),
+  triggerPause: Object.freeze({
+    id: 'event-intelligence.trigger.pause',
+    operation: 'update',
+    resource: 'trigger',
+    effect: 'durable-state',
+    durability: 'durable',
+    hostControl: 'required',
+  }),
+  triggerResume: Object.freeze({
+    id: 'event-intelligence.trigger.resume',
+    operation: 'update',
+    resource: 'trigger',
+    effect: 'durable-state',
+    durability: 'durable',
+    hostControl: 'required',
+  }),
+  triggerDelete: Object.freeze({
+    id: 'event-intelligence.trigger.delete',
+    operation: 'delete',
+    resource: 'trigger',
+    effect: 'durable-state',
+    durability: 'durable',
+    hostControl: 'required',
+  }),
+  triggerUpdate: Object.freeze({
+    id: 'event-intelligence.trigger.update',
+    operation: 'update',
     resource: 'trigger',
     effect: 'durable-state',
     durability: 'durable',
@@ -122,6 +176,103 @@ const CREATE_INPUT_SCHEMA = Object.freeze({
     expires_at: { type: 'string' },
     lease_until: { type: 'string' },
     complete_on_goal: { type: 'boolean' },
+  },
+});
+
+
+const TriggerListInput = z.object({
+  status: z.union([z.string().min(1), z.array(z.string().min(1)).min(1).max(16)]).optional(),
+  trigger_id: z.string().min(1).max(200).optional(),
+  version: z.string().min(1).max(100).optional(),
+  connection_id: z.string().min(1).max(200).optional(),
+  event: z.string().min(1).max(200).optional(),
+  target_runtime: z.string().min(1).max(200).optional(),
+  target_kind: z.string().min(1).max(200).optional(),
+  target_id: z.string().min(1).max(500).optional(),
+  one_shot: z.boolean().optional(),
+  remaining_only: z.boolean().optional(),
+  include_definition: z.boolean().optional(),
+  limit: z.number().int().min(1).max(200).optional(),
+}).strict();
+
+const TriggerInspectInput = z.object({
+  trigger_id: z.string().min(1).max(200),
+  version: z.string().min(1).max(100).optional(),
+  match_id: z.string().min(1).max(200).optional(),
+}).strict();
+
+const TriggerLifecycleInput = z.object({
+  trigger_id: z.string().min(1).max(200),
+  version: z.string().min(1).max(100).optional(),
+}).strict();
+
+const TriggerUpdateInput = TriggerCreateInput.omit({
+  trigger_id: true,
+  version: true,
+}).extend({
+  trigger_id: z.string().min(1).max(200),
+  expected_version: z.string().min(1).max(100).optional(),
+  version: z.string().min(1).max(100).optional(),
+}).strict();
+
+const LIST_INPUT_SCHEMA = Object.freeze({
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    status: {
+      oneOf: [
+        { type: 'string', minLength: 1 },
+        {
+          type: 'array',
+          minItems: 1,
+          maxItems: 16,
+          items: { type: 'string', minLength: 1 },
+        },
+      ],
+    },
+    trigger_id: { type: 'string', minLength: 1, maxLength: 200 },
+    version: { type: 'string', minLength: 1, maxLength: 100 },
+    connection_id: { type: 'string', minLength: 1, maxLength: 200 },
+    event: { type: 'string', minLength: 1, maxLength: 200 },
+    target_runtime: { type: 'string', minLength: 1, maxLength: 200 },
+    target_kind: { type: 'string', minLength: 1, maxLength: 200 },
+    target_id: { type: 'string', minLength: 1, maxLength: 500 },
+    one_shot: { type: 'boolean' },
+    remaining_only: { type: 'boolean' },
+    include_definition: { type: 'boolean' },
+    limit: { type: 'integer', minimum: 1, maximum: 200 },
+  },
+});
+
+const INSPECT_INPUT_SCHEMA = Object.freeze({
+  type: 'object',
+  additionalProperties: false,
+  required: ['trigger_id'],
+  properties: {
+    trigger_id: { type: 'string', minLength: 1, maxLength: 200 },
+    version: { type: 'string', minLength: 1, maxLength: 100 },
+    match_id: { type: 'string', minLength: 1, maxLength: 200 },
+  },
+});
+
+const LIFECYCLE_INPUT_SCHEMA = Object.freeze({
+  type: 'object',
+  additionalProperties: false,
+  required: ['trigger_id'],
+  properties: {
+    trigger_id: { type: 'string', minLength: 1, maxLength: 200 },
+    version: { type: 'string', minLength: 1, maxLength: 100 },
+  },
+});
+
+const UPDATE_INPUT_SCHEMA = Object.freeze({
+  ...CREATE_INPUT_SCHEMA,
+  required: ['trigger_id', 'events', 'instruction'],
+  properties: {
+    ...CREATE_INPUT_SCHEMA.properties,
+    trigger_id: { type: 'string', minLength: 1, maxLength: 200 },
+    expected_version: { type: 'string', minLength: 1, maxLength: 100 },
+    version: { type: 'string', minLength: 1, maxLength: 100 },
   },
 });
 
@@ -644,6 +795,139 @@ function buildPlanInput(parsed, target) {
   };
 }
 
+
+function compactTriggerEntry(entry, includeDefinition = false) {
+  const definition = entry?.definition ?? {};
+  const state = entry?.state ?? {};
+  const lifecycle = definition.lifecycle ?? {};
+  const maxFirings = lifecycle.maxFirings ?? null;
+  const fireCount = Number(state.fireCount ?? 0);
+  return {
+    triggerId: definition.triggerId ?? null,
+    version: definition.version ?? null,
+    description: definition.description ?? null,
+    status: state.status ?? null,
+    fireCount,
+    maxFirings,
+    remainingFirings:
+      Number.isFinite(Number(maxFirings))
+        ? Math.max(0, Number(maxFirings) - fireCount)
+        : null,
+    oneShot: Boolean(lifecycle.oneShot),
+    connectionIds: Array.isArray(state.connectionIds) ? state.connectionIds : [],
+    target: definition.target ?? null,
+    events: Array.isArray(definition.clauses)
+      ? definition.clauses.map((clause) => ({
+          id: clause.id,
+          serverId: clause.serverId,
+          event: clause.event,
+        }))
+      : [],
+    updatedAt: state.updatedAt ?? null,
+    ...(includeDefinition ? { definition } : {}),
+  };
+}
+
+function filterOwnedTriggerEntries(entries, input = {}) {
+  const statuses = input.status == null
+    ? null
+    : new Set((Array.isArray(input.status) ? input.status : [input.status]).map(String));
+  return entries.filter((entry) => {
+    const definition = entry?.definition ?? {};
+    const state = entry?.state ?? {};
+    const lifecycle = definition.lifecycle ?? {};
+    const target = definition.target ?? {};
+    if (statuses && !statuses.has(String(state.status ?? ''))) return false;
+    if (input.trigger_id && definition.triggerId !== input.trigger_id) return false;
+    if (input.version && definition.version !== input.version) return false;
+    if (
+      input.connection_id &&
+      !(Array.isArray(state.connectionIds) && state.connectionIds.includes(input.connection_id))
+    ) return false;
+    if (
+      input.event &&
+      !(Array.isArray(definition.clauses) && definition.clauses.some(
+        (clause) => clause?.event === input.event,
+      ))
+    ) return false;
+    if (input.target_runtime && target.runtime !== input.target_runtime) return false;
+    if (input.target_kind && target.kind !== input.target_kind) return false;
+    if (input.target_id && target.id !== input.target_id) return false;
+    if (
+      input.one_shot !== undefined &&
+      Boolean(lifecycle.oneShot) !== input.one_shot
+    ) return false;
+    if (input.remaining_only) {
+      if (!['active', 'paused'].includes(String(state.status ?? ''))) return false;
+      if (
+        lifecycle.maxFirings !== undefined &&
+        Number(state.fireCount ?? 0) >= Number(lifecycle.maxFirings)
+      ) return false;
+    }
+    return true;
+  });
+}
+
+async function ownedTriggerEntries(scoped, resolved) {
+  const owner = normalizeIdentity(resolved?.owner, 'owner');
+  const entries = await scoped.triggerControl.listTriggers({ owner });
+  return { owner, entries: Array.isArray(entries) ? entries : [] };
+}
+
+function selectOwnedTrigger(entries, triggerId, version, allowedStatuses) {
+  let candidates = entries.filter(
+    (entry) => entry?.definition?.triggerId === triggerId,
+  );
+  if (version) {
+    candidates = candidates.filter(
+      (entry) => entry?.definition?.version === version,
+    );
+  }
+  if (allowedStatuses?.length) {
+    const allowed = new Set(allowedStatuses);
+    candidates = candidates.filter(
+      (entry) => allowed.has(String(entry?.state?.status ?? '')),
+    );
+  }
+  if (candidates.length === 0) {
+    const error = new Error(
+      version
+        ? `Unknown owned trigger ${triggerId}@${version}`
+        : `No current owned trigger found for ${triggerId}`,
+    );
+    error.code = 'TRIGGER_NOT_FOUND';
+    throw error;
+  }
+  if (!version && candidates.length > 1) {
+    const error = new Error(
+      `Trigger ${triggerId} has multiple matching versions; specify version`,
+    );
+    error.code = 'TRIGGER_VERSION_AMBIGUOUS';
+    throw error;
+  }
+  return candidates[0];
+}
+
+function nextPortableVersion(entries, triggerId, currentVersion) {
+  const used = new Set(
+    entries
+      .filter((entry) => entry?.definition?.triggerId === triggerId)
+      .map((entry) => String(entry?.definition?.version ?? '')),
+  );
+  if (/^\d+$/.test(currentVersion)) {
+    let candidate = String(Number(currentVersion) + 1);
+    while (used.has(candidate)) candidate = String(Number(candidate) + 1);
+    return candidate;
+  }
+  let revision = 2;
+  let candidate = `${currentVersion}-r${revision}`;
+  while (used.has(candidate)) {
+    revision += 1;
+    candidate = `${currentVersion}-r${revision}`;
+  }
+  return candidate;
+}
+
 /**
  * Portable agent-facing tools. The descriptors are runtime-neutral.
  * The embedding host performs any final translation into its own tool system.
@@ -690,6 +974,18 @@ export function createEventIntelligenceAgentTools({
     EVENT_INTELLIGENCE_CAPABILITIES.eventSourcesList;
   const createCapability =
     EVENT_INTELLIGENCE_CAPABILITIES.triggerCreate;
+  const listCapability =
+    EVENT_INTELLIGENCE_CAPABILITIES.triggerList;
+  const inspectCapability =
+    EVENT_INTELLIGENCE_CAPABILITIES.triggerInspect;
+  const pauseCapability =
+    EVENT_INTELLIGENCE_CAPABILITIES.triggerPause;
+  const resumeCapability =
+    EVENT_INTELLIGENCE_CAPABILITIES.triggerResume;
+  const deleteCapability =
+    EVENT_INTELLIGENCE_CAPABILITIES.triggerDelete;
+  const updateCapability =
+    EVENT_INTELLIGENCE_CAPABILITIES.triggerUpdate;
 
   return [
     {
@@ -879,6 +1175,451 @@ export function createEventIntelligenceAgentTools({
         try {
           return await projectPortableResult(projectResult, {
             capability: createCapability,
+            runtimeContext,
+            context: resolved,
+            value,
+          });
+        } catch {
+          return { ok: true, data: value };
+        }
+      },
+    },
+    {
+      name: toolNames.list,
+      description:
+        'List durable triggers owned by the current host principal. Results are compact by default and can be filtered by lifecycle status, source, target, consumption mode and remaining firings.',
+      inputSchema: LIST_INPUT_SCHEMA,
+      capability: listCapability,
+      async execute(args, runtimeContext) {
+        const parsed = TriggerListInput.safeParse(args ?? {});
+        if (!parsed.success) {
+          const issue = parsed.error.issues[0];
+          const canonical = {
+            ok: false,
+            error: {
+              code: 'EVENT_TRIGGER_LIST_INPUT_INVALID',
+              message: `${issue?.path?.join('.') || 'input'} — ${issue?.message || 'invalid'}`,
+            },
+          };
+          return projectPortableFailure(projectError, {
+            capability: listCapability,
+            runtimeContext,
+            context: undefined,
+            phase: 'trigger.list.input',
+          }, canonical);
+        }
+
+        let resolved;
+        try {
+          resolved = await resolveContext(runtimeContext, {
+            action: 'trigger.list',
+            capability: listCapability,
+            input: parsed.data,
+          });
+          const scoped = await scopedHostFor(host, resolved);
+          const { entries } = await ownedTriggerEntries(scoped, resolved);
+          const filtered = filterOwnedTriggerEntries(entries, parsed.data);
+          const limit = parsed.data.limit ?? 50;
+          const value = {
+            triggers: filtered.slice(0, limit).map((entry) =>
+              compactTriggerEntry(entry, parsed.data.include_definition === true)
+            ),
+            total: filtered.length,
+            returned: Math.min(filtered.length, limit),
+          };
+          return await projectPortableResult(projectResult, {
+            capability: listCapability,
+            runtimeContext,
+            context: resolved,
+            value,
+          });
+        } catch (error) {
+          const canonical = fail(error, 'EVENT_TRIGGER_LIST_FAILED');
+          return projectPortableFailure(projectError, {
+            capability: listCapability,
+            runtimeContext,
+            context: resolved,
+            phase: 'trigger.list',
+          }, canonical);
+        }
+      },
+    },
+    {
+      name: toolNames.inspect,
+      description:
+        'Inspect one durable trigger owned by the current host principal, including lifecycle and temporal state. If more than one version is eligible, specify version.',
+      inputSchema: INSPECT_INPUT_SCHEMA,
+      capability: inspectCapability,
+      async execute(args, runtimeContext) {
+        const parsed = TriggerInspectInput.safeParse(args ?? {});
+        if (!parsed.success) {
+          const issue = parsed.error.issues[0];
+          const canonical = {
+            ok: false,
+            error: {
+              code: 'EVENT_TRIGGER_INSPECT_INPUT_INVALID',
+              message: `${issue?.path?.join('.') || 'input'} — ${issue?.message || 'invalid'}`,
+            },
+          };
+          return projectPortableFailure(projectError, {
+            capability: inspectCapability,
+            runtimeContext,
+            context: undefined,
+            phase: 'trigger.inspect.input',
+          }, canonical);
+        }
+
+        let resolved;
+        try {
+          resolved = await resolveContext(runtimeContext, {
+            action: 'trigger.inspect',
+            capability: inspectCapability,
+            input: parsed.data,
+          });
+          const scoped = await scopedHostFor(host, resolved);
+          const { entries } = await ownedTriggerEntries(scoped, resolved);
+          let entry;
+          try {
+            entry = selectOwnedTrigger(
+              entries,
+              parsed.data.trigger_id,
+              parsed.data.version,
+              parsed.data.version ? undefined : ['active', 'paused'],
+            );
+          } catch (error) {
+            if (
+              parsed.data.version ||
+              error?.code !== 'TRIGGER_NOT_FOUND'
+            ) throw error;
+            entry = selectOwnedTrigger(
+              entries,
+              parsed.data.trigger_id,
+              undefined,
+            );
+          }
+          const value = await Promise.resolve(
+            scoped.triggerInspector.inspect({
+              triggerId: parsed.data.trigger_id,
+              version: entry.definition.version,
+              ...(parsed.data.match_id ? { matchId: parsed.data.match_id } : {}),
+            }),
+          );
+          return await projectPortableResult(projectResult, {
+            capability: inspectCapability,
+            runtimeContext,
+            context: resolved,
+            value,
+          });
+        } catch (error) {
+          const canonical = fail(error, 'EVENT_TRIGGER_INSPECT_FAILED');
+          return projectPortableFailure(projectError, {
+            capability: inspectCapability,
+            runtimeContext,
+            context: resolved,
+            phase: 'trigger.inspect',
+          }, canonical);
+        }
+      },
+    },
+    ...[
+      {
+        key: 'pause',
+        action: 'trigger.pause',
+        capability: pauseCapability,
+        allowedStatuses: ['active'],
+        method: 'pauseTrigger',
+        description: 'Pause an active durable trigger owned by the current host principal.',
+      },
+      {
+        key: 'resume',
+        action: 'trigger.resume',
+        capability: resumeCapability,
+        allowedStatuses: ['paused'],
+        method: 'resumeTrigger',
+        description: 'Resume a paused durable trigger owned by the current host principal.',
+      },
+      {
+        key: 'delete',
+        action: 'trigger.delete',
+        capability: deleteCapability,
+        allowedStatuses: ['active', 'paused'],
+        method: 'deleteTrigger',
+        description: 'Delete a current durable trigger owned by the current host principal.',
+      },
+    ].map((spec) => ({
+      name: toolNames[spec.key],
+      description: spec.description,
+      inputSchema: LIFECYCLE_INPUT_SCHEMA,
+      capability: spec.capability,
+      async execute(args, runtimeContext) {
+        const parsed = TriggerLifecycleInput.safeParse(args ?? {});
+        if (!parsed.success) {
+          const issue = parsed.error.issues[0];
+          const canonical = {
+            ok: false,
+            error: {
+              code: 'EVENT_TRIGGER_LIFECYCLE_INPUT_INVALID',
+              message: `${issue?.path?.join('.') || 'input'} — ${issue?.message || 'invalid'}`,
+            },
+          };
+          return projectPortableFailure(projectError, {
+            capability: spec.capability,
+            runtimeContext,
+            context: undefined,
+            phase: `${spec.action}.input`,
+          }, canonical);
+        }
+
+        let resolved;
+        let scoped;
+        let entry;
+        let owner;
+        try {
+          resolved = await resolveContext(runtimeContext, {
+            action: spec.action,
+            capability: spec.capability,
+            input: parsed.data,
+          });
+          scoped = await scopedHostFor(host, resolved);
+          const owned = await ownedTriggerEntries(scoped, resolved);
+          owner = owned.owner;
+          entry = selectOwnedTrigger(
+            owned.entries,
+            parsed.data.trigger_id,
+            parsed.data.version,
+            spec.allowedStatuses,
+          );
+        } catch (error) {
+          const canonical = fail(error, 'EVENT_TRIGGER_LIFECYCLE_FAILED');
+          return projectPortableFailure(projectError, {
+            capability: spec.capability,
+            runtimeContext,
+            context: resolved,
+            phase: `${spec.action}.resolve`,
+          }, canonical);
+        }
+
+        if (!control) {
+          const canonical = {
+            ok: false,
+            error: {
+              code: 'EVENT_TRIGGER_CONTROL_REQUIRED',
+              message: 'Host control() is required for trigger lifecycle mutations',
+            },
+          };
+          return projectPortableFailure(projectError, {
+            capability: spec.capability,
+            runtimeContext,
+            context: resolved,
+            phase: `${spec.action}.control`,
+          }, canonical);
+        }
+        const decision = normalizeHostControlDecision(await control({
+          capability: spec.capability,
+          action: spec.action,
+          runtimeContext,
+          context: resolved,
+          input: parsed.data,
+          resource: compactTriggerEntry(entry, false),
+        }));
+        if (decision.action === 'return') return decision.result;
+
+        let value;
+        try {
+          const execution = decision.execution ?? {};
+          const actor = normalizeIdentity(
+            execution.actor ?? resolved?.actor,
+            'actor',
+          );
+          const mutationOwner = normalizeIdentity(
+            execution.owner ?? owner,
+            'owner',
+          );
+          const confirmationId = String(
+            execution.receiptId ??
+              execution.confirmationId ??
+              resolved?.confirmationId ??
+              '',
+          ).trim();
+          const result = await scoped.triggerControl[spec.method]({
+            triggerId: entry.definition.triggerId,
+            version: entry.definition.version,
+            actor,
+            owner: mutationOwner,
+            ...(confirmationId ? { confirmationId } : {}),
+          });
+          value = {
+            receiptId: result.receiptId,
+            action: result.action,
+            triggerId: result.definition?.triggerId ?? entry.definition.triggerId,
+            version: result.definition?.version ?? entry.definition.version,
+            state: result.state,
+          };
+        } catch (error) {
+          const canonical = fail(error, 'EVENT_TRIGGER_LIFECYCLE_FAILED');
+          return projectPortableFailure(projectError, {
+            capability: spec.capability,
+            runtimeContext,
+            context: resolved,
+            phase: spec.action,
+          }, canonical);
+        }
+
+        try {
+          return await projectPortableResult(projectResult, {
+            capability: spec.capability,
+            runtimeContext,
+            context: resolved,
+            value,
+          });
+        } catch {
+          return { ok: true, data: value };
+        }
+      },
+    })),
+    {
+      name: toolNames.update,
+      description:
+        'Replace the current owned trigger with a new immutable version. Supply the complete future condition; the original continuation target is preserved.',
+      inputSchema: UPDATE_INPUT_SCHEMA,
+      capability: updateCapability,
+      async execute(args, runtimeContext) {
+        const parsed = TriggerUpdateInput.safeParse(args ?? {});
+        if (!parsed.success) {
+          const issue = parsed.error.issues[0];
+          const canonical = {
+            ok: false,
+            error: {
+              code: 'EVENT_TRIGGER_UPDATE_INPUT_INVALID',
+              message: `${issue?.path?.join('.') || 'input'} — ${issue?.message || 'invalid'}`,
+            },
+          };
+          return projectPortableFailure(projectError, {
+            capability: updateCapability,
+            runtimeContext,
+            context: undefined,
+            phase: 'trigger.update.input',
+          }, canonical);
+        }
+
+        let resolved;
+        let scoped;
+        let owner;
+        let current;
+        let plan;
+        try {
+          resolved = await resolveContext(runtimeContext, {
+            action: 'trigger.update',
+            capability: updateCapability,
+            input: parsed.data,
+          });
+          scoped = await scopedHostFor(host, resolved);
+          const owned = await ownedTriggerEntries(scoped, resolved);
+          owner = owned.owner;
+          current = selectOwnedTrigger(
+            owned.entries,
+            parsed.data.trigger_id,
+            parsed.data.expected_version,
+            ['active', 'paused'],
+          );
+          if (typeof host.refreshMcpRegistry === 'function') {
+            await host.refreshMcpRegistry();
+          }
+          const version = parsed.data.version ?? nextPortableVersion(
+            owned.entries,
+            parsed.data.trigger_id,
+            String(current.definition.version),
+          );
+          plan = await scoped.planTrigger(buildPlanInput({
+            ...parsed.data,
+            trigger_id: parsed.data.trigger_id,
+            version,
+          }, createContinuationTarget(current.definition.target)));
+        } catch (error) {
+          const canonical = fail(error, 'EVENT_TRIGGER_UPDATE_PLAN_FAILED');
+          return projectPortableFailure(projectError, {
+            capability: updateCapability,
+            runtimeContext,
+            context: resolved,
+            phase: 'trigger.update.plan',
+          }, canonical);
+        }
+
+        if (!control) {
+          const canonical = {
+            ok: false,
+            error: {
+              code: 'EVENT_TRIGGER_CONTROL_REQUIRED',
+              message: 'Host control() is required for trigger update',
+            },
+          };
+          return projectPortableFailure(projectError, {
+            capability: updateCapability,
+            runtimeContext,
+            context: resolved,
+            phase: 'trigger.update.control',
+          }, canonical);
+        }
+        const decision = normalizeHostControlDecision(await control({
+          capability: updateCapability,
+          action: 'trigger.update',
+          runtimeContext,
+          context: resolved,
+          input: parsed.data,
+          plan,
+          resource: compactTriggerEntry(current, false),
+        }));
+        if (decision.action === 'return') return decision.result;
+
+        let value;
+        try {
+          const execution = decision.execution ?? {};
+          const actor = normalizeIdentity(
+            execution.actor ?? resolved?.actor,
+            'actor',
+          );
+          const mutationOwner = normalizeIdentity(
+            execution.owner ?? owner,
+            'owner',
+          );
+          const confirmationId = String(
+            execution.receiptId ??
+              execution.confirmationId ??
+              resolved?.confirmationId ??
+              '',
+          ).trim();
+          const updated = await scoped.triggerControl.updateTrigger({
+            triggerId: current.definition.triggerId,
+            expectedVersion: current.definition.version,
+            definition: plan.definition,
+            connectionIds: plan.connectionIds,
+            actor,
+            owner: mutationOwner,
+            ...(confirmationId ? { confirmationId } : {}),
+          });
+          value = {
+            receiptId: updated.receiptId,
+            action: updated.action,
+            triggerId: updated.definition?.triggerId,
+            previousVersion: updated.previous?.definition?.version,
+            version: updated.definition?.version,
+            state: updated.state,
+            connectionIds: plan.connectionIds,
+            warnings: plan.warnings ?? [],
+          };
+        } catch (error) {
+          const canonical = fail(error, 'EVENT_TRIGGER_UPDATE_FAILED');
+          return projectPortableFailure(projectError, {
+            capability: updateCapability,
+            runtimeContext,
+            context: resolved,
+            phase: 'trigger.update',
+          }, canonical);
+        }
+
+        try {
+          return await projectPortableResult(projectResult, {
+            capability: updateCapability,
             runtimeContext,
             context: resolved,
             value,

@@ -1,6 +1,6 @@
 {
   "name": "mcp-event-intelligence",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "description": "MCP-native complex event processing for durable agent workflows: event-time patterns, semantic predicates, derived events, and targeted wakeups.",
   "license": "Apache-2.0",
   "type": "module",

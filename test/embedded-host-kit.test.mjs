@@ -224,6 +224,225 @@ test('portable tools keep target and authorization host-owned', async () => {
   assert.equal(created[0].confirmationId, 'host-policy-1');
 });
 
+test('portable trigger management is owner-scoped and covers lifecycle', async () => {
+  const owner = { type: 'user', principal_id: 'user-1', tenant_id: 'tenant-1' };
+  const foreignOwner = { type: 'user', principal_id: 'user-2', tenant_id: 'tenant-1' };
+  const rows = [
+    {
+      definition: {
+        triggerId: 'watch-1',
+        version: '1',
+        description: 'Watch the primary source',
+        clauses: [{ id: 'source', serverId: 'demo', event: 'demo.changed' }],
+        lifecycle: { oneShot: false, maxFirings: 3 },
+        target: { runtime: 'custom-runtime', kind: 'task', id: 'task-1' },
+      },
+      state: {
+        status: 'active',
+        fireCount: 1,
+        connectionIds: ['demo-connection'],
+        owner,
+      },
+    },
+    {
+      definition: {
+        triggerId: 'foreign-watch',
+        version: '1',
+        clauses: [{ id: 'source', serverId: 'demo', event: 'demo.changed' }],
+        lifecycle: { oneShot: true },
+        target: { runtime: 'custom-runtime', kind: 'task', id: 'task-2' },
+      },
+      state: {
+        status: 'active',
+        fireCount: 0,
+        connectionIds: ['demo-connection'],
+        owner: foreignOwner,
+      },
+    },
+  ];
+  const mutations = [];
+  const sameOwner = (candidate, expected) =>
+    candidate?.type === expected?.type &&
+    candidate?.principal_id === expected?.principal_id &&
+    candidate?.tenant_id === expected?.tenant_id;
+
+  const host = {
+    async refreshMcpRegistry() {},
+    async scope() { return this; },
+    eventSources: [],
+    async planTrigger(input) {
+      return {
+        definition: {
+          triggerId: input.triggerId,
+          version: input.version,
+          clauses: input.events.map((event, index) => ({
+            id: event.id ?? `event_${index + 1}`,
+            serverId: event.serverId ?? 'demo',
+            event: event.event,
+          })),
+          lifecycle: input.lifecycle,
+          target: input.target,
+          continuation: input.continuation,
+        },
+        connectionIds: ['demo-connection'],
+        warnings: [],
+      };
+    },
+    triggerInspector: {
+      inspect({ triggerId, version }) {
+        return {
+          triggerId,
+          version,
+          explanation: 'deterministic inspection',
+        };
+      },
+    },
+    triggerControl: {
+      async listTriggers({ owner: requestedOwner } = {}) {
+        return rows.filter((entry) =>
+          !requestedOwner || sameOwner(entry.state.owner, requestedOwner)
+        );
+      },
+      async pauseTrigger(input) {
+        mutations.push(['pause', input]);
+        rows[0].state = { ...rows[0].state, status: 'paused' };
+        return {
+          receiptId: 'pause-receipt',
+          action: 'pause',
+          definition: rows[0].definition,
+          state: rows[0].state,
+        };
+      },
+      async resumeTrigger(input) {
+        mutations.push(['resume', input]);
+        rows[0].state = { ...rows[0].state, status: 'active' };
+        return {
+          receiptId: 'resume-receipt',
+          action: 'resume',
+          definition: rows[0].definition,
+          state: rows[0].state,
+        };
+      },
+      async deleteTrigger(input) {
+        mutations.push(['delete', input]);
+        rows[0].state = { ...rows[0].state, status: 'deleted' };
+        return {
+          receiptId: 'delete-receipt',
+          action: 'delete',
+          definition: rows[0].definition,
+          state: rows[0].state,
+        };
+      },
+      async updateTrigger(input) {
+        mutations.push(['update', input]);
+        rows[0].state = { ...rows[0].state, status: 'completed' };
+        const next = {
+          definition: input.definition,
+          state: {
+            status: 'active',
+            fireCount: 0,
+            connectionIds: input.connectionIds,
+            owner,
+          },
+        };
+        rows.push(next);
+        return {
+          receiptId: 'update-receipt',
+          action: 'update',
+          previous: {
+            definition: rows[0].definition,
+            state: rows[0].state,
+          },
+          definition: next.definition,
+          state: next.state,
+        };
+      },
+      async createTrigger() {
+        throw new Error('not used');
+      },
+    },
+  };
+
+  const tools = createEventIntelligenceAgentTools({
+    host,
+    resolveContext: () => ({
+      target: { runtime: 'custom-runtime', kind: 'task', id: 'current-task' },
+      actor: { type: 'agent', principal_id: 'agent-1', tenant_id: 'tenant-1' },
+      owner,
+    }),
+    control: ({ action }) => ({
+      action: 'execute',
+      execution: { receiptId: `policy:${action}` },
+    }),
+  });
+  const byName = new Map(tools.map((tool) => [tool.name, tool]));
+
+  const listed = await byName.get('trigger_list').execute({
+    status: 'active',
+    connection_id: 'demo-connection',
+    remaining_only: true,
+  }, {});
+  assert.equal(listed.ok, true);
+  assert.equal(listed.data.total, 1);
+  assert.equal(listed.data.triggers[0].triggerId, 'watch-1');
+  assert.equal(listed.data.triggers[0].remainingFirings, 2);
+  assert.equal(
+    listed.data.triggers.some((entry) => entry.triggerId === 'foreign-watch'),
+    false,
+  );
+
+  const inspected = await byName.get('trigger_inspect').execute({
+    trigger_id: 'watch-1',
+  }, {});
+  assert.equal(inspected.ok, true);
+  assert.equal(inspected.data.triggerId, 'watch-1');
+
+  const paused = await byName.get('trigger_pause').execute({
+    trigger_id: 'watch-1',
+  }, {});
+  assert.equal(paused.ok, true);
+  assert.equal(paused.data.state.status, 'paused');
+
+  const resumed = await byName.get('trigger_resume').execute({
+    trigger_id: 'watch-1',
+  }, {});
+  assert.equal(resumed.ok, true);
+  assert.equal(resumed.data.state.status, 'active');
+
+  const updated = await byName.get('trigger_update').execute({
+    trigger_id: 'watch-1',
+    events: [{ event: 'demo.changed', serverId: 'demo' }],
+    instruction: 'Continue after the next matching event.',
+    one_shot: false,
+    max_firings: 4,
+  }, {});
+  assert.equal(updated.ok, true);
+  assert.equal(updated.data.previousVersion, '1');
+  assert.equal(updated.data.version, '2');
+  assert.deepEqual(updated.data.state.status, 'active');
+  assert.deepEqual(
+    rows.at(-1).definition.target,
+    { runtime: 'custom-runtime', kind: 'task', id: 'task-1' },
+  );
+
+  const deleted = await byName.get('trigger_delete').execute({
+    trigger_id: 'watch-1',
+    version: '2',
+  }, {});
+  assert.equal(deleted.ok, true);
+  assert.equal(deleted.data.state.status, 'deleted');
+
+  assert.deepEqual(
+    mutations.map(([action]) => action),
+    ['pause', 'resume', 'update', 'delete'],
+  );
+  for (const [, input] of mutations) {
+    assert.equal(input.actor.principal_id, 'agent-1');
+    assert.equal(input.owner.principal_id, 'user-1');
+    assert.match(input.confirmationId, /^policy:trigger\./);
+  }
+});
+
 test('embedded install composes host MCP, activation delivery and portable tools', async () => {
   let capturedOptions;
   let closed = false;
@@ -781,6 +1000,12 @@ test('embedded runtime integration composes neutral sources, tools, control and 
     [
       'event-intelligence.event-sources.list',
       'event-intelligence.trigger.create',
+      'event-intelligence.trigger.list',
+      'event-intelligence.trigger.inspect',
+      'event-intelligence.trigger.pause',
+      'event-intelligence.trigger.resume',
+      'event-intelligence.trigger.delete',
+      'event-intelligence.trigger.update',
     ],
   );
   assert.deepEqual(
