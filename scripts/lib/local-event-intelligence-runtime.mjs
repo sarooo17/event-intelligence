@@ -366,6 +366,7 @@ export async function createLocalEventIntelligenceRuntime({
           principal_id: 'event-intelligence:host-mcp-client',
         },
       ),
+    observability: observer,
   });
 
   const discovery = await mcpEventsClient.discoverAll();
