@@ -108,6 +108,32 @@ export async function runStoreConformance({
     assert.equal([a, b].filter(Boolean).length, 1);
   });
 
+  if (typeof store.compareAndAppendTriggerMatch === 'function') {
+    await check('trigger match transition exclusion', async () => {
+      const current = (await store.listTriggerMatches('store-conf-trigger'))
+        .find((record) => record.matchId === 'store-conf-match');
+      assert.ok(current);
+      const fired = {
+        ...current,
+        status: 'fired',
+        firedWakeId: 'store-conf-fired-wake',
+        updatedAt: '2026-09-30T00:00:01.000Z',
+      };
+      const [a, b] = await Promise.all([
+        store.compareAndAppendTriggerMatch(fired, {
+          expectedStatuses: ['matched'],
+        }),
+        store.compareAndAppendTriggerMatch(fired, {
+          expectedStatuses: ['matched'],
+        }),
+      ]);
+      assert.equal([a, b].filter((entry) => entry.applied).length, 1);
+      const latest = (await store.listTriggerMatches('store-conf-trigger'))
+        .find((record) => record.matchId === 'store-conf-match');
+      assert.equal(latest?.status, 'fired');
+    });
+  }
+
   if (
     typeof store.claimPartitionLease === 'function' &&
     typeof store.releasePartitionLease === 'function'
