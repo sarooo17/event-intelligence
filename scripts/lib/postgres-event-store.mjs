@@ -100,32 +100,43 @@ export class PostgresEventStore {
 
   async init() {
     if (!this.initialized) {
-      await this.pool.query(
-        'CREATE TABLE IF NOT EXISTS ' + this.records + ' (' +
-        'scope_id TEXT NOT NULL, kind TEXT NOT NULL, record_key TEXT NOT NULL,' +
-        'payload JSONB NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),' +
-        'PRIMARY KEY (scope_id, kind, record_key));' +
-        'CREATE INDEX IF NOT EXISTS ' + this.tablePrefix + '_records_kind_idx ON ' +
-        this.records + ' (scope_id, kind);' +
-        'CREATE TABLE IF NOT EXISTS ' + this.history + ' (' +
-        'history_id BIGSERIAL PRIMARY KEY, scope_id TEXT NOT NULL, kind TEXT NOT NULL,' +
-        'record_key TEXT, payload JSONB NOT NULL,' +
-        'created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp());' +
-        'CREATE INDEX IF NOT EXISTS ' + this.tablePrefix + '_history_scope_kind_idx ON ' +
-        this.history + ' (scope_id, kind, history_id);' +
-        'CREATE INDEX IF NOT EXISTS ' + this.tablePrefix + '_history_key_idx ON ' +
-        this.history + ' (scope_id, kind, record_key, history_id);' +
-        'CREATE TABLE IF NOT EXISTS ' + this.leases + ' (' +
-        'scope_id TEXT NOT NULL, lease_kind TEXT NOT NULL, lease_key TEXT NOT NULL,' +
-        'owner_id TEXT NOT NULL, lease_until TIMESTAMPTZ NOT NULL,' +
-        'updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),' +
-        'PRIMARY KEY (scope_id, lease_kind, lease_key));' +
-        'CREATE INDEX IF NOT EXISTS ' + this.tablePrefix + '_leases_expiry_idx ON ' +
-        this.leases + ' (scope_id, lease_kind, lease_until);' +
-        'CREATE TABLE IF NOT EXISTS ' + this.counters + ' (' +
-        'scope_id TEXT NOT NULL, name TEXT NOT NULL, value BIGINT NOT NULL,' +
-        'PRIMARY KEY (scope_id, name));',
-      );
+      await this.tx(async (client) => {
+        await client.query(
+          'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
+          [this.tablePrefix + ':schema'],
+        );
+        for (const statement of [
+          'CREATE TABLE IF NOT EXISTS ' + this.records + ' (' +
+            'scope_id TEXT NOT NULL, kind TEXT NOT NULL, record_key TEXT NOT NULL,' +
+            'payload JSONB NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),' +
+            'PRIMARY KEY (scope_id, kind, record_key))',
+          'CREATE INDEX IF NOT EXISTS ' + this.tablePrefix +
+            '_records_kind_idx ON ' + this.records + ' (scope_id, kind)',
+          'CREATE TABLE IF NOT EXISTS ' + this.history + ' (' +
+            'history_id BIGSERIAL PRIMARY KEY, scope_id TEXT NOT NULL, kind TEXT NOT NULL,' +
+            'record_key TEXT, payload JSONB NOT NULL,' +
+            'created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp())',
+          'CREATE INDEX IF NOT EXISTS ' + this.tablePrefix +
+            '_history_scope_kind_idx ON ' + this.history +
+            ' (scope_id, kind, history_id)',
+          'CREATE INDEX IF NOT EXISTS ' + this.tablePrefix +
+            '_history_key_idx ON ' + this.history +
+            ' (scope_id, kind, record_key, history_id)',
+          'CREATE TABLE IF NOT EXISTS ' + this.leases + ' (' +
+            'scope_id TEXT NOT NULL, lease_kind TEXT NOT NULL, lease_key TEXT NOT NULL,' +
+            'owner_id TEXT NOT NULL, lease_until TIMESTAMPTZ NOT NULL,' +
+            'updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),' +
+            'PRIMARY KEY (scope_id, lease_kind, lease_key))',
+          'CREATE INDEX IF NOT EXISTS ' + this.tablePrefix +
+            '_leases_expiry_idx ON ' + this.leases +
+            ' (scope_id, lease_kind, lease_until)',
+          'CREATE TABLE IF NOT EXISTS ' + this.counters + ' (' +
+            'scope_id TEXT NOT NULL, name TEXT NOT NULL, value BIGINT NOT NULL,' +
+            'PRIMARY KEY (scope_id, name))',
+        ]) {
+          await client.query(statement);
+        }
+      });
       this.initialized = true;
     }
     return this.restoredCounts();
