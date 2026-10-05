@@ -168,6 +168,7 @@ export interface EventSourceDiagnostics {
   readonly eventDefinitions: number;
   readonly errors: number;
   readonly statuses: readonly any[];
+  readonly refreshOutcomes: readonly any[];
 }
 
 export interface EmbeddedRuntimeBindOptions<
@@ -323,6 +324,7 @@ export function createDeterministicReceiptId(
 
 export function summarizeEventSourceStatus(
   statuses?: readonly any[],
+  refreshOutcomes?: readonly any[],
 ): EventSourceDiagnostics;
 
 export function bindEmbeddedRuntimeIntegration<
