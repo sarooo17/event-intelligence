@@ -10,6 +10,7 @@ export class CompositeEventConsumer {
     wakeCoordinators = null,
     derivedEventCoordinator = null,
     maxDerivedDepth = 16,
+    observability = null,
   }) {
     this.store = store;
     this.triggerEngine = triggerEngine;
@@ -19,6 +20,7 @@ export class CompositeEventConsumer {
       : new Map();
     this.derivedEventCoordinator = derivedEventCoordinator;
     this.maxDerivedDepth = Math.max(1, Number(maxDerivedDepth) || 16);
+    this.observability = observability;
   }
 
   coordinatorFor(runtime) {
@@ -58,6 +60,15 @@ export class CompositeEventConsumer {
     for (const result of results) {
       if (!result.matched || !result.match) continue;
 
+      await this.observability?.emit({
+        event: 'ei.match.matched',
+        level: 'info',
+        traceId: event.traceId,
+        triggerId: result.match.triggerId,
+        matchId: result.match.matchId,
+        status: result.match.status,
+      });
+
       const definition = (await this.store.listTriggers()).find(
         (candidate) =>
           candidate.triggerId === result.match.triggerId &&
@@ -71,6 +82,14 @@ export class CompositeEventConsumer {
           wakeId: null,
           status: 'trigger_definition_missing',
           runtimeReceiptId: null,
+        });
+        await this.observability?.emit({
+          event: 'ei.match.definition_missing',
+          level: 'error',
+          traceId: event.traceId,
+          triggerId: result.triggerId,
+          matchId: result.match.matchId,
+          status: 'trigger_definition_missing',
         });
         continue;
       }
@@ -130,6 +149,15 @@ export class CompositeEventConsumer {
           wakeId: null,
           status: 'runtime_unconfigured',
           runtimeReceiptId: null,
+        });
+        await this.observability?.emit({
+          event: 'ei.wake.runtime_unconfigured',
+          level: 'warn',
+          traceId: event.traceId,
+          triggerId: result.triggerId,
+          matchId: result.match.matchId,
+          status: 'runtime_unconfigured',
+          metadata: { runtime: definition.target.runtime },
         });
         continue;
       }
