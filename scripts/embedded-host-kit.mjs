@@ -1399,6 +1399,21 @@ export function createEventIntelligenceAgentTools({
           }, canonical);
         }
 
+        if (!control) {
+          const canonical = {
+            ok: false,
+            error: {
+              code: 'EVENT_TRIGGER_CONTROL_REQUIRED',
+              message: 'Host control() is required for trigger lifecycle mutations',
+            },
+          };
+          return projectPortableFailure(projectError, {
+            capability: spec.capability,
+            runtimeContext,
+            context: resolved,
+            phase: `${spec.action}.control`,
+          }, canonical);
+        }
         const decision = normalizeHostControlDecision(await control({
           capability: spec.capability,
           action: spec.action,
@@ -1530,6 +1545,21 @@ export function createEventIntelligenceAgentTools({
           }, canonical);
         }
 
+        if (!control) {
+          const canonical = {
+            ok: false,
+            error: {
+              code: 'EVENT_TRIGGER_CONTROL_REQUIRED',
+              message: 'Host control() is required for trigger update',
+            },
+          };
+          return projectPortableFailure(projectError, {
+            capability: updateCapability,
+            runtimeContext,
+            context: resolved,
+            phase: 'trigger.update.control',
+          }, canonical);
+        }
         const decision = normalizeHostControlDecision(await control({
           capability: updateCapability,
           action: 'trigger.update',
