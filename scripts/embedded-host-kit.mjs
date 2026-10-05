@@ -243,6 +243,24 @@ export function createResultReference(reference) {
   };
 }
 
+async function projectPortableFailure(projectError, input, canonical) {
+  if (typeof projectError !== 'function') return canonical;
+  try {
+    const projected = await projectError({
+      ...input,
+      error: canonical.error,
+      result: canonical,
+    });
+    if (projected == null) return canonical;
+    if (typeof projected !== 'object' || projected.ok !== false) {
+      throw new Error('projectError() must return a PortableToolResult with ok:false');
+    }
+    return projected;
+  } catch {
+    return canonical;
+  }
+}
+
 async function projectPortableResult(projectResult, input) {
   if (typeof projectResult !== 'function') {
     return { ok: true, data: input.value };
@@ -615,6 +633,7 @@ export function createEventIntelligenceAgentTools({
   resolveContext,
   control,
   projectResult,
+  projectError,
   authorize,
   names = {},
 } = {}) {
@@ -637,6 +656,9 @@ export function createEventIntelligenceAgentTools({
   }
   if (projectResult !== undefined && typeof projectResult !== 'function') {
     throw new Error('Agent tools projectResult must be a function');
+  }
+  if (projectError !== undefined && typeof projectError !== 'function') {
+    throw new Error('Agent tools projectError must be a function');
   }
 
   const toolNames = {
@@ -679,7 +701,13 @@ export function createEventIntelligenceAgentTools({
             value,
           });
         } catch (error) {
-          return fail(error, 'EVENT_SOURCES_LIST_FAILED');
+          const canonical = fail(error, 'EVENT_SOURCES_LIST_FAILED');
+          return projectPortableFailure(projectError, {
+            capability: sourcesCapability,
+            runtimeContext,
+            context: undefined,
+            phase: 'event.sources.list',
+          }, canonical);
         }
       },
     },
@@ -693,7 +721,7 @@ export function createEventIntelligenceAgentTools({
         const parsed = TriggerCreateInput.safeParse(args ?? {});
         if (!parsed.success) {
           const issue = parsed.error.issues[0];
-          return {
+          const canonical = {
             ok: false,
             error: {
               code: 'EVENT_TRIGGER_INPUT_INVALID',
@@ -701,6 +729,12 @@ export function createEventIntelligenceAgentTools({
                 `${issue?.path?.join('.') || 'input'} — ${issue?.message || 'invalid'}`,
             },
           };
+          return projectPortableFailure(projectError, {
+            capability: createCapability,
+            runtimeContext,
+            context: undefined,
+            phase: 'trigger.input',
+          }, canonical);
         }
 
         let resolved;
@@ -721,7 +755,13 @@ export function createEventIntelligenceAgentTools({
             buildPlanInput(parsed.data, target),
           );
         } catch (error) {
-          return fail(error, 'EVENT_TRIGGER_PLAN_FAILED');
+          const canonical = fail(error, 'EVENT_TRIGGER_PLAN_FAILED');
+          return projectPortableFailure(projectError, {
+            capability: createCapability,
+            runtimeContext,
+            context: resolved,
+            phase: 'trigger.plan',
+          }, canonical);
         }
 
         // Host control is intentionally outside EI's error-normalization
@@ -753,7 +793,13 @@ export function createEventIntelligenceAgentTools({
               }),
             );
           } catch (error) {
-            return fail(error, 'EVENT_TRIGGER_CREATE_FAILED');
+            const canonical = fail(error, 'EVENT_TRIGGER_CREATE_FAILED');
+            return projectPortableFailure(projectError, {
+              capability: createCapability,
+              runtimeContext,
+              context: resolved,
+              phase: 'trigger.control',
+            }, canonical);
           }
         }
         const decision = normalizeHostControlDecision(rawDecision);
@@ -797,7 +843,13 @@ export function createEventIntelligenceAgentTools({
             warnings: plan.warnings ?? [],
           };
         } catch (error) {
-          return fail(error, 'EVENT_TRIGGER_CREATE_FAILED');
+          const canonical = fail(error, 'EVENT_TRIGGER_CREATE_FAILED');
+          return projectPortableFailure(projectError, {
+            capability: createCapability,
+            runtimeContext,
+            context: resolved,
+            phase: 'trigger.create',
+          }, canonical);
         }
 
         // Trigger creation is already durable at this point. Projection is a
@@ -934,6 +986,12 @@ export async function createEmbeddedRuntimeIntegration({
   ) {
     throw new Error('tooling.projectResult must be a function');
   }
+  if (
+    tooling?.projectError !== undefined &&
+    typeof tooling.projectError !== 'function'
+  ) {
+    throw new Error('tooling.projectError must be a function');
+  }
 
   const sourceRegistry = eventSources
     ? (
@@ -974,6 +1032,9 @@ export async function createEmbeddedRuntimeIntegration({
         control: tooling.control,
         ...(tooling.projectResult
           ? { projectResult: tooling.projectResult }
+          : {}),
+        ...(tooling.projectError
+          ? { projectError: tooling.projectError }
           : {}),
         names: tooling.names ?? {},
       })
