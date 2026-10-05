@@ -54,6 +54,10 @@ export interface CompositeTriggerStore {
     metadata?: Record<string, unknown>,
   ): Promise<unknown>;
   appendTriggerMatch(record: TriggerMatchRecord): Promise<void>;
+  compareAndAppendTriggerMatch?(
+    record: TriggerMatchRecord,
+    options: { expectedStatuses: string[] },
+  ): Promise<{ applied: boolean; record: TriggerMatchRecord }>;
   listTriggerMatches(triggerId?: string):
     | TriggerMatchRecord[]
     | Promise<TriggerMatchRecord[]>;
