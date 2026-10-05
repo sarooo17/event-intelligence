@@ -1,4 +1,4 @@
-const REPORT_SCHEMA = 'event-intelligence.host-conformance.v1';
+const REPORT_SCHEMA = 'event-intelligence.host-conformance.v2';
 
 function assertFunction(value, name) {
   if (typeof value !== 'function') {
@@ -6,18 +6,28 @@ function assertFunction(value, name) {
   }
 }
 
-function validateHarness(harness) {
+function validateHarness(harness, profile) {
   if (!harness || typeof harness !== 'object') {
     throw new Error('createHarness() must return a harness object');
   }
-  for (const method of [
+  const methods = [
     'createTrigger',
     'emitEvent',
     'deliveries',
     'restart',
     'inspectTrigger',
     'close',
-  ]) {
+  ];
+  if (profile === 'management') {
+    methods.push(
+      'listTriggers',
+      'pauseTrigger',
+      'resumeTrigger',
+      'updateTrigger',
+      'deleteTrigger',
+    );
+  }
+  for (const method of methods) {
     assertFunction(harness[method], method);
   }
   return harness;
@@ -60,19 +70,23 @@ function requireCondition(condition, message) {
  */
 export async function runHostConformance(
   adapter,
-  { throwOnFailure = false } = {},
+  { throwOnFailure = false, profile = 'core' } = {},
 ) {
   if (!adapter || typeof adapter !== 'object') {
     throw new Error('Host conformance adapter is required');
   }
   assertFunction(adapter.createHarness, 'createHarness');
+  if (!['core', 'management'].includes(profile)) {
+    throw new Error('Host conformance profile must be "core" or "management"');
+  }
 
   const observed = [];
   const harness = validateHarness(await adapter.createHarness({
     observability(event) {
       observed.push(event);
     },
-  }));
+    profile,
+  }), profile);
 
   const results = [];
   try {
@@ -180,6 +194,99 @@ export async function runHostConformance(
       );
     }));
 
+    if (profile === 'management') {
+      results.push(await runCase('management.lifecycle', async () => {
+        const triggerId = 'conformance-management';
+        await harness.createTrigger({
+          triggerId,
+          threshold: 1000,
+          oneShot: false,
+          maxFirings: 5,
+        });
+
+        const listed = await harness.listTriggers();
+        const initial = listed.find((entry) => entry?.triggerId === triggerId);
+        requireCondition(Boolean(initial), 'created trigger missing from owner-scoped list');
+        requireCondition(
+          initial.status === 'active',
+          `expected active trigger in list, got ${initial?.status}`,
+        );
+
+        await harness.pauseTrigger(triggerId);
+        await harness.emitEvent({
+          eventId: 'management-paused',
+          value: 1500,
+          secretProbe: 'ei-conformance-secret-probe',
+        });
+        requireCondition(
+          deliveryCount(await harness.deliveries(), triggerId) === 0,
+          'paused trigger produced an external delivery',
+        );
+        const paused = await harness.inspectTrigger(triggerId);
+        requireCondition(
+          paused?.status === 'paused',
+          `expected paused status, got ${paused?.status}`,
+        );
+
+        await harness.resumeTrigger(triggerId);
+        await harness.emitEvent({
+          eventId: 'management-resumed',
+          value: 1600,
+          secretProbe: 'ei-conformance-secret-probe',
+        });
+        requireCondition(
+          deliveryCount(await harness.deliveries(), triggerId) === 1,
+          'resumed trigger did not deliver exactly once',
+        );
+
+        await harness.updateTrigger({
+          triggerId,
+          threshold: 2000,
+        });
+        const updated = await harness.inspectTrigger(triggerId);
+        requireCondition(
+          updated?.status === 'active',
+          `updated trigger is not active: ${updated?.status}`,
+        );
+
+        await harness.emitEvent({
+          eventId: 'management-old-threshold',
+          value: 1700,
+          secretProbe: 'ei-conformance-secret-probe',
+        });
+        requireCondition(
+          deliveryCount(await harness.deliveries(), triggerId) === 1,
+          'updated trigger still matched the superseded threshold',
+        );
+
+        await harness.emitEvent({
+          eventId: 'management-new-threshold',
+          value: 2100,
+          secretProbe: 'ei-conformance-secret-probe',
+        });
+        requireCondition(
+          deliveryCount(await harness.deliveries(), triggerId) === 2,
+          'updated trigger did not match the new threshold',
+        );
+
+        await harness.deleteTrigger(triggerId);
+        const deleted = await harness.inspectTrigger(triggerId);
+        requireCondition(
+          deleted?.status === 'deleted',
+          `expected deleted status, got ${deleted?.status}`,
+        );
+        await harness.emitEvent({
+          eventId: 'management-deleted',
+          value: 2200,
+          secretProbe: 'ei-conformance-secret-probe',
+        });
+        requireCondition(
+          deliveryCount(await harness.deliveries(), triggerId) === 2,
+          'deleted trigger produced an external delivery',
+        );
+      }));
+    }
+
     results.push(await runCase('observability.required-events', async () => {
       const names = new Set(observed.map((event) => event?.event));
       for (const name of [
@@ -206,6 +313,7 @@ export async function runHostConformance(
   const failed = results.filter((result) => result.status === 'fail');
   const report = Object.freeze({
     schema: REPORT_SCHEMA,
+    profile,
     adapter: String(adapter.name ?? 'unnamed-host'),
     passed: failed.length === 0,
     summary: Object.freeze({
