@@ -170,6 +170,27 @@ The catalog does not register tools with any SDK. The host performs the final
 translation. There are intentionally no helpers such as `toOpenAI()`,
 `toAnthropic()`, `toMuffin()` or `toArtemis()`.
 
+The default embedded catalog now covers the full durable trigger lifecycle:
+
+```text
+event_sources_list
+trigger_create
+trigger_list
+trigger_inspect
+trigger_pause
+trigger_resume
+trigger_delete
+trigger_update
+```
+
+Trigger listing is always scoped through the host-resolved owner identity before
+portable filtering is applied. By default it returns compact summaries rather
+than canonical definitions; hosts can still project or externalize larger
+results through `projectResult()`. Pause, resume, delete and update are all
+durable mutations and therefore pass through the same host-owned `control()`
+boundary as create.
+
+
 ## Result projection
 
 Success and failure presentation can both stay host-owned. EI keeps canonical
@@ -284,13 +305,22 @@ import {
 
 const report = await runHostConformance(myRuntimeAdapter, {
   throwOnFailure: true,
+  profile: 'management',
 });
 ```
 
-The adapter supplies an isolated harness with `createTrigger`, `emitEvent`,
-`deliveries`, `restart`, `inspectTrigger` and `close`. EI then checks
-one-shot delivery, replay deduplication, restart durability, bounded
-`maxFirings`, required operational events and payload non-leakage.
+The default `core` profile preserves the original six-method adapter contract
+(`createTrigger`, `emitEvent`, `deliveries`, `restart`,
+`inspectTrigger`, `close`) and checks one-shot delivery, replay
+deduplication, restart durability, bounded `maxFirings`, required operational
+events and payload non-leakage.
+
+The opt-in `management` profile additionally requires `listTriggers`,
+`pauseTrigger`, `resumeTrigger`, `updateTrigger` and `deleteTrigger`.
+It verifies the externally meaningful lifecycle: a paused trigger cannot wake,
+resume restores delivery, an updated condition replaces the old one, and a
+deleted trigger remains silent. Reports use
+`event-intelligence.host-conformance.v2` and identify the profile exercised.
 
 The conformance harness is intentionally runtime-neutral: it does not know
 about Turns, Executions, threads, conversations, graphs, OpenAI, Anthropic,
