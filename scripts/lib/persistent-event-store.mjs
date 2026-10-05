@@ -812,6 +812,28 @@ export class PersistentEventStore {
     });
   }
 
+  async compareAndAppendTriggerMatch(
+    recordInput,
+    { expectedStatuses = [] } = {},
+  ) {
+    return this.#serialized(async () => {
+      const record = parseTriggerMatchRecord(recordInput);
+      const current = this.#triggerMatches.get(record.matchId) ?? null;
+      const expected = new Set(expectedStatuses.map(String));
+      if (!current || !expected.has(current.status)) {
+        return { applied: false, record: current };
+      }
+      this.#triggerMatchHistory.push(record);
+      this.#triggerMatches.set(record.matchId, record);
+      await appendFile(
+        this.files.triggerMatches,
+        `${JSON.stringify(record)}\n`,
+        'utf8',
+      );
+      return { applied: true, record };
+    });
+  }
+
   listTriggerMatches(triggerId) {
     return [...this.#triggerMatches.values()]
       .filter((record) => !triggerId || record.triggerId === triggerId);
