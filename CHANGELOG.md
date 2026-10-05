@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Embedded runtime integration
+
+- add `createEmbeddedRuntimeIntegration()` above the lower-level host kit;
+- add a runtime-neutral `EventSourceRegistry` over host-owned event connections;
+- add portable EI capability metadata and a neutral tool catalog for host-owned exposure;
+- add host-owned result projection with optional runtime result references;
+- replace boolean authorization in the new integration surface with a host control contract that can execute or return an opaque deny/approval/interrupt/defer result;
+- preserve native host interrupt/suspension exceptions instead of normalizing them into EI errors;
+- keep tooling optional so headless/workflow runtimes can embed EI without exposing agent tools;
+- document and test the invariant that EI core contains no named-runtime dispatch or per-runtime adapter matrix.
+
 ## [0.7.1] - 2026-10-04
 
 ### Fixed
