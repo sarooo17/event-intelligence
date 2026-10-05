@@ -172,6 +172,9 @@ translation. There are intentionally no helpers such as `toOpenAI()`,
 
 ## Result projection
 
+Success and failure presentation can both stay host-owned. EI keeps canonical
+semantics and falls back to them if a projection callback fails.
+
 A host may keep small results inline:
 
 ```js
@@ -192,6 +195,18 @@ projectResult: async ({ value, capability }) => ({
 ```
 
 EI validates the reference shape but does not read it back or own its storage.
+
+Failures can be annotated or translated into a host-facing portable result:
+
+```js
+projectError: ({ phase, result }) => ({
+  ...result,
+  hostPresentation: host.renderError({ phase, error: result.error }),
+})
+```
+
+`projectError` never changes whether the EI operation succeeded. If the
+projection throws or returns nothing, EI returns its canonical error result.
 
 ## Event source registry
 
