@@ -221,6 +221,19 @@ export interface EventIntelligenceAgentToolsOptions<RuntimeContext = unknown> {
   }): PortableProjectedResult | void | Promise<PortableProjectedResult | void>;
 
   /**
+   * Optional host-owned projection for canonical EI failures. Returning null
+   * keeps the canonical error; projection failures also fall back to it.
+   */
+  projectError?(input: {
+    capability: EventIntelligenceCapabilityMetadata;
+    runtimeContext: RuntimeContext;
+    context?: EmbeddedToolContext;
+    phase: string;
+    error?: PortableToolResult['error'];
+    result: PortableToolResult;
+  }): PortableToolResult | void | Promise<PortableToolResult | void>;
+
+  /**
    * @deprecated Compatibility only. New integrations should use control().
    */
   authorize?(input: {
@@ -271,6 +284,7 @@ export interface EmbeddedRuntimeTooling<RuntimeContext = unknown> {
   resolveContext: EventIntelligenceAgentToolsOptions<RuntimeContext>['resolveContext'];
   control: NonNullable<EventIntelligenceAgentToolsOptions<RuntimeContext>['control']>;
   projectResult?: EventIntelligenceAgentToolsOptions<RuntimeContext>['projectResult'];
+  projectError?: EventIntelligenceAgentToolsOptions<RuntimeContext>['projectError'];
   names?: {
     sources?: string;
     create?: string;
