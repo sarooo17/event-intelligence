@@ -840,6 +840,10 @@ test('deterministic receipt ids are namespaced and bounded', () => {
   assert.equal(first, same);
   assert.equal(first.length, 32);
   assert.notEqual(first, other);
+  assert.notEqual(
+    createDeterministicReceiptId('a:b', 'c'),
+    createDeterministicReceiptId('a', 'b:c'),
+  );
   assert.equal(
     createDeterministicReceiptId('runtime-a', 'wake-1', { length: 16 }).length,
     16,
@@ -907,6 +911,44 @@ test('static one-shot event iterables are snapshotted for repeated refreshes', a
   assert.equal(first.length, 1);
   assert.equal(second.length, 1);
   assert.equal(first[0], second[0]);
+});
+
+test('diagnostics retain registry attachment failures', async () => {
+  const fakeHost = {
+    runtime: {},
+    eventSources: [],
+    async refreshMcpRegistry() {
+      return [{
+        connectionId: 'broken-a',
+        status: 'error',
+        error: 'connection refused',
+      }];
+    },
+    async mcpStatus() { return []; },
+    async scope() { return this; },
+    async close() {},
+  };
+
+  const integration = await createEmbeddedRuntimeIntegration({
+    eventSources: [{
+      connectionId: 'broken-a',
+      serverId: 'broken-a',
+      request: async () => ({ events: [] }),
+      getCapabilities: () => ({
+        extensions: { 'io.modelcontextprotocol/events': {} },
+      }),
+    }],
+    activation: {
+      deliver: ({ receiptId }) => ({ runtimeReceiptId: receiptId }),
+    },
+    createHost: async () => fakeHost,
+  });
+
+  const diagnostics = await integration.diagnostics();
+  assert.equal(diagnostics.connections, 1);
+  assert.equal(diagnostics.errors, 1);
+  assert.equal(diagnostics.eventsCapable, 0);
+  assert.equal(diagnostics.refreshOutcomes[0].connectionId, 'broken-a');
 });
 
 test('embedded binding adapts tools, registers them and wires lifecycle', async () => {
