@@ -152,10 +152,12 @@ export class TriggerControlPlane {
     store,
     triggerEngine,
     now = () => new Date(),
+    observability = null,
   }) {
     this.store = store;
     this.triggerEngine = triggerEngine;
     this.now = now;
+    this.observability = observability;
     this.contractRegistry = new DerivedContractRegistry({
       store,
       now,
@@ -1110,5 +1112,29 @@ export class TriggerControlPlane {
       entityId,
       details,
     });
+
+    const event =
+      kind === 'event_source.registered'
+        ? 'ei.source.registered'
+        : kind.startsWith('trigger.')
+          ? `ei.${kind}`
+          : null;
+    if (event) {
+      await this.observability?.emit({
+        event,
+        level: 'info',
+        traceId,
+        ...(entityType === 'trigger' ? { triggerId: entityId } : {}),
+        ...(details?.connectionId ? { connectionId: details.connectionId } : {}),
+        ...(details?.serverId ? { serverId: details.serverId } : {}),
+        ...(details?.eventName ? { eventName: details.eventName } : {}),
+        metadata: {
+          entityType,
+          ...(details?.version ? { version: details.version } : {}),
+          ...(details?.fromVersion ? { fromVersion: details.fromVersion } : {}),
+          ...(details?.toVersion ? { toVersion: details.toVersion } : {}),
+        },
+      });
+    }
   }
 }

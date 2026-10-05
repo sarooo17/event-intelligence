@@ -26,6 +26,14 @@
     "./embedded": {
       "types": "./scripts/embedded-host-kit.d.mts",
       "import": "./scripts/embedded-host-kit.mjs"
+    },
+    "./observability": {
+      "types": "./scripts/lib/observability.d.mts",
+      "import": "./scripts/lib/observability.mjs"
+    },
+    "./conformance": {
+      "types": "./scripts/host-conformance.d.mts",
+      "import": "./scripts/host-conformance.mjs"
     }
   },
   "bin": {
@@ -47,7 +55,10 @@
     "scripts/host-integration.d.mts",
     "scripts/run-tests.mjs",
     "scripts/embedded-host-kit.mjs",
-    "scripts/embedded-host-kit.d.mts"
+    "scripts/embedded-host-kit.d.mts",
+    "scripts/host-conformance.mjs",
+    "scripts/host-conformance.d.mts",
+    "conformance/"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
@@ -64,7 +75,8 @@
     "conformance:pattern-v2": "npm run build && node scripts/evidence/pattern-v2-conformance.mjs",
     "bench:pattern-v2": "npm run build && node scripts/evidence/pattern-v2-benchmark.mjs --profile quick",
     "evidence:pattern-v2": "npm run build && node scripts/evidence/pattern-v2-conformance.mjs && node scripts/evidence/pattern-v2-benchmark.mjs --profile quick",
-    "prepare": "npm run build"
+    "prepare": "npm run build",
+    "conformance:host": "npm run build && node conformance/reference-host.mjs"
   },
   "keywords": [
     "mcp",

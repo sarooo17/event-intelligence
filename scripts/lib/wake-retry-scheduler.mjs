@@ -4,11 +4,13 @@ export class WakeRetryScheduler {
     resolveCoordinator,
     intervalMs = 1000,
     now = () => new Date(),
+    observability = null,
   }) {
     this.store = store;
     this.resolveCoordinator = resolveCoordinator;
     this.intervalMs = Math.max(100, Number(intervalMs) || 1000);
     this.now = now;
+    this.observability = observability;
     this.timer = null;
     this.running = false;
   }
@@ -60,6 +62,14 @@ export class WakeRetryScheduler {
     if (this.timer) return;
     this.timer = setInterval(() => {
       this.runDue().catch((error) => {
+        if (this.observability?.enabled) {
+          void this.observability.emit({
+            event: 'ei.scheduler.wake_retry_failed',
+            level: 'error',
+            error,
+          });
+          return;
+        }
         console.error(JSON.stringify({
           message: 'wake_retry_scheduler_error',
           error: error instanceof Error ? error.message : String(error),

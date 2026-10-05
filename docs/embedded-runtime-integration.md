@@ -233,3 +233,65 @@ runtime-specific connection manager
 A different runtime can therefore reuse the same EI package without EI knowing
 anything about that runtime's session, model, UI, Work graph or capability
 system.
+
+
+## Operational observability
+
+Embedded hosts can supply a runtime-neutral sink without giving Event
+Intelligence ownership of their logging stack:
+
+```js
+const integration = await createEmbeddedRuntimeIntegration({
+  // ...
+  observability(event) {
+    runtimeLogger.info(event);
+  },
+});
+```
+
+The sink receives versioned structured `ei.*` events for lifecycle, source
+health, trigger mutations, matches, wake delivery, retry/dead-letter and
+scheduler failures. The host can translate these records into its existing
+logger, OpenTelemetry events/spans, metrics, Sentry, Datadog or another
+backend.
+
+Observability is deliberately separate from the persistent audit chain:
+
+- **audit** answers what happened and preserves tamper-evident history;
+- **observability** answers what the running process is doing now.
+
+Sink failures are best-effort and never alter EI delivery semantics. EI does
+not emit event payloads, continuation instructions or evidence through this
+surface, and sensitive metadata keys/token-like text are redacted
+defensively.
+
+The public helpers and types are also available from:
+
+```js
+import {
+  createObservabilityEmitter,
+} from 'mcp-event-intelligence/observability';
+```
+
+## Host conformance
+
+A runtime can verify its EI embedding with the public conformance runner:
+
+```js
+import {
+  runHostConformance,
+} from 'mcp-event-intelligence/conformance';
+
+const report = await runHostConformance(myRuntimeAdapter, {
+  throwOnFailure: true,
+});
+```
+
+The adapter supplies an isolated harness with `createTrigger`, `emitEvent`,
+`deliveries`, `restart`, `inspectTrigger` and `close`. EI then checks
+one-shot delivery, replay deduplication, restart durability, bounded
+`maxFirings`, required operational events and payload non-leakage.
+
+The conformance harness is intentionally runtime-neutral: it does not know
+about Turns, Executions, threads, conversations, graphs, OpenAI, Anthropic,
+Muffin or Artemis.

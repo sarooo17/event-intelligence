@@ -31,6 +31,7 @@ export class CompositeWakeCoordinator {
     maxAttempts = 5,
     retryBaseDelayMs = 1000,
     retryMaxDelayMs = 60000,
+    observability = null,
   }) {
     this.store = store;
     this.triggerEngine = triggerEngine;
@@ -45,6 +46,7 @@ export class CompositeWakeCoordinator {
       this.retryBaseDelayMs,
       Number(retryMaxDelayMs) || 60000,
     );
+    this.observability = observability;
 
     for (const method of [
       'ensureWakeDelivery',
@@ -100,6 +102,16 @@ export class CompositeWakeCoordinator {
           recoveredFromDeliveryState: true,
           composite: true,
         },
+      });
+      await this.observability?.emit({
+        event: 'ei.wake.delivered',
+        level: 'info',
+        traceId: delivered.traceId,
+        triggerId: match.triggerId,
+        matchId: match.matchId,
+        wakeId,
+        status: 'wake_delivered',
+        metadata: { recoveredFromDeliveryState: true },
       });
     }
 
@@ -193,6 +205,15 @@ export class CompositeWakeCoordinator {
             composite: true,
           },
         });
+        await this.observability?.emit({
+          event: 'ei.wake.queued',
+          level: 'debug',
+          traceId: queued.traceId,
+          triggerId: match.triggerId,
+          matchId: match.matchId,
+          wakeId,
+          status: 'wake_queued',
+        });
       }
       return {
         status: 'wake_queued',
@@ -272,6 +293,15 @@ export class CompositeWakeCoordinator {
           composite: true,
         },
       });
+      await this.observability?.emit({
+        event: 'ei.wake.queued',
+        level: 'debug',
+        traceId: queued.traceId,
+        triggerId: match.triggerId,
+        matchId: match.matchId,
+        wakeId,
+        status: 'wake_queued',
+      });
     }
 
     try {
@@ -322,6 +352,17 @@ export class CompositeWakeCoordinator {
           composite: true,
         },
       });
+      await this.observability?.emit({
+        event: 'ei.wake.delivered',
+        level: 'info',
+        traceId: delivered.traceId,
+        triggerId: match.triggerId,
+        matchId: match.matchId,
+        wakeId,
+        status: 'wake_delivered',
+        attempt: delivery?.attemptCount ?? claim.attemptCount,
+        metadata: { duplicate: receipt.duplicate === true },
+      });
 
       await this.triggerEngine.markFired(match.matchId, wakeId);
 
@@ -365,6 +406,18 @@ export class CompositeWakeCoordinator {
             composite: true,
           },
         });
+        await this.observability?.emit({
+          event: 'ei.wake.retry_scheduled',
+          level: 'warn',
+          traceId: queued.traceId,
+          triggerId: match.triggerId,
+          matchId: match.matchId,
+          wakeId,
+          status: 'retry_scheduled',
+          attempt: delivery?.attemptCount ?? claim.attemptCount,
+          nextAttemptAt: delivery?.nextAttemptAt ?? undefined,
+          error,
+        });
         return {
           status: 'retry_scheduled',
           wake: persistedQueued,
@@ -397,6 +450,17 @@ export class CompositeWakeCoordinator {
           message: error instanceof Error ? error.message : 'wake delivery failed',
           composite: true,
         },
+      });
+      await this.observability?.emit({
+        event: 'ei.wake.dead_letter',
+        level: 'error',
+        traceId: deadLetter.traceId,
+        triggerId: match.triggerId,
+        matchId: match.matchId,
+        wakeId,
+        status: 'dead_letter',
+        attempt: delivery?.attemptCount ?? claim.attemptCount,
+        error,
       });
       return {
         status: 'dead_letter',
