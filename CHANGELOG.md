@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.8.1] - 2026-10-05
+
+### Fixed
+
+- preserve successful durable trigger creation when host result projection fails after commit, falling back to the canonical inline success payload instead of reporting `EVENT_TRIGGER_CREATE_FAILED`;
+- preserve the legacy `authorize()` callback's normalized error-result behavior while keeping native interrupt/suspension passthrough on the new `control()` contract;
+- add regression coverage for both post-commit projection failure and legacy authorization callback rejection;
+- align the root package-lock metadata with the published package version.
+
 ## [0.8.0] - 2026-10-05
 
 ### Embedded runtime integration
