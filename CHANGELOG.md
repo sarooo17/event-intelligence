@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.9.0] - 2026-10-05
+
+### Runtime-neutral observability
+
+- add the public `mcp-event-intelligence/observability` surface for structured operational `ei.*` events;
+- cover lifecycle, MCP/event-source health, trigger mutations, matches, wake delivery, retry/dead-letter and scheduler failures;
+- keep observability best-effort and non-blocking so slow or failing telemetry sinks cannot change Event Intelligence execution semantics;
+- defensively exclude event payloads, evidence, continuation instructions and credential-like metadata from operational events;
+- keep audit and observability separate: the audit chain remains durable and tamper-evident while observability stays host-owned and ephemeral.
+
+### Host conformance
+
+- add the public `mcp-event-intelligence/conformance` runner with a six-method runtime-neutral host adapter contract;
+- emit machine-readable `event-intelligence.host-conformance.v1` reports;
+- verify threshold/one-shot behavior, replay deduplication on persistent triggers, restart durability, bounded `maxFirings`, required observability and payload non-leakage;
+- add a real embedded reference host and `npm run conformance:host`;
+- document the integration contract without introducing Muffin, Artemis, OpenAI, Anthropic or logger-vendor adapters into EI core.
+
+
 ## [0.8.2] - 2026-10-05
 
 ### Embedded integration
