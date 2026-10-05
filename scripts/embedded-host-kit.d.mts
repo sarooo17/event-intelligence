@@ -134,6 +134,8 @@ export interface ActivationDispatcherOptions<Target = RuntimeTarget> {
     packet: Record<string, unknown>;
     activation: ActivationEnvelope;
   }) => string | Promise<string>;
+  /** Optional deterministic SHA-256 receipt namespace. Mutually exclusive with receiptId. */
+  receiptNamespace?: string;
   deliver(
     input: ActivationDeliveryInput<Target>,
   ): HostWakeReceipt | string | void | Promise<HostWakeReceipt | string | void>;
