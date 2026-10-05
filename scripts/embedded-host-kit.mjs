@@ -997,9 +997,12 @@ export async function createEmbeddedRuntimeIntegration({
     ? (
         typeof eventSources?.list === 'function'
           ? createEventSourceRegistry(eventSources)
-          : createEventSourceRegistry({
-              list: () => eventSources,
-            })
+          : (() => {
+              const staticSources = Object.freeze([...eventSources]);
+              return createEventSourceRegistry({
+                list: () => staticSources,
+              });
+            })()
       )
     : null;
 
