@@ -15,6 +15,9 @@ import {
 import {
   CompositeTriggerEngine,
 } from '../dist/src/composite/engine.js';
+import {
+  TriggerControlPlane,
+} from '../scripts/lib/trigger-control-plane.mjs';
 
 const POSTGRES_URL = process.env.POSTGRES_URL;
 const integrationTest = POSTGRES_URL ? test : test.skip;
@@ -286,6 +289,122 @@ integrationTest('expired wake and partition leases recover on another worker and
     );
     assert.ok(recovered);
   } finally {
+    await dropTables(poolA);
+    await Promise.all([poolA.end(), poolB.end()]);
+  }
+});
+
+integrationTest('concurrent match finalization advances lifecycle exactly once', async () => {
+  const poolA = pool();
+  const poolB = pool();
+  try {
+    const storeA = store(poolA, 'match-cas');
+    const storeB = store(poolB, 'match-cas');
+    await Promise.all([storeA.init(), storeB.init()]);
+    await storeA.putTrigger(triggerDefinition('cas-trigger'));
+    await storeA.setTriggerState(
+      'cas-trigger',
+      '1',
+      'active',
+      { type: 'system', principal_id: 'setup' },
+      { fireCount: 0 },
+    );
+    await storeA.appendTriggerMatch(
+      matchedRecord('cas-trigger', 'cas-match'),
+    );
+
+    const engineA = new CompositeTriggerEngine(storeA);
+    const engineB = new CompositeTriggerEngine(storeB);
+    const [a, b] = await Promise.all([
+      engineA.markFired('cas-match', 'cas-wake'),
+      engineB.markFired('cas-match', 'cas-wake'),
+    ]);
+    assert.equal(a.status, 'fired');
+    assert.equal(b.status, 'fired');
+
+    const state = await storeB.getTriggerState('cas-trigger', '1');
+    assert.equal(state.fireCount, 1);
+    const history = await storeA.listTriggerMatchHistory('cas-match');
+    assert.equal(
+      history.filter((record) => record.status === 'fired').length,
+      1,
+    );
+  } finally {
+    await dropTables(poolA);
+    await Promise.all([poolA.end(), poolB.end()]);
+  }
+});
+
+integrationTest('control-plane mutations are serialized by trigger/version lease', async () => {
+  const poolA = pool();
+  const poolB = pool();
+  let releaseMutation;
+  let enteredMutation;
+  const entered = new Promise((resolve) => { enteredMutation = resolve; });
+  const release = new Promise((resolve) => { releaseMutation = resolve; });
+  const owner = { type: 'owner', principal_id: 'owner-1' };
+  const actor = { type: 'system', principal_id: 'operator' };
+
+  try {
+    const storeA = store(poolA, 'control-lease');
+    const storeB = store(poolB, 'control-lease');
+    await Promise.all([storeA.init(), storeB.init()]);
+    await storeA.putTrigger(triggerDefinition('control-trigger'));
+    await storeA.setTriggerState(
+      'control-trigger',
+      '1',
+      'active',
+      actor,
+      { owner, connectionIds: [] },
+    );
+
+    const originalSet = storeA.setTriggerState.bind(storeA);
+    storeA.setTriggerState = async (...args) => {
+      enteredMutation();
+      await release;
+      return originalSet(...args);
+    };
+
+    const controlA = new TriggerControlPlane({
+      store: storeA,
+      triggerEngine: {},
+      workerId: 'control-worker-a',
+      mutationLeaseMs: 30000,
+    });
+    const controlB = new TriggerControlPlane({
+      store: storeB,
+      triggerEngine: {},
+      workerId: 'control-worker-b',
+      mutationLeaseMs: 30000,
+    });
+
+    const first = controlA.pauseTrigger({
+      triggerId: 'control-trigger',
+      version: '1',
+      actor,
+      owner,
+    });
+    await entered;
+
+    await assert.rejects(
+      () => controlB.pauseTrigger({
+        triggerId: 'control-trigger',
+        version: '1',
+        actor,
+        owner,
+      }),
+      (error) => error?.code === 'TRIGGER_MUTATION_BUSY',
+    );
+
+    releaseMutation();
+    const paused = await first;
+    assert.equal(paused.state.status, 'paused');
+    assert.equal(
+      (await storeB.getTriggerState('control-trigger', '1')).status,
+      'paused',
+    );
+  } finally {
+    releaseMutation?.();
     await dropTables(poolA);
     await Promise.all([poolA.end(), poolB.end()]);
   }
