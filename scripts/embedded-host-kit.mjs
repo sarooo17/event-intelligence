@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import {
   RuntimeTargetSchema,
@@ -301,11 +302,33 @@ function wakeIdFromPacket(packet) {
   return typeof value === 'string' && value.trim() ? value : null;
 }
 
+export function createDeterministicReceiptId(
+  namespace,
+  wakeId,
+  { length = 32 } = {},
+) {
+  const normalizedNamespace = String(namespace ?? '').trim();
+  const normalizedWakeId = String(wakeId ?? '').trim();
+  if (!normalizedNamespace) {
+    throw new Error('receipt namespace is required');
+  }
+  if (!normalizedWakeId) {
+    throw new Error('wake id is required');
+  }
+  if (!Number.isInteger(length) || length < 8 || length > 64) {
+    throw new Error('receipt id length must be an integer between 8 and 64');
+  }
+  return createHash('sha256')
+    .update(`${normalizedNamespace}:${normalizedWakeId}`)
+    .digest('hex')
+    .slice(0, length);
+}
+
 /**
  * Runtime-neutral registry over host-owned event connections.
  *
- * The host keeps credentials, transport and lifecycle ownership. EI only asks
- * for the currently available connections and listens for topology changes.
+ * Static iterables are accepted directly by createEmbeddedRuntimeIntegration();
+ * use this explicit factory when the host has dynamic discovery/subscription.
  */
 export function createEventSourceRegistry({
   list,
@@ -328,6 +351,63 @@ export function createEventSourceRegistry({
  * Neutral catalog for host tool exposure. It does not decide policy or adapt
  * descriptors to any vendor SDK; the embedding runtime owns both.
  */
+export function summarizeEventSourceStatus(statuses = []) {
+  const rows = Array.isArray(statuses) ? statuses : [];
+  let eventsCapable = 0;
+  let eventDefinitions = 0;
+  let errors = 0;
+
+  for (const row of rows) {
+    if (!row || typeof row !== 'object') continue;
+    if (row.error != null) {
+      errors += 1;
+      continue;
+    }
+    if (Array.isArray(row.events) && row.events.length > 0) {
+      eventsCapable += 1;
+      eventDefinitions += row.events.length;
+    }
+  }
+
+  return Object.freeze({
+    connections: rows.length,
+    eventsCapable,
+    eventDefinitions,
+    errors,
+    statuses: rows,
+  });
+}
+
+export function bindEmbeddedRuntimeIntegration(
+  integration,
+  { adapt, register, onClose } = {},
+) {
+  if (!integration || typeof integration !== 'object') {
+    throw new Error('embedded integration is required');
+  }
+  if (typeof adapt !== 'function') {
+    throw new Error('bind adapt() is required');
+  }
+  if (typeof register !== 'function') {
+    throw new Error('bind register() is required');
+  }
+  if (onClose !== undefined && typeof onClose !== 'function') {
+    throw new Error('bind onClose must be a function');
+  }
+
+  const adapted = integration.tools.map((portableTool) => {
+    const hostTool = adapt(portableTool);
+    register(hostTool, portableTool);
+    return hostTool;
+  });
+
+  if (onClose) {
+    onClose(() => integration.close());
+  }
+
+  return Object.freeze(adapted);
+}
+
 export function createPortableToolCatalog(tools = []) {
   const all = Object.freeze([...tools]);
   const byName = new Map(all.map((tool) => [tool.name, tool]));
@@ -839,7 +919,13 @@ export async function createEmbeddedRuntimeIntegration({
   }
 
   const sourceRegistry = eventSources
-    ? createEventSourceRegistry(eventSources)
+    ? (
+        typeof eventSources?.list === 'function'
+          ? createEventSourceRegistry(eventSources)
+          : createEventSourceRegistry({
+              list: () => eventSources,
+            })
+      )
     : null;
 
   const embedded = await createEmbeddedEventIntelligence({
@@ -883,6 +969,18 @@ export async function createEmbeddedRuntimeIntegration({
     toolCatalog,
     capabilities: Object.freeze(toolCatalog.capabilities()),
     eventSources: sourceRegistry,
+    async diagnostics() {
+      return summarizeEventSourceStatus(await embedded.status());
+    },
+    bind(options) {
+      return bindEmbeddedRuntimeIntegration(
+        {
+          ...embedded,
+          tools: toolCatalog.all,
+        },
+        options,
+      );
+    },
   });
 }
 
