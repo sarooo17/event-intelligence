@@ -76,7 +76,7 @@ export async function runHostConformance(
 
   const results = [];
   try {
-    results.push(await runCase('core.once-and-replay-dedup', async () => {
+    results.push(await runCase('core.once-threshold', async () => {
       await harness.createTrigger({
         triggerId: 'conformance-once',
         threshold: 1000,
@@ -103,14 +103,35 @@ export async function runHostConformance(
         'matching event did not produce exactly one delivery',
       );
 
+    }));
+
+    results.push(await runCase('core.replay-dedup', async () => {
+      await harness.createTrigger({
+        triggerId: 'conformance-replay',
+        threshold: 1000,
+        oneShot: false,
+        maxFirings: 2,
+      });
+
       await harness.emitEvent({
-        eventId: 'once-match',
-        value: 1001,
+        eventId: 'replay-same-id',
+        value: 1100,
         secretProbe: 'ei-conformance-secret-probe',
       });
+      await harness.emitEvent({
+        eventId: 'replay-same-id',
+        value: 1100,
+        secretProbe: 'ei-conformance-secret-probe',
+      });
+
       requireCondition(
-        deliveryCount(await harness.deliveries(), 'conformance-once') === 1,
-        'replayed event produced a duplicate delivery',
+        deliveryCount(await harness.deliveries(), 'conformance-replay') === 1,
+        'replayed event produced a duplicate delivery on a persistent trigger',
+      );
+      const state = await harness.inspectTrigger('conformance-replay');
+      requireCondition(
+        Number(state?.fireCount) === 1,
+        `replayed event advanced fireCount to ${state?.fireCount}`,
       );
     }));
 
