@@ -1,6 +1,6 @@
 {
   "name": "mcp-event-intelligence",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "description": "MCP-native complex event processing for durable agent workflows: event-time patterns, semantic predicates, derived events, and targeted wakeups.",
   "license": "Apache-2.0",
   "type": "module",
@@ -34,6 +34,10 @@
     "./conformance": {
       "types": "./scripts/host-conformance.d.mts",
       "import": "./scripts/host-conformance.mjs"
+    },
+    "./storage/postgres": {
+      "types": "./scripts/lib/postgres-event-store.d.mts",
+      "import": "./scripts/lib/postgres-event-store.mjs"
     }
   },
   "bin": {
@@ -76,7 +80,8 @@
     "bench:pattern-v2": "npm run build && node scripts/evidence/pattern-v2-benchmark.mjs --profile quick",
     "evidence:pattern-v2": "npm run build && node scripts/evidence/pattern-v2-conformance.mjs && node scripts/evidence/pattern-v2-benchmark.mjs --profile quick",
     "prepare": "npm run build",
-    "conformance:host": "npm run build && node conformance/reference-host.mjs"
+    "conformance:host": "npm run build && node conformance/reference-host.mjs",
+    "test:postgres": "npm run build && node --test test/postgres-shared-state.test.mjs"
   },
   "keywords": [
     "mcp",
