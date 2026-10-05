@@ -13,6 +13,25 @@ const DEFAULT_TOOL_NAMES = Object.freeze({
   create: 'trigger_create',
 });
 
+export const EVENT_INTELLIGENCE_CAPABILITIES = Object.freeze({
+  eventSourcesList: Object.freeze({
+    id: 'event-intelligence.event-sources.list',
+    operation: 'read',
+    resource: 'event-source',
+    effect: 'none',
+    durability: 'ephemeral',
+    hostControl: 'none',
+  }),
+  triggerCreate: Object.freeze({
+    id: 'event-intelligence.trigger.create',
+    operation: 'create',
+    resource: 'trigger',
+    effect: 'durable-state',
+    durability: 'durable',
+    hostControl: 'required',
+  }),
+});
+
 const TriggerClauseInput = z.object({
   id: z.string().min(1).max(200).optional(),
   event: z.string().min(1).max(200),
@@ -140,15 +159,121 @@ function normalizeIdentity(input, label) {
   };
 }
 
-function normalizeAuthorization(decision) {
-  if (decision === true) return { allowed: true };
-  if (decision === false || decision == null) return { allowed: false };
+function normalizeLegacyAuthorization(decision) {
+  if (decision === true) return { action: 'execute' };
+  if (decision === false || decision == null) {
+    return {
+      action: 'return',
+      result: {
+        ok: false,
+        error: {
+          code: 'EVENT_TRIGGER_AUTHORIZATION_DENIED',
+          message: 'Host denied durable trigger creation',
+        },
+      },
+    };
+  }
   if (typeof decision !== 'object') {
     throw new Error('authorize() must return boolean or an authorization decision');
   }
+  if (decision.allowed === true) {
+    return {
+      action: 'execute',
+      execution: {
+        actor: decision.actor,
+        owner: decision.owner,
+        receiptId: decision.confirmationId,
+      },
+    };
+  }
   return {
-    ...decision,
-    allowed: decision.allowed === true,
+    action: 'return',
+    result: {
+      ok: false,
+      error: {
+        code: String(decision.code || 'EVENT_TRIGGER_AUTHORIZATION_DENIED'),
+        message: String(
+          decision.message || 'Host denied durable trigger creation',
+        ),
+      },
+    },
+  };
+}
+
+function normalizeHostControlDecision(decision) {
+  if (!decision || typeof decision !== 'object') {
+    throw new Error(
+      'Host control must return { action: "execute" } or { action: "return", result }',
+    );
+  }
+  if (decision.action === 'return') {
+    if (!decision.result || typeof decision.result.ok !== 'boolean') {
+      throw new Error('Host control return action requires a portable tool result');
+    }
+    return decision;
+  }
+  if (decision.action !== 'execute') {
+    throw new Error(
+      'Host control action must be "execute" or "return"',
+    );
+  }
+  return {
+    action: 'execute',
+    execution:
+      decision.execution && typeof decision.execution === 'object'
+        ? decision.execution
+        : {},
+  };
+}
+
+export function createResultReference(reference) {
+  if (reference == null) return undefined;
+  if (typeof reference !== 'object') {
+    throw new Error('result reference must be an object');
+  }
+  const id = String(reference.id || '').trim();
+  if (!id) throw new Error('result reference id is required');
+  return {
+    ...reference,
+    id,
+    ...(reference.kind == null
+      ? {}
+      : { kind: String(reference.kind).trim() || undefined }),
+  };
+}
+
+async function projectPortableResult(projectResult, input) {
+  if (typeof projectResult !== 'function') {
+    return { ok: true, data: input.value };
+  }
+
+  const projected = await projectResult(input);
+  if (projected == null) {
+    return { ok: true, data: input.value };
+  }
+  if (typeof projected !== 'object') {
+    throw new Error('projectResult() must return an object');
+  }
+
+  const reference = createResultReference(projected.reference);
+  const hasInline = Object.prototype.hasOwnProperty.call(projected, 'inline');
+  if (!hasInline && !reference) {
+    throw new Error('projectResult() must return inline and/or reference');
+  }
+
+  return {
+    ok: true,
+    ...(hasInline ? { data: projected.inline } : {}),
+    result: {
+      ...(hasInline ? { inline: projected.inline } : {}),
+      ...(reference ? { reference } : {}),
+      ...(projected.summary == null
+        ? {}
+        : { summary: String(projected.summary) }),
+      ...(projected.metadata && typeof projected.metadata === 'object'
+        ? { metadata: projected.metadata }
+        : {}),
+    },
   };
 }
 
@@ -174,6 +299,53 @@ function wakeIdFromPacket(packet) {
   if (!packet || typeof packet !== 'object') return null;
   const value = packet.wake_id ?? packet.wakeId;
   return typeof value === 'string' && value.trim() ? value : null;
+}
+
+/**
+ * Runtime-neutral registry over host-owned event connections.
+ *
+ * The host keeps credentials, transport and lifecycle ownership. EI only asks
+ * for the currently available connections and listens for topology changes.
+ */
+export function createEventSourceRegistry({
+  list,
+  subscribe,
+} = {}) {
+  if (typeof list !== 'function') {
+    throw new Error('Event source registry requires list()');
+  }
+  if (subscribe !== undefined && typeof subscribe !== 'function') {
+    throw new Error('Event source registry subscribe must be a function');
+  }
+
+  return Object.freeze({
+    list,
+    ...(subscribe ? { subscribe } : {}),
+  });
+}
+
+/**
+ * Neutral catalog for host tool exposure. It does not decide policy or adapt
+ * descriptors to any vendor SDK; the embedding runtime owns both.
+ */
+export function createPortableToolCatalog(tools = []) {
+  const all = Object.freeze([...tools]);
+  const byName = new Map(all.map((tool) => [tool.name, tool]));
+
+  return Object.freeze({
+    all,
+    get(name) {
+      return byName.get(name) ?? null;
+    },
+    list({ capabilityIds } = {}) {
+      if (!capabilityIds) return [...all];
+      const allowed = new Set(capabilityIds);
+      return all.filter((tool) => allowed.has(tool.capability?.id));
+    },
+    capabilities() {
+      return all.map((tool) => tool.capability).filter(Boolean);
+    },
+  });
 }
 
 /**
@@ -338,13 +510,14 @@ function buildPlanInput(parsed, target) {
 }
 
 /**
- * Portable agent-facing tools. The descriptors do not depend on OpenAI,
- * Anthropic, MCP tool objects, Muffin, Artemis, LangGraph, or any other host.
- * Adapters only need to translate {name, description, inputSchema, execute}.
+ * Portable agent-facing tools. The descriptors are runtime-neutral.
+ * The embedding host performs any final translation into its own tool system.
  */
 export function createEventIntelligenceAgentTools({
   host,
   resolveContext,
+  control,
+  projectResult,
   authorize,
   names = {},
 } = {}) {
@@ -354,8 +527,19 @@ export function createEventIntelligenceAgentTools({
   if (typeof resolveContext !== 'function') {
     throw new Error('Agent tools require resolveContext()');
   }
-  if (typeof authorize !== 'function') {
-    throw new Error('Agent tools require authorize() for durable mutations');
+  if (control !== undefined && typeof control !== 'function') {
+    throw new Error('Agent tools control must be a function');
+  }
+  if (authorize !== undefined && typeof authorize !== 'function') {
+    throw new Error('Agent tools authorize must be a function');
+  }
+  if (!control && !authorize) {
+    throw new Error(
+      'Durable mutations require a host control() callback',
+    );
+  }
+  if (projectResult !== undefined && typeof projectResult !== 'function') {
+    throw new Error('Agent tools projectResult must be a function');
   }
 
   const toolNames = {
@@ -363,30 +547,40 @@ export function createEventIntelligenceAgentTools({
     ...names,
   };
 
+  const sourcesCapability =
+    EVENT_INTELLIGENCE_CAPABILITIES.eventSourcesList;
+  const createCapability =
+    EVENT_INTELLIGENCE_CAPABILITIES.triggerCreate;
+
   return [
     {
       name: toolNames.sources,
       description:
-        'List live future-event sources discovered from MCP connections already owned by the host runtime. Use this before creating a trigger so event names and schemas are not guessed.',
+        'List live future-event sources discovered from event connections already owned by the host runtime. Use this before creating a trigger so event names and schemas are not guessed.',
       inputSchema: SOURCES_INPUT_SCHEMA,
+      capability: sourcesCapability,
       async execute(_args, runtimeContext) {
         try {
           const resolved = await resolveContext(runtimeContext, {
             action: 'event.sources.list',
+            capability: sourcesCapability,
           });
           if (typeof host.refreshMcpRegistry === 'function') {
             await host.refreshMcpRegistry();
           }
           const scoped = await scopedHostFor(host, resolved);
           const sources = await Promise.resolve(scoped.eventSources);
-          return {
-            ok: true,
-            data: {
-              sources: Array.isArray(sources)
-                ? sources.map(sourceSummary)
-                : [],
-            },
+          const value = {
+            sources: Array.isArray(sources)
+              ? sources.map(sourceSummary)
+              : [],
           };
+          return await projectPortableResult(projectResult, {
+            capability: sourcesCapability,
+            runtimeContext,
+            context: resolved,
+            value,
+          });
         } catch (error) {
           return fail(error, 'EVENT_SOURCES_LIST_FAILED');
         }
@@ -395,8 +589,9 @@ export function createEventIntelligenceAgentTools({
     {
       name: toolNames.create,
       description:
-        'Create a durable future condition. The host, not the model, supplies the continuation target and authority context; Event Intelligence wakes that target only when the condition matches.',
+        'Create a durable future condition. The host supplies continuation, control and identity context; Event Intelligence wakes the opaque continuation target only when the condition matches.',
       inputSchema: CREATE_INPUT_SCHEMA,
+      capability: createCapability,
       async execute(args, runtimeContext) {
         const parsed = TriggerCreateInput.safeParse(args ?? {});
         if (!parsed.success) {
@@ -411,53 +606,69 @@ export function createEventIntelligenceAgentTools({
           };
         }
 
+        let resolved;
+        let scoped;
+        let plan;
         try {
-          const resolved = await resolveContext(runtimeContext, {
+          resolved = await resolveContext(runtimeContext, {
             action: 'trigger.create',
+            capability: createCapability,
             input: parsed.data,
           });
           const target = createContinuationTarget(resolved?.target);
           if (typeof host.refreshMcpRegistry === 'function') {
             await host.refreshMcpRegistry();
           }
-          const scoped = await scopedHostFor(host, resolved);
-          const plan = await scoped.planTrigger(
+          scoped = await scopedHostFor(host, resolved);
+          plan = await scoped.planTrigger(
             buildPlanInput(parsed.data, target),
           );
+        } catch (error) {
+          return fail(error, 'EVENT_TRIGGER_PLAN_FAILED');
+        }
 
-          const decision = normalizeAuthorization(
-            await authorize({
+        // Host control is intentionally outside EI's error-normalization
+        // boundary. A runtime may return an opaque result or throw its native
+        // interrupt/suspension signal; EI must not reinterpret that mechanism.
+        const rawDecision = control
+          ? await control({
+              capability: createCapability,
               action: 'trigger.create',
               runtimeContext,
               context: resolved,
               input: parsed.data,
               plan,
-            }),
-          );
-          if (!decision.allowed) {
-            return {
-              ok: false,
-              error: {
-                code: String(
-                  decision.code || 'EVENT_TRIGGER_AUTHORIZATION_DENIED',
-                ),
-                message: String(
-                  decision.message || 'Host denied durable trigger creation',
-                ),
-              },
-            };
-          }
+            })
+          : normalizeLegacyAuthorization(
+              await authorize({
+                action: 'trigger.create',
+                runtimeContext,
+                context: resolved,
+                input: parsed.data,
+                plan,
+              }),
+            );
+        const decision = normalizeHostControlDecision(rawDecision);
 
+        if (decision.action === 'return') {
+          return decision.result;
+        }
+
+        try {
+          const execution = decision.execution ?? {};
           const actor = normalizeIdentity(
-            decision.actor ?? resolved?.actor,
+            execution.actor ?? resolved?.actor,
             'actor',
           );
           const owner = normalizeIdentity(
-            decision.owner ?? resolved?.owner,
+            execution.owner ?? resolved?.owner,
             'owner',
           );
           const confirmationId = String(
-            decision.confirmationId ?? resolved?.confirmationId ?? '',
+            execution.receiptId ??
+              execution.confirmationId ??
+              resolved?.confirmationId ??
+              '',
           ).trim();
 
           const created = await scoped.triggerControl.createTrigger({
@@ -468,17 +679,21 @@ export function createEventIntelligenceAgentTools({
             ...(confirmationId ? { confirmationId } : {}),
           });
 
-          return {
-            ok: true,
-            data: {
-              receiptId: created.receiptId,
-              triggerId: created.definition?.triggerId,
-              version: created.definition?.version,
-              state: created.state,
-              connectionIds: plan.connectionIds,
-              warnings: plan.warnings ?? [],
-            },
+          const value = {
+            receiptId: created.receiptId,
+            triggerId: created.definition?.triggerId,
+            version: created.definition?.version,
+            state: created.state,
+            connectionIds: plan.connectionIds,
+            warnings: plan.warnings ?? [],
           };
+
+          return await projectPortableResult(projectResult, {
+            capability: createCapability,
+            runtimeContext,
+            context: resolved,
+            value,
+          });
         } catch (error) {
           return fail(error, 'EVENT_TRIGGER_CREATE_FAILED');
         }
@@ -562,6 +777,93 @@ export async function createEmbeddedEventIntelligence({
       return host.close();
     },
   };
+}
+
+
+/**
+ * Runtime-level composition over the lower-level embedded host kit.
+ *
+ * This is deliberately not an adapter for any named runtime. It returns
+ * neutral tool descriptors + capability metadata; the embedding host decides
+ * how those descriptors are exposed to its model/tool system.
+ */
+export async function createEmbeddedRuntimeIntegration({
+  dataDir,
+  store,
+  env = {},
+  eventSources,
+  mcpClients = [],
+  semanticEvaluator,
+  activation,
+  wake,
+  wakeHandlers = {},
+  tooling,
+  createHost = createEventIntelligenceHost,
+} = {}) {
+  if (tooling !== undefined && (!tooling || typeof tooling !== 'object')) {
+    throw new Error('tooling must be an object when provided');
+  }
+  if (tooling && typeof tooling.resolveContext !== 'function') {
+    throw new Error('tooling.resolveContext() is required');
+  }
+  if (tooling && typeof tooling.control !== 'function') {
+    throw new Error(
+      'tooling.control() is required for host-owned mutation control',
+    );
+  }
+  if (
+    tooling?.projectResult !== undefined &&
+    typeof tooling.projectResult !== 'function'
+  ) {
+    throw new Error('tooling.projectResult must be a function');
+  }
+
+  const sourceRegistry = eventSources
+    ? createEventSourceRegistry(eventSources)
+    : null;
+
+  const embedded = await createEmbeddedEventIntelligence({
+    dataDir,
+    store,
+    env,
+    ...(sourceRegistry
+      ? {
+          mcpRegistry: createMcpRegistryAdapter({
+            listConnections: () => sourceRegistry.list(),
+            ...(typeof sourceRegistry.subscribe === 'function'
+              ? { subscribe: (listener) => sourceRegistry.subscribe(listener) }
+              : {}),
+          }),
+        }
+      : {}),
+    mcpClients,
+    semanticEvaluator,
+    activation,
+    wake,
+    wakeHandlers,
+    createHost,
+  });
+
+  const tools = tooling
+    ? createEventIntelligenceAgentTools({
+        host: embedded.host,
+        resolveContext: tooling.resolveContext,
+        control: tooling.control,
+        ...(tooling.projectResult
+          ? { projectResult: tooling.projectResult }
+          : {}),
+        names: tooling.names ?? {},
+      })
+    : [];
+  const toolCatalog = createPortableToolCatalog(tools);
+
+  return Object.freeze({
+    ...embedded,
+    tools: toolCatalog.all,
+    toolCatalog,
+    capabilities: Object.freeze(toolCatalog.capabilities()),
+    eventSources: sourceRegistry,
+  });
 }
 
 export const PORTABLE_EVENT_INTELLIGENCE_TOOL_NAMES = DEFAULT_TOOL_NAMES;

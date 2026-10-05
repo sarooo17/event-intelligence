@@ -7,6 +7,7 @@ export type {
   ActivationEnvelope as EventActivation,
   RuntimeTarget as ContinuationTarget,
 };
+
 import type {
   EventIntelligenceHost,
   EventIntelligenceHostOptions,
@@ -25,31 +26,58 @@ export interface EmbeddedHostIdentity {
 export interface EmbeddedToolContext {
   scopeId?: string;
   target: RuntimeTarget;
-  actor: EmbeddedHostIdentity;
-  owner: EmbeddedHostIdentity;
+  actor?: EmbeddedHostIdentity;
+  owner?: EmbeddedHostIdentity;
   confirmationId?: string;
   [key: string]: unknown;
+}
+
+export interface EventIntelligenceCapabilityMetadata {
+  id: string;
+  operation: 'read' | 'create' | 'update' | 'delete' | string;
+  resource: string;
+  effect: 'none' | 'durable-state' | string;
+  durability: 'ephemeral' | 'durable' | string;
+  hostControl: 'none' | 'required' | string;
+}
+
+export interface PortableResultReference {
+  id: string;
+  kind?: string;
+  metadata?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export interface PortableProjectedResult {
+  inline?: unknown;
+  reference?: PortableResultReference;
+  summary?: string;
+  metadata?: Record<string, unknown>;
 }
 
 export interface PortableToolResult {
   ok: boolean;
   data?: any;
+  result?: PortableProjectedResult;
   error?: {
     code: string;
     message: string;
   };
+  [key: string]: unknown;
 }
 
 export interface PortableAgentTool<RuntimeContext = unknown> {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
+  capability: EventIntelligenceCapabilityMetadata;
   execute(
     args: unknown,
     runtimeContext: RuntimeContext,
   ): Promise<PortableToolResult>;
 }
 
+/** @deprecated Prefer the host-owned control() contract. */
 export interface AuthorizationDecision {
   allowed: boolean;
   code?: string;
@@ -58,6 +86,33 @@ export interface AuthorizationDecision {
   owner?: EmbeddedHostIdentity;
   confirmationId?: string;
 }
+
+export interface HostControlExecuteDecision {
+  action: 'execute';
+  execution?: {
+    actor?: EmbeddedHostIdentity;
+    owner?: EmbeddedHostIdentity;
+    /** Host policy/approval receipt persisted by EI as confirmation provenance. */
+    receiptId?: string;
+    /** Legacy alias accepted for compatibility. */
+    confirmationId?: string;
+    [key: string]: unknown;
+  };
+}
+
+export interface HostControlReturnDecision {
+  action: 'return';
+  /**
+   * Opaque host-owned outcome. It may represent deny, approval required,
+   * interruption, deferral or another runtime-specific control path.
+   * EI does not interpret the reason.
+   */
+  result: PortableToolResult;
+}
+
+export type HostControlDecision =
+  | HostControlExecuteDecision
+  | HostControlReturnDecision;
 
 export interface ActivationDeliveryInput<Target = unknown> {
   packet: Record<string, unknown>;
@@ -84,16 +139,69 @@ export interface ActivationDispatcherOptions<Target = RuntimeTarget> {
   ): HostWakeReceipt | string | void | Promise<HostWakeReceipt | string | void>;
 }
 
+export type EventSourceConnection = HostMcpConnectionOptions;
+
+export interface EventSourceRegistry {
+  list(): Iterable<EventSourceConnection> | Promise<Iterable<EventSourceConnection>>;
+  subscribe?: (listener: () => void) => void | (() => void);
+}
+
+export interface EventSourceRegistryOptions {
+  list(): Iterable<EventSourceConnection> | Promise<Iterable<EventSourceConnection>>;
+  subscribe?: (listener: () => void) => void | (() => void);
+}
+
+export interface PortableToolCatalog<RuntimeContext = unknown> {
+  readonly all: readonly PortableAgentTool<RuntimeContext>[];
+  get(name: string): PortableAgentTool<RuntimeContext> | null;
+  list(options?: {
+    capabilityIds?: Iterable<string>;
+  }): PortableAgentTool<RuntimeContext>[];
+  capabilities(): EventIntelligenceCapabilityMetadata[];
+}
+
 export interface EventIntelligenceAgentToolsOptions<RuntimeContext = unknown> {
   host: EventIntelligenceHost;
   resolveContext(
     runtimeContext: RuntimeContext,
     request: {
       action: 'event.sources.list' | 'trigger.create';
+      capability: EventIntelligenceCapabilityMetadata;
       input?: unknown;
     },
   ): EmbeddedToolContext | Promise<EmbeddedToolContext>;
-  authorize(input: {
+
+  /**
+   * Host-owned control gate for durable mutations.
+   *
+   * Return action:'execute' to allow EI to perform the mutation, or
+   * action:'return' with a fully host-owned PortableToolResult to represent
+   * deny/interrupt/approval/defer semantics without EI interpreting them.
+   */
+  control?(input: {
+    capability: EventIntelligenceCapabilityMetadata;
+    action: 'trigger.create';
+    runtimeContext: RuntimeContext;
+    context: EmbeddedToolContext;
+    input: unknown;
+    plan: any;
+  }): HostControlDecision | Promise<HostControlDecision>;
+
+  /**
+   * Host-owned result projection. Use it to inline, summarize or externalize
+   * large results behind a runtime-specific reference.
+   */
+  projectResult?(input: {
+    capability: EventIntelligenceCapabilityMetadata;
+    runtimeContext: RuntimeContext;
+    context: EmbeddedToolContext;
+    value: unknown;
+  }): PortableProjectedResult | void | Promise<PortableProjectedResult | void>;
+
+  /**
+   * @deprecated Compatibility only. New integrations should use control().
+   */
+  authorize?(input: {
     action: 'trigger.create';
     runtimeContext: RuntimeContext;
     context: EmbeddedToolContext;
@@ -103,6 +211,7 @@ export interface EventIntelligenceAgentToolsOptions<RuntimeContext = unknown> {
     | boolean
     | AuthorizationDecision
     | Promise<boolean | AuthorizationDecision>;
+
   names?: {
     sources?: string;
     create?: string;
@@ -136,6 +245,45 @@ export interface EmbeddedEventIntelligence<RuntimeContext = unknown> {
   close(): Promise<void>;
 }
 
+export interface EmbeddedRuntimeTooling<RuntimeContext = unknown> {
+  resolveContext: EventIntelligenceAgentToolsOptions<RuntimeContext>['resolveContext'];
+  control: NonNullable<EventIntelligenceAgentToolsOptions<RuntimeContext>['control']>;
+  projectResult?: EventIntelligenceAgentToolsOptions<RuntimeContext>['projectResult'];
+  names?: {
+    sources?: string;
+    create?: string;
+  };
+}
+
+export interface EmbeddedRuntimeIntegrationOptions<RuntimeContext = unknown>
+  extends Omit<
+    EmbeddedEventIntelligenceOptions<RuntimeContext>,
+    'mcpRegistry' | 'mcp' | 'agentTools'
+  > {
+  eventSources?: EventSourceRegistry | EventSourceRegistryOptions;
+  tooling?: EmbeddedRuntimeTooling<RuntimeContext>;
+}
+
+export interface EmbeddedRuntimeIntegration<RuntimeContext = unknown>
+  extends Omit<EmbeddedEventIntelligence<RuntimeContext>, 'tools'> {
+  readonly tools: readonly PortableAgentTool<RuntimeContext>[];
+  readonly toolCatalog: PortableToolCatalog<RuntimeContext>;
+  readonly capabilities: readonly EventIntelligenceCapabilityMetadata[];
+  readonly eventSources: EventSourceRegistry | null;
+}
+
+export function createResultReference(
+  input: PortableResultReference,
+): PortableResultReference;
+
+export function createEventSourceRegistry(
+  options: EventSourceRegistryOptions,
+): EventSourceRegistry;
+
+export function createPortableToolCatalog<RuntimeContext = unknown>(
+  tools?: PortableAgentTool<RuntimeContext>[],
+): PortableToolCatalog<RuntimeContext>;
+
 export function createContinuationTarget(input: {
   runtime: string;
   kind: string;
@@ -153,6 +301,15 @@ export function createEventIntelligenceAgentTools<RuntimeContext = unknown>(
 export function createEmbeddedEventIntelligence<RuntimeContext = unknown>(
   options?: EmbeddedEventIntelligenceOptions<RuntimeContext>,
 ): Promise<EmbeddedEventIntelligence<RuntimeContext>>;
+
+export function createEmbeddedRuntimeIntegration<RuntimeContext = unknown>(
+  options: EmbeddedRuntimeIntegrationOptions<RuntimeContext>,
+): Promise<EmbeddedRuntimeIntegration<RuntimeContext>>;
+
+export const EVENT_INTELLIGENCE_CAPABILITIES: Readonly<{
+  eventSourcesList: Readonly<EventIntelligenceCapabilityMetadata>;
+  triggerCreate: Readonly<EventIntelligenceCapabilityMetadata>;
+}>;
 
 export const PORTABLE_EVENT_INTELLIGENCE_TOOL_NAMES: Readonly<{
   sources: 'event_sources_list';

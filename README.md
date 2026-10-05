@@ -31,28 +31,46 @@ npm install mcp-event-intelligence
 
 Published package: [npm](https://www.npmjs.com/package/mcp-event-intelligence) · [Official MCP Registry](https://registry.modelcontextprotocol.io/?q=io.github.sarooo17%2Fevent-intelligence)
 
-For most runtimes, start with the runtime-neutral embedded host kit:
+For most runtimes, start with the runtime-neutral integration surface:
 
 ```js
 import {
-  createEmbeddedEventIntelligence,
+  createEmbeddedRuntimeIntegration,
+  createEventSourceRegistry,
 } from 'mcp-event-intelligence/embedded';
 
-const ei = await createEmbeddedEventIntelligence({
+const ei = await createEmbeddedRuntimeIntegration({
   dataDir: './data/event-intelligence',
 
-  // The host keeps ownership of MCP transports, auth and connection lifecycle.
-  mcp: {
-    listConnections: () => runtime.mcp.connections(),
-    subscribe: (refresh) => runtime.mcp.onConnectionsChanged(refresh),
-  },
+  // The host owns transports, auth and connection lifecycle.
+  eventSources: createEventSourceRegistry({
+    list: () => runtime.events.connections(),
+    subscribe: (refresh) => runtime.events.onConnectionsChanged(refresh),
+  }),
 
-  // EI produces an activation; the host decides how its own work resumes.
+  // EI emits an activation. The host decides what "resume" means.
   activation: {
     resolveTarget: (target) => runtime.resolveContinuation(target),
     hasReceipt: (receiptId) => runtime.hasWakeReceipt(receiptId),
     deliver: ({ activation, target, receiptId }) =>
       runtime.resumeFromEvent({ activation, target, receiptId }),
+  },
+
+  // Optional. Runtimes without an agent-tool surface can omit tooling entirely.
+  tooling: {
+    resolveContext: (ctx) => ({
+      target: runtime.currentContinuation(ctx),
+      actor: runtime.currentActor(ctx),
+      owner: runtime.currentOwner(ctx),
+    }),
+
+    // Host-owned control. EI does not reduce authorization/approval/interrupt
+    // semantics to a boolean.
+    control: (request) => runtime.policy.control(request),
+
+    // Optional host-owned result projection. Large results may be externalized
+    // behind a runtime-specific reference instead of entering model context.
+    projectResult: (request) => runtime.results.project(request),
   },
 });
 ```
@@ -60,24 +78,45 @@ const ei = await createEmbeddedEventIntelligence({
 The continuation target is intentionally opaque to EI apart from
 `{ runtime, kind, id }`. A host may map it to a Turn, Execution, thread,
 graph checkpoint, workflow, Case, or any other durable continuation primitive.
-The package contains no `runtime === "muffin"` / `"artemis"` branches.
 
-Portable agent-facing trigger tools are optional:
+The returned tools are neutral descriptors with EI-neutral capability metadata:
 
 ```js
-const tools = ei.createAgentTools({
-  resolveContext: (ctx) => ({
-    target: runtime.currentContinuation(ctx),
-    actor: runtime.currentActor(ctx),
-    owner: runtime.currentOwner(ctx),
-  }),
-  authorize: (request) => runtime.policy.authorize(request),
-});
+for (const tool of ei.toolCatalog.all) {
+  // The host translates this descriptor into its own tool/capability system.
+  runtime.tools.register(tool);
+}
 ```
 
-Each tool is a neutral `{ name, description, inputSchema, execute }`
-descriptor. Adapt that descriptor to OpenAI, Anthropic, an internal capability
-graph, or any other host SDK without changing EI core.
+EI intentionally ships **no per-runtime adapter matrix** such as
+`toOpenAI()`, `toAnthropic()`, `toMuffin()` or `toArtemis()`.
+There are too many runtimes, and adding one runtime must never require changing
+EI core. The host consumes the same neutral contract and performs the final
+translation at its own boundary.
+
+Tool exposure is also host-owned. `toolCatalog.list({ capabilityIds })` can
+project only the capabilities the host has decided to expose. EI supplies
+metadata such as read vs durable mutation; it does not decide the host's RBAC,
+risk tiers, approval flow or interrupt UX.
+
+For durable mutations, `tooling.control()` returns either:
+
+- `{ action: 'execute', execution?: ... }` — proceed, optionally attaching
+  host policy/approval provenance; or
+- `{ action: 'return', result: ... }` — stop and return an opaque host-owned
+  outcome. That outcome may mean denied, approval required, interrupted,
+  deferred, or anything else the host runtime supports.
+
+EI never interprets the second case. This keeps authorization, human approval
+and interrupt semantics entirely outside the event engine.
+
+Result handling follows the same boundary. `projectResult()` may keep a small
+value inline or replace it with a host-owned reference. EI does not become a
+blob store, artifact system or model-context manager.
+
+The package contains no named-runtime dispatch such as
+`if (runtime === "muffin")`, `"artemis"`, `"openai"` or `"anthropic"`.
+A new runtime should require only host-boundary code outside EI core.
 
 The lower-level host API remains available when a runtime needs direct control:
 

@@ -1,15 +1,22 @@
 #!/usr/bin/env node
 
+import { readFileSync } from 'node:fs';
+
+const packageJson = JSON.parse(
+  readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
+);
+const packageVersion = String(packageJson.version || '').trim();
+
 const args = process.argv.slice(2);
 const flags = new Set(args);
 
 if (flags.has('--version') || flags.has('-v')) {
-  console.log('0.6.1');
+  console.log(packageVersion);
   process.exit(0);
 }
 
 if (flags.has('--help') || flags.has('-h')) {
-  console.log(`MCP Event Intelligence v0.6.1
+  console.log(`MCP Event Intelligence v${packageVersion}
 
 MCP-native complex event processing for durable agents.
 

@@ -1,10 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  EVENT_INTELLIGENCE_CAPABILITIES,
   createActivationDispatcher,
   createContinuationTarget,
   createEmbeddedEventIntelligence,
+  createEmbeddedRuntimeIntegration,
   createEventIntelligenceAgentTools,
+  createEventSourceRegistry,
+  createPortableToolCatalog,
+  createResultReference,
 } from '../scripts/embedded-host-kit.mjs';
 
 const activation = {
@@ -170,9 +175,11 @@ test('portable tools keep target and authorization host-owned', async () => {
         tenant_id: 'tenant-1',
       },
     }),
-    authorize: () => ({
-      allowed: true,
-      confirmationId: 'host-policy-1',
+    control: () => ({
+      action: 'execute',
+      execution: {
+        receiptId: 'host-policy-1',
+      },
     }),
   });
 
@@ -227,4 +234,383 @@ test('embedded install composes host MCP, activation delivery and portable tools
   assert.deepEqual(await embedded.refresh(), ['refreshed']);
   await embedded.close();
   assert.equal(closed, true);
+});
+
+test('capability metadata is EI-neutral and drives host-side exposure', () => {
+  assert.deepEqual(EVENT_INTELLIGENCE_CAPABILITIES.eventSourcesList, {
+    id: 'event-intelligence.event-sources.list',
+    operation: 'read',
+    resource: 'event-source',
+    effect: 'none',
+    durability: 'ephemeral',
+    hostControl: 'none',
+  });
+  assert.deepEqual(EVENT_INTELLIGENCE_CAPABILITIES.triggerCreate, {
+    id: 'event-intelligence.trigger.create',
+    operation: 'create',
+    resource: 'trigger',
+    effect: 'durable-state',
+    durability: 'durable',
+    hostControl: 'required',
+  });
+
+  const tools = [
+    {
+      name: 'read',
+      capability: EVENT_INTELLIGENCE_CAPABILITIES.eventSourcesList,
+    },
+    {
+      name: 'write',
+      capability: EVENT_INTELLIGENCE_CAPABILITIES.triggerCreate,
+    },
+  ];
+  const catalog = createPortableToolCatalog(tools);
+  assert.equal(catalog.get('read').name, 'read');
+  assert.deepEqual(
+    catalog.list({
+      capabilityIds: ['event-intelligence.trigger.create'],
+    }).map((tool) => tool.name),
+    ['write'],
+  );
+});
+
+test('event source registry is host-owned and runtime-neutral', async () => {
+  let listener = null;
+  const connections = [{ id: 'events-a' }];
+  const registry = createEventSourceRegistry({
+    list: () => connections,
+    subscribe(callback) {
+      listener = callback;
+      return () => {
+        listener = null;
+      };
+    },
+  });
+
+  assert.deepEqual(await registry.list(), connections);
+  let refreshed = 0;
+  const unsubscribe = registry.subscribe(() => {
+    refreshed += 1;
+  });
+  listener();
+  assert.equal(refreshed, 1);
+  unsubscribe();
+  assert.equal(listener, null);
+});
+
+test('host control may interrupt without EI interpreting approval semantics', async () => {
+  let created = 0;
+  const host = {
+    async refreshMcpRegistry() {},
+    eventSources: [],
+    async planTrigger(input) {
+      return {
+        definition: {
+          triggerId: 'planned-interrupt',
+          version: '1',
+          target: input.target,
+        },
+        connectionIds: [],
+        warnings: [],
+      };
+    },
+    triggerControl: {
+      async createTrigger() {
+        created += 1;
+        throw new Error('must not execute');
+      },
+    },
+  };
+
+  const tools = createEventIntelligenceAgentTools({
+    host,
+    resolveContext: () => ({
+      target: {
+        runtime: 'opaque-host',
+        kind: 'continuation',
+        id: 'c-1',
+      },
+      actor: {
+        type: 'agent',
+        principal_id: 'agent-1',
+      },
+      owner: {
+        type: 'user',
+        principal_id: 'user-1',
+      },
+    }),
+    control: ({ capability }) => ({
+      action: 'return',
+      result: {
+        ok: false,
+        control: {
+          kind: 'host-interrupt',
+          capabilityId: capability.id,
+          requestId: 'approval-123',
+        },
+      },
+    }),
+  });
+
+  const result = await tools[1].execute({
+    events: [{ event: 'demo.changed' }],
+    instruction: 'Continue after the change.',
+  }, {});
+
+  assert.equal(created, 0);
+  assert.deepEqual(result, {
+    ok: false,
+    control: {
+      kind: 'host-interrupt',
+      capabilityId: 'event-intelligence.trigger.create',
+      requestId: 'approval-123',
+    },
+  });
+});
+
+test('host control may throw a native interrupt without EI swallowing it', async () => {
+  const nativeInterrupt = Object.assign(new Error('host paused execution'), {
+    name: 'HostInterrupt',
+    interruptId: 'interrupt-1',
+  });
+  const host = {
+    async refreshMcpRegistry() {},
+    eventSources: [],
+    async planTrigger(input) {
+      return {
+        definition: {
+          triggerId: 'planned-native-interrupt',
+          version: '1',
+          target: input.target,
+        },
+        connectionIds: [],
+        warnings: [],
+      };
+    },
+    triggerControl: {
+      async createTrigger() {
+        throw new Error('must not execute');
+      },
+    },
+  };
+
+  const tools = createEventIntelligenceAgentTools({
+    host,
+    resolveContext: () => ({
+      target: {
+        runtime: 'opaque-host',
+        kind: 'continuation',
+        id: 'c-native',
+      },
+    }),
+    control: () => {
+      throw nativeInterrupt;
+    },
+  });
+
+  await assert.rejects(
+    tools[1].execute({
+      events: [{ event: 'demo.changed' }],
+      instruction: 'Resume later.',
+    }, {}),
+    (error) => error === nativeInterrupt,
+  );
+});
+
+test('result projection can externalize large results behind host references', async () => {
+  const host = {
+    async refreshMcpRegistry() {},
+    eventSources: [{
+      connectionId: 'big',
+      serverId: 'big',
+      eventName: 'big.event',
+      description: 'Large source metadata',
+      delivery: ['poll'],
+      inputSchema: { type: 'object' },
+      payloadSchema: { type: 'object' },
+    }],
+    async planTrigger() {
+      throw new Error('not used');
+    },
+    triggerControl: {
+      async createTrigger() {
+        throw new Error('not used');
+      },
+    },
+  };
+
+  const tools = createEventIntelligenceAgentTools({
+    host,
+    resolveContext: () => ({
+      target: {
+        runtime: 'custom',
+        kind: 'task',
+        id: 't-1',
+      },
+      actor: { type: 'agent', principal_id: 'a-1' },
+      owner: { type: 'user', principal_id: 'u-1' },
+    }),
+    control: () => ({ action: 'execute' }),
+    projectResult: ({ capability, value }) => ({
+      reference: createResultReference({
+        id: 'result-1',
+        kind: 'host-result',
+        metadata: {
+          capabilityId: capability.id,
+          count: value.sources.length,
+        },
+      }),
+      summary: '1 event source',
+    }),
+  });
+
+  const result = await tools[0].execute({}, {});
+  assert.equal(result.ok, true);
+  assert.equal(Object.hasOwn(result, 'data'), false);
+  assert.deepEqual(result.result, {
+    reference: {
+      id: 'result-1',
+      kind: 'host-result',
+      metadata: {
+        capabilityId: 'event-intelligence.event-sources.list',
+        count: 1,
+      },
+    },
+    summary: '1 event source',
+  });
+});
+
+test('embedded runtime integration composes neutral sources, tools, control and projection', async () => {
+  let capturedOptions;
+  const fakeHost = {
+    runtime: { marker: 'runtime-neutral' },
+    eventSources: Promise.resolve([]),
+    async refreshMcpRegistry() {
+      return [];
+    },
+    async mcpStatus() {
+      return [];
+    },
+    async scope() {
+      return this;
+    },
+    async close() {},
+    async planTrigger(input) {
+      return {
+        definition: {
+          triggerId: 'generic-1',
+          version: '1',
+          target: input.target,
+        },
+        connectionIds: [],
+        warnings: [],
+      };
+    },
+    triggerControl: {
+      async createTrigger(input) {
+        return {
+          receiptId: 'receipt-1',
+          definition: input.definition,
+          state: { status: 'active' },
+        };
+      },
+    },
+  };
+  const eventSources = createEventSourceRegistry({
+    list: () => [],
+  });
+
+  const integration = await createEmbeddedRuntimeIntegration({
+    eventSources,
+    tooling: {
+      resolveContext: () => ({
+        target: {
+          runtime: 'vendor-independent-host',
+          kind: 'checkpoint',
+          id: 'checkpoint-7',
+        },
+        actor: {
+          type: 'agent',
+          principal_id: 'agent-7',
+        },
+        owner: {
+          type: 'user',
+          principal_id: 'user-7',
+        },
+      }),
+      control: () => ({
+        action: 'execute',
+        execution: { receiptId: 'policy-receipt-7' },
+      }),
+      projectResult: ({ value }) => ({ inline: value }),
+    },
+    activation: {
+      deliver: ({ receiptId }) => ({ runtimeReceiptId: receiptId }),
+    },
+    createHost: async (options) => {
+      capturedOptions = options;
+      return fakeHost;
+    },
+  });
+
+  assert.equal(typeof capturedOptions.mcpRegistry.listConnections, 'function');
+  assert.equal(typeof capturedOptions.wake, 'function');
+  assert.deepEqual(
+    [...await integration.eventSources.list()],
+    [...await eventSources.list()],
+  );
+  assert.deepEqual(
+    integration.capabilities.map((capability) => capability.id),
+    [
+      'event-intelligence.event-sources.list',
+      'event-intelligence.trigger.create',
+    ],
+  );
+  assert.deepEqual(
+    integration.toolCatalog.list({
+      capabilityIds: ['event-intelligence.event-sources.list'],
+    }).map((tool) => tool.name),
+    ['event_sources_list'],
+  );
+
+  const created = await integration.toolCatalog.get('trigger_create').execute({
+    events: [{ event: 'demo.changed' }],
+    instruction: 'Resume.',
+  }, {});
+  assert.equal(created.ok, true);
+  assert.equal(created.data.triggerId, 'generic-1');
+});
+
+
+
+test('embedded runtime integration does not require a tool system', async () => {
+  const fakeHost = {
+    runtime: { marker: 'headless-runtime' },
+    eventSources: [],
+    async refreshMcpRegistry() { return []; },
+    async mcpStatus() { return []; },
+    async scope() { return this; },
+    async close() {},
+  };
+
+  const integration = await createEmbeddedRuntimeIntegration({
+    eventSources: createEventSourceRegistry({ list: () => [] }),
+    activation: {
+      deliver: ({ receiptId }) => ({ runtimeReceiptId: receiptId }),
+    },
+    createHost: async () => fakeHost,
+  });
+
+  assert.deepEqual(integration.tools, []);
+  assert.deepEqual(integration.capabilities, []);
+});
+
+test('embedded host kit contains no named-runtime branch', async () => {
+  const source = await import('node:fs/promises').then(({ readFile }) =>
+    readFile(new URL('../scripts/embedded-host-kit.mjs', import.meta.url), 'utf8')
+  );
+  assert.doesNotMatch(
+    source,
+    /if\s*\([^)]*runtime\s*===\s*['"][^'"]+['"]/,
+  );
 });
