@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   EVENT_INTELLIGENCE_CAPABILITIES,
+  bindEmbeddedRuntimeIntegration,
   createActivationDispatcher,
+  createDeterministicReceiptId,
   createContinuationTarget,
   createEmbeddedEventIntelligence,
   createEmbeddedRuntimeIntegration,
@@ -10,6 +12,7 @@ import {
   createEventSourceRegistry,
   createPortableToolCatalog,
   createResultReference,
+  summarizeEventSourceStatus,
 } from '../scripts/embedded-host-kit.mjs';
 
 const activation = {
@@ -720,4 +723,120 @@ test('embedded host kit contains no named-runtime branch', async () => {
     source,
     /if\s*\([^)]*runtime\s*===\s*['"][^'"]+['"]/,
   );
+});
+
+test('deterministic receipt ids are namespaced and bounded', () => {
+  const first = createDeterministicReceiptId('runtime-a', 'wake-1');
+  const same = createDeterministicReceiptId('runtime-a', 'wake-1');
+  const other = createDeterministicReceiptId('runtime-b', 'wake-1');
+
+  assert.equal(first, same);
+  assert.equal(first.length, 32);
+  assert.notEqual(first, other);
+  assert.equal(
+    createDeterministicReceiptId('runtime-a', 'wake-1', { length: 16 }).length,
+    16,
+  );
+});
+
+test('event source diagnostics normalize readiness without host semantics', () => {
+  const diagnostics = summarizeEventSourceStatus([
+    { serverId: 'a', events: [{ name: 'one' }, { name: 'two' }] },
+    { serverId: 'b', events: [] },
+    { serverId: 'c', error: 'offline' },
+  ]);
+
+  assert.deepEqual(
+    {
+      connections: diagnostics.connections,
+      eventsCapable: diagnostics.eventsCapable,
+      eventDefinitions: diagnostics.eventDefinitions,
+      errors: diagnostics.errors,
+    },
+    {
+      connections: 3,
+      eventsCapable: 1,
+      eventDefinitions: 2,
+      errors: 1,
+    },
+  );
+});
+
+test('embedded binding adapts tools, registers them and wires lifecycle', async () => {
+  let closeHook;
+  let closed = false;
+  const registered = [];
+  const integration = {
+    tools: [
+      { name: 'read' },
+      { name: 'write' },
+    ],
+    async close() {
+      closed = true;
+    },
+  };
+
+  const bound = bindEmbeddedRuntimeIntegration(integration, {
+    adapt: (tool) => ({ hostName: `host:${tool.name}` }),
+    register: (tool, portableTool) => {
+      registered.push([tool.hostName, portableTool.name]);
+    },
+    onClose: (hook) => {
+      closeHook = hook;
+    },
+  });
+
+  assert.deepEqual(
+    bound.map((tool) => tool.hostName),
+    ['host:read', 'host:write'],
+  );
+  assert.deepEqual(registered, [
+    ['host:read', 'read'],
+    ['host:write', 'write'],
+  ]);
+  assert.equal(typeof closeHook, 'function');
+  await closeHook();
+  assert.equal(closed, true);
+});
+
+test('runtime integration accepts a static iterable of host-owned event connections', async () => {
+  let capturedOptions;
+  const connection = {
+    connectionId: 'static-a',
+    serverId: 'static-a',
+    request: async () => ({ events: [] }),
+    getCapabilities: () => ({
+      extensions: { 'io.modelcontextprotocol/events': {} },
+    }),
+  };
+  const fakeHost = {
+    runtime: {},
+    eventSources: [],
+    async refreshMcpRegistry() { return []; },
+    async mcpStatus() {
+      return [{ serverId: 'static-a', events: [{ name: 'demo.ready' }] }];
+    },
+    async scope() { return this; },
+    async close() {},
+  };
+
+  const integration = await createEmbeddedRuntimeIntegration({
+    eventSources: [connection],
+    activation: {
+      deliver: ({ receiptId }) => ({ runtimeReceiptId: receiptId }),
+    },
+    createHost: async (options) => {
+      capturedOptions = options;
+      return fakeHost;
+    },
+  });
+
+  assert.deepEqual(
+    [...await capturedOptions.mcpRegistry.listConnections()],
+    [connection],
+  );
+  const diagnostics = await integration.diagnostics();
+  assert.equal(diagnostics.connections, 1);
+  assert.equal(diagnostics.eventsCapable, 1);
+  assert.equal(diagnostics.eventDefinitions, 1);
 });
