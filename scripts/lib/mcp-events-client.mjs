@@ -286,6 +286,7 @@ export class McpEventsClientManager {
     resolveScope = null,
     connections = [],
     now = () => new Date(),
+    observability = null,
   }) {
     this.store = store;
     this.compositeEventConsumer = compositeEventConsumer;
@@ -293,6 +294,7 @@ export class McpEventsClientManager {
     this.resolveScope = resolveScope;
     this.connections = new Map();
     this.now = now;
+    this.observability = observability;
     this.descriptors = new Map();
     this.profiles = new Map();
     this.timers = new Map();
@@ -877,6 +879,15 @@ export class McpEventsClientManager {
         connection.connectionId,
         error instanceof Error ? error.message : String(error),
       );
+      void this.observability?.emit({
+        event: 'ei.source.delivery_failed',
+        level: 'warn',
+        scopeId: connection.scopeId,
+        connectionId: connection.connectionId,
+        serverId: connection.serverId,
+        eventName: subscription.eventName,
+        error,
+      });
     };
 
     const onTerminated = async (detail) => {
@@ -887,6 +898,15 @@ export class McpEventsClientManager {
           typeof detail === 'string' ? detail : JSON.stringify(detail),
         );
       }
+      void this.observability?.emit({
+        event: 'ei.source.delivery_terminated',
+        level: detail ? 'warn' : 'debug',
+        scopeId: connection.scopeId,
+        connectionId: connection.connectionId,
+        serverId: connection.serverId,
+        eventName: subscription.eventName,
+        status: 'terminated',
+      });
     };
 
     const open =
@@ -1054,6 +1074,14 @@ export class McpEventsClientManager {
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         this.lastErrors.set(connection.connectionId, message);
+        await this.observability?.emit({
+          event: 'ei.source.poll_failed',
+          level: 'warn',
+          scopeId: connection.scopeId,
+          connectionId: connection.connectionId,
+          serverId: connection.serverId,
+          error,
+        });
         results.push({
           connectionId: connection.connectionId,
           error: message,
@@ -1097,6 +1125,14 @@ export class McpEventsClientManager {
           connection.connectionId,
           error instanceof Error ? error.message : String(error),
         );
+        await this.observability?.emit({
+          event: 'ei.source.poll_failed',
+          level: 'warn',
+          scopeId: connection.scopeId,
+          connectionId: connection.connectionId,
+          serverId: connection.serverId,
+          error,
+        });
       } finally {
         if (
           this.started &&
