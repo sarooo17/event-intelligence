@@ -10,6 +10,7 @@ export const referenceHostAdapter = {
   async createHarness({ observability }) {
     const dataDir = await mkdtemp(path.join(os.tmpdir(), 'ei-host-conformance-'));
     const externalDeliveries = [];
+    const owner = { type: 'user', principal_id: 'host-conformance-user' };
     let host = null;
 
     const start = async () => {
@@ -93,8 +94,8 @@ export const referenceHostAdapter = {
         await host.triggerControl.createTrigger({
           definition: planned.definition,
           connectionIds: planned.connectionIds,
-          actor: { type: 'user', principal_id: 'host-conformance-user' },
-          owner: { type: 'user', principal_id: 'host-conformance-user' },
+          actor: owner,
+          owner,
         });
       },
 
@@ -122,12 +123,120 @@ export const referenceHostAdapter = {
         await start();
       },
 
+      async listTriggers() {
+        const rows = await host.triggerControl.listTriggers({ owner });
+        return rows.map((entry) => ({
+          triggerId: entry.definition.triggerId,
+          version: entry.definition.version,
+          status: entry.state.status,
+          fireCount: entry.state.fireCount,
+        }));
+      },
+
       async inspectTrigger(triggerId) {
-        const rows = await host.triggerControl.listTriggers();
-        const entry = rows.find(
-          (candidate) => candidate.definition.triggerId === triggerId,
-        );
-        return entry?.state ?? null;
+        const rows = (await host.triggerControl.listTriggers({ owner }))
+          .filter((candidate) => candidate.definition.triggerId === triggerId);
+        const current = rows.filter((candidate) =>
+          ['active', 'paused'].includes(candidate.state.status)
+        ).at(-1) ?? rows.at(-1);
+        return current
+          ? {
+              ...current.state,
+              version: current.definition.version,
+            }
+          : null;
+      },
+
+      async pauseTrigger(triggerId) {
+        const rows = (await host.triggerControl.listTriggers({ owner }))
+          .filter((candidate) =>
+            candidate.definition.triggerId === triggerId &&
+            candidate.state.status === 'active'
+          );
+        const current = rows.at(-1);
+        if (!current) throw new Error(`No active trigger ${triggerId}`);
+        await host.triggerControl.pauseTrigger({
+          triggerId,
+          version: current.definition.version,
+          actor: owner,
+          owner,
+        });
+      },
+
+      async resumeTrigger(triggerId) {
+        const rows = (await host.triggerControl.listTriggers({ owner }))
+          .filter((candidate) =>
+            candidate.definition.triggerId === triggerId &&
+            candidate.state.status === 'paused'
+          );
+        const current = rows.at(-1);
+        if (!current) throw new Error(`No paused trigger ${triggerId}`);
+        await host.triggerControl.resumeTrigger({
+          triggerId,
+          version: current.definition.version,
+          actor: owner,
+          owner,
+        });
+      },
+
+      async updateTrigger({ triggerId, threshold }) {
+        const rows = (await host.triggerControl.listTriggers({ owner }))
+          .filter((candidate) =>
+            candidate.definition.triggerId === triggerId &&
+            ['active', 'paused'].includes(candidate.state.status)
+          );
+        const current = rows.at(-1);
+        if (!current) throw new Error(`No mutable trigger ${triggerId}`);
+        const currentVersion = String(current.definition.version);
+        const nextVersion = /^\d+$/.test(currentVersion)
+          ? String(Number(currentVersion) + 1)
+          : `${currentVersion}-r2`;
+        const planned = await host.planTrigger({
+          triggerId,
+          version: nextVersion,
+          events: [{
+            id: 'value',
+            event: 'conformance.value.changed',
+            serverId: 'conformance',
+            where: [{
+              path: 'value',
+              op: 'gt',
+              value: threshold,
+            }],
+          }],
+          lifecycle: {
+            oneShot: current.definition.lifecycle?.oneShot ?? false,
+            ...(current.definition.lifecycle?.maxFirings === undefined
+              ? {}
+              : { maxFirings: current.definition.lifecycle.maxFirings }),
+          },
+          target: current.definition.target,
+          continuation: current.definition.continuation,
+        });
+        await host.triggerControl.updateTrigger({
+          triggerId,
+          expectedVersion: current.definition.version,
+          definition: planned.definition,
+          connectionIds: planned.connectionIds,
+          actor: owner,
+          owner,
+        });
+      },
+
+      async deleteTrigger(triggerId) {
+        const rows = (await host.triggerControl.listTriggers({ owner }))
+          .filter((candidate) =>
+            candidate.definition.triggerId === triggerId &&
+            ['active', 'paused'].includes(candidate.state.status)
+          );
+        const current = rows.at(-1);
+        if (!current) throw new Error(`No current trigger ${triggerId}`);
+        await host.triggerControl.deleteTrigger({
+          triggerId,
+          version: current.definition.version,
+          actor: owner,
+          owner,
+        });
       },
 
       async close() {
@@ -139,7 +248,9 @@ export const referenceHostAdapter = {
 };
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  const report = await runHostConformance(referenceHostAdapter);
+  const report = await runHostConformance(referenceHostAdapter, {
+    profile: 'management',
+  });
   console.log(JSON.stringify(report, null, 2));
   if (!report.passed) process.exitCode = 1;
 }
