@@ -46,6 +46,7 @@ const integration = await createEmbeddedRuntimeIntegration({
   }),
 
   activation: {
+    receiptNamespace: 'my-runtime',
     resolveTarget: (target) => host.resolveContinuation(target),
     hasReceipt: (receiptId) => host.hasWakeReceipt(receiptId),
     deliver: ({ activation, target, receiptId }) =>
@@ -93,6 +94,9 @@ from a wake, EI exposes a neutral hashing helper:
 ```js
 const id = createDeterministicReceiptId('my-runtime', activation.wake.wakeId);
 ```
+
+Or declare the namespace directly on the activation dispatcher with
+`activation.receiptNamespace`; EI will derive the same id automatically.
 
 The namespace is host-chosen. EI does not assign semantics to the resulting id.
 
