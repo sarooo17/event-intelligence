@@ -2,6 +2,9 @@ import type {
   ActivationEnvelope,
   TriggerPlanInput,
 } from '../dist/src/intelligenceProtocol/index.js';
+import type {
+  EventIntelligenceObservabilitySink,
+} from './lib/observability.d.mts';
 
 export interface HostMcpClientLike {
   request(
@@ -130,6 +133,8 @@ export interface EventIntelligenceHostOptions {
   /** Optional runtime-specific dispatchers. */
   wakeHandlers?: Map<string, HostWakeHandler> | Record<string, HostWakeHandler>;
   semanticEvaluator?: unknown;
+  /** Runtime-neutral structured operational events. Sink failures never affect EI semantics. */
+  observability?: EventIntelligenceObservabilitySink;
 }
 
 export interface EventIntelligenceScopedHost {
