@@ -34,6 +34,7 @@ continuation semantics and user-facing delivery.
 
 ```js
 import {
+  createDeterministicReceiptId,
   createEmbeddedRuntimeIntegration,
   createEventSourceRegistry,
 } from 'mcp-event-intelligence/embedded';
@@ -68,6 +69,51 @@ const integration = await createEmbeddedRuntimeIntegration({
 `tooling` is optional. A runtime that does not expose EI operations directly
 to a model can omit it and still use the same source registry, trigger engine
 and activation delivery contract.
+
+
+
+## Reusable host glue
+
+A host with a fixed set of already-open event connections can pass the iterable
+directly instead of wrapping it:
+
+```js
+const integration = await createEmbeddedRuntimeIntegration({
+  eventSources: host.eventConnections,
+  // ...
+});
+```
+
+Dynamic connection managers should keep using `createEventSourceRegistry()`
+so they can expose `subscribe()`.
+
+For runtimes that need a bounded deterministic execution/Turn/checkpoint id
+from a wake, EI exposes a neutral hashing helper:
+
+```js
+const id = createDeterministicReceiptId('my-runtime', activation.wake.wakeId);
+```
+
+The namespace is host-chosen. EI does not assign semantics to the resulting id.
+
+`integration.diagnostics()` normalizes MCP-event source readiness into
+`connections`, `eventsCapable`, `eventDefinitions`, `errors` and the
+raw status rows. This keeps readiness counting out of every host without
+prescribing how the host renders status.
+
+Finally, `integration.bind()` removes the repetitive adaptation/registration
+loop while leaving the actual host tool shape entirely host-owned:
+
+```js
+integration.bind({
+  adapt: (portableTool) => host.toNativeTool(portableTool),
+  register: (nativeTool, portableTool) =>
+    host.register(nativeTool, host.mapCapability(portableTool.capability)),
+  onClose: (close) => host.onClose(close),
+});
+```
+
+This is deliberately callback-driven rather than a vendor adapter matrix.
 
 ## Host control
 
