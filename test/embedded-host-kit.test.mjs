@@ -869,6 +869,46 @@ test('event source diagnostics normalize readiness without host semantics', () =
   );
 });
 
+test('static one-shot event iterables are snapshotted for repeated refreshes', async () => {
+  function* connections() {
+    yield {
+      connectionId: 'generator-a',
+      serverId: 'generator-a',
+      request: async () => ({ events: [] }),
+      getCapabilities: () => ({
+        extensions: { 'io.modelcontextprotocol/events': {} },
+      }),
+    };
+  }
+
+  let capturedOptions;
+  const fakeHost = {
+    runtime: {},
+    eventSources: [],
+    async refreshMcpRegistry() { return []; },
+    async mcpStatus() { return []; },
+    async scope() { return this; },
+    async close() {},
+  };
+
+  await createEmbeddedRuntimeIntegration({
+    eventSources: connections(),
+    activation: {
+      deliver: ({ receiptId }) => ({ runtimeReceiptId: receiptId }),
+    },
+    createHost: async (options) => {
+      capturedOptions = options;
+      return fakeHost;
+    },
+  });
+
+  const first = [...await capturedOptions.mcpRegistry.listConnections()];
+  const second = [...await capturedOptions.mcpRegistry.listConnections()];
+  assert.equal(first.length, 1);
+  assert.equal(second.length, 1);
+  assert.equal(first[0], second[0]);
+});
+
 test('embedded binding adapts tools, registers them and wires lifecycle', async () => {
   let closeHook;
   let closed = false;
