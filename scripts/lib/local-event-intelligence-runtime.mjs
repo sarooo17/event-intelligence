@@ -48,6 +48,9 @@ import {
 import {
   ActivationHydrator,
 } from './activation-hydrator.mjs';
+import {
+  createObservabilityEmitter,
+} from './observability.mjs';
 
 const REQUIRED_STORE_METHODS = [
   'putTrigger',
@@ -114,7 +117,9 @@ export async function createLocalEventIntelligenceRuntime({
   wake,
   semanticEvaluator,
   store: providedStore,
+  observability,
 } = {}) {
+  const observer = createObservabilityEmitter(observability);
   const dataDir = env.DATA_DIR ?? './data';
   const rootStore = providedStore ?? new PersistentEventStore(dataDir);
   const restored = await initializeStore(rootStore);
@@ -212,6 +217,7 @@ export async function createLocalEventIntelligenceRuntime({
           triggerEngine,
           deliverer: createSignedRuntimeWakeDeliverer(target),
           packetBuilder,
+          observability: observer,
           ...deliveryOptions,
         }),
       );
@@ -224,6 +230,7 @@ export async function createLocalEventIntelligenceRuntime({
           store,
           triggerEngine,
           packetBuilder,
+          observability: observer,
           ...deliveryOptions,
           deliverer: async (packet) => {
             const activation = await activationHydrator.hydrateWake(packet.wake_id);
@@ -281,18 +288,21 @@ export async function createLocalEventIntelligenceRuntime({
       wakeCoordinators,
       derivedEventCoordinator,
       maxDerivedDepth: Number(env.MAX_DERIVED_EVENT_DEPTH ?? 16),
+      observability: observer,
     });
 
     const temporalScheduler = new TemporalDeadlineScheduler({
       store,
       compositeEventConsumer,
       intervalMs: Number(env.TEMPORAL_TICK_MS ?? 1000),
+      observability: observer,
     });
     temporalScheduler.start();
 
     const triggerControl = new TriggerControlPlane({
       store,
       triggerEngine,
+      observability: observer,
     });
     const triggerInspector = new TriggerInspector({ store });
 
@@ -302,6 +312,7 @@ export async function createLocalEventIntelligenceRuntime({
       store,
       resolveCoordinator: coordinatorFor,
       intervalMs: Number(env.WAKE_RETRY_TICK_MS ?? 1000),
+      observability: observer,
     });
     wakeRetryScheduler.start();
 
@@ -359,8 +370,32 @@ export async function createLocalEventIntelligenceRuntime({
   const discovery = await mcpEventsClient.discoverAll();
   mcpEventsClient.start();
 
+  for (const source of discovery) {
+    await observer.emit({
+      event: source.status === 'error'
+        ? 'ei.source.discovery_failed'
+        : 'ei.source.discovered',
+      level: source.status === 'error' ? 'warn' : 'info',
+      connectionId: source.connectionId,
+      status: source.status,
+      ...(source.error ? { error: new Error(source.error) } : {}),
+      ...(source.events ? { metadata: { eventNames: source.events } } : {}),
+    });
+  }
+  await observer.emit({
+    event: 'ei.lifecycle.started',
+    level: 'info',
+    metadata: {
+      restoredScopes:
+        typeof rootStore.listScopeIds === 'function'
+          ? await rootStore.listScopeIds()
+          : [DEFAULT_EVENT_SCOPE_ID],
+    },
+  });
+
   return {
     restored,
+    observability: observer,
     storeCapabilities,
     store: defaultContext.store,
     evaluator,
@@ -378,6 +413,7 @@ export async function createLocalEventIntelligenceRuntime({
       return [...scopeContexts.keys()].sort();
     },
     async close() {
+      await observer.emit({ event: 'ei.lifecycle.closing', level: 'debug' });
       await mcpEventsClient.close();
       const contexts = [...scopeContexts.values()];
       await Promise.all(contexts.map((context) => context.close()));
@@ -390,6 +426,7 @@ export async function createLocalEventIntelligenceRuntime({
           await store.drain();
         }
       }
+      await observer.emit({ event: 'ei.lifecycle.closed', level: 'info' });
     },
   };
 }
