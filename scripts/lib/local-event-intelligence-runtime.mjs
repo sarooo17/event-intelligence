@@ -304,6 +304,10 @@ export async function createLocalEventIntelligenceRuntime({
       store,
       triggerEngine,
       observability: observer,
+      workerId: `${rootWorkerId}:${scopeId}:control`,
+      mutationLeaseMs: Number(
+        env.EVENT_INTELLIGENCE_TRIGGER_MUTATION_LEASE_MS ?? 300000,
+      ),
     });
     const triggerInspector = new TriggerInspector({ store });
 

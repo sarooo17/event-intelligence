@@ -38,14 +38,24 @@ export interface CompositeTriggerStore {
   getTriggerState?(
     triggerId: string,
     version: string,
-  ): {
-    status: 'active' | 'paused' | 'completed' | 'expired' | 'deleted';
-    owner?: unknown;
-    connectionIds?: string[];
-    fireCount?: number;
-    lastFiredAt?: string | null;
-    revision?: number;
-  } | null;
+  ):
+    | {
+        status: 'active' | 'paused' | 'completed' | 'expired' | 'deleted';
+        owner?: unknown;
+        connectionIds?: string[];
+        fireCount?: number;
+        lastFiredAt?: string | null;
+        revision?: number;
+      }
+    | null
+    | Promise<{
+        status: 'active' | 'paused' | 'completed' | 'expired' | 'deleted';
+        owner?: unknown;
+        connectionIds?: string[];
+        fireCount?: number;
+        lastFiredAt?: string | null;
+        revision?: number;
+      } | null>;
   setTriggerState?(
     triggerId: string,
     version: string,
@@ -54,6 +64,10 @@ export interface CompositeTriggerStore {
     metadata?: Record<string, unknown>,
   ): Promise<unknown>;
   appendTriggerMatch(record: TriggerMatchRecord): Promise<void>;
+  compareAndAppendTriggerMatch?(
+    record: TriggerMatchRecord,
+    options: { expectedStatuses: string[] },
+  ): Promise<{ applied: boolean; record: TriggerMatchRecord | null }>;
   listTriggerMatches(triggerId?: string):
     | TriggerMatchRecord[]
     | Promise<TriggerMatchRecord[]>;

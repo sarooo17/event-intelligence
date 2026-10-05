@@ -14,8 +14,10 @@ export interface PersistedMcpOccurrence {
 }
 
 export interface McpEventOccurrenceStore {
-  latestMcpEventSequence(): number;
-  listMcpOccurrencesAfter(sequence: number): PersistedMcpOccurrence[];
+  latestMcpEventSequence(): number | Promise<number>;
+  listMcpOccurrencesAfter(
+    sequence: number,
+  ): PersistedMcpOccurrence[] | Promise<PersistedMcpOccurrence[]>;
 }
 
 export interface RegisteredMcpEvent {
@@ -92,7 +94,7 @@ export class ExperimentalMcpEventsServer {
               { kind: 'event' },
             );
           }
-          return this.ok(request.id, this.poll(params));
+          return this.ok(request.id, await this.poll(params));
         }
 
         default:
@@ -111,13 +113,13 @@ export class ExperimentalMcpEventsServer {
     }
   }
 
-  poll(params: PollEventsParams): PollEventsResult {
+  async poll(params: PollEventsParams): Promise<PollEventsResult> {
     const registered = this.events.get(params.name);
     if (!registered) {
       throw new Error(`Unknown event: ${params.name}`);
     }
 
-    const latest = this.store.latestMcpEventSequence();
+    const latest = await this.store.latestMcpEventSequence();
 
     if (params.cursor === null || params.cursor === undefined) {
       return {
@@ -136,7 +138,7 @@ export class ExperimentalMcpEventsServer {
         ? Number.NEGATIVE_INFINITY
         : this.now().getTime() - params.maxAgeMs;
 
-    const candidates = this.store.listMcpOccurrencesAfter(start);
+    const candidates = await this.store.listMcpOccurrencesAfter(start);
     const args = params.arguments ?? {};
     const events: EventOccurrence[] = [];
     let cursorSequence = start;

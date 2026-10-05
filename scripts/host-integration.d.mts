@@ -116,6 +116,9 @@ export interface EventIntelligenceStore {
     workerId: string;
     now?: string;
   }): Promise<boolean>;
+  compareAndAppendTriggerMatch?(record: any, options: {
+    expectedStatuses: string[];
+  }): Promise<{ applied: boolean; record: any | null }>;
   compactMutableState?(): Promise<unknown>;
   [key: string]: any;
 }

@@ -145,7 +145,7 @@ test('cursor and occurrence log survive restart and support bounded draining', a
     const firstServer = new ExperimentalMcpEventsServer(firstStore);
     registerGitHubMcpEvents(firstServer);
 
-    const baseline = firstServer.poll({
+    const baseline = await firstServer.poll({
       name: 'github.issue.opened',
       cursor: null,
     });
@@ -166,7 +166,7 @@ test('cursor and occurrence log survive restart and support bounded draining', a
     const secondServer = new ExperimentalMcpEventsServer(secondStore);
     registerGitHubMcpEvents(secondServer);
 
-    const firstBatch = secondServer.poll({
+    const firstBatch = await secondServer.poll({
       name: 'github.issue.opened',
       cursor: baseline.cursor,
       maxEvents: 1,
@@ -176,7 +176,7 @@ test('cursor and occurrence log survive restart and support bounded draining', a
     assert.equal(firstBatch.hasMore, true);
     assert.equal(firstBatch.nextPollMs, 0);
 
-    const secondBatch = secondServer.poll({
+    const secondBatch = await secondServer.poll({
       name: 'github.issue.opened',
       cursor: firstBatch.cursor,
       maxEvents: 1,

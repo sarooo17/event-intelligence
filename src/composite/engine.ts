@@ -226,13 +226,29 @@ export class CompositeTriggerEngine {
       );
     }
 
-    const fired = TriggerMatchRecordSchema.parse({
+    let fired = TriggerMatchRecordSchema.parse({
       ...latest,
       status: 'fired',
       firedWakeId: wakeId,
       updatedAt: this.now().toISOString(),
     });
-    await this.store.appendTriggerMatch(fired);
+    if (this.store.compareAndAppendTriggerMatch) {
+      const transition = await this.store.compareAndAppendTriggerMatch(
+        fired,
+        { expectedStatuses: ['matched'] },
+      );
+      if (!transition.applied) {
+        if (transition.record?.status === 'fired') {
+          return transition.record;
+        }
+        throw new Error(
+          `Trigger match changed before firing; current=${transition.record?.status ?? 'missing'}`,
+        );
+      }
+      fired = transition.record ?? fired;
+    } else {
+      await this.store.appendTriggerMatch(fired);
+    }
     await this.support.cancelDeadlinesForMatch(matchId);
     await this.support.auditMatch(fired, 'trigger.fired', { wakeId });
 
@@ -263,7 +279,7 @@ export class CompositeTriggerEngine {
       );
     }
 
-    const emitted = TriggerMatchRecordSchema.parse({
+    let emitted = TriggerMatchRecordSchema.parse({
       ...latest,
       status: 'emitted',
       updatedAt: this.now().toISOString(),
@@ -271,7 +287,26 @@ export class CompositeTriggerEngine {
         ...new Set([...latest.derivedEventIds, derivedEventId]),
       ],
     });
-    await this.store.appendTriggerMatch(emitted);
+    if (this.store.compareAndAppendTriggerMatch) {
+      const transition = await this.store.compareAndAppendTriggerMatch(
+        emitted,
+        { expectedStatuses: ['matched'] },
+      );
+      if (!transition.applied) {
+        if (
+          transition.record?.status === 'emitted' &&
+          transition.record.derivedEventIds.includes(derivedEventId)
+        ) {
+          return transition.record;
+        }
+        throw new Error(
+          `Trigger match changed before derived emission; current=${transition.record?.status ?? 'missing'}`,
+        );
+      }
+      emitted = transition.record ?? emitted;
+    } else {
+      await this.store.appendTriggerMatch(emitted);
+    }
     await this.support.cancelDeadlinesForMatch(matchId);
     await this.support.auditMatch(emitted, 'trigger.emitted', {
       derivedEventId,

@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/sarooo17/event-intelligence/actions/workflows/ci.yml/badge.svg)](https://github.com/sarooo17/event-intelligence/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/mcp-event-intelligence.svg)](https://www.npmjs.com/package/mcp-event-intelligence)
-[![MCP Registry](https://img.shields.io/badge/MCP%20Registry-v0.9.0-5b5bd6)](https://registry.modelcontextprotocol.io/?q=io.github.sarooo17%2Fevent-intelligence)
+[![MCP Registry](https://img.shields.io/badge/MCP%20Registry-v0.11.0-5b5bd6)](https://registry.modelcontextprotocol.io/?q=io.github.sarooo17%2Fevent-intelligence)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 MCP Event Intelligence is an experimental event runtime for agents that need to react to **future conditions over multiple event sources** without keeping an LLM or agent loop alive.
@@ -301,7 +301,21 @@ const ei = await createEventIntelligenceHost({
 });
 ```
 
-`PersistentEventStore` remains the zero-dependency default. A custom backend can implement `forScope(scopeId)` to return an isolated tenant view. For horizontally scaled workers, its wake-delivery claim/lease operations must be atomic across processes; the bundled JSONL store provides serialized atomicity inside one process and is a reference backend, not a distributed database.
+`PersistentEventStore` remains the zero-dependency single-process default. For horizontally scaled workers, use the optional PostgreSQL adapter:
+
+```js
+import pg from 'pg';
+import {
+  PostgresEventStore,
+} from 'mcp-event-intelligence/storage/postgres';
+
+const store = new PostgresEventStore({
+  pool: new pg.Pool({ connectionString: process.env.DATABASE_URL }),
+  ownsPool: true,
+});
+```
+
+Run shared deployments with `EVENT_INTELLIGENCE_REQUIRE_SHARED_STORE=true` and a globally unique `EVENT_INTELLIGENCE_WORKER_ID`. The PostgreSQL path provides database-authoritative scope isolation, distributed-atomic wake claims and trigger/version/partition leases, plus shared retry/dead-letter and crash-recovery state. The bundled JSONL store remains reference-grade rather than pretending to provide multi-replica safety. See [Storage and shared state](docs/STORAGE.md).
 
 
 ## Add Events to an MCP provider

@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.11.0] - 2026-10-05
+
+### Transactional Postgres shared state
+
+- add the public `mcp-event-intelligence/storage/postgres` adapter for authoritative shared state across independent runtime workers;
+- persist triggers, lifecycle state, Pattern v2 matches/buffers, event sources, MCP cursors/occurrences, temporal deadlines, derived contracts/events, semantic decisions, wakes, wake delivery and audit in PostgreSQL;
+- isolate every record, history stream, counter and lease by EI scope so tenant boundaries are enforced in database keys rather than post-query filtering;
+- keep the SQL driver host-owned: `PostgresEventStore` accepts a `pg`-compatible pool instead of making PostgreSQL a mandatory dependency for all EI users.
+
+### Distributed atomicity and recovery
+
+- make wake claims transactional with row locks, lease expiry takeover and stale-owner rejection;
+- make trigger-state, match, MCP cursor/dedup, deadline, derived-contract, semantic-cache and audit first-writer races database-serialized with transaction-scoped advisory locks;
+- add distributed trigger/version/partition leases with atomic claim, renew, release and expiry takeover;
+- preserve a single hash-linked audit order across concurrent workers;
+- verify shared retry/dead-letter state and crash-style lease recovery across independent PostgreSQL pools.
+
+### HA verification
+
+- add a PostgreSQL 16 CI gate with two-worker contention, shared-store conformance, fail-closed shared-host startup, scope isolation and audit-chain validation;
+- keep the bundled JSONL `PersistentEventStore` explicitly single-process/reference-grade.
+
+# Changelog
+
 ## [0.10.0] - 2026-10-05
 
 ### Complete embedded trigger management

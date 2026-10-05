@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import {
   parseCompositeTriggerDefinition,
   sha256Hex,
@@ -153,16 +154,60 @@ export class TriggerControlPlane {
     triggerEngine,
     now = () => new Date(),
     observability = null,
+    workerId = `trigger-control:${randomUUID()}`,
+    mutationLeaseMs = 300000,
   }) {
     this.store = store;
     this.triggerEngine = triggerEngine;
     this.now = now;
     this.observability = observability;
+    this.workerId = String(workerId);
+    this.mutationLeaseMs = Math.max(1000, Number(mutationLeaseMs) || 300000);
     this.contractRegistry = new DerivedContractRegistry({
       store,
       now,
       audit: (entry) => this.audit(entry),
     });
+  }
+
+  async withTriggerMutationLease(triggerId, version, operation) {
+    const capabilities = this.store.storeCapabilities?.();
+    if (capabilities?.partitionLeases !== 'distributed-atomic') {
+      return operation();
+    }
+    if (
+      typeof this.store.claimPartitionLease !== 'function' ||
+      typeof this.store.releasePartitionLease !== 'function'
+    ) {
+      const error = new Error(
+        'Distributed trigger mutations require partition lease methods',
+      );
+      error.code = 'TRIGGER_MUTATION_LEASE_UNSUPPORTED';
+      throw error;
+    }
+
+    const key = `control:${String(triggerId)}:${String(version)}`;
+    const lease = await this.store.claimPartitionLease(key, {
+      workerId: this.workerId,
+      now: this.now().toISOString(),
+      leaseMs: this.mutationLeaseMs,
+    });
+    if (!lease) {
+      const error = new Error(
+        `Trigger mutation is currently owned by another worker: ${triggerId}@${version}`,
+      );
+      error.code = 'TRIGGER_MUTATION_BUSY';
+      throw error;
+    }
+
+    try {
+      return await operation();
+    } finally {
+      await this.store.releasePartitionLease(key, {
+        workerId: this.workerId,
+        now: this.now().toISOString(),
+      });
+    }
   }
 
   async listEventSources({ connectionIds } = {}) {
@@ -301,7 +346,15 @@ export class TriggerControlPlane {
     };
   }
 
-  async updateTrigger({
+  async updateTrigger(input) {
+    return this.withTriggerMutationLease(
+      input.triggerId,
+      input.expectedVersion,
+      () => this.updateTriggerUnlocked(input),
+    );
+  }
+
+  async updateTriggerUnlocked({
     triggerId,
     expectedVersion,
     definition: definitionInput,
@@ -471,7 +524,15 @@ export class TriggerControlPlane {
     };
   }
 
-  async deleteTrigger({
+  async deleteTrigger(input) {
+    return this.withTriggerMutationLease(
+      input.triggerId,
+      input.version,
+      () => this.deleteTriggerUnlocked(input),
+    );
+  }
+
+  async deleteTriggerUnlocked({
     triggerId,
     version,
     actor: actorInput,
@@ -589,7 +650,15 @@ export class TriggerControlPlane {
     });
   }
 
-  async setTriggerLifecycle({
+  async setTriggerLifecycle(input) {
+    return this.withTriggerMutationLease(
+      input.triggerId,
+      input.version,
+      () => this.setTriggerLifecycleUnlocked(input),
+    );
+  }
+
+  async setTriggerLifecycleUnlocked({
     triggerId,
     version,
     status,

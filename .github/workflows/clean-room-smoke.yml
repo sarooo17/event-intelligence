@@ -56,12 +56,15 @@ jobs:
           import assert from 'node:assert/strict';
           const protocol = await import('mcp-event-intelligence');
           const host = await import('mcp-event-intelligence/host');
+          const postgres = await import('mcp-event-intelligence/storage/postgres');
 
           assert.ok(Object.keys(protocol).length > 0, 'root package export is empty');
           assert.equal(typeof protocol.TriggerPlanInputSchema, 'object');
           assert.equal(typeof protocol.ActivationEnvelopeSchema, 'object');
           assert.equal(typeof host.createEventIntelligenceHost, 'function');
           assert.equal(typeof host.createMcpRegistryAdapter, 'function');
+          assert.equal(typeof postgres.PostgresEventStore, 'function');
+          assert.equal(postgres.POSTGRES_STORE_CAPABILITIES.sharedState, 'strong');
 
           const dataDir = './ei-data';
           const ei = await host.createEventIntelligenceHost({

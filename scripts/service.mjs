@@ -617,7 +617,7 @@ const server = createServer(async (request, response) => {
       const afterSequence = Number(url.searchParams.get('afterSequence') ?? -1);
       const traceId = url.searchParams.get('traceId') ?? undefined;
       return sendJson(response, 200, {
-        records: store.listAudit({ traceId, afterSequence }),
+        records: await store.listAudit({ traceId, afterSequence }),
         verified: await store.verifyAudit(),
       });
     }
@@ -629,7 +629,7 @@ const server = createServer(async (request, response) => {
       const traceId = decodeURIComponent(
         url.pathname.slice('/v1/traces/'.length),
       );
-      return sendJson(response, 200, store.trace(traceId));
+      return sendJson(response, 200, await store.trace(traceId));
     }
 
 
