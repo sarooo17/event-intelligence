@@ -337,7 +337,7 @@ export function createDeterministicReceiptId(
     throw new Error('receipt id length must be an integer between 8 and 64');
   }
   return createHash('sha256')
-    .update(`${normalizedNamespace}:${normalizedWakeId}`)
+    .update(JSON.stringify([normalizedNamespace, normalizedWakeId]))
     .digest('hex')
     .slice(0, length);
 }
@@ -369,16 +369,35 @@ export function createEventSourceRegistry({
  * Neutral catalog for host tool exposure. It does not decide policy or adapt
  * descriptors to any vendor SDK; the embedding runtime owns both.
  */
-export function summarizeEventSourceStatus(statuses = []) {
+export function summarizeEventSourceStatus(
+  statuses = [],
+  refreshOutcomes = [],
+) {
   const rows = Array.isArray(statuses) ? statuses : [];
+  const refresh = Array.isArray(refreshOutcomes) ? refreshOutcomes : [];
+  const connectionIds = new Set();
+  const errorIds = new Set();
+  let anonymousErrors = 0;
   let eventsCapable = 0;
   let eventDefinitions = 0;
-  let errors = 0;
+
+  for (const outcome of refresh) {
+    if (!outcome || typeof outcome !== 'object') continue;
+    const id = String(outcome.connectionId ?? '').trim();
+    if (outcome.status !== 'detached' && id) connectionIds.add(id);
+    if (outcome.status === 'error' || outcome.error != null) {
+      if (id) errorIds.add(id);
+      else anonymousErrors += 1;
+    }
+  }
 
   for (const row of rows) {
     if (!row || typeof row !== 'object') continue;
+    const id = String(row.connectionId ?? row.id ?? '').trim();
+    if (id) connectionIds.add(id);
     if (row.error != null) {
-      errors += 1;
+      if (id) errorIds.add(id);
+      else anonymousErrors += 1;
       continue;
     }
     if (Array.isArray(row.events) && row.events.length > 0) {
@@ -388,11 +407,12 @@ export function summarizeEventSourceStatus(statuses = []) {
   }
 
   return Object.freeze({
-    connections: rows.length,
+    connections: connectionIds.size || rows.length,
     eventsCapable,
     eventDefinitions,
-    errors,
+    errors: errorIds.size + anonymousErrors,
     statuses: rows,
+    refreshOutcomes: refresh,
   });
 }
 
@@ -1051,7 +1071,11 @@ export async function createEmbeddedRuntimeIntegration({
     capabilities: Object.freeze(toolCatalog.capabilities()),
     eventSources: sourceRegistry,
     async diagnostics() {
-      return summarizeEventSourceStatus(await embedded.status());
+      const refreshOutcomes = sourceRegistry ? await embedded.refresh() : [];
+      return summarizeEventSourceStatus(
+        await embedded.status(),
+        refreshOutcomes,
+      );
     },
     bind(options) {
       return bindEmbeddedRuntimeIntegration(
