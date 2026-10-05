@@ -113,6 +113,24 @@ test('activation dispatcher is host-neutral and idempotent', async () => {
   assert.deepEqual(deliveries[0].target, { opaqueHostTarget: 'thread-123' });
 });
 
+test('activation dispatcher can derive a deterministic receipt from a namespace', async () => {
+  const delivered = [];
+  const dispatch = createActivationDispatcher({
+    receiptNamespace: 'runtime-a',
+    deliver: ({ receiptId }) => {
+      delivered.push(receiptId);
+      return { runtimeReceiptId: receiptId };
+    },
+  });
+
+  const result = await dispatch({ wake_id: 'wake-1' }, activation);
+  assert.equal(
+    result.runtimeReceiptId,
+    createDeterministicReceiptId('runtime-a', 'wake-1'),
+  );
+  assert.deepEqual(delivered, [result.runtimeReceiptId]);
+});
+
 test('portable tools keep target and authorization host-owned', async () => {
   const created = [];
   const host = {
