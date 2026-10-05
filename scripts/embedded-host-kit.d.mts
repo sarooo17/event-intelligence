@@ -160,6 +160,26 @@ export interface PortableToolCatalog<RuntimeContext = unknown> {
   capabilities(): EventIntelligenceCapabilityMetadata[];
 }
 
+export interface EventSourceDiagnostics {
+  readonly connections: number;
+  readonly eventsCapable: number;
+  readonly eventDefinitions: number;
+  readonly errors: number;
+  readonly statuses: readonly any[];
+}
+
+export interface EmbeddedRuntimeBindOptions<
+  RuntimeContext = unknown,
+  HostTool = unknown,
+> {
+  adapt(tool: PortableAgentTool<RuntimeContext>): HostTool;
+  register(
+    tool: HostTool,
+    portableTool: PortableAgentTool<RuntimeContext>,
+  ): void;
+  onClose?(close: () => Promise<void>): void;
+}
+
 export interface EventIntelligenceAgentToolsOptions<RuntimeContext = unknown> {
   host: EventIntelligenceHost;
   resolveContext(
@@ -260,7 +280,10 @@ export interface EmbeddedRuntimeIntegrationOptions<RuntimeContext = unknown>
     EmbeddedEventIntelligenceOptions<RuntimeContext>,
     'mcpRegistry' | 'mcp' | 'agentTools'
   > {
-  eventSources?: EventSourceRegistry | EventSourceRegistryOptions;
+  eventSources?:
+    | EventSourceRegistry
+    | EventSourceRegistryOptions
+    | Iterable<EventSourceConnection>;
   tooling?: EmbeddedRuntimeTooling<RuntimeContext>;
 }
 
@@ -270,7 +293,32 @@ export interface EmbeddedRuntimeIntegration<RuntimeContext = unknown>
   readonly toolCatalog: PortableToolCatalog<RuntimeContext>;
   readonly capabilities: readonly EventIntelligenceCapabilityMetadata[];
   readonly eventSources: EventSourceRegistry | null;
+  diagnostics(): Promise<EventSourceDiagnostics>;
+  bind<HostTool>(
+    options: EmbeddedRuntimeBindOptions<RuntimeContext, HostTool>,
+  ): readonly HostTool[];
 }
+
+export function createDeterministicReceiptId(
+  namespace: string,
+  wakeId: string,
+  options?: { length?: number },
+): string;
+
+export function summarizeEventSourceStatus(
+  statuses?: readonly any[],
+): EventSourceDiagnostics;
+
+export function bindEmbeddedRuntimeIntegration<
+  RuntimeContext = unknown,
+  HostTool = unknown,
+>(
+  integration: Pick<
+    EmbeddedRuntimeIntegration<RuntimeContext>,
+    'tools' | 'close'
+  >,
+  options: EmbeddedRuntimeBindOptions<RuntimeContext, HostTool>,
+): readonly HostTool[];
 
 export function createResultReference(
   input: PortableResultReference,
