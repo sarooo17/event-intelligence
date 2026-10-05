@@ -581,6 +581,36 @@ export class PostgresEventStore {
     });
   }
 
+  async compareAndAppendTriggerMatch(
+    input,
+    { expectedStatuses = [] } = {},
+  ) {
+    const record = parseTriggerMatchRecord(input);
+    const expected = new Set(expectedStatuses.map(String));
+    return this.tx(async (client) => {
+      await this.lock(client, 'trigger-match', record.matchId);
+      const current = await this.get(
+        'trigger_match',
+        record.matchId,
+        client,
+      );
+      if (!current || !expected.has(current.status)) {
+        return {
+          applied: false,
+          record: current ? parseTriggerMatchRecord(current) : null,
+        };
+      }
+      await this.appendHistory(
+        'trigger_match_history',
+        record.matchId,
+        record,
+        client,
+      );
+      await this.upsert('trigger_match', record.matchId, record, client);
+      return { applied: true, record };
+    });
+  }
+
   async listTriggerMatches(triggerId) {
     return (await this.list('trigger_match'))
       .map(parseTriggerMatchRecord)
