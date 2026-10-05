@@ -86,6 +86,10 @@ export declare class PostgresEventStore {
     enabledOnly?: boolean;
   }): Promise<any[]>;
   appendTriggerMatch(record: any): Promise<any>;
+  compareAndAppendTriggerMatch(
+    record: any,
+    options: { expectedStatuses: string[] },
+  ): Promise<{ applied: boolean; record: any | null }>;
   listTriggerMatches(triggerId?: string): Promise<any[]>;
   listTriggerMatchHistory(matchId?: string): Promise<any[]>;
 
