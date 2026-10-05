@@ -438,6 +438,95 @@ test('host control may throw a native interrupt without EI swallowing it', async
   );
 });
 
+test('host may project canonical EI failures without changing EI semantics', async () => {
+  const host = {
+    async refreshMcpRegistry() {},
+    eventSources: [],
+    async planTrigger() {
+      throw new Error('source unavailable');
+    },
+    triggerControl: {
+      async createTrigger() {
+        throw new Error('must not execute');
+      },
+    },
+  };
+
+  const tools = createEventIntelligenceAgentTools({
+    host,
+    resolveContext: () => ({
+      target: {
+        runtime: 'projection-host',
+        kind: 'task',
+        id: 'projection-error-1',
+      },
+    }),
+    control: () => ({ action: 'execute' }),
+    projectError: ({ phase, result }) => ({
+      ...result,
+      hostPresentation: {
+        phase,
+        message: result.error?.message,
+      },
+    }),
+  });
+
+  const result = await tools[1].execute({
+    events: [{ event: 'demo.changed' }],
+    instruction: 'Resume later.',
+  }, {});
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error.code, 'EVENT_TRIGGER_PLAN_FAILED');
+  assert.deepEqual(result.hostPresentation, {
+    phase: 'trigger.plan',
+    message: 'source unavailable',
+  });
+});
+
+test('error projection failure falls back to the canonical EI error', async () => {
+  const host = {
+    async refreshMcpRegistry() {},
+    eventSources: [],
+    async planTrigger() {
+      throw new Error('still canonical');
+    },
+    triggerControl: {
+      async createTrigger() {
+        throw new Error('must not execute');
+      },
+    },
+  };
+
+  const tools = createEventIntelligenceAgentTools({
+    host,
+    resolveContext: () => ({
+      target: {
+        runtime: 'projection-host',
+        kind: 'task',
+        id: 'projection-error-2',
+      },
+    }),
+    control: () => ({ action: 'execute' }),
+    projectError: () => {
+      throw new Error('presentation unavailable');
+    },
+  });
+
+  const result = await tools[1].execute({
+    events: [{ event: 'demo.changed' }],
+    instruction: 'Resume later.',
+  }, {});
+
+  assert.deepEqual(result, {
+    ok: false,
+    error: {
+      code: 'EVENT_TRIGGER_PLAN_FAILED',
+      message: 'still canonical',
+    },
+  });
+});
+
 test('legacy authorize failures remain normalized tool results', async () => {
   const host = {
     async refreshMcpRegistry() {},
