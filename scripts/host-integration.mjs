@@ -127,6 +127,7 @@ export async function createEventIntelligenceHost({
   wake,
   wakeHandlers = {},
   semanticEvaluator,
+  observability,
 } = {}) {
   const explicitConnections = mcpClients.map(normalizeMcpConnection);
   const runtime = await createLocalEventIntelligenceRuntime({
@@ -140,7 +141,9 @@ export async function createEventIntelligenceHost({
     wakeHandlers,
     semanticEvaluator,
     store,
+    observability,
   });
+  const observer = runtime.observability;
 
   const registryManaged = new Set();
   let unsubscribe = null;
@@ -212,6 +215,21 @@ export async function createEventIntelligenceHost({
       }
     }
 
+    await Promise.all(outcomes.map((outcome) => observer.emit({
+      event: 'ei.source.registry_update',
+      level:
+        outcome.status === 'error'
+          ? 'error'
+          : outcome.status === 'ignored_no_events' ||
+              outcome.status === 'already_attached'
+            ? 'debug'
+            : 'info',
+      connectionId: outcome.connectionId,
+      status: outcome.status,
+      ...(outcome.error ? { error: new Error(outcome.error) } : {}),
+      ...(outcome.events ? { metadata: { eventNames: outcome.events } } : {}),
+    })));
+
     return outcomes;
   };
 
@@ -241,10 +259,11 @@ export async function createEventIntelligenceHost({
     if (typeof mcpRegistry.subscribe === 'function') {
       const maybeUnsubscribe = mcpRegistry.subscribe(() => {
         refreshMcpRegistry().catch((error) => {
-          console.error(JSON.stringify({
-            message: 'event_intelligence_mcp_registry_refresh_failed',
-            error: error instanceof Error ? error.message : String(error),
-          }));
+          void observer.emit({
+            event: 'ei.source.refresh_failed',
+            level: 'error',
+            error,
+          });
         });
       });
       if (typeof maybeUnsubscribe === 'function') {
