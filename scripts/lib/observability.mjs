@@ -64,7 +64,8 @@ export function serializeObservabilityError(error) {
 /**
  * Runtime-neutral, best-effort observability boundary.
  *
- * Sink failures are intentionally swallowed: logging/telemetry must never
+ * Async sinks are detached after invocation, so slow telemetry cannot stall
+ * event processing. Sink failures are intentionally swallowed: telemetry must never
  * change Event Intelligence delivery semantics. Event payloads, continuation
  * instructions, evidence and credentials are not accepted as first-class
  * fields and sensitive keys in metadata are dropped defensively.
@@ -120,7 +121,10 @@ export function createObservabilityEmitter(
       };
 
       try {
-        await sink.emit(Object.freeze(record));
+        const pending = sink.emit(Object.freeze(record));
+        if (pending && typeof pending.then === 'function') {
+          void Promise.resolve(pending).catch(() => {});
+        }
         return true;
       } catch {
         return false;
