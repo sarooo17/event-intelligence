@@ -61,6 +61,7 @@ export function validateSharedStoreCapabilities(store) {
     'claimPartitionLease',
     'renewPartitionLease',
     'releasePartitionLease',
+    'compareAndAppendTriggerMatch',
   ]) {
     if (typeof store?.[method] !== 'function') {
       errors.push(`shared store is missing ${method}()`);
