@@ -260,6 +260,7 @@ export async function createLocalEventIntelligenceRuntime({
         store,
         triggerEngine,
         packetBuilder,
+        observability: observer,
         ...deliveryOptions,
         deliverer: async (packet) => {
           const activation = await activationHydrator.hydrateWake(packet.wake_id);
