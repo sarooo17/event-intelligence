@@ -1,0 +1,125 @@
+const LEVELS = new Set(['debug', 'info', 'warn', 'error']);
+const SENSITIVE_KEY = /(authorization|cookie|credential|password|secret|token|payload|instruction|context|evidence|body|content|data)/i;
+
+export const EI_OBSERVABILITY_SCHEMA_VERSION = '1';
+
+function truncate(value, max = 1000) {
+  const text = String(value ?? '');
+  return text.length > max ? `${text.slice(0, max)}…` : text;
+}
+
+function sanitize(value, depth = 0) {
+  if (value == null || typeof value === 'boolean' || typeof value === 'number') {
+    return value;
+  }
+  if (typeof value === 'string') return truncate(value);
+  if (depth >= 3) return '[truncated]';
+  if (Array.isArray(value)) {
+    return value.slice(0, 20).map((item) => sanitize(item, depth + 1));
+  }
+  if (value instanceof Error) {
+    return {
+      name: truncate(value.name, 120),
+      message: truncate(value.message),
+      ...(value.code == null ? {} : { code: truncate(value.code, 200) }),
+    };
+  }
+  if (typeof value === 'object') {
+    const result = {};
+    for (const [key, item] of Object.entries(value).slice(0, 40)) {
+      if (SENSITIVE_KEY.test(key)) continue;
+      const sanitized = sanitize(item, depth + 1);
+      if (sanitized !== undefined) result[key] = sanitized;
+    }
+    return result;
+  }
+  return undefined;
+}
+
+function normalizeSink(input) {
+  if (input == null) return null;
+  if (typeof input === 'function') return { emit: input };
+  if (typeof input === 'object' && typeof input.emit === 'function') {
+    return input;
+  }
+  throw new Error('observability must be a function or { emit(event) }');
+}
+
+export function serializeObservabilityError(error) {
+  if (error instanceof Error) {
+    return Object.freeze({
+      name: truncate(error.name, 120),
+      message: truncate(error.message),
+      ...(error.code == null ? {} : { code: truncate(error.code, 200) }),
+    });
+  }
+  return Object.freeze({ message: truncate(error) });
+}
+
+/**
+ * Runtime-neutral, best-effort observability boundary.
+ *
+ * Sink failures are intentionally swallowed: logging/telemetry must never
+ * change Event Intelligence delivery semantics. Event payloads, continuation
+ * instructions, evidence and credentials are not accepted as first-class
+ * fields and sensitive keys in metadata are dropped defensively.
+ */
+export function createObservabilityEmitter(
+  sinkInput,
+  { now = () => new Date(), component = 'event-intelligence' } = {},
+) {
+  const sink = normalizeSink(sinkInput);
+
+  return Object.freeze({
+    enabled: Boolean(sink),
+    async emit(input = {}) {
+      if (!sink) return false;
+
+      const event = String(input.event ?? '').trim();
+      if (!event.startsWith('ei.')) {
+        throw new Error('observability event must use the ei.* namespace');
+      }
+
+      const level = String(input.level ?? 'info').toLowerCase();
+      if (!LEVELS.has(level)) {
+        throw new Error(`unsupported observability level: ${level}`);
+      }
+
+      const record = {
+        schema: `event-intelligence.observability.v${EI_OBSERVABILITY_SCHEMA_VERSION}`,
+        timestamp: input.timestamp
+          ? String(input.timestamp)
+          : now().toISOString(),
+        level,
+        event,
+        component: String(input.component ?? component),
+        ...(input.traceId ? { traceId: String(input.traceId) } : {}),
+        ...(input.scopeId ? { scopeId: String(input.scopeId) } : {}),
+        ...(input.triggerId ? { triggerId: String(input.triggerId) } : {}),
+        ...(input.matchId ? { matchId: String(input.matchId) } : {}),
+        ...(input.wakeId ? { wakeId: String(input.wakeId) } : {}),
+        ...(input.connectionId ? { connectionId: String(input.connectionId) } : {}),
+        ...(input.serverId ? { serverId: String(input.serverId) } : {}),
+        ...(input.eventName ? { eventName: String(input.eventName) } : {}),
+        ...(input.status ? { status: String(input.status) } : {}),
+        ...(input.attempt != null ? { attempt: Number(input.attempt) } : {}),
+        ...(input.nextAttemptAt
+          ? { nextAttemptAt: String(input.nextAttemptAt) }
+          : {}),
+        ...(input.error
+          ? { error: serializeObservabilityError(input.error) }
+          : {}),
+        ...(input.metadata && typeof input.metadata === 'object'
+          ? { metadata: sanitize(input.metadata) }
+          : {}),
+      };
+
+      try {
+        await sink.emit(Object.freeze(record));
+        return true;
+      } catch {
+        return false;
+      }
+    },
+  });
+}
