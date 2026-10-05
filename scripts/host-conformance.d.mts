@@ -22,6 +22,14 @@ export interface HostConformanceDelivery {
   [key: string]: unknown;
 }
 
+export interface HostConformanceTriggerSummary {
+  triggerId: string;
+  version?: string;
+  status?: string;
+  fireCount?: number;
+  [key: string]: unknown;
+}
+
 export interface HostConformanceHarness {
   createTrigger(input: HostConformanceTriggerInput): Promise<void>;
   emitEvent(input: HostConformanceEventInput): Promise<void>;
@@ -30,8 +38,17 @@ export interface HostConformanceHarness {
   inspectTrigger(triggerId: string): Promise<{
     status?: string;
     fireCount?: number;
+    version?: string;
     [key: string]: unknown;
   } | null>;
+  listTriggers?(): Promise<readonly HostConformanceTriggerSummary[]> | readonly HostConformanceTriggerSummary[];
+  pauseTrigger?(triggerId: string): Promise<void>;
+  resumeTrigger?(triggerId: string): Promise<void>;
+  updateTrigger?(input: {
+    triggerId: string;
+    threshold: number;
+  }): Promise<void>;
+  deleteTrigger?(triggerId: string): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -39,6 +56,7 @@ export interface HostConformanceAdapter {
   name?: string;
   createHarness(input: {
     observability(event: EventIntelligenceObservabilityEvent): void;
+    profile: 'core' | 'management';
   }): Promise<HostConformanceHarness> | HostConformanceHarness;
 }
 
@@ -51,7 +69,8 @@ export interface HostConformanceResult {
 }
 
 export interface HostConformanceReport {
-  schema: 'event-intelligence.host-conformance.v1' | string;
+  schema: 'event-intelligence.host-conformance.v2' | string;
+  profile: 'core' | 'management';
   adapter: string;
   passed: boolean;
   summary: {
@@ -67,9 +86,12 @@ export interface HostConformanceReport {
 }
 
 export const HOST_CONFORMANCE_REPORT_SCHEMA:
-  'event-intelligence.host-conformance.v1';
+  'event-intelligence.host-conformance.v2';
 
 export function runHostConformance(
   adapter: HostConformanceAdapter,
-  options?: { throwOnFailure?: boolean },
+  options?: {
+    throwOnFailure?: boolean;
+    profile?: 'core' | 'management';
+  },
 ): Promise<HostConformanceReport>;
