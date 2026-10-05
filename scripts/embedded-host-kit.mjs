@@ -630,16 +630,23 @@ export function createEventIntelligenceAgentTools({
         // Host control is intentionally outside EI's error-normalization
         // boundary. A runtime may return an opaque result or throw its native
         // interrupt/suspension signal; EI must not reinterpret that mechanism.
-        const rawDecision = control
-          ? await control({
-              capability: createCapability,
-              action: 'trigger.create',
-              runtimeContext,
-              context: resolved,
-              input: parsed.data,
-              plan,
-            })
-          : normalizeLegacyAuthorization(
+        //
+        // The deprecated authorize() path keeps its historical behavior:
+        // ordinary callback failures are normalized into PortableToolResult
+        // errors instead of becoming rejected tool executions.
+        let rawDecision;
+        if (control) {
+          rawDecision = await control({
+            capability: createCapability,
+            action: 'trigger.create',
+            runtimeContext,
+            context: resolved,
+            input: parsed.data,
+            plan,
+          });
+        } else {
+          try {
+            rawDecision = normalizeLegacyAuthorization(
               await authorize({
                 action: 'trigger.create',
                 runtimeContext,
@@ -648,12 +655,17 @@ export function createEventIntelligenceAgentTools({
                 plan,
               }),
             );
+          } catch (error) {
+            return fail(error, 'EVENT_TRIGGER_CREATE_FAILED');
+          }
+        }
         const decision = normalizeHostControlDecision(rawDecision);
 
         if (decision.action === 'return') {
           return decision.result;
         }
 
+        let value;
         try {
           const execution = decision.execution ?? {};
           const actor = normalizeIdentity(
@@ -679,7 +691,7 @@ export function createEventIntelligenceAgentTools({
             ...(confirmationId ? { confirmationId } : {}),
           });
 
-          const value = {
+          value = {
             receiptId: created.receiptId,
             triggerId: created.definition?.triggerId,
             version: created.definition?.version,
@@ -687,15 +699,23 @@ export function createEventIntelligenceAgentTools({
             connectionIds: plan.connectionIds,
             warnings: plan.warnings ?? [],
           };
+        } catch (error) {
+          return fail(error, 'EVENT_TRIGGER_CREATE_FAILED');
+        }
 
+        // Trigger creation is already durable at this point. Projection is a
+        // host presentation concern, so a projection failure must never turn
+        // the committed mutation into an apparent create failure that callers
+        // may retry. Fall back to the canonical inline success payload.
+        try {
           return await projectPortableResult(projectResult, {
             capability: createCapability,
             runtimeContext,
             context: resolved,
             value,
           });
-        } catch (error) {
-          return fail(error, 'EVENT_TRIGGER_CREATE_FAILED');
+        } catch {
+          return { ok: true, data: value };
         }
       },
     },
