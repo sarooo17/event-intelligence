@@ -417,6 +417,113 @@ test('host control may throw a native interrupt without EI swallowing it', async
   );
 });
 
+test('legacy authorize failures remain normalized tool results', async () => {
+  const host = {
+    async refreshMcpRegistry() {},
+    eventSources: [],
+    async planTrigger(input) {
+      return {
+        definition: {
+          triggerId: 'planned-legacy-auth',
+          version: '1',
+          target: input.target,
+        },
+        connectionIds: [],
+        warnings: [],
+      };
+    },
+    triggerControl: {
+      async createTrigger() {
+        throw new Error('must not execute');
+      },
+    },
+  };
+
+  const tools = createEventIntelligenceAgentTools({
+    host,
+    resolveContext: () => ({
+      target: {
+        runtime: 'legacy-host',
+        kind: 'continuation',
+        id: 'legacy-1',
+      },
+    }),
+    authorize: async () => {
+      throw new Error('legacy authorization unavailable');
+    },
+  });
+
+  const result = await tools[1].execute({
+    events: [{ event: 'demo.changed' }],
+    instruction: 'Resume later.',
+  }, {});
+
+  assert.deepEqual(result, {
+    ok: false,
+    error: {
+      code: 'EVENT_TRIGGER_CREATE_FAILED',
+      message: 'legacy authorization unavailable',
+    },
+  });
+});
+
+test('projection failure after durable creation falls back to success', async () => {
+  let created = 0;
+  const host = {
+    async refreshMcpRegistry() {},
+    eventSources: [],
+    async planTrigger(input) {
+      return {
+        definition: {
+          triggerId: 'planned-projection-fallback',
+          version: '1',
+          target: input.target,
+        },
+        connectionIds: [],
+        warnings: [],
+      };
+    },
+    triggerControl: {
+      async createTrigger(input) {
+        created += 1;
+        return {
+          receiptId: 'receipt-projection-fallback',
+          definition: input.definition,
+          state: { status: 'active' },
+        };
+      },
+    },
+  };
+
+  const tools = createEventIntelligenceAgentTools({
+    host,
+    resolveContext: () => ({
+      target: {
+        runtime: 'projection-host',
+        kind: 'continuation',
+        id: 'projection-1',
+      },
+      actor: { type: 'agent', principal_id: 'agent-1' },
+      owner: { type: 'user', principal_id: 'user-1' },
+    }),
+    control: () => ({ action: 'execute' }),
+    projectResult: () => {
+      throw new Error('projection unavailable');
+    },
+  });
+
+  const result = await tools[1].execute({
+    events: [{ event: 'demo.changed' }],
+    instruction: 'Resume later.',
+  }, {});
+
+  assert.equal(created, 1);
+  assert.equal(result.ok, true);
+  assert.equal(result.data.receiptId, 'receipt-projection-fallback');
+  assert.equal(result.data.triggerId, 'planned-projection-fallback');
+  assert.equal(result.data.state.status, 'active');
+});
+
 test('result projection can externalize large results behind host references', async () => {
   const host = {
     async refreshMcpRegistry() {},
