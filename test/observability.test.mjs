@@ -56,3 +56,25 @@ test('observability rejects events outside the EI namespace', async () => {
     /ei\.\*/,
   );
 });
+
+
+test('async observability sinks are detached from runtime latency', async () => {
+  let release;
+  const blocked = new Promise((resolve) => {
+    release = resolve;
+  });
+  const observer = createObservabilityEmitter(async () => {
+    await blocked;
+    throw new Error('late telemetry failure');
+  });
+
+  const result = await Promise.race([
+    observer.emit({ event: 'ei.lifecycle.started' }),
+    new Promise((_, reject) => setTimeout(
+      () => reject(new Error('observability blocked runtime')),
+      100,
+    )),
+  ]);
+  assert.equal(result, true);
+  release();
+});
