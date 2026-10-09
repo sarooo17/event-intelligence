@@ -424,7 +424,7 @@ export interface SimpleTriggerPlanInput
   then: {
     target: NonNullable<TriggerPlanInput['target']>;
     instruction: string;
-    contextPolicy?: NonNullable<TriggerPlanInput['continuation']>['contextPolicy'];
+    contextPolicy?: Partial<NonNullable<TriggerPlanInput['continuation']>['contextPolicy']>;
   };
 }
 
