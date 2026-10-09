@@ -2,12 +2,14 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   EVENT_INTELLIGENCE_CAPABILITIES,
+  EMBEDDED_OPERATION_REGISTRY,
   bindEmbeddedRuntimeIntegration,
   createActivationDispatcher,
   createDeterministicReceiptId,
   createContinuationTarget,
   createEmbeddedEventIntelligence,
   createEmbeddedRuntimeIntegration,
+  createEventIntelligence,
   createEventIntelligenceAgentTools,
   createEventSourceRegistry,
   createPortableToolCatalog,
@@ -1253,4 +1255,243 @@ test('runtime integration accepts a static iterable of host-owned event connecti
   assert.equal(diagnostics.connections, 1);
   assert.equal(diagnostics.eventsCapable, 1);
   assert.equal(diagnostics.eventDefinitions, 1);
+});
+
+test('embedded operation registry is the single descriptor source for model tools', () => {
+  const keys = [
+    'sources', 'create', 'list', 'inspect',
+    'pause', 'resume', 'delete', 'update',
+  ];
+  assert.deepEqual(Object.keys(EMBEDDED_OPERATION_REGISTRY), keys);
+  const names = Object.values(EMBEDDED_OPERATION_REGISTRY).map((row) => row.name);
+  assert.equal(new Set(names).size, 8);
+
+  const tools = createEventIntelligenceAgentTools({
+    host: {},
+    resolveContext: () => ({}),
+    control: () => ({ action: 'return', result: { ok: false } }),
+  });
+  for (let i = 0; i < keys.length; i += 1) {
+    const canonical = EMBEDDED_OPERATION_REGISTRY[keys[i]];
+    assert.equal(tools[i].name, canonical.name);
+    assert.equal(tools[i].capability, canonical.capability);
+    assert.equal(tools[i].inputSchema, canonical.inputSchema);
+    assert.equal(Object.isFrozen(canonical), true);
+  }
+  const ids = tools.map((tool) => tool.capability.id);
+  assert.equal(new Set(ids).size, ids.length);
+});
+
+test('embedded tool name collisions cannot shadow a different capability', () => {
+  const options = {
+    host: {},
+    resolveContext: () => ({}),
+    control: () => ({ action: 'return', result: { ok: false } }),
+  };
+  assert.throws(
+    () => createEventIntelligenceAgentTools({
+      ...options,
+      names: { create: 'event_sources_list' },
+    }),
+    /Duplicate embedded tool name/,
+  );
+  assert.throws(
+    () => createEventIntelligenceAgentTools({
+      ...options,
+      names: { delete: '' },
+    }),
+    /non-empty strings/,
+  );
+  const custom = createEventIntelligenceAgentTools({
+    ...options,
+    names: { create: 'watch_create', list: 'watch_list' },
+  });
+  assert.equal(custom[1].name, 'watch_create');
+  assert.equal(custom[2].name, 'watch_list');
+  assert.equal(custom[1].capability, EMBEDDED_OPERATION_REGISTRY.create.capability);
+});
+
+test('embedded exported schema trees are deeply immutable across consumers', () => {
+  const create = EMBEDDED_OPERATION_REGISTRY.create.inputSchema;
+  const update = EMBEDDED_OPERATION_REGISTRY.update.inputSchema;
+  const firstName = create.required[0];
+  const eventLength = create.properties.events.items.properties.event.minLength;
+  assert.equal(Object.isFrozen(create.required), true);
+  assert.equal(Object.isFrozen(create.properties.events.items.properties), true);
+  assert.equal(Object.isFrozen(update.properties.events.items.properties), true);
+  assert.throws(
+    () => create.required.push('dangerous'),
+    TypeError,
+  );
+  assert.throws(
+    () => { create.properties.events.items.properties.event.minLength = 999; },
+    TypeError,
+  );
+  assert.throws(
+    () => { update.properties.events.items.properties.event.minLength = 999; },
+    TypeError,
+  );
+  assert.equal(create.required[0], firstName);
+  assert.equal(create.properties.events.items.properties.event.minLength, eventLength);
+});
+
+test('neutral facade delegates to the existing host without taking runtime ownership', async () => {
+  let captured;
+  let closed = false;
+  const fakeHost = {
+    runtime: { marker: 'facade' },
+    async refreshMcpRegistry() { return []; },
+    async mcpStatus() { return []; },
+    async scope() { return this; },
+    async close() { closed = true; },
+    eventSources: [],
+  };
+
+  const integration = await createEventIntelligence({
+    mcp: {
+      list: () => [{ connectionId: 'events-1' }],
+    },
+    runtime: {
+      receiptNamespace: 'test-runtime',
+      hasReceipt: () => false,
+      deliver: ({ receiptId }) => ({ runtimeReceiptId: receiptId }),
+      resolveContext: () => ({
+        target: { runtime: 'test-runtime', kind: 'task', id: 'task-1' },
+        actor: { type: 'agent', principal_id: 'agent-1' },
+        owner: { type: 'user', principal_id: 'owner-1' },
+      }),
+      control: () => ({ action: 'return', result: { ok: false } }),
+    },
+    createHost: async (options) => {
+      captured = options;
+      return fakeHost;
+    },
+  });
+
+  assert.deepEqual(await captured.mcpRegistry.listConnections(), [
+    { connectionId: 'events-1' },
+  ]);
+  assert.equal(typeof captured.wake, 'function');
+  const dispatched = await captured.wake({ wake_id: 'wake-1' }, activation);
+  assert.equal(
+    dispatched.runtimeReceiptId,
+    createDeterministicReceiptId('test-runtime', 'wake-1'),
+  );
+  assert.equal(integration.tools.length, 8);
+  assert.equal(integration.toolCatalog.list().length, 8);
+  assert.equal(integration.host, fakeHost);
+  await integration.close();
+  assert.equal(closed, true);
+});
+
+test('neutral facade supports headless delivery without model tools', async () => {
+  const fakeHost = {
+    runtime: {},
+    async refreshMcpRegistry() { return []; },
+    async mcpStatus() { return []; },
+    async close() {},
+  };
+  const integration = await createEventIntelligence({
+    runtime: {
+      deliver: () => ({ runtimeReceiptId: 'receipt-1' }),
+    },
+    createHost: async () => fakeHost,
+  });
+  assert.deepEqual(integration.tools, []);
+  assert.equal(integration.toolCatalog.all.length, 0);
+  await integration.close();
+});
+
+test('neutral facade refuses invalid or unguarded host configurations before constructing runtime', async () => {
+  let constructed = 0;
+  const createHost = async () => {
+    constructed += 1;
+    throw new Error('should never construct');
+  };
+  const runtime = { deliver: () => ({ runtimeReceiptId: 'receipt' }) };
+  await assert.rejects(
+    () => createEventIntelligence({ runtime: {}, createHost }),
+    /runtime\.deliver/,
+  );
+  await assert.rejects(
+    () => createEventIntelligence({
+      runtime: { ...runtime, resolveContext: () => ({}) },
+      createHost,
+    }),
+    /BOTH runtime\.resolveContext.*runtime\.control/,
+  );
+  await assert.rejects(
+    () => createEventIntelligence({
+      runtime: { ...runtime, control: () => ({ action: 'execute' }) },
+      createHost,
+    }),
+    /BOTH runtime\.resolveContext.*runtime\.control/,
+  );
+  await assert.rejects(
+    () => createEventIntelligence({
+      mcp: { list: [] },
+      runtime,
+      createHost,
+    }),
+    /mcp must provide list/,
+  );
+  await assert.rejects(
+    () => createEventIntelligence({
+      runtime: { ...runtime, receiptId: () => 'x', receiptNamespace: 'y' },
+      createHost,
+    }),
+    /receiptId or receiptNamespace/,
+  );
+  assert.equal(constructed, 0);
+});
+
+test('neutral facade preserves class registry receivers for listing and subscription', async () => {
+  class HostRegistry {
+    constructor() {
+      this.connections = [{ connectionId: 'class-registry' }];
+      this.listeners = [];
+    }
+    list() {
+      assert.equal(this instanceof HostRegistry, true);
+      return this.connections;
+    }
+    subscribe(listener) {
+      assert.equal(this instanceof HostRegistry, true);
+      this.listeners.push(listener);
+      return () => {
+        this.listeners = this.listeners.filter((entry) => entry !== listener);
+      };
+    }
+  }
+  const mcp = new HostRegistry();
+  let captured;
+  const ei = await createEventIntelligence({
+    mcp,
+    runtime: {
+      deliver: () => ({ runtimeReceiptId: 'receipt' }),
+    },
+    createHost: async (options) => {
+      captured = options;
+      return {
+        runtime: {},
+        async refreshMcpRegistry() {},
+        async mcpStatus() { return []; },
+        async close() {},
+      };
+    },
+  });
+
+  assert.deepEqual(await captured.mcpRegistry.listConnections(), [
+    { connectionId: 'class-registry' },
+  ]);
+  let refreshed = 0;
+  const unsub = captured.mcpRegistry.subscribe(() => {
+    refreshed += 1;
+  });
+  assert.equal(mcp.listeners.length, 1);
+  mcp.listeners[0]();
+  assert.equal(refreshed, 1);
+  unsub();
+  assert.equal(mcp.listeners.length, 0);
+  await ei.close();
 });

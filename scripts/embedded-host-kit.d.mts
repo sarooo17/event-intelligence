@@ -400,6 +400,63 @@ export function createEmbeddedRuntimeIntegration<RuntimeContext = unknown>(
   options: EmbeddedRuntimeIntegrationOptions<RuntimeContext>,
 ): Promise<EmbeddedRuntimeIntegration<RuntimeContext>>;
 
+/**
+ * Common host-neutral bindings. EI consumes host capabilities without owning
+ * MCP sessions, policy/approval decisions or continuation execution.
+ */
+export interface EventIntelligenceRuntimeBindings<
+  RuntimeContext = unknown,
+  Target = RuntimeTarget,
+>
+  extends Pick<
+    ActivationDispatcherOptions<Target>,
+    'deliver' | 'resolveTarget' | 'hasReceipt' | 'receiptId' | 'receiptNamespace'
+  > {
+  resolveContext?: EmbeddedRuntimeTooling<RuntimeContext>['resolveContext'];
+  control?: EmbeddedRuntimeTooling<RuntimeContext>['control'];
+  projectResult?: EmbeddedRuntimeTooling<RuntimeContext>['projectResult'];
+  projectError?: EmbeddedRuntimeTooling<RuntimeContext>['projectError'];
+}
+
+/**
+ * Simplified embedded entry point. Agent-facing tools are available only when
+ * both runtime.resolveContext and runtime.control are supplied.
+ */
+export interface EventIntelligenceOptions<
+  RuntimeContext = unknown,
+  Target = RuntimeTarget,
+>
+  extends Omit<
+    EmbeddedRuntimeIntegrationOptions<RuntimeContext>,
+    'eventSources' | 'activation' | 'wake' | 'tooling'
+  > {
+  mcp?: EventSourceRegistryOptions;
+  runtime: EventIntelligenceRuntimeBindings<RuntimeContext, Target>;
+}
+
+export function createEventIntelligence<
+  RuntimeContext = unknown,
+  Target = RuntimeTarget,
+>(
+  options: EventIntelligenceOptions<RuntimeContext, Target>,
+): Promise<EmbeddedRuntimeIntegration<RuntimeContext>>;
+
+export type EmbeddedOperationKey =
+  | 'sources' | 'create' | 'list' | 'inspect'
+  | 'pause' | 'resume' | 'delete' | 'update';
+
+/** Canonical portable embedded operation metadata (MCP stdio parity is separate). */
+export const EMBEDDED_OPERATION_REGISTRY: Readonly<
+  Record<
+    EmbeddedOperationKey,
+    Readonly<{
+      name: string;
+      capability: EventIntelligenceCapabilityMetadata;
+      inputSchema: Record<string, unknown>;
+    }>
+  >
+>;
+
 import type {
   TriggerPlanInput,
 } from '../dist/src/intelligenceProtocol/index.js';

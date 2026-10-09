@@ -119,13 +119,23 @@ export async function createLocalEventIntelligenceRuntime({
   store: providedStore,
   observability,
 } = {}) {
+  // Configuration errors must fail before the store initializes. Otherwise a
+  // misspelled shared-mode flag silently selects unsafe single-process mode.
+  const rawSharedMode = env.EVENT_INTELLIGENCE_REQUIRE_SHARED_STORE;
+  if (rawSharedMode !== undefined && rawSharedMode !== '' &&
+      rawSharedMode !== 'true' && rawSharedMode !== 'false') {
+    const error = new Error(
+      'EVENT_INTELLIGENCE_REQUIRE_SHARED_STORE must be exactly "true" or "false"',
+    );
+    error.code = 'EVENT_INTELLIGENCE_SHARED_STORE_MODE_INVALID';
+    throw error;
+  }
   const observer = createObservabilityEmitter(observability);
   const dataDir = env.DATA_DIR ?? './data';
   const rootStore = providedStore ?? new PersistentEventStore(dataDir);
   const restored = await initializeStore(rootStore);
   const storeCapabilities = describeStoreCapabilities(rootStore);
-  const requireSharedStore =
-    env.EVENT_INTELLIGENCE_REQUIRE_SHARED_STORE === 'true';
+  const requireSharedStore = rawSharedMode === 'true';
   if (requireSharedStore) {
     assertSharedStoreCapabilities(rootStore);
     if (!String(env.EVENT_INTELLIGENCE_WORKER_ID || '').trim()) {

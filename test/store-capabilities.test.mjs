@@ -265,3 +265,25 @@ function expectCapabilities(partial) {
     ...partial,
   };
 }
+
+test('runtime fails closed before initializing storage for invalid shared-mode flags', async () => {
+  let initialized = 0;
+  const store = {
+    async init() {
+      initialized += 1;
+    },
+  };
+  for (const value of ['ture', 'TRUE', 'yes', '1', ' true ']) {
+    await assert.rejects(
+      () => createLocalEventIntelligenceRuntime({
+        env: {
+          EVENT_INTELLIGENCE_REQUIRE_SHARED_STORE: value,
+          EVENT_INTELLIGENCE_WORKER_ID: 'worker-1',
+        },
+        store,
+      }),
+      (error) => error.code === 'EVENT_INTELLIGENCE_SHARED_STORE_MODE_INVALID',
+    );
+  }
+  assert.equal(initialized, 0, 'no store state should change on configuration error');
+});
