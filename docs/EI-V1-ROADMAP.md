@@ -27,7 +27,7 @@ A production readiness score cannot be asserted from feature count. v0.11 CI val
 4. **MCP clients stay host-owned:** no duplication of credentials, OAuth sessions, connection lifecycle or ordinary tool calls.
 5. **No named runtime matrix:** never add `if(runtime === 'muffin')`, `toClaude()` or `toOpenAI()` in EI core.
 6. **Storage is truthful:** JSONL is single-process only; Postgres/shared adapters must prove cross-worker safety.
-7. **No silent regressions:** releases, persisted state, and downstream consumer upgrades require explicit compatibility decisions and CI evidence.
+7. **Clean pre-1.0 evolution:** breaking public API changes may remove obsolete entry points; do not carry legacy host shims. Document breaks and test the new canonical contract. Keep persisted-state transitions explicit and fail closed on incompatible on-disk schemas.
 8. **Small independently reviewable PRs:** split unrelated refactors, semantic behavior changes, migrations and infrastructure.
 
 ## Phases and implementation issues
@@ -42,7 +42,7 @@ A production readiness score cannot be asserted from feature count. v0.11 CI val
 | B–C | P0 | Shared storage/recovery/scale | [#47](https://github.com/sarooo17/event-intelligence/issues/47), [#21](https://github.com/sarooo17/event-intelligence/issues/21) | Migrations, retention, chaos, benchmarks |
 | C | P1 | Explainability/observability | [#48](https://github.com/sarooo17/event-intelligence/issues/48) | Why-not-fired traces, optional OTel bridge |
 | C | P2 | Semantic importance monitoring | [#49](https://github.com/sarooo17/event-intelligence/issues/49) | Bounded semantic triage and quality evidence |
-| D | P0 | Compatibility and v1 release gates | [#50](https://github.com/sarooo17/event-intelligence/issues/50) | SemVer/data versioning, downstream safe upgrades |
+| D | P0 | API/state evolution and v1 release gates | [#50](https://github.com/sarooo17/event-intelligence/issues/50) | Clean breaking changes pre-1.0, safe data-state transitions; consumer upgrades owned externally |
 
 Do not block a reliable v1 release on P2 semantic intelligence if its quality, privacy or cost criteria have not been demonstrated. Track it explicitly as subsequent evolution when necessary.
 
@@ -71,7 +71,7 @@ Do **not** infer a universal performance target: publish workload, number and co
 6. Store migrations, retention, crash/restore and soak [#47 / #21].
 7. Explainability contracts and traces [#48].
 8. Reproducible scale/SLO evidence [#47 / #21].
-9. Independent consumer validation and release stabilization [#50].
+9. Canonical host-contract validation, documented breaks and release stabilization [#50].
 10. Optional bounded semantic triage [#49] once budgets/quality prove useful.
 
 Parallelize independent tests and docs, but **serialize changes to canonical schema, persistence layout and core pattern semantics**. Each PR needs a review-ready self-contained unit, CI, target/acceptance evidence and compatibility note.
@@ -79,18 +79,18 @@ Parallelize independent tests and docs, but **serialize changes to canonical sch
 ## Release gates
 
 - **Gate 0 — Baseline:** current main CI green; no unresolved high-priority regression.
-- **Gate 1 — API:** packed-package smoke, semver/public surface checks and conformance for host/management/registry metadata.
+- **Gate 1 — API:** packed-package smoke, documented public breaks and conformance for the **current** host/management/registry contract; no legacy API shims required pre-1.0.
 - **Gate 2 — Correctness:** formal CEP suite, recorded seeds, deterministic time + restart, safe truncation.
-- **Gate 3 — Trust and storage:** cross-tenant security, scoped access, persisted-state upgrade/restore, concurrent Postgres HA, fault injection.
+- **Gate 3 — Trust and storage:** cross-tenant security, scoped access, persisted-state version detection and either a deliberately supported migration or explicit snapshot/reset procedure, concurrent Postgres HA, fault injection.
 - **Gate 4 — Performance:** archived scenario-based p95/p99/throughput/memory DB metrics plus regression budget; do not mark green on synthetic microbench alone.
-- **Gate 5 — Consumers:** Muffin and Artemis candidate upgrade verified in separate opt-in branches; third-party host tested; no automatic dependency/deploy change.
+- **Gate 5 — Runtime boundary:** independent clean-room host tested against the current contract. EI does not maintain legacy host integration branches or block release on Muffin/Artemis CI; each consumer owner tests and migrates later in a separate PR.
 - **Gate 6 — Release:** docs/security/changelog/version compatibility match published artifact; independent review sign-off.
 
 Use [release compatibility policy](EI-RELEASE-COMPATIBILITY.md) and [embedded integration design](EI-INTEGRATION-V1-DESIGN.md) as the contract drafts to refine in implementation PRs.
 
 ## Ownership and issue closure
 
-Every child issue must have: final code+commit/PR links, test commands, CI evidence/artifacts, measured limitations, affected public schemas, migration decision, downstream checks (where relevant), and independently reviewed acceptance criteria. Closing a task because documentation was added is not sufficient. Avoid closing [#21](https://github.com/sarooo17/event-intelligence/issues/21) until its remaining HA work is truly covered.
+Every child issue must have: final code+commit/PR links, test commands, CI evidence/artifacts, measured limitations, public API breaks, persisted-state migration-or-reset decision where needed, and independently reviewed acceptance criteria. Muffin/Artemis consumer upgrades are outside the EI implementation scope. Closing a task because documentation was added is not sufficient. Avoid closing [#21](https://github.com/sarooo17/event-intelligence/issues/21) until its remaining HA work is truly covered.
 
 ## Out-of-scope for this roadmap PR
 
