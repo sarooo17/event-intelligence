@@ -1365,3 +1365,54 @@ test('neutral facade refuses invalid or unguarded host configurations before con
   );
   assert.equal(constructed, 0);
 });
+
+test('neutral facade preserves class registry receivers for listing and subscription', async () => {
+  class HostRegistry {
+    constructor() {
+      this.connections = [{ connectionId: 'class-registry' }];
+      this.listeners = [];
+    }
+    list() {
+      assert.equal(this instanceof HostRegistry, true);
+      return this.connections;
+    }
+    subscribe(listener) {
+      assert.equal(this instanceof HostRegistry, true);
+      this.listeners.push(listener);
+      return () => {
+        this.listeners = this.listeners.filter((entry) => entry !== listener);
+      };
+    }
+  }
+  const mcp = new HostRegistry();
+  let captured;
+  const ei = await createEventIntelligence({
+    mcp,
+    runtime: {
+      deliver: () => ({ runtimeReceiptId: 'receipt' }),
+    },
+    createHost: async (options) => {
+      captured = options;
+      return {
+        runtime: {},
+        async refreshMcpRegistry() {},
+        async mcpStatus() { return []; },
+        async close() {},
+      };
+    },
+  });
+
+  assert.deepEqual(await captured.mcpRegistry.listConnections(), [
+    { connectionId: 'class-registry' },
+  ]);
+  let refreshed = 0;
+  const unsub = captured.mcpRegistry.subscribe(() => {
+    refreshed += 1;
+  });
+  assert.equal(mcp.listeners.length, 1);
+  mcp.listeners[0]();
+  assert.equal(refreshed, 1);
+  unsub();
+  assert.equal(mcp.listeners.length, 0);
+  await ei.close();
+});
