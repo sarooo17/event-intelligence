@@ -1850,12 +1850,26 @@ export function toTriggerPlan({
   withinMs,
   eventTime,
   lifecycle,
+  ...unexpected
 } = {}) {
-  if (!when || typeof when !== 'object') {
+  const unknownTopLevel = Object.keys(unexpected);
+  if (unknownTopLevel.length) {
+    throw new TypeError('Unknown simple trigger option: ' + unknownTopLevel[0]);
+  }
+  if (!when || typeof when !== 'object' || Array.isArray(when)) {
     throw new TypeError('toTriggerPlan requires when.event');
   }
-  if (!then || typeof then !== 'object') {
+  if (!then || typeof then !== 'object' || Array.isArray(then)) {
     throw new TypeError('toTriggerPlan requires then.target and then.instruction');
+  }
+  for (const [name, input, allowed] of [
+    ['when', when, ['id', 'event', 'serverId', 'arguments', 'where']],
+    ['then', then, ['target', 'instruction', 'contextPolicy']],
+  ]) {
+    const unknownKey = Object.keys(input).find((key) => !allowed.includes(key));
+    if (unknownKey) {
+      throw new TypeError('Unknown simple trigger ' + name + ' property: ' + unknownKey);
+    }
   }
 
   return parseTriggerPlanInput({
