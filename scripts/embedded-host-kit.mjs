@@ -1834,4 +1834,101 @@ export async function createEmbeddedRuntimeIntegration({
   });
 }
 
+/**
+ * The common embedded integration path. The host supplies its already-open MCP
+ * connections and the exact continuation/authority callbacks it owns.
+ *
+ * This is a configuration facade around the existing embedded implementation:
+ * no transport, policy, agent loop, scheduler, or alternate CEP executor.
+ * Hosts needing different wiring can continue to use the lower-level kit.
+ */
+export async function createEventIntelligence({
+  mcp,
+  runtime,
+  ...options
+} = {}) {
+  if (!runtime || typeof runtime !== 'object' ||
+      typeof runtime.deliver !== 'function') {
+    throw new TypeError(
+      'createEventIntelligence requires runtime.deliver() for host-owned continuation delivery',
+    );
+  }
+
+  if (mcp !== undefined &&
+      (!mcp || typeof mcp.list !== 'function' ||
+        (mcp.subscribe !== undefined && typeof mcp.subscribe !== 'function'))) {
+    throw new TypeError(
+      'createEventIntelligence mcp must provide list() and optional subscribe()',
+    );
+  }
+
+  const wantsTools = runtime.resolveContext !== undefined ||
+    runtime.control !== undefined;
+  if (wantsTools &&
+      (typeof runtime.resolveContext !== 'function' ||
+        typeof runtime.control !== 'function')) {
+    throw new TypeError(
+      'Agent-facing EI tools require BOTH runtime.resolveContext() and runtime.control(); missing control must never grant mutations',
+    );
+  }
+  for (const name of ['hasReceipt', 'resolveTarget', 'receiptId',
+    'projectResult', 'projectError']) {
+    if (runtime[name] !== undefined && typeof runtime[name] !== 'function') {
+      throw new TypeError(`runtime.${name} must be a function when supplied`);
+    }
+  }
+  if (runtime.receiptNamespace !== undefined &&
+      (typeof runtime.receiptNamespace !== 'string' ||
+        !runtime.receiptNamespace.trim())) {
+    throw new TypeError('runtime.receiptNamespace must be a non-empty string');
+  }
+  if (runtime.receiptId && runtime.receiptNamespace) {
+    throw new TypeError('Provide runtime.receiptId or receiptNamespace, not both');
+  }
+
+  // Forward through runtime so ordinary object methods keep their receiver.
+  const activation = {
+    deliver: (...args) => runtime.deliver(...args),
+    ...(runtime.resolveTarget
+      ? { resolveTarget: (...args) => runtime.resolveTarget(...args) }
+      : {}),
+    ...(runtime.hasReceipt
+      ? { hasReceipt: (...args) => runtime.hasReceipt(...args) }
+      : {}),
+    ...(runtime.receiptId
+      ? { receiptId: (...args) => runtime.receiptId(...args) }
+      : {}),
+    ...(runtime.receiptNamespace
+      ? { receiptNamespace: runtime.receiptNamespace }
+      : {}),
+  };
+
+  const tooling = wantsTools
+    ? {
+        resolveContext: (...args) => runtime.resolveContext(...args),
+        control: (...args) => runtime.control(...args),
+        ...(runtime.projectResult
+          ? { projectResult: (...args) => runtime.projectResult(...args) }
+          : {}),
+        ...(runtime.projectError
+          ? { projectError: (...args) => runtime.projectError(...args) }
+          : {}),
+      }
+    : undefined;
+
+  return createEmbeddedRuntimeIntegration({
+    ...options,
+    ...(mcp ? {
+      eventSources: {
+        list: (...args) => mcp.list(...args),
+        ...(mcp.subscribe
+          ? { subscribe: (...args) => mcp.subscribe(...args) }
+          : {}),
+      },
+    } : {}),
+    activation,
+    ...(tooling ? { tooling } : {}),
+  });
+}
+
 export const PORTABLE_EVENT_INTELLIGENCE_TOOL_NAMES = DEFAULT_TOOL_NAMES;
