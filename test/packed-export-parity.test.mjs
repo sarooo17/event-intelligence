@@ -24,7 +24,7 @@ test('every declared import and declaration path must be in npm tarball', () => 
 test('pack check rejects absolute, unsafe and malformed export targets', () => {
   const manifest = {
     exports: {
-      '.': { types: './types/index.d.ts', import: '../../escape.js' },
+      '.': { types: './types/index.d.ts', import: './../escape.js' },
       './bad': { import: '/secrets.js' },
       './invalid': { import: false },
     },
