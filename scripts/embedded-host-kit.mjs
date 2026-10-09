@@ -4,6 +4,7 @@ import {
   RuntimeTargetSchema,
   parseActivationEnvelope,
   parseTriggerPlanInput,
+  StructuredPredicateSchema,
 } from '../dist/src/intelligenceProtocol/index.js';
 import {
   createEventIntelligenceHost,
@@ -1869,6 +1870,33 @@ export function toTriggerPlan({
     const unknownKey = Object.keys(input).find((key) => !allowed.includes(key));
     if (unknownKey) {
       throw new TypeError('Unknown simple trigger ' + name + ' property: ' + unknownKey);
+    }
+  }
+
+  // Zod's predicate objects deliberately strip unknown keys in the
+  // canonical wire parser. The convenience authoring interface must not
+  // silently discard semantic modifiers supplied by the user.
+  if (when.where !== undefined) {
+    if (!Array.isArray(when.where)) {
+      throw new TypeError('when.where must be an array of predicates');
+    }
+    for (const [index, predicate] of when.where.entries()) {
+      if (!predicate || typeof predicate !== 'object' ||
+          Array.isArray(predicate)) {
+        throw new TypeError('Invalid predicate in when.where at index ' + index);
+      }
+      const variant = StructuredPredicateSchema.options.find(
+        (option) => option.shape.op.safeParse(predicate.op).success,
+      );
+      if (!variant) continue; // Canonical parser reports unsupported op.
+      const unknownKey = Object.keys(predicate).find(
+        (key) => !(key in variant.shape),
+      );
+      if (unknownKey) {
+        throw new TypeError(
+          'Unknown when.where[' + index + '] predicate property: ' + unknownKey,
+        );
+      }
     }
   }
 
