@@ -19,10 +19,11 @@ const input = toTriggerPlan({
 });
 
 // The canonical planner validates against live, host-owned MCP source metadata.
-const plan = await host.scope(scopeId).planTrigger(input);
+const scoped = await host.scope(scopeId);
+const plan = await scoped.planTrigger(input);
 
 // An authenticated and approved host actor still creates the durable trigger.
-await host.scope(scopeId).triggerControl.createTrigger({
+await scoped.triggerControl.createTrigger({
   definition: plan.definition,
   connectionIds: plan.connectionIds,
   actor: host.currentActor(),
