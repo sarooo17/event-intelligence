@@ -143,17 +143,25 @@ export function diagnoseEnvironment({
       : 'Node.js >=22 is required.',
   ));
 
-  const shared = env.EVENT_INTELLIGENCE_REQUIRE_SHARED_STORE === 'true';
+  const rawShared = env.EVENT_INTELLIGENCE_REQUIRE_SHARED_STORE;
+  // Match the runtime's documented exact-string mode selection, but do not
+  // silently treat a noncanonical value as disabled (e.g. "ture").
+  const sharedSettingValid =
+    rawShared === undefined || rawShared === '' ||
+    rawShared === 'true' || rawShared === 'false';
+  const shared = rawShared === 'true';
   const workerId = typeof env.EVENT_INTELLIGENCE_WORKER_ID === 'string' &&
     env.EVENT_INTELLIGENCE_WORKER_ID.trim().length > 0;
   checks.push(check(
     'store.shared-mode',
-    !shared || workerId ? 'pass' : 'fail',
-    shared
-      ? workerId
-        ? 'Shared mode and worker ID are configured; database/store contract was not checked.'
-        : 'Shared mode requires EVENT_INTELLIGENCE_WORKER_ID; also provide a verified strong shared store.'
-      : 'Shared store not explicitly required; multi-worker safety was not verified.',
+    !sharedSettingValid || (shared && !workerId) ? 'fail' : 'pass',
+    !sharedSettingValid
+      ? 'EVENT_INTELLIGENCE_REQUIRE_SHARED_STORE must be exactly "true" or "false" when set; invalid values are unsafe.'
+      : shared
+        ? workerId
+          ? 'Shared mode and worker ID are configured; database/store contract was not checked.'
+          : 'Shared mode requires EVENT_INTELLIGENCE_WORKER_ID; also provide a verified strong shared store.'
+        : 'Shared store not explicitly required; multi-worker safety was not verified.',
   ));
 
   checks.push(check(
