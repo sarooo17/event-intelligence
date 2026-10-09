@@ -102,3 +102,33 @@ test('CLI doctor --json is standalone and strictly offline', () => {
   assert.equal(parsed.status, 'warn');
   assert.equal(r.stderr, '');
 });
+
+test('doctor rejects all noncanonical shared-mode values instead of silently disabling HA', () => {
+  for (const invalid of ['ture', 'TRUE', 'False', '1', 'yes', ' true ', 'off']) {
+    const result = diagnoseEnvironment({
+      nodeVersion: '22.0.0',
+      env: {
+        EVENT_INTELLIGENCE_REQUIRE_SHARED_STORE: invalid,
+        EVENT_INTELLIGENCE_WORKER_ID: 'worker-1',
+      },
+    });
+    assert.equal(result.status, 'fail', invalid);
+    const row = result.checks.find((entry) =>
+      entry.id === 'store.shared-mode'
+    );
+    assert.equal(row.status, 'fail', invalid);
+    assert.match(row.message, /must be exactly/);
+    assert.doesNotMatch(JSON.stringify(result), new RegExp(invalid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'));
+  }
+
+  for (const valid of ['true', 'false', '', undefined]) {
+    const r = diagnoseEnvironment({
+      nodeVersion: '22.0.0',
+      env: {
+        EVENT_INTELLIGENCE_REQUIRE_SHARED_STORE: valid,
+        EVENT_INTELLIGENCE_WORKER_ID: 'worker-1',
+      },
+    });
+    assert.equal(r.checks.find((c) => c.id === 'store.shared-mode').status, 'pass');
+  }
+});
