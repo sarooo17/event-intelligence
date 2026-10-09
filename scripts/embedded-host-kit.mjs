@@ -1886,11 +1886,18 @@ export async function createEventIntelligence({
     throw new TypeError('Provide runtime.receiptId or receiptNamespace, not both');
   }
 
+  // Forward through runtime so ordinary object methods keep their receiver.
   const activation = {
-    deliver: runtime.deliver,
-    ...(runtime.resolveTarget ? { resolveTarget: runtime.resolveTarget } : {}),
-    ...(runtime.hasReceipt ? { hasReceipt: runtime.hasReceipt } : {}),
-    ...(runtime.receiptId ? { receiptId: runtime.receiptId } : {}),
+    deliver: (...args) => runtime.deliver(...args),
+    ...(runtime.resolveTarget
+      ? { resolveTarget: (...args) => runtime.resolveTarget(...args) }
+      : {}),
+    ...(runtime.hasReceipt
+      ? { hasReceipt: (...args) => runtime.hasReceipt(...args) }
+      : {}),
+    ...(runtime.receiptId
+      ? { receiptId: (...args) => runtime.receiptId(...args) }
+      : {}),
     ...(runtime.receiptNamespace
       ? { receiptNamespace: runtime.receiptNamespace }
       : {}),
@@ -1898,13 +1905,13 @@ export async function createEventIntelligence({
 
   const tooling = wantsTools
     ? {
-        resolveContext: runtime.resolveContext,
-        control: runtime.control,
+        resolveContext: (...args) => runtime.resolveContext(...args),
+        control: (...args) => runtime.control(...args),
         ...(runtime.projectResult
-          ? { projectResult: runtime.projectResult }
+          ? { projectResult: (...args) => runtime.projectResult(...args) }
           : {}),
         ...(runtime.projectError
-          ? { projectError: runtime.projectError }
+          ? { projectError: (...args) => runtime.projectError(...args) }
           : {}),
       }
     : undefined;
