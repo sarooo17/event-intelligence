@@ -1918,7 +1918,14 @@ export async function createEventIntelligence({
 
   return createEmbeddedRuntimeIntegration({
     ...options,
-    ...(mcp ? { eventSources: mcp } : {}),
+    ...(mcp ? {
+      eventSources: {
+        list: (...args) => mcp.list(...args),
+        ...(mcp.subscribe
+          ? { subscribe: (...args) => mcp.subscribe(...args) }
+          : {}),
+      },
+    } : {}),
     activation,
     ...(tooling ? { tooling } : {}),
   });
