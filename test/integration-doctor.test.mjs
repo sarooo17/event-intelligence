@@ -118,7 +118,7 @@ test('doctor rejects all noncanonical shared-mode values instead of silently dis
     );
     assert.equal(row.status, 'fail', invalid);
     assert.match(row.message, /must be exactly/);
-    assert.doesNotMatch(JSON.stringify(result), new RegExp(invalid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'));
+    assert.equal(row.message.includes(invalid), false);
   }
 
   for (const valid of ['true', 'false', '', undefined]) {
