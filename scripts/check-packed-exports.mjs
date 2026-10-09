@@ -21,6 +21,13 @@ export function validatePackedExports(manifest, packedFiles) {
       errors.push(`${key}.${condition} must be a relative ./ file path`);
       return;
     }
+    const rawSegments = target.slice(2).split('/');
+    // Node rejects package export targets with dot segments *even if* path
+    // normalization would resolve them to a file present in the tarball.
+    if (rawSegments.some((segment) => segment === '.' || segment === '..')) {
+      errors.push(`${key}.${condition}: ${target} contains an invalid dot segment`);
+      return;
+    }
     const normalized = path.posix.normalize(target.slice(2));
     if (!normalized || normalized === '.' || normalized.startsWith('../') ||
         path.posix.isAbsolute(normalized)) {
