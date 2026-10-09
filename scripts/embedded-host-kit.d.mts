@@ -400,6 +400,22 @@ export function createEmbeddedRuntimeIntegration<RuntimeContext = unknown>(
   options: EmbeddedRuntimeIntegrationOptions<RuntimeContext>,
 ): Promise<EmbeddedRuntimeIntegration<RuntimeContext>>;
 
+export type EmbeddedOperationKey =
+  | 'sources' | 'create' | 'list' | 'inspect'
+  | 'pause' | 'resume' | 'delete' | 'update';
+
+/** Canonical portable embedded operation metadata (MCP stdio parity is separate). */
+export const EMBEDDED_OPERATION_REGISTRY: Readonly<
+  Record<
+    EmbeddedOperationKey,
+    Readonly<{
+      name: string;
+      capability: EventIntelligenceCapabilityMetadata;
+      inputSchema: Record<string, unknown>;
+    }>
+  >
+>;
+
 export const EVENT_INTELLIGENCE_CAPABILITIES: Readonly<{
   eventSourcesList: Readonly<EventIntelligenceCapabilityMetadata>;
   triggerCreate: Readonly<EventIntelligenceCapabilityMetadata>;
