@@ -3,6 +3,7 @@ import { z } from 'zod';
 import {
   RuntimeTargetSchema,
   parseActivationEnvelope,
+  parseTriggerPlanInput,
 } from '../dist/src/intelligenceProtocol/index.js';
 import {
   createEventIntelligenceHost,
@@ -1831,6 +1832,53 @@ export async function createEmbeddedRuntimeIntegration({
         options,
       );
     },
+  });
+}
+
+/**
+ * Compile the common one-event authoring shape into the existing canonical
+ * TriggerPlanInput. This performs no source discovery, mutation, or wake:
+ * consumers MUST submit the result to a scoped host.planTrigger(), which
+ * checks advertised source schemas and canonical Pattern AST rules.
+ */
+export function toTriggerPlan({
+  when,
+  then,
+  triggerId,
+  version,
+  description,
+  withinMs,
+  eventTime,
+  lifecycle,
+} = {}) {
+  if (!when || typeof when !== 'object') {
+    throw new TypeError('toTriggerPlan requires when.event');
+  }
+  if (!then || typeof then !== 'object') {
+    throw new TypeError('toTriggerPlan requires then.target and then.instruction');
+  }
+
+  return parseTriggerPlanInput({
+    events: [{
+      ...(when.id !== undefined ? { id: when.id } : {}),
+      event: when.event,
+      ...(when.serverId !== undefined ? { serverId: when.serverId } : {}),
+      ...(when.arguments !== undefined ? { arguments: when.arguments } : {}),
+      ...(when.where !== undefined ? { where: when.where } : {}),
+    }],
+    target: then.target,
+    continuation: {
+      instruction: then.instruction,
+      ...(then.contextPolicy !== undefined
+        ? { contextPolicy: then.contextPolicy }
+        : {}),
+    },
+    ...(triggerId !== undefined ? { triggerId } : {}),
+    ...(version !== undefined ? { version } : {}),
+    ...(description !== undefined ? { description } : {}),
+    ...(withinMs !== undefined ? { withinMs } : {}),
+    ...(eventTime !== undefined ? { eventTime } : {}),
+    ...(lifecycle !== undefined ? { lifecycle } : {}),
   });
 }
 
