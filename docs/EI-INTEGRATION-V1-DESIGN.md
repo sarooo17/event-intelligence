@@ -18,9 +18,9 @@ The integration must not assume ChatGPT, Cursor, Claude, Codex, Muffin, Artemis 
 
 `createEmbeddedRuntimeIntegration({ eventSources, activation, tooling?, store?, ... })` already returns a host, portable tool catalog, `bind()`, diagnostics and lifecycle methods. The source registry discovers already-connected MCP Events sessions. `activation.deliver()` routes matched evidence to the host. An optional `tooling.control()` delegates any durable create/update/pause/resume/delete action to host policy, including host-owned approvals/interrupts.
 
-**Preserve this API**: build ergonomic sugar on top, not a breaking replacement.
+**Pre-1.0 design decision:** this is the *current* API, not a permanent compatibility constraint. Prefer one clean canonical public API; refactor or remove old exports if maintaining both would create duplicate paths. Document breaking changes instead of shipping compatibility shims for existing hosts.
 
-## Proposed optional façade (illustrative pseudocode; NOT executable)
+## Proposed canonical façade (illustrative pseudocode; NOT executable)
 
 ```ts
 import { createEventIntelligence } from 'mcp-event-intelligence/embedded';
@@ -69,7 +69,7 @@ One canonical definition per EI operation holds:
 - input/output schemas;
 - resource/effect/durability;
 - host-control requirement, exposure constraints and identity/scope rules;
-- behavior version and deprecation markers.
+- canonical behavior version and documented breaking changes when public contracts change; no automatic pre-1.0 compatibility mapping.
 
 Publish projections to embedded portable tools, CLI and standalone MCP control plane. Capabilities should be selectively discoverable under host policy. `trigger_plan` and simulation are not automatically visible merely because the package can perform them. The host remains responsible for principal-aware selection and execution.
 
@@ -102,7 +102,7 @@ Design rules:
 
 ## Lifecycle and error handling
 
-The additive facade should coalesce registry refreshes, expose explicit `start()/close()/diagnostics()`, and optionally use host shutdown callbacks. No hidden worker or side-effectful startup when configuration is incomplete.
+The proposed canonical facade should coalesce registry refreshes, expose explicit `start()/close()/diagnostics()`, and optionally use host shutdown callbacks. No hidden worker or side-effectful startup when configuration is incomplete.
 
 Introduce stable *category* codes for configuration errors (e.g. registry shape, missing scope identity, required mutation control, insufficient store capabilities, invalid receipt policy, unresolvable target). These are proposed categories; exact names are to be decided and semver-documented. No fabricated successful setup on partial attach errors.
 
@@ -138,12 +138,13 @@ Never send synthetic delivery to a live conversation as part of an unauthorised 
 
 Measure time-to-first-trigger, code needed for generic wiring, confusing error rate, and new-host regressions. A 10/10 integration claim requires external adoption evidence, not just fewer lines in an internal test.
 
-## Migration and backward compatibility
+## Pre-1.0 evolution and migration
 
-- Prefer an **additive opt-in** `createEventIntelligence()`; leave `createEmbeddedRuntimeIntegration()`, `createEventIntelligenceHost()` and existing import paths operational during documented deprecation periods.
-- Existing v0.11 consumers use their pinned package until an explicit dependency PR; no unsolicited Muffin/Artemis updates.
-- Any changed exported tool inputs, lifecycle/receipt semantics or durable stored definitions must have tests and migration instructions.
-- Use [EI release compatibility](EI-RELEASE-COMPATIBILITY.md) for producer/MCP draft vs package vs persisted-state distinctions.
+- Choose the **single clean canonical** public entry point for the next release. Legacy `createEmbeddedRuntimeIntegration()`, `createEventIntelligenceHost()` or other old exported paths may be removed if keeping them would duplicate behavior; preserve lower-level primitives only when they solve a distinct real use case.
+- **No runtime-specific compatibility shims and no mandatory deprecation period before v1.0.** Document removed/renamed exports and new signatures in the changelog and migration notes; do not implement old behavior solely for Muffin or Artemis.
+- Existing v0.11 consumers keep their exact pinned package until their owner explicitly upgrades. EI releases do not change host package manifests, lockfiles or deployments.
+- Test the current public contract and fail closed on incompatibilities involving stored data or external MCP Events profiles. For persisted data, choose an intentional migration if warranted **or** a documented snapshot/reset/restore procedure; never silently wipe active triggers, receipts or scopes.
+- Use [EI release compatibility](EI-RELEASE-COMPATIBILITY.md) to distinguish package API from provider/wire and persisted-state compatibility.
 
 ## Definition of done
 
