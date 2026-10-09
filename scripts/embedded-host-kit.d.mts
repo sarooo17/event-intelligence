@@ -457,6 +457,36 @@ export const EMBEDDED_OPERATION_REGISTRY: Readonly<
   >
 >;
 
+import type {
+  TriggerPlanInput,
+} from '../dist/src/intelligenceProtocol/index.js';
+
+/**
+ * One-event authoring shortcut. Output is the canonical TriggerPlanInput;
+ * the host still validates source availability, scope and mutation control.
+ */
+export interface SimpleTriggerPlanInput
+  extends Partial<Pick<
+    TriggerPlanInput,
+    'triggerId' | 'version' | 'description' | 'withinMs' |
+    'eventTime' | 'lifecycle'
+  >> {
+  when: {
+    id?: string;
+    event: string;
+    serverId?: string;
+    arguments?: Record<string, unknown>;
+    where?: TriggerPlanInput['events'][number]['where'];
+  };
+  then: {
+    target: NonNullable<TriggerPlanInput['target']>;
+    instruction: string;
+    contextPolicy?: Partial<NonNullable<TriggerPlanInput['continuation']>['contextPolicy']>;
+  };
+}
+
+export function toTriggerPlan(options: SimpleTriggerPlanInput): TriggerPlanInput;
+
 export const EVENT_INTELLIGENCE_CAPABILITIES: Readonly<{
   eventSourcesList: Readonly<EventIntelligenceCapabilityMetadata>;
   triggerCreate: Readonly<EventIntelligenceCapabilityMetadata>;

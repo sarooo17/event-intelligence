@@ -3,6 +3,8 @@ import { z } from 'zod';
 import {
   RuntimeTargetSchema,
   parseActivationEnvelope,
+  parseTriggerPlanInput,
+  StructuredPredicateSchema,
 } from '../dist/src/intelligenceProtocol/index.js';
 import {
   createEventIntelligenceHost,
@@ -1994,6 +1996,94 @@ export async function createEventIntelligence({
     } : {}),
     activation,
     ...(tooling ? { tooling } : {}),
+  });
+}
+
+/**
+ * Compile the common one-event authoring shape into the existing canonical
+ * TriggerPlanInput. This performs no source discovery, mutation, or wake:
+ * consumers MUST submit the result to a scoped host.planTrigger(), which
+ * checks advertised source schemas and canonical Pattern AST rules.
+ */
+export function toTriggerPlan({
+  when,
+  then,
+  triggerId,
+  version,
+  description,
+  withinMs,
+  eventTime,
+  lifecycle,
+  ...unexpected
+} = {}) {
+  const unknownTopLevel = Object.keys(unexpected);
+  if (unknownTopLevel.length) {
+    throw new TypeError('Unknown simple trigger option: ' + unknownTopLevel[0]);
+  }
+  if (!when || typeof when !== 'object' || Array.isArray(when)) {
+    throw new TypeError('toTriggerPlan requires when.event');
+  }
+  if (!then || typeof then !== 'object' || Array.isArray(then)) {
+    throw new TypeError('toTriggerPlan requires then.target and then.instruction');
+  }
+  for (const [name, input, allowed] of [
+    ['when', when, ['id', 'event', 'serverId', 'arguments', 'where']],
+    ['then', then, ['target', 'instruction', 'contextPolicy']],
+  ]) {
+    const unknownKey = Object.keys(input).find((key) => !allowed.includes(key));
+    if (unknownKey) {
+      throw new TypeError('Unknown simple trigger ' + name + ' property: ' + unknownKey);
+    }
+  }
+
+  // Zod's predicate objects deliberately strip unknown keys in the
+  // canonical wire parser. The convenience authoring interface must not
+  // silently discard semantic modifiers supplied by the user.
+  if (when.where !== undefined) {
+    if (!Array.isArray(when.where)) {
+      throw new TypeError('when.where must be an array of predicates');
+    }
+    for (const [index, predicate] of when.where.entries()) {
+      if (!predicate || typeof predicate !== 'object' ||
+          Array.isArray(predicate)) {
+        throw new TypeError('Invalid predicate in when.where at index ' + index);
+      }
+      const variant = StructuredPredicateSchema.options.find(
+        (option) => option.shape.op.safeParse(predicate.op).success,
+      );
+      if (!variant) continue; // Canonical parser reports unsupported op.
+      const unknownKey = Object.keys(predicate).find(
+        (key) => !(key in variant.shape),
+      );
+      if (unknownKey) {
+        throw new TypeError(
+          'Unknown when.where[' + index + '] predicate property: ' + unknownKey,
+        );
+      }
+    }
+  }
+
+  return parseTriggerPlanInput({
+    events: [{
+      ...(when.id !== undefined ? { id: when.id } : {}),
+      event: when.event,
+      ...(when.serverId !== undefined ? { serverId: when.serverId } : {}),
+      ...(when.arguments !== undefined ? { arguments: when.arguments } : {}),
+      ...(when.where !== undefined ? { where: when.where } : {}),
+    }],
+    target: then.target,
+    continuation: {
+      instruction: then.instruction,
+      ...(then.contextPolicy !== undefined
+        ? { contextPolicy: then.contextPolicy }
+        : {}),
+    },
+    ...(triggerId !== undefined ? { triggerId } : {}),
+    ...(version !== undefined ? { version } : {}),
+    ...(description !== undefined ? { description } : {}),
+    ...(withinMs !== undefined ? { withinMs } : {}),
+    ...(eventTime !== undefined ? { eventTime } : {}),
+    ...(lifecycle !== undefined ? { lifecycle } : {}),
   });
 }
 
