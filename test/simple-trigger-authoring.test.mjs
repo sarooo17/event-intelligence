@@ -113,3 +113,31 @@ test('simple authoring rejects unknown or malformed fields rather than silently 
     /then.target and then.instruction/,
   );
 });
+
+test('simple authoring rejects silent predicate modifier stripping but keeps valid regex flags', () => {
+  const then = {
+    target,
+    instruction: 'Review event safely.',
+    contextPolicy: { evidence: 'refs_only' },
+  };
+  assert.throws(
+    () => toTriggerPlan({
+      when: {
+        event: 'github.issue.updated',
+        where: [{ path: 'priority', op: 'gte', value: 2, negate: true }],
+      },
+      then,
+    }),
+    /Unknown when\.where\[0\] predicate property: negate/,
+  );
+  const plan = toTriggerPlan({
+    when: {
+      event: 'github.issue.updated',
+      where: [{ path: 'title', op: 'regex', value: 'bug', flags: 'i' }],
+    },
+    then,
+  });
+  assert.equal(plan.events[0].where[0].flags, 'i');
+  assert.equal(plan.continuation.contextPolicy.evidence, 'refs_only');
+  assert.equal(plan.continuation.contextPolicy.maxEvents, 50);
+});
