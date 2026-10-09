@@ -1309,3 +1309,27 @@ test('embedded tool name collisions cannot shadow a different capability', () =>
   assert.equal(custom[2].name, 'watch_list');
   assert.equal(custom[1].capability, EMBEDDED_OPERATION_REGISTRY.create.capability);
 });
+
+test('embedded exported schema trees are deeply immutable across consumers', () => {
+  const create = EMBEDDED_OPERATION_REGISTRY.create.inputSchema;
+  const update = EMBEDDED_OPERATION_REGISTRY.update.inputSchema;
+  const firstName = create.required[0];
+  const eventLength = create.properties.events.items.properties.event.minLength;
+  assert.equal(Object.isFrozen(create.required), true);
+  assert.equal(Object.isFrozen(create.properties.events.items.properties), true);
+  assert.equal(Object.isFrozen(update.properties.events.items.properties), true);
+  assert.throws(
+    () => create.required.push('dangerous'),
+    TypeError,
+  );
+  assert.throws(
+    () => { create.properties.events.items.properties.event.minLength = 999; },
+    TypeError,
+  );
+  assert.throws(
+    () => { update.properties.events.items.properties.event.minLength = 999; },
+    TypeError,
+  );
+  assert.equal(create.required[0], firstName);
+  assert.equal(create.properties.events.items.properties.event.minLength, eventLength);
+});
