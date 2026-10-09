@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   EVENT_INTELLIGENCE_CAPABILITIES,
+  EMBEDDED_OPERATION_REGISTRY,
   bindEmbeddedRuntimeIntegration,
   createActivationDispatcher,
   createDeterministicReceiptId,
@@ -1254,6 +1255,84 @@ test('runtime integration accepts a static iterable of host-owned event connecti
   assert.equal(diagnostics.connections, 1);
   assert.equal(diagnostics.eventsCapable, 1);
   assert.equal(diagnostics.eventDefinitions, 1);
+});
+
+test('embedded operation registry is the single descriptor source for model tools', () => {
+  const keys = [
+    'sources', 'create', 'list', 'inspect',
+    'pause', 'resume', 'delete', 'update',
+  ];
+  assert.deepEqual(Object.keys(EMBEDDED_OPERATION_REGISTRY), keys);
+  const names = Object.values(EMBEDDED_OPERATION_REGISTRY).map((row) => row.name);
+  assert.equal(new Set(names).size, 8);
+
+  const tools = createEventIntelligenceAgentTools({
+    host: {},
+    resolveContext: () => ({}),
+    control: () => ({ action: 'return', result: { ok: false } }),
+  });
+  for (let i = 0; i < keys.length; i += 1) {
+    const canonical = EMBEDDED_OPERATION_REGISTRY[keys[i]];
+    assert.equal(tools[i].name, canonical.name);
+    assert.equal(tools[i].capability, canonical.capability);
+    assert.equal(tools[i].inputSchema, canonical.inputSchema);
+    assert.equal(Object.isFrozen(canonical), true);
+  }
+  const ids = tools.map((tool) => tool.capability.id);
+  assert.equal(new Set(ids).size, ids.length);
+});
+
+test('embedded tool name collisions cannot shadow a different capability', () => {
+  const options = {
+    host: {},
+    resolveContext: () => ({}),
+    control: () => ({ action: 'return', result: { ok: false } }),
+  };
+  assert.throws(
+    () => createEventIntelligenceAgentTools({
+      ...options,
+      names: { create: 'event_sources_list' },
+    }),
+    /Duplicate embedded tool name/,
+  );
+  assert.throws(
+    () => createEventIntelligenceAgentTools({
+      ...options,
+      names: { delete: '' },
+    }),
+    /non-empty strings/,
+  );
+  const custom = createEventIntelligenceAgentTools({
+    ...options,
+    names: { create: 'watch_create', list: 'watch_list' },
+  });
+  assert.equal(custom[1].name, 'watch_create');
+  assert.equal(custom[2].name, 'watch_list');
+  assert.equal(custom[1].capability, EMBEDDED_OPERATION_REGISTRY.create.capability);
+});
+
+test('embedded exported schema trees are deeply immutable across consumers', () => {
+  const create = EMBEDDED_OPERATION_REGISTRY.create.inputSchema;
+  const update = EMBEDDED_OPERATION_REGISTRY.update.inputSchema;
+  const firstName = create.required[0];
+  const eventLength = create.properties.events.items.properties.event.minLength;
+  assert.equal(Object.isFrozen(create.required), true);
+  assert.equal(Object.isFrozen(create.properties.events.items.properties), true);
+  assert.equal(Object.isFrozen(update.properties.events.items.properties), true);
+  assert.throws(
+    () => create.required.push('dangerous'),
+    TypeError,
+  );
+  assert.throws(
+    () => { create.properties.events.items.properties.event.minLength = 999; },
+    TypeError,
+  );
+  assert.throws(
+    () => { update.properties.events.items.properties.event.minLength = 999; },
+    TypeError,
+  );
+  assert.equal(create.required[0], firstName);
+  assert.equal(create.properties.events.items.properties.event.minLength, eventLength);
 });
 
 test('neutral facade delegates to the existing host without taking runtime ownership', async () => {

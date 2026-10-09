@@ -276,6 +276,75 @@ const UPDATE_INPUT_SCHEMA = Object.freeze({
   },
 });
 
+/**
+ * Keep publicly exposed JSON schema trees immutable, not merely their
+ * descriptor containers. Several operation schemas share nested nodes.
+ */
+function deepFreezeSchema(value, seen = new WeakSet()) {
+  if (!value || typeof value !== 'object' || seen.has(value)) return value;
+  seen.add(value);
+  for (const child of Object.values(value)) deepFreezeSchema(child, seen);
+  return Object.freeze(value);
+}
+
+/**
+ * Canonical embedded operation descriptors. The embedded management surface
+ * keeps name/schema/capability metadata together to prevent drift.
+ * Standalone MCP parity is a separate #43 slice.
+ */
+export const EMBEDDED_OPERATION_REGISTRY = Object.freeze({
+  sources: Object.freeze({
+    name: DEFAULT_TOOL_NAMES.sources,
+    capability: EVENT_INTELLIGENCE_CAPABILITIES.eventSourcesList,
+    inputSchema: deepFreezeSchema(SOURCES_INPUT_SCHEMA),
+  }),
+  create: Object.freeze({
+    name: DEFAULT_TOOL_NAMES.create,
+    capability: EVENT_INTELLIGENCE_CAPABILITIES.triggerCreate,
+    inputSchema: deepFreezeSchema(CREATE_INPUT_SCHEMA),
+  }),
+  list: Object.freeze({
+    name: DEFAULT_TOOL_NAMES.list,
+    capability: EVENT_INTELLIGENCE_CAPABILITIES.triggerList,
+    inputSchema: deepFreezeSchema(LIST_INPUT_SCHEMA),
+  }),
+  inspect: Object.freeze({
+    name: DEFAULT_TOOL_NAMES.inspect,
+    capability: EVENT_INTELLIGENCE_CAPABILITIES.triggerInspect,
+    inputSchema: deepFreezeSchema(INSPECT_INPUT_SCHEMA),
+  }),
+  pause: Object.freeze({
+    name: DEFAULT_TOOL_NAMES.pause,
+    capability: EVENT_INTELLIGENCE_CAPABILITIES.triggerPause,
+    inputSchema: deepFreezeSchema(LIFECYCLE_INPUT_SCHEMA),
+  }),
+  resume: Object.freeze({
+    name: DEFAULT_TOOL_NAMES.resume,
+    capability: EVENT_INTELLIGENCE_CAPABILITIES.triggerResume,
+    inputSchema: deepFreezeSchema(LIFECYCLE_INPUT_SCHEMA),
+  }),
+  delete: Object.freeze({
+    name: DEFAULT_TOOL_NAMES.delete,
+    capability: EVENT_INTELLIGENCE_CAPABILITIES.triggerDelete,
+    inputSchema: deepFreezeSchema(LIFECYCLE_INPUT_SCHEMA),
+  }),
+  update: Object.freeze({
+    name: DEFAULT_TOOL_NAMES.update,
+    capability: EVENT_INTELLIGENCE_CAPABILITIES.triggerUpdate,
+    inputSchema: deepFreezeSchema(UPDATE_INPUT_SCHEMA),
+  }),
+});
+
+function portableDescriptor(key, name) {
+  const descriptor = EMBEDDED_OPERATION_REGISTRY[key];
+  if (!descriptor) throw new Error('Unknown embedded operation');
+  return {
+    name,
+    inputSchema: descriptor.inputSchema,
+    capability: descriptor.capability,
+  };
+}
+
 function errorCode(error, fallback) {
   return String(error?.code || fallback);
 }
@@ -969,6 +1038,15 @@ export function createEventIntelligenceAgentTools({
     ...DEFAULT_TOOL_NAMES,
     ...names,
   };
+  if (Object.values(toolNames).some((value) =>
+    typeof value !== 'string' || !value.trim()
+  )) {
+    throw new Error('Embedded tool names must be non-empty strings');
+  }
+  if (new Set(Object.values(toolNames)).size !==
+      Object.keys(toolNames).length) {
+    throw new Error('Duplicate embedded tool name would shadow another capability');
+  }
 
   const sourcesCapability =
     EVENT_INTELLIGENCE_CAPABILITIES.eventSourcesList;
@@ -989,11 +1067,9 @@ export function createEventIntelligenceAgentTools({
 
   return [
     {
-      name: toolNames.sources,
+      ...portableDescriptor('sources', toolNames.sources),
       description:
         'List live future-event sources discovered from event connections already owned by the host runtime. Use this before creating a trigger so event names and schemas are not guessed.',
-      inputSchema: SOURCES_INPUT_SCHEMA,
-      capability: sourcesCapability,
       async execute(_args, runtimeContext) {
         try {
           const resolved = await resolveContext(runtimeContext, {
@@ -1028,11 +1104,9 @@ export function createEventIntelligenceAgentTools({
       },
     },
     {
-      name: toolNames.create,
+      ...portableDescriptor('create', toolNames.create),
       description:
         'Create a durable future condition. The host supplies continuation, control and identity context; Event Intelligence wakes the opaque continuation target only when the condition matches.',
-      inputSchema: CREATE_INPUT_SCHEMA,
-      capability: createCapability,
       async execute(args, runtimeContext) {
         const parsed = TriggerCreateInput.safeParse(args ?? {});
         if (!parsed.success) {
@@ -1185,11 +1259,9 @@ export function createEventIntelligenceAgentTools({
       },
     },
     {
-      name: toolNames.list,
+      ...portableDescriptor('list', toolNames.list),
       description:
         'List durable triggers owned by the current host principal. Results are compact by default and can be filtered by lifecycle status, source, target, consumption mode and remaining firings.',
-      inputSchema: LIST_INPUT_SCHEMA,
-      capability: listCapability,
       async execute(args, runtimeContext) {
         const parsed = TriggerListInput.safeParse(args ?? {});
         if (!parsed.success) {
@@ -1245,11 +1317,9 @@ export function createEventIntelligenceAgentTools({
       },
     },
     {
-      name: toolNames.inspect,
+      ...portableDescriptor('inspect', toolNames.inspect),
       description:
         'Inspect one durable trigger owned by the current host principal, including lifecycle and temporal state. If more than one version is eligible, specify version.',
-      inputSchema: INSPECT_INPUT_SCHEMA,
-      capability: inspectCapability,
       async execute(args, runtimeContext) {
         const parsed = TriggerInspectInput.safeParse(args ?? {});
         if (!parsed.success) {
@@ -1347,10 +1417,8 @@ export function createEventIntelligenceAgentTools({
         description: 'Delete a current durable trigger owned by the current host principal.',
       },
     ].map((spec) => ({
-      name: toolNames[spec.key],
+      ...portableDescriptor(spec.key, toolNames[spec.key]),
       description: spec.description,
-      inputSchema: LIFECYCLE_INPUT_SCHEMA,
-      capability: spec.capability,
       async execute(args, runtimeContext) {
         const parsed = TriggerLifecycleInput.safeParse(args ?? {});
         if (!parsed.success) {
@@ -1478,11 +1546,9 @@ export function createEventIntelligenceAgentTools({
       },
     })),
     {
-      name: toolNames.update,
+      ...portableDescriptor('update', toolNames.update),
       description:
         'Replace the current owned trigger with a new immutable version. Supply the complete future condition; the original continuation target is preserved.',
-      inputSchema: UPDATE_INPUT_SCHEMA,
-      capability: updateCapability,
       async execute(args, runtimeContext) {
         const parsed = TriggerUpdateInput.safeParse(args ?? {});
         if (!parsed.success) {
