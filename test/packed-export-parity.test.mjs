@@ -31,7 +31,20 @@ test('pack check rejects absolute, unsafe and malformed export targets', () => {
   };
   const errors = validatePackedExports(manifest, ['types/index.d.ts']);
   assert.equal(errors.length, 3);
-  assert.match(errors[0], /escapes package root/);
+  assert.match(errors[0], /invalid dot segment/);
   assert.match(errors[1], /must be a relative/);
   assert.match(errors[2], /must be a relative/);
+});
+
+test('pack check rejects dot segments that Node disallows even when files exist', () => {
+  const packed = ['dist/index.js', 'index.js', 'dist/entry.js', 'dist/index.d.ts'];
+  for (const target of ['./dist/../index.js', './dist/./index.js']) {
+    const errors = validatePackedExports({
+      exports: {
+        '.': { import: target, types: './dist/index.d.ts' },
+      },
+    }, packed);
+    assert.equal(errors.length, 1, target);
+    assert.match(errors[0], /invalid dot segment/, target);
+  }
 });
