@@ -24,6 +24,8 @@ Usage:
   mcp-event-intelligence          Start the HTTP reference service
   mcp-event-intelligence mcp      Start the standard MCP stdio control plane
   mcp-event-intelligence --mcp    Same as "mcp"
+  mcp-event-intelligence doctor   Read-only offline integration configuration checks
+  mcp-event-intelligence doctor --json   Machine-readable offline check output
 
 MCP stdio mode:
   DATA_DIR=./data
@@ -56,7 +58,23 @@ Important:
   process.exit(0);
 }
 
-if (args[0] === 'mcp' || flags.has('--mcp')) {
+if (args[0] === 'doctor') {
+  const unrecognized = args.slice(1).filter((arg) => arg !== '--json');
+  if (unrecognized.length) {
+    console.error(`Unknown doctor option: ${unrecognized[0]}`);
+    process.exitCode = 2;
+  } else {
+    const {
+      diagnoseEnvironment,
+      formatDoctorReport,
+    } = await import('../scripts/lib/integration-doctor.mjs');
+    const result = diagnoseEnvironment();
+    console.log(flags.has('--json')
+      ? JSON.stringify(result, null, 2)
+      : formatDoctorReport(result));
+    if (result.status === 'fail') process.exitCode = 1;
+  }
+} else if (args[0] === 'mcp' || flags.has('--mcp')) {
   await import('../scripts/mcp-stdio.mjs');
 } else {
   await import('../scripts/service.mjs');

@@ -33,5 +33,8 @@ jobs:
       - name: Verify npm package contents
         run: npm run pack:check
 
+      - name: Verify public exports against npm tarball
+        run: node scripts/check-packed-exports.mjs
+
       - name: Build Docker image
         run: docker build -t mcp-event-intelligence:release-check .

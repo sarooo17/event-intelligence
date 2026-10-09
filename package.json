@@ -38,6 +38,10 @@
     "./storage/postgres": {
       "types": "./scripts/lib/postgres-event-store.d.mts",
       "import": "./scripts/lib/postgres-event-store.mjs"
+    },
+    "./diagnostics": {
+      "types": "./scripts/lib/integration-doctor.d.mts",
+      "import": "./scripts/lib/integration-doctor.mjs"
     }
   },
   "bin": {

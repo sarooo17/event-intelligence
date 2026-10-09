@@ -9,6 +9,7 @@ import {
   createContinuationTarget,
   createEmbeddedEventIntelligence,
   createEmbeddedRuntimeIntegration,
+  createEventIntelligence,
   createEventIntelligenceAgentTools,
   createEventSourceRegistry,
   createPortableToolCatalog,
@@ -1332,4 +1333,165 @@ test('embedded exported schema trees are deeply immutable across consumers', () 
   );
   assert.equal(create.required[0], firstName);
   assert.equal(create.properties.events.items.properties.event.minLength, eventLength);
+});
+
+test('neutral facade delegates to the existing host without taking runtime ownership', async () => {
+  let captured;
+  let closed = false;
+  const fakeHost = {
+    runtime: { marker: 'facade' },
+    async refreshMcpRegistry() { return []; },
+    async mcpStatus() { return []; },
+    async scope() { return this; },
+    async close() { closed = true; },
+    eventSources: [],
+  };
+
+  const integration = await createEventIntelligence({
+    mcp: {
+      list: () => [{ connectionId: 'events-1' }],
+    },
+    runtime: {
+      receiptNamespace: 'test-runtime',
+      hasReceipt: () => false,
+      deliver: ({ receiptId }) => ({ runtimeReceiptId: receiptId }),
+      resolveContext: () => ({
+        target: { runtime: 'test-runtime', kind: 'task', id: 'task-1' },
+        actor: { type: 'agent', principal_id: 'agent-1' },
+        owner: { type: 'user', principal_id: 'owner-1' },
+      }),
+      control: () => ({ action: 'return', result: { ok: false } }),
+    },
+    createHost: async (options) => {
+      captured = options;
+      return fakeHost;
+    },
+  });
+
+  assert.deepEqual(await captured.mcpRegistry.listConnections(), [
+    { connectionId: 'events-1' },
+  ]);
+  assert.equal(typeof captured.wake, 'function');
+  const dispatched = await captured.wake({ wake_id: 'wake-1' }, activation);
+  assert.equal(
+    dispatched.runtimeReceiptId,
+    createDeterministicReceiptId('test-runtime', 'wake-1'),
+  );
+  assert.equal(integration.tools.length, 8);
+  assert.equal(integration.toolCatalog.list().length, 8);
+  assert.equal(integration.host, fakeHost);
+  await integration.close();
+  assert.equal(closed, true);
+});
+
+test('neutral facade supports headless delivery without model tools', async () => {
+  const fakeHost = {
+    runtime: {},
+    async refreshMcpRegistry() { return []; },
+    async mcpStatus() { return []; },
+    async close() {},
+  };
+  const integration = await createEventIntelligence({
+    runtime: {
+      deliver: () => ({ runtimeReceiptId: 'receipt-1' }),
+    },
+    createHost: async () => fakeHost,
+  });
+  assert.deepEqual(integration.tools, []);
+  assert.equal(integration.toolCatalog.all.length, 0);
+  await integration.close();
+});
+
+test('neutral facade refuses invalid or unguarded host configurations before constructing runtime', async () => {
+  let constructed = 0;
+  const createHost = async () => {
+    constructed += 1;
+    throw new Error('should never construct');
+  };
+  const runtime = { deliver: () => ({ runtimeReceiptId: 'receipt' }) };
+  await assert.rejects(
+    () => createEventIntelligence({ runtime: {}, createHost }),
+    /runtime\.deliver/,
+  );
+  await assert.rejects(
+    () => createEventIntelligence({
+      runtime: { ...runtime, resolveContext: () => ({}) },
+      createHost,
+    }),
+    /BOTH runtime\.resolveContext.*runtime\.control/,
+  );
+  await assert.rejects(
+    () => createEventIntelligence({
+      runtime: { ...runtime, control: () => ({ action: 'execute' }) },
+      createHost,
+    }),
+    /BOTH runtime\.resolveContext.*runtime\.control/,
+  );
+  await assert.rejects(
+    () => createEventIntelligence({
+      mcp: { list: [] },
+      runtime,
+      createHost,
+    }),
+    /mcp must provide list/,
+  );
+  await assert.rejects(
+    () => createEventIntelligence({
+      runtime: { ...runtime, receiptId: () => 'x', receiptNamespace: 'y' },
+      createHost,
+    }),
+    /receiptId or receiptNamespace/,
+  );
+  assert.equal(constructed, 0);
+});
+
+test('neutral facade preserves class registry receivers for listing and subscription', async () => {
+  class HostRegistry {
+    constructor() {
+      this.connections = [{ connectionId: 'class-registry' }];
+      this.listeners = [];
+    }
+    list() {
+      assert.equal(this instanceof HostRegistry, true);
+      return this.connections;
+    }
+    subscribe(listener) {
+      assert.equal(this instanceof HostRegistry, true);
+      this.listeners.push(listener);
+      return () => {
+        this.listeners = this.listeners.filter((entry) => entry !== listener);
+      };
+    }
+  }
+  const mcp = new HostRegistry();
+  let captured;
+  const ei = await createEventIntelligence({
+    mcp,
+    runtime: {
+      deliver: () => ({ runtimeReceiptId: 'receipt' }),
+    },
+    createHost: async (options) => {
+      captured = options;
+      return {
+        runtime: {},
+        async refreshMcpRegistry() {},
+        async mcpStatus() { return []; },
+        async close() {},
+      };
+    },
+  });
+
+  assert.deepEqual(await captured.mcpRegistry.listConnections(), [
+    { connectionId: 'class-registry' },
+  ]);
+  let refreshed = 0;
+  const unsub = captured.mcpRegistry.subscribe(() => {
+    refreshed += 1;
+  });
+  assert.equal(mcp.listeners.length, 1);
+  mcp.listeners[0]();
+  assert.equal(refreshed, 1);
+  unsub();
+  assert.equal(mcp.listeners.length, 0);
+  await ei.close();
 });
