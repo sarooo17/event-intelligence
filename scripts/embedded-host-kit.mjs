@@ -277,6 +277,17 @@ const UPDATE_INPUT_SCHEMA = Object.freeze({
 });
 
 /**
+ * Keep publicly exposed JSON schema trees immutable, not merely their
+ * descriptor containers. Several operation schemas share nested nodes.
+ */
+function deepFreezeSchema(value, seen = new WeakSet()) {
+  if (!value || typeof value !== 'object' || seen.has(value)) return value;
+  seen.add(value);
+  for (const child of Object.values(value)) deepFreezeSchema(child, seen);
+  return Object.freeze(value);
+}
+
+/**
  * Canonical embedded operation descriptors. The embedded management surface
  * keeps name/schema/capability metadata together to prevent drift.
  * Standalone MCP parity is a separate #43 slice.
@@ -285,42 +296,42 @@ export const EMBEDDED_OPERATION_REGISTRY = Object.freeze({
   sources: Object.freeze({
     name: DEFAULT_TOOL_NAMES.sources,
     capability: EVENT_INTELLIGENCE_CAPABILITIES.eventSourcesList,
-    inputSchema: SOURCES_INPUT_SCHEMA,
+    inputSchema: deepFreezeSchema(SOURCES_INPUT_SCHEMA),
   }),
   create: Object.freeze({
     name: DEFAULT_TOOL_NAMES.create,
     capability: EVENT_INTELLIGENCE_CAPABILITIES.triggerCreate,
-    inputSchema: CREATE_INPUT_SCHEMA,
+    inputSchema: deepFreezeSchema(CREATE_INPUT_SCHEMA),
   }),
   list: Object.freeze({
     name: DEFAULT_TOOL_NAMES.list,
     capability: EVENT_INTELLIGENCE_CAPABILITIES.triggerList,
-    inputSchema: LIST_INPUT_SCHEMA,
+    inputSchema: deepFreezeSchema(LIST_INPUT_SCHEMA),
   }),
   inspect: Object.freeze({
     name: DEFAULT_TOOL_NAMES.inspect,
     capability: EVENT_INTELLIGENCE_CAPABILITIES.triggerInspect,
-    inputSchema: INSPECT_INPUT_SCHEMA,
+    inputSchema: deepFreezeSchema(INSPECT_INPUT_SCHEMA),
   }),
   pause: Object.freeze({
     name: DEFAULT_TOOL_NAMES.pause,
     capability: EVENT_INTELLIGENCE_CAPABILITIES.triggerPause,
-    inputSchema: LIFECYCLE_INPUT_SCHEMA,
+    inputSchema: deepFreezeSchema(LIFECYCLE_INPUT_SCHEMA),
   }),
   resume: Object.freeze({
     name: DEFAULT_TOOL_NAMES.resume,
     capability: EVENT_INTELLIGENCE_CAPABILITIES.triggerResume,
-    inputSchema: LIFECYCLE_INPUT_SCHEMA,
+    inputSchema: deepFreezeSchema(LIFECYCLE_INPUT_SCHEMA),
   }),
   delete: Object.freeze({
     name: DEFAULT_TOOL_NAMES.delete,
     capability: EVENT_INTELLIGENCE_CAPABILITIES.triggerDelete,
-    inputSchema: LIFECYCLE_INPUT_SCHEMA,
+    inputSchema: deepFreezeSchema(LIFECYCLE_INPUT_SCHEMA),
   }),
   update: Object.freeze({
     name: DEFAULT_TOOL_NAMES.update,
     capability: EVENT_INTELLIGENCE_CAPABILITIES.triggerUpdate,
-    inputSchema: UPDATE_INPUT_SCHEMA,
+    inputSchema: deepFreezeSchema(UPDATE_INPUT_SCHEMA),
   }),
 });
 
