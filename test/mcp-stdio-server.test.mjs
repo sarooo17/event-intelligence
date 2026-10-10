@@ -298,6 +298,14 @@ test('MCP stdio write tools require explicit operator opt-in', async () => {
       'trigger_delete',
     ]) {
       assert.equal(names.has(name), true, `missing ${name}`);
+      const operation = Object.entries(OPERATION_MANIFEST)
+        .find(([, metadata]) => metadata.name === name)?.[0];
+      assert.ok(operation, 'missing operation metadata for ' + name);
+      const advertised = tools.find(tool => tool.name === name).outputSchema;
+      const expected = outputJsonSchema('stdio', operation);
+      assert.ok(advertised, 'missing mutation output schema: ' + name);
+      assert.deepEqual(advertised.properties, expected.properties, name);
+      assert.deepEqual(advertised.required, expected.required, name);
     }
 
     const result = await session.client.callTool({
