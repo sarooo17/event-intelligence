@@ -135,7 +135,10 @@ integrationTest('pg_dump + pg_restore preserves trigger, audit chain, wake recei
   } finally {
     if (targetPool) await targetPool.end();
     if (createdDatabase) {
-      await sourcePool.query('DROP DATABASE IF EXISTS "' + restoredDatabase + '" WITH (FORCE)');
+      // Never terminate connection pools by FORCE: if sessions remain,
+      // fail explicitly and expose their lifecycle bug instead of causing
+      // an unhandled asynchronous postgres client termination.
+      await sourcePool.query('DROP DATABASE IF EXISTS "' + restoredDatabase + '"');
     }
     for (const suffixName of suffixes) {
       await sourcePool.query('DROP TABLE IF EXISTS "' +
