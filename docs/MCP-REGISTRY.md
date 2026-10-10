@@ -58,3 +58,28 @@ It intentionally does **not** declare provider MCP connection configuration.
 CI validates `server.json` with the official MCP publisher tooling. Release automation publishes the npm package, registers the matching MCP Registry version and creates the corresponding GitHub Release.
 
 The Registry is a discovery/distribution channel for the optional control plane, not an integration hub for the host's other MCP servers.
+
+
+### Embedded authority and optional MCP stdio output contracts (v1 preparation)
+
+Event Intelligence's primary deployment is **embedded inside the host**. The
+host owns MCP connections, OAuth/credentials, user identity, tool authorization,
+interrupts/approvals, activation delivery and receipts. The bundled MCP stdio
+tool surface is an **optional control-plane adapter**, not an additional Events
+provider or a required separately running EI server.
+
+The shared canonical operation manifest records each operation's name, scope,
+effect and supported surfaces. Its model-facing input and output *projections*
+can differ by surface without creating another CEP engine. On stdio the
+read-only `trigger_inspect`, `trigger_simulate` and `wake_hydrate` now
+advertise and validate their actual output Zod contracts, alongside the
+previously modeled read operations. `wake_hydrate` reuses the canonical
+`ActivationEnvelopeSchema`; the others verify the stable envelope and preserve
+nested evidence. Owner checks and host policy are still enforced **before**
+the output can be returned. An invalid result fails with
+`EI_OUTPUT_CONTRACT_INVALID` rather than being silently projected.
+
+This is not full #43 parity: embedded host-specific inspection projections
+and mutating-operation output contracts remain separate work. In particular,
+do not advertise a full inspection schema for an arbitrary host-supplied
+inspector without validating that host's own contract.
