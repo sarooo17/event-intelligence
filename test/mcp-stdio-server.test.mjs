@@ -64,9 +64,16 @@ function assertMcpWireSchemaParity(tools) {
       Object.keys(expected.properties ?? {}).sort(),
       'MCP wire argument fields drifted for ' + key,
     );
+    // MCP's SDK treats Zod defaults as optional at the wire boundary.
+    // A direct z.toJSONSchema() marks defaulted fields as required in its
+    // output projection; derive actual input requiredness from the same
+    // underlying Zod shape instead of treating that SDK difference as drift.
+    const requiredByValidator = Object.entries(MCP_OPERATION_SCHEMAS[key].shape)
+      .filter(([, field]) => !field.isOptional())
+      .map(([name]) => name).sort();
     assert.deepEqual(
       [...(tool.inputSchema.required ?? [])].sort(),
-      [...(expected.required ?? [])].sort(),
+      requiredByValidator,
       'MCP wire required fields drifted for ' + key,
     );
   }
