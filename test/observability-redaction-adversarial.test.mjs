@@ -76,3 +76,32 @@ test('redaction keeps non-secret correlation IDs and sink behavior unchanged',as
   const broken=createObservabilityEmitter(()=>{throw new Error('sink off');});
   assert.equal(await broken.emit({event:'ei.wake.delivered'}),false);
 });
+
+test('synthetic mutation matrix varies JSON quoting, Unicode forms, case and separators',async()=>{
+  const events=[];
+  const observer=createObservabilityEmitter(e=>events.push(e));
+  for(let i=0;i<secrets.length;i++){
+    const secret=secrets[i];
+    const variants=[
+      'Bearer '+secret,
+      'Bearer\u0085'+secret,
+      '\u017Fecret='+secret,
+      JSON.stringify({token:secret}),
+      "authorization='"+secret+"'",
+      '\uFF21\uFF30\uFF29\uFF3F\uFF4B\uFF45\uFF59\uFF1D'+secret,
+      'TOKEN:'+secret,
+      'Bearer\u2028'+secret,
+    ];
+    const mutated=variants[i%variants.length];
+    await observer.emit({
+      event:'ei.source.poll_failed',
+      status:mutated,
+      error:new Error(mutated),
+      metadata:{message:mutated,nested:{value:mutated}},
+    });
+    const serialized=JSON.stringify(events.at(-1));
+    assert.ok(!serialized.includes(secret),
+      'unredacted variant '+(i%variants.length)+' at seed '+i);
+  }
+  assert.equal(events.length,secrets.length);
+});
