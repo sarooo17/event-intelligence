@@ -19,7 +19,7 @@ The test checks:
   wake receipts and audit hash-chain verification.
 - Tenant B's identical trigger ID remains isolated from tenant A's wake,
   provenance and audit history.
-- A completed wake cannot be reclaimed/redispatched after restore.
+- A **coordinator-generated** wake and stable runtime receipt cannot be reclaimed after restore; the real WakeRetryScheduler and CompositeWakeCoordinator do not invoke the deliverer again for the restored fired match. This is not inferred from a synthetic wake ID.
 - Post-restore append operations continue the audit and match history without
   serial-ID collisions.
 
