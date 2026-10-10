@@ -124,3 +124,23 @@ test('malformed optional window contract fails explicitly', async () => {
     (error) => error.code === 'EVENT_INTELLIGENCE_HISTORY_WINDOW_INVALID',
   );
 });
+
+test('oversized store-provided windows cannot bypass requested history limit', async () => {
+  const store = testStore();
+  store.getRecentTriggerMatchHistory = async () => ({
+    records: Array.from({ length: 3 }, () => ({
+      status: 'partial',
+      updatedAt: '2026-10-01T12:00:00.000Z',
+      sourceEvents: [],
+    })),
+    hasMore: true,
+    limit: 2,
+  });
+  await assert.rejects(
+    () => new TriggerInspector({
+      store,
+      matchHistoryLimit: 2,
+    }).inspect({ triggerId: 'release' }),
+    (error) => error.code === 'EVENT_INTELLIGENCE_HISTORY_WINDOW_INVALID',
+  );
+});
