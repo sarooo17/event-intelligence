@@ -92,6 +92,11 @@ export declare class PostgresEventStore {
   ): Promise<{ applied: boolean; record: any | null }>;
   listTriggerMatches(triggerId?: string): Promise<any[]>;
   listTriggerMatchHistory(matchId?: string): Promise<any[]>;
+  /** Bounded, scope-constrained history ordered oldest-to-newest. */
+  getRecentTriggerMatchHistory(
+    matchId: string,
+    options?: { limit?: number },
+  ): Promise<{ records: any[]; hasMore: boolean; limit: number }>;
 
   appendMcpOccurrence(serverId: string, event: any, subscriptionId?: string | null): Promise<{
     accepted: boolean;
