@@ -96,7 +96,7 @@ test('MCP stdio adapter exposes read-only Event Intelligence tools by default', 
     const { tools } = await session.client.listTools();
     const names = tools.map((tool) => tool.name).sort();
     assertMcpWireSchemaParity(tools);
-    for (const key of ['sources','list','plan','languageDescribe','derivedContracts','runtimeStatus']) {
+    for (const key of ['sources','list','plan','languageDescribe','derivedContracts','runtimeStatus','inspect','simulate','wakeHydrate']) {
       const op=OPERATION_MANIFEST[key];
       const wire=tools.find(tool=>tool.name===op.name)?.outputSchema;
       assert.ok(wire,'missing MCP outputSchema for '+key);
@@ -104,7 +104,7 @@ test('MCP stdio adapter exposes read-only Event Intelligence tools by default', 
       assert.deepEqual(wire.properties,expected.properties,key);
       assert.deepEqual(wire.required,expected.required,key);
     }
-    for (const key of ['update','wakeHydrate','inspect']) {
+    for (const key of ['create','pause','resume','delete','update']) {
       const op=OPERATION_MANIFEST[key];
       const wire=tools.find(tool=>tool.name===op.name)?.outputSchema;
       if (wire) throw new Error('Unmodeled output contract falsely advertised: '+key);
@@ -269,6 +269,11 @@ test('MCP stdio adapter exposes read-only Event Intelligence tools by default', 
 
     assert.equal(simulation.isError, undefined);
     assert.equal(simulation.structuredContent.inspection.match.status, 'matched');
+    assert.equal(simulation.structuredContent.isolated, true);
+    assert.equal(simulation.structuredContent.order, 'provided');
+    assert.equal(simulation.structuredContent.inspection.trigger.triggerId, 'mcp-sim');
+    assert.ok(tools.find(tool=>tool.name==='trigger_simulate').outputSchema);
+
   } finally {
     await session.close();
   }
