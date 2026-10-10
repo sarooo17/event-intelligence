@@ -10,10 +10,10 @@ The inspector now returns:
 
 ```json
 {
-  "progress": {
-    "evidenceBasis": "latest_match_only",
+  "evidenceSummary": {
+    "selectionBasis": "latest_match",
     "observedClauseIds": ["merged"],
-    "waitingClauseIds": ["deployed"],
+    "unobservedClauseIds": ["deployed"],
     "pendingDeadlineCount": 1,
     "nextEvaluationAt": "2026-10-01T12:30:00.000Z"
   },
@@ -25,9 +25,9 @@ The inspector now returns:
 }
 ```
 
-The example is illustrative. `observedClauseIds` only indicates evidence attached to the selected latest match. **It does not assert the entire Pattern AST is satisfiable or that missing events never happened externally.** Pending deadlines come from the current scoped store.
+The example is illustrative. `observedClauseIds` and `unobservedClauseIds` only describe evidence attached to the selected match—not whether an `anyOf`, absence or optional branch still needs more events. **They do not assert the Pattern AST is unsatisfied or that missing events never happened externally.** `selectionBasis` is `explicit_match`, `latest_match`, or `no_match`, reflecting how the inspection target was actually selected. Pending deadlines come from the scoped store.
 
-The history window contains the most recent 100 records by store-provided order by default. Host operators may configure `matchHistoryLimit` as an integer from 1–500; invalid or unbounded values throw. A `historyTruncated` flag communicates when the projection omitted older records. Full history remains available only via the authorized store's history API.
+**History is complete by default**, preserving the existing inspection response contract. Host operators may opt into a bounded recent window by configuring `matchHistoryLimit` as an integer from 1–500; invalid values throw. When opted in, `historyTruncated` states whether the result omitted older records and `historyLimit` reports the cap. An implicit/default truncation would be a breaking and potentially misleading change and is deliberately avoided. Full history remains accessible only through an authorized store.
 
 **Limit:** The store's current history API is not paginated; this slices results after the read, bounding response serialization but not DB read cost. Storage-side cursor pagination and retention still belong to [#47](https://github.com/sarooo17/event-intelligence/issues/47).
 
