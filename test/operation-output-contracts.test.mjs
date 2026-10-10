@@ -182,9 +182,14 @@ test('stdio mutation outputs require coherent durable receipts and canonical def
   const state = { status: 'active', owner: { type: 'user', principal_id: 'owner-1' } };
   const base = { receiptId: 'receipt-1', definition, state };
   for (const operation of ['create', 'update', 'pause', 'resume', 'delete']) {
+    const expectedStatus = operation === 'pause' ? 'paused' :
+      operation === 'delete' ? 'deleted' : 'active';
     const candidate = {
       ...base, action: operation,
-      ...(operation === 'update' ? { previous: { definition, state } } : {}),
+      state: { ...state, status: expectedStatus },
+      ...(operation === 'update' ? {
+        previous: { definition, state: { ...state, status: 'completed' } },
+      } : {}),
     };
     assert.equal(validateOperationOutput('stdio', operation, candidate), candidate);
     assert.equal(outputJsonSchema('stdio', operation).properties.action.const, operation);
@@ -192,8 +197,16 @@ test('stdio mutation outputs require coherent durable receipts and canonical def
       { ...candidate, action: 'delete-other' },
       { ...candidate, receiptId: '' },
       { ...candidate, state: { owner: state.owner } },
+      { ...candidate, state: { ...state, status: expectedStatus + '-wrong' } },
       { ...candidate, definition: { triggerId: 'invalid' } },
-      ...(operation === 'update' ? [{ ...candidate, previous: undefined }] : []),
+      { ...candidate, definition: { ...definition, protocolVersion: undefined } },
+      { ...candidate, definition: { ...definition, clauses: definition.clauses.map(
+        c => ({ ...c, arguments: undefined })
+      ) } },
+      ...(operation === 'update' ? [
+        { ...candidate, previous: undefined },
+        { ...candidate, previous: { definition, state } },
+      ] : []),
     ]) {
       assert.throws(
         () => validateOperationOutput('stdio', operation, bad),
