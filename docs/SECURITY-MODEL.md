@@ -45,7 +45,7 @@ Remote wake requests are HMAC-signed over canonical packet content and a timesta
 
 ### Hydration provenance invariant
 
-A stored wake, its persisted delivery row, and the selected trigger match **must describe the same activation**. Before rehydrating event evidence into a runtime continuation, EI checks that a trigger-scoped wake's source match ID agrees with the delivery's match ID, and that the delivery's trigger ID/version agrees with the match. Inconsistent linked records fail closed with `ACTIVATION_PROVENANCE_MISMATCH`; the check happens before evidence is returned to the caller. A missing match also fails closed.
+A stored wake, its persisted delivery row, and the selected trigger match **must describe the same activation**. Before rehydrating event evidence into a runtime continuation, EI checks that a trigger-scoped wake's source match ID agrees with the delivery's match ID, that the wake subscription identifies the same trigger as the selected match, and that the delivery's trigger ID/version agrees with the match. Inconsistent linked records fail closed with `ACTIVATION_PROVENANCE_MISMATCH`; the check happens before evidence is returned to the caller. A missing match also fails closed.
 
 These invariants are defense in depth against corruption, stale cross-trigger references or faulty storage adapters. They do not authenticate a caller: the embedding host must still enforce authorization and return a tenant-scoped store. They do not make externally supplied event payloads trustworthy.
 
