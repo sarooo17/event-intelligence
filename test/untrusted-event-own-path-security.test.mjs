@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { readOwnEventPath } from '../dist/src/protocol/ownPath.js';
+import { readOwnEventPath, snapshotUntrustedEventData } from '../dist/src/protocol/ownPath.js';
+import { parseCorrelatableEvent } from '../dist/src/intelligenceProtocol/triggerSchemas.js';
 import { projectSemanticInput } from '../dist/src/semantic/conditionEngine.js';
 import { CompositeTriggerEngine } from '../dist/src/composite/engine.js';
 import { PersistentEventStore } from '../scripts/lib/persistent-event-store.mjs';
@@ -154,4 +155,50 @@ test('Pattern partition fields do not correlate synthetic inherited tenant ident
   } finally {
     await rm(dataDir, { recursive: true, force: true });
   }
+});
+
+test('ingress snapshots payload before a schema parser can execute event getters', () => {
+  let invoked = 0;
+  const hostile = {};
+  Object.defineProperty(hostile, 'tenant', {
+    enumerable: true,
+    get() { invoked++; return 'victim'; },
+  });
+  assert.throws(
+    () => parseCorrelatableEvent(occurrence(hostile)),
+    error => error.code === 'EVENT_UNTRUSTED_DATA_INVALID',
+  );
+  assert.equal(invoked, 0, 'Zod record traversal must not invoke accessor');
+  const clean = parseCorrelatableEvent(occurrence({ tenant: 'victim' }));
+  assert.equal(clean.data.tenant, 'victim');
+});
+
+test('terminal array values cannot see inherited indices or element accessors', () => {
+  const inherited = new Array(1);
+  const maliciousPrototype = Object.create(Array.prototype);
+  Object.defineProperty(maliciousPrototype, '0', {
+    enumerable: true, value: 'admin',
+  });
+  Object.setPrototypeOf(inherited, maliciousPrototype);
+  assert.equal(inherited.includes('admin'), true, 'fixture proves the inherited array-index bypass');
+  assert.equal(readOwnEventPath({ roles: inherited }, 'roles'), undefined);
+  assert.equal(clauseMatches(clause('roles', 'contains', 'admin'),
+    occurrence({ roles: inherited })), false);
+  assert.throws(
+    () => snapshotUntrustedEventData({ roles: inherited }),
+    error => error.code === 'EVENT_UNTRUSTED_DATA_INVALID',
+  );
+  let invoked = 0;
+  const accessor = [];
+  Object.defineProperty(accessor, '0', {
+    enumerable: true,
+    get() { invoked++; return 'admin'; },
+  });
+  assert.equal(readOwnEventPath({ roles: accessor }, 'roles'), undefined);
+  assert.throws(
+    () => parseCorrelatableEvent(occurrence({ roles: accessor })),
+    error => error.code === 'EVENT_UNTRUSTED_DATA_INVALID',
+  );
+  assert.equal(invoked, 0);
+  assert.deepEqual(readOwnEventPath({ roles: ['admin'] }, 'roles'), ['admin']);
 });
