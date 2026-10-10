@@ -209,15 +209,33 @@ export class TriggerInspector {
       ? (await this.store.listDerivedEvents?.({ matchId: match.matchId }) ?? [])
       : [];
 
-    const rawHistory = match && this.store.listTriggerMatchHistory
-      ? await this.store.listTriggerMatchHistory(match.matchId)
-      : (match ? [match] : []);
-    // Bound the serialized explanation even if the historical store contains
-    // thousands of transitions. Full history remains available from the
-    // authorized store itself; explain output is a recent-window projection.
-    const recentHistory = this.matchHistoryLimit === null
-      ? rawHistory
-      : rawHistory.slice(-this.matchHistoryLimit);
+    // Use the storage adapter's indexed recent-history query when the
+    // caller explicitly requests a bounded window. For custom stores without
+    // that optional optimization, retain the ordinary history path.
+    let recentHistory = [];
+    let historyTruncated = false;
+    if (match && this.matchHistoryLimit !== null &&
+        typeof this.store.getRecentTriggerMatchHistory === 'function') {
+      const window = await this.store.getRecentTriggerMatchHistory(
+        match.matchId,
+        { limit: this.matchHistoryLimit },
+      );
+      if (!window || !Array.isArray(window.records) ||
+          typeof window.hasMore !== 'boolean') {
+        const error = new Error('Store returned invalid bounded history window');
+        error.code = 'EVENT_INTELLIGENCE_HISTORY_WINDOW_INVALID';
+        throw error;
+      }
+      recentHistory = window.records;
+      historyTruncated = window.hasMore;
+    } else {
+      const rawHistory = match && this.store.listTriggerMatchHistory
+        ? await this.store.listTriggerMatchHistory(match.matchId)
+        : (match ? [match] : []);
+      recentHistory = this.matchHistoryLimit === null
+        ? rawHistory : rawHistory.slice(-this.matchHistoryLimit);
+      historyTruncated = rawHistory.length > recentHistory.length;
+    }
     const matchHistory = recentHistory.map((record) => ({
       status: record.status,
       updatedAt: record.updatedAt,
@@ -295,7 +313,7 @@ export class TriggerInspector {
           rootEvidence: record.rootEvidence,
         })),
         matchHistory,
-        historyTruncated: rawHistory.length > recentHistory.length,
+        historyTruncated,
         historyLimit: this.matchHistoryLimit,
         patternState: match?.patternState ?? null,
       },
