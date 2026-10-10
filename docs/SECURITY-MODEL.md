@@ -194,8 +194,8 @@ tenant attributes, without treating untrusted event data as authority.
 
 The event ingress entry point now takes a bounded, descriptor-only snapshot
 *before* the Zod parser can read nested records, hashes, or pattern handlers.
-Accessor-bearing properties, circular structures, sparse arrays and
-non-JSON values fail closed with `EVENT_UNTRUSTED_DATA_INVALID`; selected
+Proxy objects, accessor-bearing properties, circular structures, sparse
+arrays and non-JSON values fail closed with `EVENT_UNTRUSTED_DATA_INVALID`; selected
 object/array terminals are detached from inherited indexed properties.
 No external event code or property getter may participate in matching.
 
@@ -206,3 +206,10 @@ The host must continue to enforce owner permissions on every wake.
 
 This closes a specific event-evidence ambiguity under #45. Other trust-boundary
 hypotheses, complete tenant fuzzing and independent security review remain open.
+
+The JavaScript ingress explicitly rejects native `Proxy` values (including
+nested and array proxies) via Node's `node:util/types.isProxy` before any
+reflection or traversal can trigger attacker-defined proxy traps. This is a
+Node-specific security boundary; other JS runtimes need their own equivalent
+intrinsic or a wire-JSON-only ingress contract. The event payload remains
+untrusted even after normalization.
