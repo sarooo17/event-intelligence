@@ -13,6 +13,7 @@ import {
   createLocalEventIntelligenceRuntime,
 } from './lib/local-event-intelligence-runtime.mjs';
 import { createOwnerReadGuard } from './lib/mcp-owner-read-guard.mjs';
+import { OPERATION_MANIFEST } from './lib/operation-manifest.mjs';
 
 function jsonResult(value) {
   return {
@@ -88,7 +89,7 @@ function registerReadTools(server, runtime, env) {
     owner: ownerFromEnv(env),
   });
   server.registerTool(
-    'event_sources_list',
+    OPERATION_MANIFEST.sources.name,
     {
       description:
         'List active event sources currently available to Event Intelligence.',
@@ -110,7 +111,7 @@ function registerReadTools(server, runtime, env) {
   );
 
   server.registerTool(
-    'trigger_language_describe',
+    OPERATION_MANIFEST.languageDescribe.name,
     {
       description:
         'Describe the public Event Intelligence trigger authoring language. Use this when you need to discover supported predicates, composition, temporal, correlation, timing, or lifecycle operators before planning a trigger.',
@@ -126,7 +127,7 @@ function registerReadTools(server, runtime, env) {
   );
 
   server.registerTool(
-    'trigger_plan',
+    OPERATION_MANIFEST.plan.name,
     {
       description:
         'Compile an agent-friendly trigger plan into a validated durable trigger definition using the event sources currently available. This does not mutate state and does not call another model.',
@@ -142,7 +143,7 @@ function registerReadTools(server, runtime, env) {
   );
 
   server.registerTool(
-    'trigger_list',
+    OPERATION_MANIFEST.list.name,
     {
       description:
         'List durable triggers and lifecycle state for the configured owner only.',
@@ -162,7 +163,7 @@ function registerReadTools(server, runtime, env) {
   );
 
   server.registerTool(
-    'trigger_inspect',
+    OPERATION_MANIFEST.inspect.name,
     {
       description:
         'Explain a trigger deterministically, including missing clauses, temporal state, deadlines, lineage, derived outputs and wake receipt.',
@@ -188,7 +189,7 @@ function registerReadTools(server, runtime, env) {
   );
 
   server.registerTool(
-    'trigger_simulate',
+    OPERATION_MANIFEST.simulate.name,
     {
       description:
         'Run a trigger definition against an isolated event sequence without mutating live state.',
@@ -209,7 +210,7 @@ function registerReadTools(server, runtime, env) {
   );
 
   server.registerTool(
-    'derived_contracts_list',
+    OPERATION_MANIFEST.derivedContracts.name,
     {
       description:
         'List versioned derived-event contracts, canonical schemas, fingerprints and registered producers.',
@@ -229,7 +230,7 @@ function registerReadTools(server, runtime, env) {
   );
 
   server.registerTool(
-    'wake_hydrate',
+    OPERATION_MANIFEST.wakeHydrate.name,
     {
       description:
         'Hydrate a composite wake into an Activation Envelope containing the configured continuation and matched event evidence. Evidence data is included only according to the trigger context policy.',
@@ -248,7 +249,7 @@ function registerReadTools(server, runtime, env) {
   );
 
   server.registerTool(
-    'runtime_status',
+    OPERATION_MANIFEST.runtimeStatus.name,
     {
       description:
         'Return local Event Intelligence runtime status, restored counts, host-managed MCP event connections and pending temporal deadlines.',
@@ -277,7 +278,7 @@ function registerWriteTools(server, runtime, env) {
   const owner = () => ownerFromEnv(env);
 
   server.registerTool(
-    'trigger_create',
+    OPERATION_MANIFEST.create.name,
     {
       description:
         'Create a durable trigger. Persistent MCP mutations require explicit confirmationId and MCP_WRITE_ENABLED=true.',
@@ -334,7 +335,7 @@ function registerWriteTools(server, runtime, env) {
   });
 
   server.registerTool(
-    'trigger_pause',
+    OPERATION_MANIFEST.pause.name,
     {
       description: 'Pause a durable trigger after explicit confirmation.',
       inputSchema: lifecycleSchema,
@@ -357,7 +358,7 @@ function registerWriteTools(server, runtime, env) {
   );
 
   server.registerTool(
-    'trigger_resume',
+    OPERATION_MANIFEST.resume.name,
     {
       description: 'Resume a paused durable trigger after explicit confirmation.',
       inputSchema: lifecycleSchema,
@@ -380,7 +381,7 @@ function registerWriteTools(server, runtime, env) {
   );
 
   server.registerTool(
-    'trigger_delete',
+    OPERATION_MANIFEST.delete.name,
     {
       description: 'Delete a durable trigger after explicit confirmation.',
       inputSchema: lifecycleSchema,
@@ -403,7 +404,7 @@ function registerWriteTools(server, runtime, env) {
   );
 
   server.registerTool(
-    'trigger_update',
+    OPERATION_MANIFEST.update.name,
     {
       description:
         'Create a new immutable version of an existing durable trigger after explicit confirmation.',
