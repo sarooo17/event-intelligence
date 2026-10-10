@@ -50,4 +50,22 @@ npm run build
 node --test test/simple-trigger-authoring.test.mjs
 ```
 
-This is one **partial** improvement toward developer experience issue [#46](https://github.com/sarooo17/event-intelligence/issues/46); virtual-time simulation and other planned features are not implemented by this slice.
+### Runnable clean-room package example
+
+The repo includes [`docs/examples/packed-simple-trigger.mjs`](examples/packed-simple-trigger.mjs).
+It is executed in CI from an **empty external Node project** after installing
+the candidate `npm pack` tarball, not through the source tree or workspace
+aliases. The example creates an isolated host-owned test fixture descriptor,
+calls `toTriggerPlan()`, then invokes the **actual** deterministic planner and
+checks the canonical Pattern v2 output plus source-schema resolution.
+
+The example is intentionally read-only for trigger state: it creates **zero
+durable triggers**, executes **no** provider calls or model invocations, and
+does **not** demonstrate live host approval or wake delivery. It must not be
+mistaken for full three-host integration conformance (#42).
+
+This is one further partial improvement toward developer experience
+issue [#46](https://github.com/sarooo17/event-intelligence/issues/46).
+Deterministic virtual time has been implemented separately (#86/#89);
+the remaining typed-source, restart, and independently run external-host
+conformance claims require their own evidence.
