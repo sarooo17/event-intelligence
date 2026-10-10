@@ -86,36 +86,54 @@ const prefix = 'ei_perf_' + randomBytes(6).toString('hex');
 const suffixes = ['metadata', 'leases', 'history', 'records', 'counters'];
 
 async function main() {
-  if (process.env.EI_PG_BENCHMARK_CONFIRM !== 'YES_ISOLATED') {
-    fail('set EI_PG_BENCHMARK_CONFIRM=YES_ISOLATED for isolated benchmark data');
-  }
-  if (!process.env.POSTGRES_URL) fail('POSTGRES_URL is required');
-  const profile = String(option('profile', 'smoke'));
-  if (!Object.hasOwn(PROFILES, profile)) {
-    fail('--profile must be smoke, 1k, 10k or 100k');
-  }
-  const triggerCount = PROFILES[profile];
-  const wakes = boundedInt('wakes', profile === 'smoke' ? 4 : 128, 1000);
-  const concurrency = boundedInt('concurrency', 4, 16);
-  const pg = await import('pg');
-  const Pool = pg.Pool ?? pg.default?.Pool;
-  if (!Pool) fail('pg Pool driver unavailable');
-  const pool = new Pool({
-    connectionString: process.env.POSTGRES_URL,
-    max: concurrency + 2,
-  });
-  const startCpu = process.cpuUsage();
-  const startMemory = process.memoryUsage();
-  const runStarted = performance.now();
-  let phase = 'initialization';
+  // Validation, driver initialization, measurement, and cleanup all share a
+  // single structured error path; no success is emitted before teardown.
+  let phase = 'configuration';
+  let pool = null;
+  let profile = null;
+  const failures = [];
   const record = {
     schema: 'event-intelligence.postgres-durable-scale.v1',
     generatedAt: new Date().toISOString(),
-    profile, triggerCount, wakes, concurrency, prefix,
+    prefix,
     runtime: { node: process.version, platform: process.platform },
     metrics: {},
   };
+
+  function recordFailure(error, stage) {
+    const raw = error instanceof Error ? error.message : String(error);
+    failures.push({
+      phase: stage,
+      code: error?.code ?? 'EI_PG_BENCHMARK_FAILED',
+      message: raw.replace(/postgres(?:ql)?:\\/\\/[^\\s]+/gi,
+        'postgresql://[redacted]'),
+    });
+  }
+
   try {
+    if (process.env.EI_PG_BENCHMARK_CONFIRM !== 'YES_ISOLATED') {
+      fail('set EI_PG_BENCHMARK_CONFIRM=YES_ISOLATED for isolated benchmark data');
+    }
+    if (!process.env.POSTGRES_URL) fail('POSTGRES_URL is required');
+    profile = String(option('profile', 'smoke'));
+    if (!Object.hasOwn(PROFILES, profile)) {
+      fail('--profile must be smoke, 1k, 10k or 100k');
+    }
+    const triggerCount = PROFILES[profile];
+    const wakes = boundedInt('wakes', profile === 'smoke' ? 4 : 128, 1000);
+    const concurrency = boundedInt('concurrency', 4, 16);
+    Object.assign(record, { profile, triggerCount, wakes, concurrency });
+    const pg = await import('pg');
+    const Pool = pg.Pool ?? pg.default?.Pool;
+    if (!Pool) fail('pg Pool driver unavailable');
+    pool = new Pool({
+      connectionString: process.env.POSTGRES_URL,
+      max: concurrency + 2,
+    });
+    const startCpu = process.cpuUsage();
+    const startMemory = process.memoryUsage();
+    const runStarted = performance.now();
+    phase = 'initialization';
     const store = new PostgresEventStore({ pool, tablePrefix: prefix });
     await store.init();
     record.runtime.postgresVersion = (
@@ -207,33 +225,41 @@ async function main() {
       heapUsedAfter: process.memoryUsage().heapUsed,
     };
     record.metrics.totalWallMs = performance.now() - runStarted;
-    record.status = 'completed';
-    console.log(JSON.stringify(record, null, 2));
   } catch (error) {
+    recordFailure(error, phase);
+  } finally {
+    if (pool) {
+      // Only a newly generated, isolated prefix is eligible for teardown.
+      // Each failure is captured, including an unavailable DB or pool close.
+      phase = 'cleanup';
+      for (const suffix of suffixes) {
+        try {
+          const identifier = '"' + prefix + '_' + suffix + '"';
+          await pool.query('DROP TABLE IF EXISTS ' + identifier + ' CASCADE');
+        } catch (error) {
+          recordFailure(error, phase);
+        }
+      }
+      try {
+        await pool.end();
+      } catch (error) {
+        recordFailure(error, 'pool_close');
+      }
+    }
+  }
+
+  if (failures.length) {
     console.error(JSON.stringify({
       schema: record.schema,
-      profile,
-      phase,
-      status: 'failed',
-      code: error?.code ?? 'EI_PG_BENCHMARK_FAILED',
-      message: error instanceof Error ? error.message : String(error),
-    }));
+      generatedAt: record.generatedAt,
+      profile, prefix, status: 'failed',
+      phase: failures[0].phase,
+      failures,
+    }, null, 2));
     process.exitCode = 1;
-  } finally {
-    // Only generated, uniquely prefixed tables can be dropped. Use an isolated
-    // service account/database: this is not a backup or retention operation.
-    try {
-      for (const suffix of suffixes) {
-        const identifier = '"' + prefix + '_' + suffix + '"';
-        await pool.query('DROP TABLE IF EXISTS ' + identifier + ' CASCADE');
-      }
-    } catch (error) {
-      console.error('Benchmark cleanup failed for prefix ' + prefix + ': ' +
-        (error instanceof Error ? error.message : String(error)));
-      process.exitCode = 1;
-    } finally {
-      await pool.end();
-    }
+  } else {
+    record.status = 'completed';
+    console.log(JSON.stringify(record, null, 2));
   }
 }
 
