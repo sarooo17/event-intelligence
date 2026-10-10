@@ -145,7 +145,6 @@ function registerReadTools(server, runtime, env) {
       description:
         'Explain a trigger deterministically, including missing clauses, temporal state, deadlines, lineage, derived outputs and wake receipt.',
       inputSchema: MCP_OPERATION_SCHEMAS.inspect,
-      outputSchema: OPERATION_OUTPUT_CONTRACTS.inspect.stdio,
     },
     async (input) => {
       try {
@@ -155,7 +154,7 @@ function registerReadTools(server, runtime, env) {
           // Never let Inspector select a newer, foreign-owned version when
           // the caller omits the version. The authorization is version-bound.
           version: owned.definition.version,
-        }), 'inspect');
+        }));
       } catch (error) {
         return errorResult(error);
       }
