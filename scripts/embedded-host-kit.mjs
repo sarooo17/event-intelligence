@@ -18,6 +18,7 @@ import {
   TriggerLifecycleInput,
   TriggerUpdateInput,
   EMBEDDED_INPUT_JSON_SCHEMAS,
+  EMBEDDED_INPUT_VALIDATORS,
 } from './lib/embedded-operation-schemas.mjs';
 
 const DEFAULT_TOOL_NAMES = Object.freeze({
@@ -871,8 +872,11 @@ export function createEventIntelligenceAgentTools({
       ...portableDescriptor('sources', toolNames.sources),
       description:
         'List live future-event sources discovered from event connections already owned by the host runtime. Use this before creating a trigger so event names and schemas are not guessed.',
-      async execute(_args, runtimeContext) {
+      async execute(args, runtimeContext) {
         try {
+          // Same executable validator as the model-facing JSON Schema:
+          // unknown model fields must not pass silently.
+          EMBEDDED_INPUT_VALIDATORS.sources.parse(args ?? {});
           const resolved = await resolveContext(runtimeContext, {
             action: 'event.sources.list',
             capability: sourcesCapability,
