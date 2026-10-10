@@ -2,37 +2,65 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { createEventIntelligenceHost } from '../scripts/host-integration.mjs';
+import { createEventIntelligence } from '../scripts/embedded-host-kit.mjs';
 import { runHostConformance } from '../scripts/host-conformance.mjs';
 
 export const referenceHostAdapter = {
   name: 'event-intelligence-reference-host',
 
-  async createHarness({ observability }) {
+  async createHarness({ observability, useNeutralFacade = false }) {
     const dataDir = await mkdtemp(path.join(os.tmpdir(), 'ei-host-conformance-'));
     const externalDeliveries = [];
     const owner = { type: 'user', principal_id: 'host-conformance-user' };
     let host = null;
 
+    const receipts = new Set();
+    const env = {
+      TYPESAFE_API_KEY: '',
+      RUNTIME_WAKE_TARGETS_JSON: '{}',
+      TEMPORAL_TICK_MS: '100000',
+      WAKE_RETRY_TICK_MS: '100000',
+    };
     const start = async () => {
-      host = await createEventIntelligenceHost({
-        dataDir,
-        observability,
-        env: {
-          TYPESAFE_API_KEY: '',
-          RUNTIME_WAKE_TARGETS_JSON: '{}',
-          TEMPORAL_TICK_MS: '100000',
-          WAKE_RETRY_TICK_MS: '100000',
-        },
-        wake: async (packet, activation) => {
-          const runtimeReceiptId = `conformance:${packet.wake_id}`;
-          externalDeliveries.push({
-            triggerId: activation.trigger.triggerId,
-            wakeId: packet.wake_id,
-            runtimeReceiptId,
-          });
-          return { runtimeReceiptId };
-        },
-      });
+      if (useNeutralFacade) {
+        // Exercise the REAL in-process host through the public neutral
+        // facade. The simulated external runtime owns continuation receipt
+        // state; EI does not create an agent loop or a fake policy engine.
+        const integration = await createEventIntelligence({
+          dataDir,
+          env,
+          observability,
+          runtime: {
+            receiptNamespace: 'conformance-neutral-host',
+            hasReceipt: (id) => receipts.has(id),
+            deliver: ({ activation, receiptId }) => {
+              receipts.add(receiptId);
+              externalDeliveries.push({
+                triggerId: activation.trigger.triggerId,
+                wakeId: activation.wake.wakeId,
+                runtimeReceiptId: receiptId,
+              });
+              return { runtimeReceiptId: receiptId };
+            },
+          },
+        });
+        host = integration.host;
+      } else {
+        host = await createEventIntelligenceHost({
+          dataDir,
+          env,
+          observability,
+          wake: async (packet, activation) => {
+            const runtimeReceiptId = `conformance:${packet.wake_id}`;
+            externalDeliveries.push({
+              triggerId: activation.trigger.triggerId,
+              wakeId: packet.wake_id,
+              runtimeReceiptId,
+            });
+            return { runtimeReceiptId };
+          },
+        });
+      }
     };
 
     await start();
