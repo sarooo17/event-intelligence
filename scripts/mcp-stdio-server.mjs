@@ -108,10 +108,11 @@ function registerReadTools(server, runtime, env) {
       description:
         'Compile an agent-friendly trigger plan into a validated durable trigger definition using the event sources currently available. This does not mutate state and does not call another model.',
       inputSchema: MCP_OPERATION_SCHEMAS.plan,
+      outputSchema: OPERATION_OUTPUT_CONTRACTS.plan.stdio,
     },
     async (input) => {
       try {
-        return jsonResult(await runtime.triggerPlanner.plan(input));
+        return jsonResult(await runtime.triggerPlanner.plan(input), 'plan');
       } catch (error) {
         return errorResult(error);
       }
