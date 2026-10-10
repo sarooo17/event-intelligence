@@ -70,7 +70,7 @@ test('real embedded list validates canonical projected response before host proj
   assert.equal(result.ok,true);
   assert.deepEqual(result.data,{triggers:[],total:0,returned:0});
   assert.equal(projected,1);
-  for(const key of ['event_sources_list','trigger_inspect']){
+  for(const key of ['event_sources_list']){
     assert.ok(tools.find(item=>item.name===key)?.outputSchema);
   }
   for(const key of ['trigger_create','trigger_pause','trigger_update','trigger_inspect']){
