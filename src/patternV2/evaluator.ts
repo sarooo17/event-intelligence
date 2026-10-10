@@ -1,3 +1,4 @@
+import { readOwnEventPath } from '../protocol/ownPath.js';
 import {
   SemanticConditionEngine,
 } from '../semantic/conditionEngine.js';
@@ -273,20 +274,6 @@ function dedupe(
   return { values, truncated };
 }
 
-function getByPath(source: unknown, path: string): unknown {
-  let current = source;
-  for (const part of path.split('.')) {
-    if (
-      current === null ||
-      typeof current !== 'object' ||
-      Array.isArray(current)
-    ) {
-      return undefined;
-    }
-    current = (current as Record<string, unknown>)[part];
-  }
-  return current;
-}
 
 function selectedEvent(
   candidate: PatternV2Candidate,
@@ -320,7 +307,7 @@ function evaluateValue(
       value.select,
       value.nth,
     );
-    return event ? getByPath(event.data, value.path) : undefined;
+    return event ? readOwnEventPath(event.data, value.path) : undefined;
   }
 
   if (value.kind === 'occurredAt') {
@@ -471,7 +458,7 @@ function aggregateValues(
 ): unknown[] {
   const events = [...(candidate.bindings[ref] ?? [])].sort(eventOrder);
   return events
-    .map((event) => path ? getByPath(event.data, path) : event)
+    .map((event) => path ? readOwnEventPath(event.data, path) : event)
     .filter((value) => value !== undefined);
 }
 
@@ -683,7 +670,7 @@ function stateMatches(
 ): boolean {
   const events = [...(candidate.bindings[node.ref] ?? [])].sort(eventOrder);
   if (!events.length) return false;
-  const values = events.map((event) => getByPath(event.data, node.path));
+  const values = events.map((event) => readOwnEventPath(event.data, node.path));
 
   if (node.op === 'stableFor') {
     if (events.length < 2) return false;
@@ -1037,7 +1024,7 @@ async function evaluateNode(
     const chosen: TriggerSourceEvent[] = [];
     const values = new Set<string>();
     for (const event of eventsForRef(context, node.ref)) {
-      const value = getByPath(event.data, node.path);
+      const value = readOwnEventPath(event.data, node.path);
       if (
         typeof value !== 'string' &&
         typeof value !== 'number' &&

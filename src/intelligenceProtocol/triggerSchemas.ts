@@ -1,3 +1,4 @@
+import { snapshotUntrustedEventData } from '../protocol/ownPath.js';
 import { z } from 'zod';
 import { RuntimeTargetSchema } from './schemas.js';
 import {
@@ -461,7 +462,7 @@ export function parseCompositeTriggerDefinition(
 }
 
 export function parseCorrelatableEvent(value: unknown): CorrelatableEvent {
-  return CorrelatableEventSchema.parse(value);
+  return CorrelatableEventSchema.parse(snapshotUntrustedEventData(value));
 }
 
 export function parseTriggerMatchRecord(value: unknown): TriggerMatchRecord {

@@ -1,21 +1,10 @@
+import { readOwnEventPath } from '../protocol/ownPath.js';
 import type {
   CorrelatableEvent,
   TriggerClause,
   TriggerSourceEvent,
 } from '../intelligenceProtocol/triggerSchemas.js';
 
-function getByPath(source: unknown, path: string): unknown {
-  let current = source;
-  for (const part of path.split('.')) {
-    if (
-      current === null ||
-      typeof current !== 'object' ||
-      Array.isArray(current)
-    ) return undefined;
-    current = (current as Record<string, unknown>)[part];
-  }
-  return current;
-}
 
 function stableValue(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(stableValue);
@@ -44,7 +33,7 @@ function predicateMatches(
   event: CorrelatableEvent,
   predicate: TriggerClause['where'][number],
 ): boolean {
-  const value = getByPath(event.data, predicate.path);
+  const value = readOwnEventPath(event.data, predicate.path);
 
   switch (predicate.op) {
     case 'eq':
@@ -118,7 +107,7 @@ export function clauseMatches(
   clause: TriggerClause,
   event: CorrelatableEvent,
 ): boolean {
-  const contractVersion = getByPath(
+  const contractVersion = readOwnEventPath(
     event.data,
     '_derived.contractVersion',
   );

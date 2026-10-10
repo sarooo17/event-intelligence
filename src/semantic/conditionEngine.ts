@@ -1,27 +1,10 @@
+import { readOwnEventPath } from '../protocol/ownPath.js';
 import type {
   SemanticBooleanCondition,
   SemanticDecision,
   SemanticEvaluator,
 } from './types.js';
 
-function getByPath(source: Record<string, unknown>, path: string): unknown {
-  const parts = path.split('.');
-  let current: unknown = source;
-
-  for (const part of parts) {
-    if (
-      current === null ||
-      typeof current !== 'object' ||
-      Array.isArray(current)
-    ) {
-      return undefined;
-    }
-
-    current = (current as Record<string, unknown>)[part];
-  }
-
-  return current;
-}
 
 export function projectSemanticInput(
   source: Record<string, unknown>,
@@ -30,7 +13,7 @@ export function projectSemanticInput(
   const projected: Record<string, unknown> = {};
 
   for (const path of paths) {
-    projected[path] = getByPath(source, path);
+    projected[path] = readOwnEventPath(source, path);
   }
 
   return projected;

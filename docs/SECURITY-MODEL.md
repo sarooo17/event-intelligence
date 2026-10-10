@@ -180,3 +180,41 @@ Production hardening should use:
 Event Intelligence does not contain a general-purpose agent or natural-language model planner. The surrounding harness/agent performs natural-language reasoning. Event Intelligence can then deterministically compile an agent-friendly trigger plan into the canonical Pattern trigger.
 
 The only bundled AI adapter is the optional TypeSafe Jev semantic evaluator, used only by an explicit Pattern `semantic` node. A model cannot gain authority by inventing an event source, field, runtime target or contract version because the deterministic control plane validates the submitted program against scoped live sources and schemas.
+
+## Untrusted JSON property resolution
+
+Event-clause predicates, Pattern v2 arithmetic selectors, partition keys,
+semantic input projection and derived-event field selection all share
+`readOwnEventPath()`. It reads only **own data property descriptors**, never
+prototype-chain properties or accessor getters. Inherited `constructor`,
+`toString`, `__proto__` and custom prototype properties do not count
+as evidence; explicitly owned JSON keys remain readable. This prevents
+correlation or semantic decisions from relying on fabricated inherited
+tenant attributes, without treating untrusted event data as authority.
+
+The event ingress entry point now takes a bounded, descriptor-only snapshot
+*before* the Zod parser can read nested records, hashes, or pattern handlers.
+Proxy objects, accessor-bearing properties, circular structures, sparse
+arrays and non-JSON values fail closed with `EVENT_UNTRUSTED_DATA_INVALID`; selected
+object/array terminals are detached from inherited indexed properties.
+No external event code or property getter may participate in matching.
+
+Deterministic tests cover inherited and own JSON keys, getter non-execution,
+malicious sparse arrays, pre-parser accessor rejection, semantic input
+projection and real Pattern engine partition isolation.
+The host must continue to enforce owner permissions on every wake.
+
+This closes a specific event-evidence ambiguity under #45. Other trust-boundary
+hypotheses, complete tenant fuzzing and independent security review remain open.
+
+Both direct composite ingestion and MCP Events occurrence conversion
+snapshot provider data before schema validation or canonical payload hashing.
+MCP conversion also snapshots subscription arguments; tests verify zero
+accessor or Proxy trap execution before hashing.
+
+The JavaScript ingress explicitly rejects native `Proxy` values (including
+nested and array proxies) via Node's `node:util/types.isProxy` before any
+reflection or traversal can trigger attacker-defined proxy traps. This is a
+Node-specific security boundary; other JS runtimes need their own equivalent
+intrinsic or a wire-JSON-only ingress contract. The event payload remains
+untrusted even after normalization.
