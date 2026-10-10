@@ -13,20 +13,23 @@ import {
 
 test('three shared semantic output operations expose intentional transport projections', () => {
   assert.equal(OPERATION_OUTPUT_CONTRACT_VERSION, '1');
-  assert.deepEqual(Object.keys(OPERATION_OUTPUT_CONTRACTS),[
-    'sources','list',
+  assert.deepEqual(Object.keys(OPERATION_OUTPUT_CONTRACTS), [
+    'sources', 'list', 'plan',
   ]);
   assert.equal(outputValidator('stdio','sources'),
     outputValidator('embedded','sources'));
   assert.notEqual(outputValidator('stdio','list'),
     outputValidator('embedded','list'));
-  for (const key of ['sources','list']) {
-    for (const surface of ['stdio','embedded']) {
-      const json=outputJsonSchema(surface,key);
-      assert.equal(json.type,'object');
-      assert.equal(Object.isFrozen(OPERATION_OUTPUT_CONTRACTS[key]),true);
+  for (const key of ['sources', 'list', 'plan']) {
+    const surfaces = key === 'plan' ? ['stdio'] : ['stdio', 'embedded'];
+    for (const surface of surfaces) {
+      const json = outputJsonSchema(surface, key);
+      assert.equal(json.type, 'object');
+      assert.equal(Object.isFrozen(OPERATION_OUTPUT_CONTRACTS[key]), true);
     }
   }
+  assert.throws(() => outputValidator('embedded', 'plan'),
+    /Operation not exposed on EI surface/);
 });
 
 test('runtime output validation rejects missing/wrong shapes without mutating data',()=>{
@@ -46,6 +49,24 @@ test('runtime output validation rejects missing/wrong shapes without mutating da
     {triggers:[]}),{triggers:[]});
   assert.throws(()=>outputValidator('muffin','list'),/Unknown EI output surface/);
   assert.throws(()=>outputValidator('stdio','create'),/Unmodeled/);
+  const validPlan = {
+    planVersion: '2',
+    definition: { triggerId: 'test' },
+    connectionIds: ['source-1'],
+    resolvedSources: [],
+    warnings: [],
+    explanation: { when: {}, then: {} },
+  };
+  assert.equal(validateOperationOutput('stdio', 'plan', validPlan), validPlan);
+  for (const invalid of [
+    { ...validPlan, planVersion: 'unknown' },
+    { ...validPlan, connectionIds: 'wrong' },
+    { ...validPlan, explanation: { when: {} } },
+    { ...validPlan, definition: null },
+  ]) {
+    assert.throws(() => validateOperationOutput('stdio', 'plan', invalid),
+      err => err.code === 'EI_OUTPUT_CONTRACT_INVALID');
+  }
 });
 
 test('real embedded list validates canonical projected response before host projection',async()=>{
