@@ -660,8 +660,10 @@ export function bindEmbeddedRuntimeIntegration(
   // The host remains responsible for per-actor policy at execution time.
   let selected = integration.tools;
   if (capabilityIds !== undefined) {
+    // Iterating converts sparse holes to undefined; Array.some() silently
+    // skips empty slots, which would otherwise bypass fail-closed validation.
     if (!Array.isArray(capabilityIds) ||
-        capabilityIds.some((id) => typeof id !== 'string' || !id.trim())) {
+        [...capabilityIds].some((id) => typeof id !== 'string' || !id.trim())) {
       throw new TypeError('capabilityIds must be an array of non-empty capability IDs');
     }
     const known = new Set(
