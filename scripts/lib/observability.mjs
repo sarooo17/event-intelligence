@@ -141,3 +141,54 @@ export function createObservabilityEmitter(
     },
   });
 }
+
+
+/**
+ * Optional dependency-free translation of already-sanitized EI observation
+ * records into OpenTelemetry spans. The embedding host supplies its tracer:
+ * EI does not own exporters, sampling, parent context, credentials or SDK.
+ *
+ * By default no tenant IDs, event payload, metadata or correlation IDs are
+ * exported. Correlation IDs are opt-in, useful only for authorized sinks with
+ * appropriate cardinality and data-retention policy.
+ */
+export function createOpenTelemetrySink(tracer, { includeCorrelations = false } = {}) {
+  if (!tracer || typeof tracer.startSpan !== 'function') {
+    throw new TypeError('OpenTelemetry bridge requires tracer.startSpan()');
+  }
+  if (typeof includeCorrelations !== 'boolean') {
+    throw new TypeError('includeCorrelations must be boolean');
+  }
+
+  return Object.freeze({
+    emit(record) {
+      // This adapter is intended to consume createObservabilityEmitter's
+      // sanitized output, never unvalidated provider/agent payloads.
+      if (!record || typeof record.event !== 'string' ||
+          !record.event.startsWith('ei.')) return;
+      try {
+        const attributes = {
+          'ei.schema': String(record.schema ?? ''),
+          'ei.level': String(record.level ?? ''),
+          'ei.component': String(record.component ?? ''),
+          ...(record.status ? { 'ei.status': String(record.status) } : {}),
+          ...(Number.isFinite(record.attempt)
+            ? { 'ei.attempt': record.attempt } : {}),
+        };
+        if (includeCorrelations) {
+          // Explicit opt-in: these are already sanitized and length-bounded
+          // by EI's core emitter, not arbitrarily copied from event data.
+          for (const key of ['traceId', 'scopeId', 'triggerId', 'matchId', 'wakeId']) {
+            if (typeof record[key] === 'string' && record[key]) {
+              attributes['ei.' + key] = record[key];
+            }
+          }
+        }
+        const span = tracer.startSpan(record.event, { attributes });
+        if (span && typeof span.end === 'function') span.end();
+      } catch {
+        // Observability must never block or change match/wake semantics.
+      }
+    },
+  });
+}
