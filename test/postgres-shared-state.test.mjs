@@ -102,7 +102,7 @@ function matchedRecord(triggerId = 'ha-trigger', matchId = 'ha-match') {
 }
 
 async function dropTables(dbPool) {
-  for (const suffix of ['leases', 'history', 'records', 'counters']) {
+  for (const suffix of ['metadata', 'leases', 'history', 'records', 'counters']) {
     await dbPool.query(`DROP TABLE IF EXISTS "${prefix}_${suffix}" CASCADE`);
   }
 }
@@ -491,6 +491,127 @@ integrationTest('Postgres history window uses stable order and isolates tenant s
       () => a.getRecentTriggerMatchHistory(matchId, { limit: 0 }),
       (error) => error.code === 'EVENT_INTELLIGENCE_HISTORY_LIMIT_INVALID',
     );
+  } finally {
+    await dropTables(dbPool);
+    await dbPool.end();
+  }
+});
+
+integrationTest('fresh schema receives durable version marker and survives independent restart', async () => {
+  const dbPool = pool();
+  try {
+    const first = store(dbPool, 'schema-first');
+    await first.init();
+    const row = await dbPool.query(
+      'SELECT version, adopted_from FROM "' + prefix + '_metadata" WHERE component = $1',
+      ['store'],
+    );
+    assert.equal(Number(row.rows[0].version), 1);
+    assert.equal(row.rows[0].adopted_from, null);
+    await first.putTrigger(triggerDefinition('schema-marker-trigger'));
+    const second = store(dbPool, 'schema-second');
+    await second.init();
+    assert.equal((await second.forScope('schema-first')).initialized, true);
+    assert.equal((await first.listTriggers()).length, 1);
+  } finally {
+    await dropTables(dbPool);
+    await dbPool.end();
+  }
+});
+
+integrationTest('unknown newer PostgreSQL schema refuses startup without data mutation', async () => {
+  const dbPool = pool();
+  try {
+    const first = store(dbPool);
+    await first.init();
+    await first.putTrigger(triggerDefinition('preserved-trigger'));
+    await dbPool.query(
+      'UPDATE "' + prefix + '_metadata" SET version = $1 WHERE component = $2',
+      [99, 'store'],
+    );
+    await assert.rejects(
+      () => store(dbPool).init(),
+      (error) => error.code === 'EVENT_INTELLIGENCE_POSTGRES_SCHEMA_INCOMPATIBLE',
+    );
+    // Database content remains untouched; an operator can restore the marker.
+    await dbPool.query(
+      'UPDATE "' + prefix + '_metadata" SET version = $1 WHERE component = $2',
+      [1, 'store'],
+    );
+    const restored = store(dbPool);
+    await restored.init();
+    assert.equal((await restored.listTriggers())[0].triggerId, 'preserved-trigger');
+  } finally {
+    await dropTables(dbPool);
+    await dbPool.end();
+  }
+});
+
+integrationTest('nonempty unversioned store demands explicit operator adoption', async () => {
+  const dbPool = pool();
+  try {
+    const first = store(dbPool);
+    await first.init();
+    await first.putTrigger(triggerDefinition('legacy-kept'));
+    await dbPool.query(
+      'DELETE FROM "' + prefix + '_metadata" WHERE component = $1',
+      ['store'],
+    );
+    await assert.rejects(
+      () => store(dbPool).init(),
+      (error) => error.code === 'EVENT_INTELLIGENCE_POSTGRES_SCHEMA_UNVERSIONED',
+    );
+    const count = await dbPool.query(
+      'SELECT count(*)::int AS n FROM "' + prefix +
+      '_records" WHERE kind = $1',
+      ['trigger'],
+    );
+    assert.equal(Number(count.rows[0].n), 1);
+    const adopted = new PostgresEventStore({
+      pool: dbPool,
+      tablePrefix: prefix,
+      adoptUnversionedSchema: true,
+    });
+    await adopted.init();
+    const metadata = await dbPool.query(
+      'SELECT version, adopted_from FROM "' + prefix + '_metadata" WHERE component = $1',
+      ['store'],
+    );
+    assert.equal(Number(metadata.rows[0].version), 1);
+    assert.equal(metadata.rows[0].adopted_from, 'unversioned-explicit');
+    assert.equal((await adopted.listTriggers())[0].triggerId, 'legacy-kept');
+    await store(dbPool).init(); // independent worker accepts adopted v1 marker
+  } finally {
+    await dropTables(dbPool);
+    await dbPool.end();
+  }
+});
+
+integrationTest('empty malformed legacy table cannot receive a trusted schema marker', async () => {
+  const dbPool = pool();
+  try {
+    // A colliding relation with only indexed columns must never be treated
+    // as a fresh v1 store just because it contains no rows.
+    await dbPool.query(
+      'CREATE TABLE "' + prefix + '_records" (scope_id TEXT, kind TEXT)',
+    );
+    await assert.rejects(
+      () => store(dbPool).init(),
+      (error) => error.code === 'EVENT_INTELLIGENCE_POSTGRES_SCHEMA_SHAPE_INVALID',
+    );
+    const marker = await dbPool.query(
+      'SELECT to_regclass($1) AS relation',
+      [prefix + '_metadata'],
+    );
+    assert.equal(marker.rows[0].relation, null);
+    await dbPool.query('DROP TABLE "' + prefix + '_records"');
+    const valid = store(dbPool);
+    await valid.init();
+    const version = await dbPool.query(
+      'SELECT version FROM "' + prefix + '_metadata" WHERE component = $1',
+      ['store'],
+    );
+    assert.equal(Number(version.rows[0].version), 1);
   } finally {
     await dropTables(dbPool);
     await dbPool.end();

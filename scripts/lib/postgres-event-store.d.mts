@@ -23,7 +23,11 @@ export interface PostgresEventStoreOptions {
   scopeId?: string;
   tablePrefix?: string;
   ownsPool?: boolean;
+  /** Only after a verified backup and operator approval; never auto-adopts data. */
+  adoptUnversionedSchema?: boolean;
 }
+
+export declare const POSTGRES_PERSISTED_SCHEMA_VERSION: 1;
 
 export declare const POSTGRES_STORE_CAPABILITIES: Readonly<{
   version: '1';
@@ -41,6 +45,7 @@ export declare class PostgresEventStore {
   readonly scopeId: string;
   readonly tablePrefix: string;
   readonly ownsPool: boolean;
+  readonly adoptUnversionedSchema: boolean;
   storeCapabilities(): EventIntelligenceStoreCapabilities;
   init(): Promise<Record<string, number>>;
   forScope(scopeId?: string): Promise<PostgresEventStore>;

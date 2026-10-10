@@ -7,10 +7,13 @@ import {
   parseTriggerMatchRecord,
 } from '../../dist/src/intelligenceProtocol/index.js';
 import { validateHistoryWindowLimit } from './history-window.mjs';
+import { assertPostgresSchemaShape } from './postgres-schema-shape.mjs';
 import {
   DEFAULT_EVENT_SCOPE_ID,
   normalizeEventScopeId,
 } from './persistent-event-store.mjs';
+
+export const POSTGRES_PERSISTED_SCHEMA_VERSION = 1;
 
 export const POSTGRES_STORE_CAPABILITIES = Object.freeze({
   version: '1',
@@ -77,6 +80,7 @@ export class PostgresEventStore {
     scopeId = DEFAULT_EVENT_SCOPE_ID,
     tablePrefix = 'event_intelligence',
     ownsPool = false,
+    adoptUnversionedSchema = false,
   } = {}) {
     if (!pool || typeof pool.query !== 'function' || typeof pool.connect !== 'function') {
       throw new Error(
@@ -87,12 +91,14 @@ export class PostgresEventStore {
     this.scopeId = normalizeEventScopeId(scopeId);
     this.tablePrefix = ident(tablePrefix, 'tablePrefix');
     this.ownsPool = ownsPool === true;
+    this.adoptUnversionedSchema = adoptUnversionedSchema === true;
     this.initialized = false;
     this.scopeStores = new Map();
     this.records = '"' + this.tablePrefix + '_records"';
     this.history = '"' + this.tablePrefix + '_history"';
     this.leases = '"' + this.tablePrefix + '_leases"';
     this.counters = '"' + this.tablePrefix + '_counters"';
+    this.metadata = '"' + this.tablePrefix + '_metadata"';
   }
 
   storeCapabilities() {
@@ -134,8 +140,58 @@ export class PostgresEventStore {
           'CREATE TABLE IF NOT EXISTS ' + this.counters + ' (' +
             'scope_id TEXT NOT NULL, name TEXT NOT NULL, value BIGINT NOT NULL,' +
             'PRIMARY KEY (scope_id, name))',
+          'CREATE TABLE IF NOT EXISTS ' + this.metadata + ' (' +
+            'component TEXT PRIMARY KEY, version INTEGER NOT NULL,' +
+            'adopted_from TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp())',
         ]) {
           await client.query(statement);
+        }
+        await assertPostgresSchemaShape(client, this.tablePrefix);
+        // Under the same advisory transaction lock as DDL, require a known
+        // persisted contract BEFORE exposing the store to workers. Unknown
+        // versions or unversioned nonempty state must never be reinterpreted.
+        const current = await client.query(
+          'SELECT version FROM ' + this.metadata +
+          ' WHERE component = $1 FOR UPDATE',
+          ['store'],
+        );
+        if (current.rows.length) {
+          const found = Number(current.rows[0].version);
+          if (found !== POSTGRES_PERSISTED_SCHEMA_VERSION) {
+            const error = new Error(
+              'Event Intelligence PostgreSQL schema version is incompatible; ' +
+              'found ' + found + ', supported ' + POSTGRES_PERSISTED_SCHEMA_VERSION,
+            );
+            error.code = 'EVENT_INTELLIGENCE_POSTGRES_SCHEMA_INCOMPATIBLE';
+            throw error;
+          }
+        } else {
+          const counts = await client.query(
+            'SELECT ' +
+              'EXISTS(SELECT 1 FROM ' + this.records + ' LIMIT 1) AS records, ' +
+              'EXISTS(SELECT 1 FROM ' + this.history + ' LIMIT 1) AS history, ' +
+              'EXISTS(SELECT 1 FROM ' + this.leases + ' LIMIT 1) AS leases, ' +
+              'EXISTS(SELECT 1 FROM ' + this.counters + ' LIMIT 1) AS counters',
+          );
+          const hasLegacyState = Object.values(counts.rows[0] ?? {})
+            .some((value) => value === true);
+          if (hasLegacyState && !this.adoptUnversionedSchema) {
+            const error = new Error(
+              'Unversioned Event Intelligence PostgreSQL data exists. ' +
+              'Take a verified backup before explicitly adopting the existing schema.',
+            );
+            error.code = 'EVENT_INTELLIGENCE_POSTGRES_SCHEMA_UNVERSIONED';
+            throw error;
+          }
+          await client.query(
+            'INSERT INTO ' + this.metadata +
+            ' (component, version, adopted_from) VALUES ($1, $2, $3)',
+            [
+              'store',
+              POSTGRES_PERSISTED_SCHEMA_VERSION,
+              hasLegacyState ? 'unversioned-explicit' : null,
+            ],
+          );
         }
       });
       this.initialized = true;
@@ -295,6 +351,7 @@ export class PostgresEventStore {
       scopeId,
       tablePrefix: this.tablePrefix,
       ownsPool: false,
+      adoptUnversionedSchema: this.adoptUnversionedSchema,
     });
     scoped.initialized = this.initialized;
     if (!scoped.initialized) await scoped.init();
