@@ -141,7 +141,10 @@ cannot complete the new claim or schedule a retry/dead-letter with stale state,
 even though both attempts have the same `workerId`. No schema migration is
 needed because `attemptCount` was already persisted before this change.
 The coordinator now forwards the generation from each claim to both terminal
-store operations. This is a deliberate pre-v1 change to the advanced store
+store operations. If its callback loses ownership while in flight, it returns a
+non-terminal `claim_lost` outcome (with current delivery state) instead of
+scheduling a retry/dead-letter for the successor or throwing out of the
+retry scheduler. This is a deliberate pre-v1 change to the advanced store
 mutation contract; custom adapters must follow the same generation fencing.
 
 **Important limitation:** state fencing does not prevent the external runtime
