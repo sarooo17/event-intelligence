@@ -100,6 +100,22 @@ Authoritative PostgreSQL state includes:
 - hash-linked audit history;
 - trigger/version/partition leases.
 
+### Persisted schema contract and deliberate upgrade
+
+The PostgreSQL adapter now records `POSTGRES_PERSISTED_SCHEMA_VERSION = 1` in a dedicated `<tablePrefix>_metadata` table under the existing transactional schema-advisory lock. Multiple workers starting simultaneously must observe the same committed marker. Empty stores receive v1 automatically; already-versioned v1 stores reopen normally.
+
+**Fail closed:** an unknown or newer marker blocks startup with `EVENT_INTELLIGENCE_POSTGRES_SCHEMA_INCOMPATIBLE`. A nonempty, **unversioned** pre-marker database blocks with `EVENT_INTELLIGENCE_POSTGRES_SCHEMA_UNVERSIONED`; no stored triggers, receipts, cursors or evidence are deleted or implicitly migrated. The refused initialization is rolled back.
+
+**Operator procedure for an existing pre-marker PostgreSQL database:**
+
+1. Stop all EI workers sharing the table prefix and verify the running package/database version.
+2. Take and **verify a restorable backup/snapshot** of all EI tables (including records, history, leases and counters). Check any applicable retention/audit requirements.
+3. Confirm the existing tables were created by the earlier EI PostgreSQL adapter with the expected v1 column definitions; this first slice **does not structurally certify legacy tables**.
+4. Run a single maintenance bootstrap using `new PostgresEventStore({pool, tablePrefix, adoptUnversionedSchema: true}).init()`. This is a one-time explicit adoption flag; the store records `adopted_from = 'unversioned-explicit'`.
+5. Remove the opt-in flag, resume workers and verify scope counts, trigger states, receipts and wake reconciliation.
+
+This is a controlled **adoption**, not an automatic data migration. It must not be used to relabel a genuinely incompatible custom schema. Future breaking migrations require separately designed and tested transitions, not modifying this marker by hand. The host remains responsible for snapshot consistency and disaster-recovery practice. Also see [#47](https://github.com/sarooo17/event-intelligence/issues/47) and [#50](https://github.com/sarooo17/event-intelligence/issues/50).
+
 ### Distributed atomicity
 
 Wake ownership is claimed inside a database transaction with a row lock. A claim records the worker id, attempt count and lease expiry. Another worker cannot claim the same wake until the lease expires; a stale worker cannot later complete or fail a claim it no longer owns.
