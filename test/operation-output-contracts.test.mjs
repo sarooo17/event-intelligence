@@ -60,7 +60,7 @@ test('runtime output validation rejects missing/wrong shapes without mutating da
   assert.deepEqual(validateOperationOutput('stdio','list',
     {triggers:[]}),{triggers:[]});
   assert.throws(()=>outputValidator('muffin','list'),/Unknown EI output surface/);
-  assert.throws(()=>outputValidator('stdio','create'),/Unmodeled/);
+  assert.throws(()=>outputValidator('stdio','operationThatDoesNotExist'),/Unmodeled/);
   const validPlan = {
     planVersion: '2',
     definition: { triggerId: 'test' },
