@@ -95,3 +95,16 @@ test('bounded oracle rejects unsupported semantics instead of pretending to vali
     /Unknown reference contiguity/,
   );
 });
+
+test('sequence reference oracle rejects out-of-domain evidence', () => {
+  const a = sourceEvent('a', 'a', 0);
+  const b = sourceEvent('b', 'b', 1);
+  assert.throws(() => referenceSequencePairs([], 'next'), /1\.\.8/);
+  assert.throws(() => referenceSequencePairs(Array.from({ length: 9 },
+    (_,i)=>sourceEvent(String(i),'a',i)), 'next'), /1\.\.8/);
+  assert.throws(() => referenceSequencePairs([a,a], 'next'), /unique chronological/);
+  assert.throws(() => referenceSequencePairs([b,a], 'followedBy'), /unique chronological/);
+  assert.throws(() => referenceSequencePairs([
+    { ...a, clauseId: 'unmodeled' },
+  ], 'next'), /unique chronological/);
+});
