@@ -92,10 +92,11 @@ function registerReadTools(server, runtime, env) {
       description:
         'Describe the public Event Intelligence trigger authoring language. Use this when you need to discover supported predicates, composition, temporal, correlation, timing, or lifecycle operators before planning a trigger.',
       inputSchema: MCP_OPERATION_SCHEMAS.languageDescribe,
+      outputSchema: OPERATION_OUTPUT_CONTRACTS.languageDescribe.stdio,
     },
     async (input) => {
       try {
-        return jsonResult(describeTriggerLanguage(input));
+        return jsonResult(describeTriggerLanguage(input), 'languageDescribe');
       } catch (error) {
         return errorResult(error);
       }
@@ -184,12 +185,13 @@ function registerReadTools(server, runtime, env) {
       description:
         'List versioned derived-event contracts, canonical schemas, fingerprints and registered producers.',
       inputSchema: MCP_OPERATION_SCHEMAS.derivedContracts,
+      outputSchema: OPERATION_OUTPUT_CONTRACTS.derivedContracts.stdio,
     },
     async ({ eventName }) => {
       try {
         return jsonResult({
           contracts: await runtime.store.listDerivedContracts(eventName),
-        });
+        }, 'derivedContracts');
       } catch (error) {
         return errorResult(error);
       }
@@ -219,6 +221,7 @@ function registerReadTools(server, runtime, env) {
       description:
         'Return local Event Intelligence runtime status, restored counts, host-managed MCP event connections and pending temporal deadlines.',
       inputSchema: MCP_OPERATION_SCHEMAS.runtimeStatus,
+      outputSchema: OPERATION_OUTPUT_CONTRACTS.runtimeStatus.stdio,
     },
     async () => {
       try {
@@ -230,7 +233,7 @@ function registerReadTools(server, runtime, env) {
           derivedEvents: (await runtime.store.listDerivedEvents()).length,
           derivedContracts: (await runtime.store.listDerivedContracts()).length,
           writeEnabled: env.MCP_WRITE_ENABLED === 'true',
-        });
+        }, 'runtimeStatus');
       } catch (error) {
         return errorResult(error);
       }
