@@ -7,8 +7,8 @@
  * allow-overlap + keepAll; unlimited enough execution caps.
  */
 export function referenceAllOfPairs(events) {
-  if (!Array.isArray(events) || events.length > 9) {
-    throw new TypeError('AllOf reference corpus must contain <=9 events');
+  if (!Array.isArray(events) || events.length < 1 || events.length > 9) {
+    throw new TypeError('AllOf reference corpus must contain 1..9 events');
   }
   const seen = new Set();
   for (const entry of events) {
