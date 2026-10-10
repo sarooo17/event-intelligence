@@ -85,6 +85,19 @@ export class ActivationHydrator {
       throw error;
     }
 
+    // The wake also claims which trigger produced the occurrence. Verify
+    // that claim independently of the match/delivery identifiers.
+    if (
+      wake.subscriptionId?.startsWith('trigger:') &&
+      wake.subscriptionId !== `trigger:${match.triggerId}`
+    ) {
+      const error = new Error(
+        'Wake subscription trigger differs from the matched trigger',
+      );
+      error.code = 'ACTIVATION_PROVENANCE_MISMATCH';
+      throw error;
+    }
+
     if (
       delivery && (
         (delivery.triggerId &&
