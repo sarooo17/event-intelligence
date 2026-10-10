@@ -7,6 +7,7 @@ import test from 'node:test';
 
 import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
+import { operationNamesForSurface } from '../scripts/lib/operation-manifest.mjs';
 
 const rootDir = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -53,6 +54,11 @@ test('MCP stdio adapter exposes read-only Event Intelligence tools by default', 
   try {
     const { tools } = await session.client.listTools();
     const names = tools.map((tool) => tool.name).sort();
+
+    assert.deepEqual(
+      names,
+      operationNamesForSurface('stdio', { allowMutations: false }).sort(),
+    );
 
     assert.deepEqual(names, [
       'derived_contracts_list',
@@ -210,6 +216,10 @@ test('MCP stdio write tools require explicit operator opt-in', async () => {
   try {
     const { tools } = await session.client.listTools();
     const names = new Set(tools.map((tool) => tool.name));
+    assert.deepEqual(
+      [...names].sort(),
+      operationNamesForSurface('stdio').sort(),
+    );
 
     for (const name of [
       'trigger_create',
