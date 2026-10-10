@@ -173,3 +173,18 @@ test('negative window stays pending until finalAt - 1ms and finalizes at finalAt
     assert.equal(actual.matches.length, nowMs < finalAt ? 0 : 1);
   }
 });
+
+test('notFollowedBy reference oracle rejects corpus and evidence outside its finite domain', () => {
+  const options = { withinMs, allowedLatenessMs, nowMs:start + 1000 };
+  const a = event('a',0,'invalid');
+  assert.throws(() => referenceNotFollowedBy([], options), /1\.\.10/);
+  assert.throws(() => referenceNotFollowedBy(Array.from({length:11},
+    (_,i)=>event('a',i,'long')), options), /1\.\.10/);
+  assert.throws(() => referenceNotFollowedBy([a,a], options), /unique valid/);
+  assert.throws(() => referenceNotFollowedBy([
+    { ...a, clauseId: 'unmodeled' },
+  ], options), /unique valid/);
+  assert.throws(() => referenceNotFollowedBy([
+    { ...a, occurredAt: 'not-a-time' },
+  ], options), /unique valid/);
+});
