@@ -345,3 +345,26 @@ test('revoking during stream cursor initialization closes orphan stream', async 
   assert.equal(closed, 1);
   assert.equal(manager.deliverySessions.size, 0);
 });
+
+
+test('stale session reconciliation cannot remove a same-ID replacement',async()=>{
+  const {manager,descriptor,add}=fixture({
+    delivery:'push',
+    openEventStream:async()=>({close(){}}),
+  });
+  const old=add();
+  const context=await manager.scopeContext(old);
+  const subscription={
+    subscriptionId:'reused-sub', eventName:'item.changed',
+    arguments:{},descriptor,consumerRefs:[],
+  };
+  await manager.ensureDeliverySession(old,context,subscription,'push');
+  await manager.detachConnection('same-id');
+  const replacement=add();
+  await manager.ensureDeliverySession(replacement,context,subscription,'push');
+  await assert.rejects(
+    ()=>manager.reconcileDeliverySessions(old,new Set()),
+    error=>error.code==='MCP_EVENTS_CONNECTION_DETACHED',
+  );
+  assert.equal(manager.deliverySessions.get('reused-sub').connection,replacement);
+});
