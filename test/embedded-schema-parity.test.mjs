@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { z } from 'zod';
-import { EMBEDDED_OPERATION_REGISTRY } from '../scripts/embedded-host-kit.mjs';
+import {
+  EMBEDDED_OPERATION_REGISTRY,
+  createEventIntelligenceAgentTools,
+} from '../scripts/embedded-host-kit.mjs';
 import { OPERATION_MANIFEST } from '../scripts/lib/operation-manifest.mjs';
 import {
   EMBEDDED_INPUT_VALIDATORS,
@@ -81,4 +84,35 @@ test('lifecycle schemas are canonical shared objects and reject undeclared autho
       trigger_id:'t', owner:'someone-else', tenant_id:'other',
     }).success,false);
   }
+});
+
+test('the actual embedded source-list execution rejects undisclosed arguments', async () => {
+  let sourceReads = 0;
+  let resolves = 0;
+  const tools = createEventIntelligenceAgentTools({
+    host: {
+      get eventSources() {
+        sourceReads++;
+        return [{connectionId:'erp',eventName:'item.changed'}];
+      },
+    },
+    resolveContext: () => {
+      resolves++;
+      return {
+        actor:{type:'agent',principal_id:'agent-1'},
+        owner:{type:'user',principal_id:'user-1'},
+      };
+    },
+    control: () => ({action:'return',result:{ok:false}}),
+  });
+  const list = tools.find(item => item.name === 'event_sources_list');
+  assert.ok(list);
+  const invalid = await list.execute({bypass:true},{});
+  assert.equal(invalid.ok,false);
+  assert.equal(sourceReads,0);
+  assert.equal(resolves,0);
+  const valid = await list.execute({},{});
+  assert.equal(valid.ok,true);
+  assert.equal(sourceReads,1);
+  assert.equal(resolves,1);
 });
