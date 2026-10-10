@@ -5,7 +5,7 @@ export const EI_OBSERVABILITY_SCHEMA_VERSION = '1';
 
 function truncate(value, max = 1000) {
   const text = String(value ?? '').normalize('NFKC')
-    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer [redacted]')
+    .replace(/Bearer[\s\u0085]+[A-Za-z0-9._~+/=-]+/giu, 'Bearer [redacted]')
     .replace(
       /((?:api[_-]?key|authorization|password|secret|token)\s*[=:]\s*)[^\s,;]+/gi,
       '$1[redacted]',
