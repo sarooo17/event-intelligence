@@ -28,7 +28,7 @@ test('every emitted PostgreSQL identifier fits inside the 63-byte ceiling', () =
 });
 
 test('overlong PostgreSQL prefixes fail at construction, not silently truncated', () => {
-  for(const length of [MAX_POSTGRES_TABLE_PREFIX_BYTES+1,55,63]){
+  for(const length of [MAX_POSTGRES_TABLE_PREFIX_BYTES+1,55,63,64,128]){
     assert.throws(
       () => new PostgresEventStore({pool,tablePrefix:'x'.repeat(length)}),
       (error) => error.code === 'EVENT_INTELLIGENCE_POSTGRES_PREFIX_TOO_LONG',
