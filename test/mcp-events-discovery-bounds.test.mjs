@@ -105,3 +105,31 @@ test('finite catalogue at source limit continues to register normally',async()=>
   assert.equal(f.registered.length,MAX_MCP_EVENT_DISCOVERY_SOURCES);
   assert.equal(f.calls,1);
 });
+
+
+test('malformed cursor objects, arrays or numbers fail before string conversion',async()=>{
+  for (const invalid of [{cursor:'bad'},new Array(100000).fill('x'),42]) {
+    const f=fixture(()=>({events:[descriptor(1)],nextCursor:invalid}));
+    await assert.rejects(
+      ()=>f.manager.discoverConnection('untrusted-source'),
+      error=>error.code==='MCP_EVENTS_DISCOVERY_CURSOR_INVALID',
+    );
+    assert.equal(f.calls,1);
+    assert.equal(f.registered.length,0);
+  }
+});
+
+test('cursor cycle takes priority over parsing duplicated or corrupt descriptors',async()=>{
+  const f=fixture((params,n)=>({
+    events:n===1?[descriptor(1)]:[
+      descriptor(1),{not:'a valid descriptor'},
+    ],
+    nextCursor:'loop-1',
+  }));
+  await assert.rejects(
+    ()=>f.manager.discoverConnection('untrusted-source'),
+    rejected,
+  );
+  assert.equal(f.calls,2);
+  assert.equal(f.registered.length,0);
+});
