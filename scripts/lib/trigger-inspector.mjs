@@ -343,7 +343,8 @@ export class TriggerInspector {
 }
 
 class SimulationStore {
-  constructor() {
+  constructor(now = () => new Date()) {
+    this.now = now;
     this.triggers = [];
     this.matches = new Map();
     this.matchHistory = [];
@@ -385,7 +386,7 @@ class SimulationStore {
       ...previous,
       status,
       actor,
-      updatedAt: new Date().toISOString(),
+      updatedAt: this.now().toISOString(),
       owner: metadata.owner ?? previous.owner,
       connectionIds: metadata.connectionIds ?? previous.connectionIds,
       fireCount: metadata.fireCount ?? previous.fireCount,
@@ -433,8 +434,8 @@ class SimulationStore {
     const previous = this.deadlines.get(input.deadlineId);
     const record = {
       ...input,
-      createdAt: previous?.createdAt ?? new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+      createdAt: previous?.createdAt ?? this.now().toISOString(),
+      updatedAt: this.now().toISOString(),
     };
     this.deadlines.set(record.deadlineId, record);
     return record;
@@ -465,7 +466,7 @@ class SimulationStore {
     const next = {
       ...previous,
       status,
-      updatedAt: new Date().toISOString(),
+      updatedAt: this.now().toISOString(),
     };
     this.deadlines.set(deadlineId, next);
     return next;
@@ -486,6 +487,7 @@ export async function simulateTrigger({
   definition: definitionInput,
   events,
   until,
+  startAt,
   order = 'provided',
 }) {
   const definition = parseCompositeTriggerDefinition(definitionInput);
@@ -498,10 +500,32 @@ export async function simulateTrigger({
     throw new Error('Simulation order must be provided or event_time');
   }
 
-  let clock = normalized.length
-    ? new Date(normalized[0].occurredAt)
-    : new Date();
-  const store = new SimulationStore();
+  // An explicit clock anchor makes even empty-event simulations repeatable.
+  // Keep legacy event-time anchoring when startAt is omitted. All SimulationStore
+  // timestamps must use this injected clock, never the wall clock.
+  const startMs = startAt === undefined ? null : Date.parse(startAt);
+  if (startAt !== undefined && (!Number.isFinite(startMs) ||
+      typeof startAt !== 'string')) {
+    const error = new TypeError('Simulation startAt must be an ISO timestamp');
+    error.code = 'EVENT_SIMULATION_START_TIME_INVALID';
+    throw error;
+  }
+  const untilMs = until === undefined ? null : Date.parse(until);
+  if (until !== undefined && (!Number.isFinite(untilMs) ||
+      typeof until !== 'string')) {
+    const error = new TypeError('Simulation until must be a valid ISO timestamp');
+    error.code = 'EVENT_SIMULATION_END_TIME_INVALID';
+    throw error;
+  }
+  if (startMs !== null && untilMs !== null && untilMs < startMs) {
+    const error = new RangeError('Simulation until cannot precede startAt');
+    error.code = 'EVENT_SIMULATION_TIME_RANGE_INVALID';
+    throw error;
+  }
+
+  let clock = new Date(startMs ??
+    (normalized.length ? Date.parse(normalized[0].occurredAt) : Date.now()));
+  const store = new SimulationStore(() => clock);
   const engine = new CompositeTriggerEngine(
     store,
     null,
@@ -530,10 +554,7 @@ export async function simulateTrigger({
     });
   }
 
-  const untilTime = until ? Date.parse(until) : null;
-  if (until && !Number.isFinite(untilTime)) {
-    throw new Error('Simulation until must be a valid ISO timestamp');
-  }
+  const untilTime = untilMs;
 
   if (untilTime !== null) {
     while (true) {
