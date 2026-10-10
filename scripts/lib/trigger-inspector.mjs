@@ -1,3 +1,5 @@
+import * as z from 'zod/v4';
+
 import {
   CompositeTriggerEngine,
 } from '../../dist/src/composite/engine.js';
@@ -6,6 +8,10 @@ import {
   parseCorrelatableEvent,
   parseTriggerMatchRecord,
 } from '../../dist/src/intelligenceProtocol/index.js';
+
+// Apply the same offset-aware ISO boundary to direct library calls as to the
+// MCP schema; Date.parse alone accepts host-timezone-dependent local dates.
+const simulationTimestamp = z.iso.datetime({ offset: true });
 
 function validHistoryProjection(record) {
   return Boolean(
@@ -503,17 +509,23 @@ export async function simulateTrigger({
   // An explicit clock anchor makes even empty-event simulations repeatable.
   // Keep legacy event-time anchoring when startAt is omitted. All SimulationStore
   // timestamps must use this injected clock, never the wall clock.
-  const startMs = startAt === undefined ? null : Date.parse(startAt);
-  if (startAt !== undefined && (!Number.isFinite(startMs) ||
-      typeof startAt !== 'string')) {
-    const error = new TypeError('Simulation startAt must be an ISO timestamp');
+  const startValid = startAt === undefined ||
+    simulationTimestamp.safeParse(startAt).success;
+  const startMs = startValid && startAt !== undefined ? Date.parse(startAt) : null;
+  if (!startValid || (startAt !== undefined && !Number.isFinite(startMs))) {
+    const error = new TypeError(
+      'Simulation startAt must be a valid offset-aware ISO timestamp',
+    );
     error.code = 'EVENT_SIMULATION_START_TIME_INVALID';
     throw error;
   }
-  const untilMs = until === undefined ? null : Date.parse(until);
-  if (until !== undefined && (!Number.isFinite(untilMs) ||
-      typeof until !== 'string')) {
-    const error = new TypeError('Simulation until must be a valid ISO timestamp');
+  const untilValid = until === undefined ||
+    simulationTimestamp.safeParse(until).success;
+  const untilMs = untilValid && until !== undefined ? Date.parse(until) : null;
+  if (!untilValid || (until !== undefined && !Number.isFinite(untilMs))) {
+    const error = new TypeError(
+      'Simulation until must be a valid offset-aware ISO timestamp',
+    );
     error.code = 'EVENT_SIMULATION_END_TIME_INVALID';
     throw error;
   }
