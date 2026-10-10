@@ -874,8 +874,9 @@ export class McpEventsClientManager {
     subscription,
     delivery,
   ) {
+    this.assertConnectionAttached(connection);
     const existing = this.deliverySessions.get(subscription.subscriptionId);
-    if (existing?.delivery === delivery) {
+    if (existing?.delivery === delivery && existing.connection === connection) {
       return {
         subscriptionId: subscription.subscriptionId,
         eventName: subscription.eventName,
@@ -885,14 +886,18 @@ export class McpEventsClientManager {
         consumerCount: subscription.consumerRefs.length,
       };
     }
-    if (existing) await this.closeSession(subscription.subscriptionId);
+    if (existing) await this.closeSession(subscription.subscriptionId, existing);
+    this.assertConnectionAttached(connection);
 
     const current = await context.store.getMcpClientState(
       connection.connectionId,
       subscription.eventName,
       subscription.arguments,
     );
+    this.assertConnectionAttached(connection);
     let accepted = 0;
+    let activeSession = null;
+    let terminatedDuringOpen = false;
 
     const onEvent = async (raw) => {
       if (!this.isConnectionAttached(connection)) return;
@@ -969,7 +974,10 @@ export class McpEventsClientManager {
     };
 
     const onTerminated = async (detail) => {
-      if (!this.isConnectionAttached(connection)) return;
+      terminatedDuringOpen = true;
+      if (!this.isConnectionAttached(connection) ||
+          !activeSession ||
+          this.deliverySessions.get(subscription.subscriptionId) !== activeSession) return;
       this.deliverySessions.delete(subscription.subscriptionId);
       if (detail) {
         this.lastErrors.set(
@@ -1004,28 +1012,6 @@ export class McpEventsClientManager {
       onTerminated,
     });
 
-    // A stream subscription can finish opening after the host revokes its
-    // connection. Close the orphan immediately; do not install a session or
-    // persist cursor metadata after revocation.
-    if (!this.isConnectionAttached(connection)) {
-      try {
-        if (typeof handle === 'function') await handle();
-        else if (typeof handle?.close === 'function') await handle.close();
-        else if (typeof handle?.cancel === 'function') await handle.cancel();
-        else if (typeof handle?.unsubscribe === 'function') await handle.unsubscribe();
-      } catch {
-        // Orphan cleanup is best-effort; ingress remains fenced above.
-      }
-      return {
-        subscriptionId: subscription.subscriptionId,
-        eventName: subscription.eventName,
-        delivery,
-        status: 'detached',
-        accepted: 0,
-        consumerCount: subscription.consumerRefs.length,
-      };
-    }
-
     const close =
       typeof handle === 'function'
         ? handle
@@ -1037,41 +1023,73 @@ export class McpEventsClientManager {
               ? () => handle.unsubscribe()
               : async () => {};
 
-    if (handle && Object.prototype.hasOwnProperty.call(handle, 'cursor')) {
-      await onActive({
-        cursor: handle.cursor,
-        truncated: handle.truncated === true,
-      });
-    } else {
-      await this.saveSubscriptionState(
-        connection,
-        context,
-        subscription,
-        {
-          deliveryMode: delivery,
-          cursor: current?.cursor ?? null,
-        },
-      );
-    }
-
-    this.deliverySessions.set(subscription.subscriptionId, {
-      connectionId: connection.connectionId,
-      delivery,
-      close,
-      get accepted() {
-        return accepted;
-      },
-    });
-    this.lastErrors.delete(connection.connectionId);
-
-    return {
+    const detachedOutcome = () => ({
       subscriptionId: subscription.subscriptionId,
       eventName: subscription.eventName,
       delivery,
-      status: 'active',
-      accepted,
+      status: 'detached',
+      accepted: 0,
       consumerCount: subscription.consumerRefs.length,
+    });
+    const cleanupOrphan = async () => {
+      try { await close(); } catch {
+        // Cleanup is best effort; callbacks are independently fenced.
+      }
     };
+
+    try {
+      if (!this.isConnectionAttached(connection) || terminatedDuringOpen) {
+        await cleanupOrphan();
+        return detachedOutcome();
+      }
+      if (handle && Object.prototype.hasOwnProperty.call(handle, 'cursor')) {
+        await onActive({
+          cursor: handle.cursor,
+          truncated: handle.truncated === true,
+        });
+      } else {
+        await this.saveSubscriptionState(
+          connection,
+          context,
+          subscription,
+          {
+            deliveryMode: delivery,
+            cursor: current?.cursor ?? null,
+          },
+        );
+      }
+      // State initialization itself is async. Revoke may have happened
+      // while it was running, even though stream opening was authorized.
+      if (!this.isConnectionAttached(connection) || terminatedDuringOpen) {
+        await cleanupOrphan();
+        return detachedOutcome();
+      }
+
+      activeSession = {
+        connection,
+        connectionId: connection.connectionId,
+        delivery,
+        close,
+        get accepted() { return accepted; },
+      };
+      this.deliverySessions.set(subscription.subscriptionId, activeSession);
+      this.lastErrors.delete(connection.connectionId);
+
+      return {
+        subscriptionId: subscription.subscriptionId,
+        eventName: subscription.eventName,
+        delivery,
+        status: 'active',
+        accepted,
+        consumerCount: subscription.consumerRefs.length,
+      };
+    } catch (error) {
+      await cleanupOrphan();
+      if (error?.code === 'MCP_EVENTS_CONNECTION_DETACHED') {
+        return detachedOutcome();
+      }
+      throw error;
+    }
   }
 
   async reconcileDeliverySessions(connection, desiredIds) {
