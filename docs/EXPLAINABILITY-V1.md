@@ -51,7 +51,11 @@ with no OTel dependency added to EI or host credential management moved into EI:
 import {
   createOpenTelemetrySink,
 } from 'mcp-event-intelligence/observability';
+import {
+  createEventIntelligence,
+} from 'mcp-event-intelligence/embedded';
 
+// hostRuntime, hostStore and hostOwnedTracer are supplied by the embedding host.
 const otelSink = createOpenTelemetrySink(hostOwnedTracer);
 const integration = await createEventIntelligence({
   runtime: hostRuntime, observability: otelSink, store: hostStore,
