@@ -82,3 +82,45 @@ test('explanation reports explicit match selection and no-match basis truthfully
     'deployed',
   ]);
 });
+
+test('opt-in bounded inspection delegates to store window without full history scan', async () => {
+  const store = testStore();
+  let windowCalls = 0;
+  store.listTriggerMatchHistory = () => {
+    throw new Error('unbounded history scan must not run');
+  };
+  store.getRecentTriggerMatchHistory = async (matchId, { limit }) => {
+    windowCalls++;
+    assert.equal(matchId, 'match-1');
+    assert.equal(limit, 2);
+    return {
+      records: [
+        { status: 'partial', updatedAt: '2026-10-01T12:00:00.000Z', sourceEvents: [] },
+        { status: 'matched', updatedAt: '2026-10-01T12:01:00.000Z', sourceEvents: [] },
+      ],
+      hasMore: true,
+      limit,
+    };
+  };
+  const view = await new TriggerInspector({
+    store,
+    matchHistoryLimit: 2,
+  }).inspect({ triggerId: 'release' });
+  assert.equal(windowCalls, 1);
+  assert.equal(view.lineage.matchHistory.length, 2);
+  assert.equal(view.lineage.historyTruncated, true);
+  assert.equal(view.lineage.historyLimit, 2);
+});
+
+test('malformed optional window contract fails explicitly', async () => {
+  const store = testStore();
+  store.getRecentTriggerMatchHistory = async () => ({
+    records: [],
+    hasMore: 'false',
+  });
+  await assert.rejects(
+    () => new TriggerInspector({ store, matchHistoryLimit: 1 })
+      .inspect({ triggerId: 'release' }),
+    (error) => error.code === 'EVENT_INTELLIGENCE_HISTORY_WINDOW_INVALID',
+  );
+});
