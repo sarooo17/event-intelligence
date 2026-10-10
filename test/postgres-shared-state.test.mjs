@@ -233,6 +233,7 @@ integrationTest('expired wake and partition leases recover on another worker and
     await assert.rejects(
       () => storeA.completeWakeDelivery('recover-wake', {
         workerId: 'worker-a',
+        attemptCount: claimA.attemptCount,
         runtimeReceiptId: 'stale-owner',
         now: new Date(t0.getTime() + 1200).toISOString(),
       }),
@@ -241,6 +242,7 @@ integrationTest('expired wake and partition leases recover on another worker and
 
     const failed = await storeB.failWakeDelivery('recover-wake', {
       workerId: 'worker-b',
+      attemptCount: claimB.attemptCount,
       error: new Error('retry me'),
       now: new Date(t0.getTime() + 1200).toISOString(),
       nextAttemptAt: new Date(t0.getTime() + 2200).toISOString(),
@@ -257,6 +259,7 @@ integrationTest('expired wake and partition leases recover on another worker and
     assert.equal(claimA2.attemptCount, 3);
     const dead = await storeA.failWakeDelivery('recover-wake', {
       workerId: 'worker-a',
+      attemptCount: claimA2.attemptCount,
       error: new Error('permanent'),
       now: new Date(t0.getTime() + 2400).toISOString(),
       maxAttempts: 3,
