@@ -1,9 +1,10 @@
 import type { EventOccurrence } from '../protocol/types.js';
 import { sha256Hex } from '../intelligenceProtocol/canonical.js';
 import {
-  CorrelatableEventSchema,
+  parseCorrelatableEvent,
   type CorrelatableEvent,
 } from '../intelligenceProtocol/triggerSchemas.js';
+import { snapshotUntrustedEventData } from '../protocol/ownPath.js';
 
 export async function mcpOccurrenceToCorrelatableEvent(
   event: EventOccurrence,
@@ -15,16 +16,24 @@ export async function mcpOccurrenceToCorrelatableEvent(
     receivedAt?: string;
   },
 ): Promise<CorrelatableEvent> {
-  return CorrelatableEventSchema.parse({
+  // The occurrence may come from a third-party provider or host. Snapshot it
+  // before reading eventId/name/timestamp, invoking the canonical hash, or
+  // parsing any Zod record. Proxies/getters must not execute even once.
+  const safeEvent = snapshotUntrustedEventData(event) as EventOccurrence;
+  const safeArguments = snapshotUntrustedEventData(
+    input.subscriptionArguments ?? {},
+  ) as Record<string, unknown>;
+  const payloadHash = await sha256Hex(safeEvent.data);
+  return parseCorrelatableEvent({
     traceId: input.traceId,
-    sourceEventId: event.eventId,
-    name: event.name,
-    occurredAt: event.timestamp,
+    sourceEventId: safeEvent.eventId,
+    name: safeEvent.name,
+    occurredAt: safeEvent.timestamp,
     ...(input.receivedAt ? { receivedAt: input.receivedAt } : {}),
     ...(input.provider ? { provider: input.provider } : {}),
     ...(input.serverId ? { serverId: input.serverId } : {}),
-    subscriptionArguments: input.subscriptionArguments ?? {},
-    payloadHash: await sha256Hex(event.data),
-    data: event.data,
+    subscriptionArguments: safeArguments,
+    payloadHash,
+    data: safeEvent.data,
   });
 }
