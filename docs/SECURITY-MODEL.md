@@ -183,12 +183,18 @@ The only bundled AI adapter is the optional TypeSafe Jev semantic evaluator, use
 
 ## Untrusted JSON property resolution
 
-Predicate and Pattern v2 field selectors now traverse **own properties only**.
-Inherited `constructor`, `toString`, `__proto__` and custom prototype
-properties do not count as event evidence. Actual own keys that arrive in JSON
-remain readable. The check applies to both regular event-clause predicates
-and the Pattern v2 evaluator; it does not grant source trust or bypass
-post-wake host authority. Deterministic negative tests cover both paths.
+Event-clause predicates, Pattern v2 arithmetic selectors, partition keys,
+semantic input projection and derived-event field selection all share
+`readOwnEventPath()`. It reads only **own data property descriptors**, never
+prototype-chain properties or accessor getters. Inherited `constructor`,
+`toString`, `__proto__` and custom prototype properties do not count
+as evidence; explicitly owned JSON keys remain readable. This prevents
+correlation or semantic decisions from relying on fabricated inherited
+tenant attributes, without treating untrusted event data as authority.
+
+Deterministic tests cover inherited and own JSON keys, getter non-execution,
+semantic input projection and real Pattern engine partition isolation.
+The host must continue to enforce owner permissions on every wake.
 
 This closes a specific event-evidence ambiguity under #45. Other trust-boundary
 hypotheses, complete tenant fuzzing and independent security review remain open.
