@@ -43,12 +43,21 @@ callback cannot gain authorization by reusing a new session's connection ID.
 - Late push/webhook `onEvent`, cursor, error and termination callbacks are
   ignored. A stream that completes opening after detach is closed without
   being installed.
-- Source descriptors are disabled by detach as before; old sessions cannot
-  re-register descriptors after returning from an awaited discovery step.
+- Source registration, cursor read-modify-write and detach deactivation
+  share a per-connection asynchronous mutation queue. This fences already
+  started writes in a deterministic order: old writes complete, detach's
+  disable runs, and only then can the replacement publish its descriptors
+  or cursor. A revoked operation that has not entered the queue fails closed.
+- Stream cleanup references the exact connection/session object, not the
+  reused ID. Late state initialization cannot re-register a revoked stream,
+  and a retiring session cannot close the replacement's live handle.
 - The host must explicitly reattach/re-authorize a new MCP connection; no
   private tokens are retained by EI.
 
-**Race boundary:** A store append that started before revocation may commit
+**Race boundary:** The mutation queue is **process-local**, not a
+distributed lock, and serializes source/cursor state **only through this
+manager instance**. It does not make external host writes atomically
+revocation-aware. A store append that started before revocation may commit
 while detach is in progress. EI checks the session again after the append and
 does **not** pass that occurrence to the CEP consumer if authorization was
 revoked. However, without a shared transactional connection-epoch fence an
