@@ -669,7 +669,7 @@ integrationTest('bounded adversarial wake claims: four workers, 20 independent l
 
       const takeover = await workers[successor].claimWakeDelivery(wakeId, {
         workerId: 'worker-' + successor,
-        now: new Date(now + 1001).toISOString(),
+        now: new Date(now + 1000).toISOString(),
         leaseMs: 1000,
       });
       assert.ok(takeover, 'round=' + round + ' takeover missing');
@@ -678,6 +678,7 @@ integrationTest('bounded adversarial wake claims: four workers, 20 independent l
       await assert.rejects(
         () => workers[winner].completeWakeDelivery(wakeId, {
           workerId: 'worker-' + winner,
+          attemptCount: claimed[winner].attemptCount,
           runtimeReceiptId: 'obsolete-' + round,
           now: new Date(now + 1100).toISOString(),
         }),
@@ -686,6 +687,7 @@ integrationTest('bounded adversarial wake claims: four workers, 20 independent l
 
       const accepted = await workers[successor].completeWakeDelivery(wakeId, {
         workerId: 'worker-' + successor,
+        attemptCount: takeover.attemptCount,
         runtimeReceiptId: 'receipt-' + round,
         now: new Date(now + 1200).toISOString(),
       });
