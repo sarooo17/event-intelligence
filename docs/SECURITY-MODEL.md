@@ -25,6 +25,29 @@ Agent-authored persistent mutations require a confirmation identifier. For commo
 
 Planning does not grant authority. Source scope and advertised predicate, Pattern, partition and projection paths fail closed when the source provides a payload schema. The embedding host remains responsible for deciding which user/agent may create or mutate triggers.
 
+## Standalone MCP read authority
+
+The standalone stdio server is configured with a trusted `MCP_OWNER_ID` and optional
+`MCP_TENANT_ID`. Model-supplied inputs **cannot** override these identities.
+
+- `trigger_list` always uses the configured owner and has no `ownerOnly:false` bypass.
+- `trigger_inspect` first checks an owner-scoped trigger entry for the requested
+  ID/version and refuses foreign IDs with the same generic not-found error.
+- `wake_hydrate` requires a trigger-scoped wake whose subscription ID,
+  matched event ID, trigger identity/version and optional persisted delivery
+  row are consistent. It checks trigger ownership **before** retrieving matched
+  evidence, then delegates to the existing provenance-aware hydrator.
+- Read guard refusals return `EVENT_INTELLIGENCE_RESOURCE_NOT_FOUND` without
+  confirming whether the foreign identifier exists.
+
+These restrictions apply to the bundled standalone MCP session, **not** a new
+authorization service for embedded hosts. In embedded mode, host-owned scoped
+context and policy checks remain mandatory. The stdio server is intended for a
+single configured owner; it must not be exposed as an unauthenticated multi-user
+remote endpoint. Global event-source/derived-contract discovery and aggregate
+runtime status remain operator-context surfaces, not per-user scoped projections.
+The remaining cross-tenant audit and session-rebind work is tracked in #45.
+
 ## Derived events
 
 Derived event payloads are not arbitrary copies of parent payloads.
