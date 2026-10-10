@@ -144,6 +144,23 @@ jobs:
           await managed.close();
           EOF
 
+      - name: Run canonical simple-trigger example against packed npm consumer
+        shell: bash
+        run: |
+          set -euo pipefail
+          WORKDIR="$(mktemp -d)"
+          cd "$WORKDIR"
+          npm init -y >/dev/null
+          npm install --ignore-scripts --no-audit --no-fund "$TARBALL"
+          cp "$GITHUB_WORKSPACE/docs/examples/packed-simple-trigger.mjs" ./packed-simple-trigger.mjs
+          node ./packed-simple-trigger.mjs | tee example-report.json
+          node --input-type=module -e "
+            import fs from 'node:fs';
+            const report=JSON.parse(fs.readFileSync('example-report.json','utf8'));
+            if(report.status!=='pass'||report.mutations!==0||report.canonicalPattern!=='2')
+              throw new Error('Packed simple-trigger example did not pass');
+          "
+
       - name: Confirm candidate MCP stdio entrypoint starts
         shell: bash
         run: |
