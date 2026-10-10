@@ -17,6 +17,30 @@ For MCP Events ingress, the embedding host retains the MCP transport, authorizat
 
 Event IDs are deduplicated before they can become a second logical source occurrence.
 
+### Untrusted MCP event-source discovery bounds
+
+A host-authorized MCP producer may still return a hostile `events/list`
+catalogue. Before source registration, EI now requires a finite discovery with
+at most `MAX_MCP_EVENT_DISCOVERY_PAGES=32` pages,
+`MAX_MCP_EVENT_DISCOVERY_SOURCES=256` descriptors total per connection,
+and opaque cursor values no longer than `MAX_MCP_EVENT_CURSOR_BYTES=4096`.
+Repeated cursors (including longer cycles) fail closed with
+`MCP_EVENTS_DISCOVERY_LIMIT_EXCEEDED`; malformed cursor types fail with
+`MCP_EVENTS_DISCOVERY_CURSOR_INVALID`. Type and cycle checks run before
+parsing the corresponding page, and page/descriptor limits run before any
+new descriptor registration, so **pagination validation failures** do not
+publish a partial new catalogue. This is **not a transactional publication
+guarantee**: an independent error during a later `registerEventSource`
+operation can still leave earlier descriptors persisted. The host remains
+responsible for registration rollback strategy, network timeouts and maximum
+RPC response bytes.
+
+**Scope:** These are finite `events/list` pagination limits, not a
+full per-tenant ingestion rate/size/regex complexity policy. Existing source
+records are not removed automatically when a subsequent discovery fails;
+the host must act on producer connection revocation. Other ingress and
+backpressure acceptance items remain open in #45.
+
 ## Trigger authority
 
 A trigger may only reference active event sources available in its scoped connection set.

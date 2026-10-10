@@ -18,6 +18,18 @@ export { assertJsonSchemaValue } from './json-schema.mjs';
 export { MCP_EVENTS_EXTENSION_ID } from './mcp-events-compatibility.mjs';
 const UnknownResultSchema = z.unknown();
 
+// Bound untrusted paginated MCP Events source catalogues before parsing or
+// persisting descriptors. These limits apply per host-managed MCP connection.
+export const MAX_MCP_EVENT_DISCOVERY_PAGES = 32;
+export const MAX_MCP_EVENT_DISCOVERY_SOURCES = 256;
+export const MAX_MCP_EVENT_CURSOR_BYTES = 4096;
+
+function discoveryLimitError(detail) {
+  const error = new Error('MCP Events discovery rejected: ' + detail);
+  error.code = 'MCP_EVENTS_DISCOVERY_LIMIT_EXCEEDED';
+  return error;
+}
+
 function assertObject(value, message) {
   if (!value || Array.isArray(value) || typeof value !== 'object') {
     throw new Error(message);
@@ -502,8 +514,13 @@ export class McpEventsClientManager {
 
     const descriptors = [];
     const names = new Set();
+    const seenCursors = new Set();
+    let pageCount = 0;
     let cursor = null;
     do {
+      if (++pageCount > MAX_MCP_EVENT_DISCOVERY_PAGES) {
+        throw discoveryLimitError('too many events/list pages');
+      }
       const listed = await this.rpc(
         connection,
         profile.listMethod,
@@ -515,6 +532,32 @@ export class McpEventsClientManager {
           `MCP server ${connectionId} returned invalid events/list`,
         );
       }
+      // Validate the *original* cursor shape and cycle before parsing any
+      // untrusted descriptor on this page. Never coerce objects/arrays with
+      // String(): doing so can allocate huge strings and fabricate cursors.
+      const rawNextCursor = listed?.nextCursor;
+      if (rawNextCursor !== undefined && rawNextCursor !== null &&
+          typeof rawNextCursor !== 'string') {
+        const error = new Error(
+          'MCP Events discovery rejected: invalid events/list cursor type',
+        );
+        error.code = 'MCP_EVENTS_DISCOVERY_CURSOR_INVALID';
+        throw error;
+      }
+      const nextCursor = rawNextCursor || null;
+      if (nextCursor) {
+        if (Buffer.byteLength(nextCursor, 'utf8') > MAX_MCP_EVENT_CURSOR_BYTES) {
+          throw discoveryLimitError('events/list cursor too long');
+        }
+        if (seenCursors.has(nextCursor)) {
+          throw discoveryLimitError('events/list cursor cycle');
+        }
+        seenCursors.add(nextCursor);
+      }
+      if (listed.events.length >
+        MAX_MCP_EVENT_DISCOVERY_SOURCES - descriptors.length) {
+        throw discoveryLimitError('too many event descriptors');
+      }
       for (const raw of listed.events) {
         const descriptor = sourceDescriptor(raw, profile);
         if (names.has(descriptor.name)) {
@@ -525,10 +568,7 @@ export class McpEventsClientManager {
         names.add(descriptor.name);
         descriptors.push(descriptor);
       }
-      cursor =
-        listed?.nextCursor === undefined || listed?.nextCursor === null
-          ? null
-          : String(listed.nextCursor);
+      cursor = nextCursor;
     } while (cursor);
 
     for (const normalized of descriptors) {
