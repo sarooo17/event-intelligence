@@ -168,10 +168,10 @@ export function createOpenTelemetrySink(tracer, { includeCorrelations = false } 
           !record.event.startsWith('ei.')) return;
       try {
         const attributes = {
-          'ei.schema': String(record.schema ?? ''),
-          'ei.level': String(record.level ?? ''),
-          'ei.component': String(record.component ?? ''),
-          ...(record.status ? { 'ei.status': String(record.status) } : {}),
+          'ei.schema': dimension(record.schema ?? ''),
+          'ei.level': dimension(record.level ?? ''),
+          'ei.component': dimension(record.component ?? ''),
+          ...(record.status ? { 'ei.status': dimension(record.status) } : {}),
           ...(Number.isFinite(record.attempt)
             ? { 'ei.attempt': record.attempt } : {}),
         };
@@ -180,11 +180,11 @@ export function createOpenTelemetrySink(tracer, { includeCorrelations = false } 
           // by EI's core emitter, not arbitrarily copied from event data.
           for (const key of ['traceId', 'scopeId', 'triggerId', 'matchId', 'wakeId']) {
             if (typeof record[key] === 'string' && record[key]) {
-              attributes['ei.' + key] = record[key];
+              attributes['ei.' + key] = dimension(record[key]);
             }
           }
         }
-        const span = tracer.startSpan(record.event, { attributes });
+        const span = tracer.startSpan(dimension(record.event), { attributes });
         if (span && typeof span.end === 'function') span.end();
       } catch {
         // Observability must never block or change match/wake semantics.
