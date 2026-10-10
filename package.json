@@ -85,7 +85,7 @@
     "evidence:pattern-v2": "npm run build && node scripts/evidence/pattern-v2-conformance.mjs && node scripts/evidence/pattern-v2-benchmark.mjs --profile quick",
     "prepare": "npm run build",
     "conformance:host": "npm run build && node conformance/reference-host.mjs",
-    "test:postgres": "npm run build && node --test test/postgres-shared-state.test.mjs"
+    "test:postgres": "npm run build && node --test test/postgres-shared-state.test.mjs test/postgres-restore-evidence.test.mjs"
   },
   "keywords": [
     "mcp",
