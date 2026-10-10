@@ -29,7 +29,7 @@ The example is illustrative. `observedClauseIds` and `unobservedClauseIds` only 
 
 **History is complete by default**, preserving the existing inspection response contract. Host operators may opt into a bounded recent window by configuring `matchHistoryLimit` as an integer from 1–500; invalid values throw. When opted in, `historyTruncated` states whether the result omitted older records and `historyLimit` reports the cap. An implicit/default truncation would be a breaking and potentially misleading change and is deliberately avoided. Full history remains accessible only through an authorized store.
 
-**Limit:** The store's current history API is not paginated; this slices results after the read, bounding response serialization but not DB read cost. Storage-side cursor pagination and retention still belong to [#47](https://github.com/sarooo17/event-intelligence/issues/47).
+**Storage read cost:** With an explicit `matchHistoryLimit`, the inspector prefers the optional `getRecentTriggerMatchHistory(matchId, { limit })` store capability, which can use an indexed bounded query (PostgreSQL implementation tracked in [#60](https://github.com/sarooo17/event-intelligence/pull/60)). A custom store without that method falls back to reading its full history and slicing the response. The default unbounded inspection continues to request full history. This is capability negotiation, not a legacy host adapter. Retention and full cursor pagination remain [#47](https://github.com/sarooo17/event-intelligence/issues/47).
 
 No raw source-event payload is added to these fields, and no model is involved in producing explanations. The host remains responsible for restricting inspection to authorized owners/tenants.
 
