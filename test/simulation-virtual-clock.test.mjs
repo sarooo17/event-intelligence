@@ -49,7 +49,12 @@ test('startAt anchors processing time ahead of earlier external event timestamps
 test('invalid virtual-time boundaries reject before creating simulated state', async () => {
   for (const [input, code] of [
     [{ startAt: 'not-a-date' }, 'EVENT_SIMULATION_START_TIME_INVALID'],
+    [{ startAt: '2026-10-10T09:00:00' }, 'EVENT_SIMULATION_START_TIME_INVALID'],
+    [{ startAt: '2026-02-30T09:00:00Z' }, 'EVENT_SIMULATION_START_TIME_INVALID'],
+    [{ startAt: '2026-01-01' }, 'EVENT_SIMULATION_START_TIME_INVALID'],
     [{ until: 'garbage' }, 'EVENT_SIMULATION_END_TIME_INVALID'],
+    [{ until: '2026-10-10T09:00:00' }, 'EVENT_SIMULATION_END_TIME_INVALID'],
+    [{ until: '2026-02-30T09:00:00Z' }, 'EVENT_SIMULATION_END_TIME_INVALID'],
     [{ startAt: '2026-01-02T00:00:00.000Z',
        until: '2026-01-01T00:00:00.000Z' },
      'EVENT_SIMULATION_TIME_RANGE_INVALID'],
