@@ -17,6 +17,10 @@ const entries = [
     state: { owner: bob },
   },
   {
+    definition: { triggerId: 'shared-name', version: '2' },
+    state: { owner: bob },
+  },
+  {
     definition: { triggerId: 'other-tenant', version: '1' },
     state: { owner: aliceOtherTenant },
   },
@@ -113,4 +117,11 @@ test('missing or cross-linked wake IDs fail indistinguishably', async () => {
       notVisible,
     );
   }
+});
+
+test('versionless owner inspection binds exactly to owned version, not global latest', async () => {
+  const { guard } = fixture();
+  const owned = await guard.assertTrigger('shared-name');
+  assert.equal(owned.definition.version, '1');
+  await assert.rejects(() => guard.assertTrigger('shared-name', '2'), notVisible);
 });
