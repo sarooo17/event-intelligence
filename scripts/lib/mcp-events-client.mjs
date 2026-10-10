@@ -609,7 +609,9 @@ export class McpEventsClientManager {
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        this.lastErrors.set(connection.connectionId, message);
+        if (this.isConnectionAttached(connection)) {
+          this.lastErrors.set(connection.connectionId, message);
+        }
         results.push({
           connectionId: connection.connectionId,
           status:
@@ -851,7 +853,9 @@ export class McpEventsClientManager {
       );
     } while (hasMore && batches < connection.maxPollBatches);
 
-    this.lastErrors.delete(connection.connectionId);
+    if (this.isConnectionAttached(connection)) {
+      this.lastErrors.delete(connection.connectionId);
+    }
     return {
       subscriptionId: subscription.subscriptionId,
       eventName: subscription.eventName,
@@ -1093,12 +1097,13 @@ export class McpEventsClientManager {
   }
 
   async reconcileDeliverySessions(connection, desiredIds) {
+    this.assertConnectionAttached(connection);
     for (const [subscriptionId, session] of this.deliverySessions) {
       if (
-        session.connectionId === connection.connectionId &&
+        session.connection === connection &&
         !desiredIds.has(subscriptionId)
       ) {
-        await this.closeSession(subscriptionId);
+        await this.closeSession(subscriptionId, session);
       }
     }
   }
@@ -1177,6 +1182,7 @@ export class McpEventsClientManager {
       }
     }
 
+    this.assertConnectionAttached(connection);
     await this.reconcileDeliverySessions(connection, desiredIds);
     return results;
   }
