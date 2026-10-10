@@ -532,6 +532,28 @@ export class McpEventsClientManager {
           `MCP server ${connectionId} returned invalid events/list`,
         );
       }
+      // Validate the *original* cursor shape and cycle before parsing any
+      // untrusted descriptor on this page. Never coerce objects/arrays with
+      // String(): doing so can allocate huge strings and fabricate cursors.
+      const rawNextCursor = listed?.nextCursor;
+      if (rawNextCursor !== undefined && rawNextCursor !== null &&
+          typeof rawNextCursor !== 'string') {
+        const error = new Error(
+          'MCP Events discovery rejected: invalid events/list cursor type',
+        );
+        error.code = 'MCP_EVENTS_DISCOVERY_CURSOR_INVALID';
+        throw error;
+      }
+      const nextCursor = rawNextCursor || null;
+      if (nextCursor) {
+        if (Buffer.byteLength(nextCursor, 'utf8') > MAX_MCP_EVENT_CURSOR_BYTES) {
+          throw discoveryLimitError('events/list cursor too long');
+        }
+        if (seenCursors.has(nextCursor)) {
+          throw discoveryLimitError('events/list cursor cycle');
+        }
+        seenCursors.add(nextCursor);
+      }
       if (listed.events.length >
         MAX_MCP_EVENT_DISCOVERY_SOURCES - descriptors.length) {
         throw discoveryLimitError('too many event descriptors');
@@ -546,19 +568,7 @@ export class McpEventsClientManager {
         names.add(descriptor.name);
         descriptors.push(descriptor);
       }
-      cursor =
-        listed?.nextCursor === undefined || listed?.nextCursor === null
-          ? null
-          : String(listed.nextCursor);
-      if (cursor) {
-        if (Buffer.byteLength(cursor, 'utf8') > MAX_MCP_EVENT_CURSOR_BYTES) {
-          throw discoveryLimitError('events/list cursor too long');
-        }
-        if (seenCursors.has(cursor)) {
-          throw discoveryLimitError('events/list cursor cycle');
-        }
-        seenCursors.add(cursor);
-      }
+      cursor = nextCursor;
     } while (cursor);
 
     for (const normalized of descriptors) {
