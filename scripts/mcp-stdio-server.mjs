@@ -174,8 +174,13 @@ function registerReadTools(server, runtime, env) {
     },
     async (input) => {
       try {
-        await ownerGuard.assertTrigger(input.triggerId, input.version);
-        return jsonResult(await runtime.triggerInspector.inspect(input));
+        const owned = await ownerGuard.assertTrigger(input.triggerId, input.version);
+        return jsonResult(await runtime.triggerInspector.inspect({
+          ...input,
+          // Never let Inspector select a newer, foreign-owned version when
+          // the caller omits the version. The authorization is version-bound.
+          version: owned.definition.version,
+        }));
       } catch (error) {
         return errorResult(error);
       }
