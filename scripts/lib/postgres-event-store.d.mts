@@ -27,6 +27,8 @@ export interface PostgresEventStoreOptions {
   adoptUnversionedSchema?: boolean;
 }
 
+export declare const MAX_POSTGRES_TABLE_PREFIX_BYTES: number;
+
 export declare const POSTGRES_PERSISTED_SCHEMA_VERSION: 1;
 
 export declare const POSTGRES_STORE_CAPABILITIES: Readonly<{

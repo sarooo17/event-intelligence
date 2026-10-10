@@ -14,6 +14,26 @@ import {
   normalizeEventScopeId,
 } from './persistent-event-store.mjs';
 
+const POSTGRES_OBJECT_SUFFIXES = Object.freeze([
+  '_records',
+  '_records_kind_idx',
+  '_history',
+  '_history_scope_kind_idx',
+  '_history_key_idx',
+  '_leases',
+  '_leases_expiry_idx',
+  '_counters',
+  '_metadata',
+]);
+
+// PostgreSQL normally truncates identifiers beyond NAMEDATALEN-1 (63 bytes).
+// If suffixes are truncated, tables/indexes from distinct EI installations
+// may collide silently despite having independently valid table prefixes.
+const MAX_POSTGRES_IDENTIFIER_BYTES = 63;
+export const MAX_POSTGRES_TABLE_PREFIX_BYTES =
+  MAX_POSTGRES_IDENTIFIER_BYTES -
+  Math.max(...POSTGRES_OBJECT_SUFFIXES.map((suffix) => Buffer.byteLength(suffix)));
+
 export const POSTGRES_PERSISTED_SCHEMA_VERSION = 1;
 
 export const POSTGRES_STORE_CAPABILITIES = Object.freeze({
@@ -90,7 +110,19 @@ export class PostgresEventStore {
     }
     this.pool = pool;
     this.scopeId = normalizeEventScopeId(scopeId);
-    this.tablePrefix = ident(tablePrefix, 'tablePrefix');
+    // Validate the full length before ident() rejects 64+ characters
+    // generically. All overlong otherwise-valid identifiers receive the
+    // specific fail-closed error, including values beyond PostgreSQL's 63.
+    const candidatePrefix = String(tablePrefix || '').trim();
+    if (Buffer.byteLength(candidatePrefix) > MAX_POSTGRES_TABLE_PREFIX_BYTES) {
+      const error = new Error(
+        'tablePrefix is too long for PostgreSQL tables and indexes; ' +
+        'maximum ' + MAX_POSTGRES_TABLE_PREFIX_BYTES + ' ASCII bytes',
+      );
+      error.code = 'EVENT_INTELLIGENCE_POSTGRES_PREFIX_TOO_LONG';
+      throw error;
+    }
+    this.tablePrefix = ident(candidatePrefix, 'tablePrefix');
     this.ownsPool = ownsPool === true;
     this.adoptUnversionedSchema = adoptUnversionedSchema === true;
     this.initialized = false;

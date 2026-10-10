@@ -85,7 +85,17 @@ const ei = await createEventIntelligenceHost({
 
 The adapter accepts a `pg`-compatible pool instead of importing a SQL driver itself. PostgreSQL therefore remains optional for single-process/reference deployments and the embedding host retains database connection, credential and lifecycle ownership.
 
-The adapter stores current state, append-only history, counters and leases in database tables under a configurable prefix. Every primary key/query includes `scope_id`, so tenant/workspace isolation is enforced in the storage keyspace rather than by filtering a global in-memory result after the query.
+The adapter stores current state, append-only history, counters and leases in database tables under a configurable prefix.
+
+**Prefix validation:** PostgreSQL normally limits identifiers to 63 bytes,
+including generated suffixes such as `_history_scope_kind_idx`. EI now rejects
+`tablePrefix` longer than `MAX_POSTGRES_TABLE_PREFIX_BYTES` (40 ASCII bytes)
+at construction with `EVENT_INTELLIGENCE_POSTGRES_PREFIX_TOO_LONG`.
+This avoids silent truncation of index/table names and possible collisions
+between installations. Existing deployments with overlong table prefixes must
+choose an operator-controlled migration/rename with a verified backup; EI
+does not silently point at a truncated old relation. This is an intentional
+pre-v1 fail-closed constraint, not an automatic schema migration. Every primary key/query includes `scope_id`, so tenant/workspace isolation is enforced in the storage keyspace rather than by filtering a global in-memory result after the query.
 
 Authoritative PostgreSQL state includes:
 
