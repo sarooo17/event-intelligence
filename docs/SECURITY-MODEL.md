@@ -192,8 +192,16 @@ as evidence; explicitly owned JSON keys remain readable. This prevents
 correlation or semantic decisions from relying on fabricated inherited
 tenant attributes, without treating untrusted event data as authority.
 
+The event ingress entry point now takes a bounded, descriptor-only snapshot
+*before* the Zod parser can read nested records, hashes, or pattern handlers.
+Accessor-bearing properties, circular structures, sparse arrays and
+non-JSON values fail closed with `EVENT_UNTRUSTED_DATA_INVALID`; selected
+object/array terminals are detached from inherited indexed properties.
+No external event code or property getter may participate in matching.
+
 Deterministic tests cover inherited and own JSON keys, getter non-execution,
-semantic input projection and real Pattern engine partition isolation.
+malicious sparse arrays, pre-parser accessor rejection, semantic input
+projection and real Pattern engine partition isolation.
 The host must continue to enforce owner permissions on every wake.
 
 This closes a specific event-evidence ambiguity under #45. Other trust-boundary
