@@ -7,7 +7,7 @@ function truncate(value, max = 1000) {
   const text = String(value ?? '').normalize('NFKC')
     .replace(/Bearer[\s\u0085]+[A-Za-z0-9._~+/=-]+/giu, 'Bearer [redacted]')
     .replace(
-      /((?:api[_-]?key|authorization|password|secret|token)\s*[=:]\s*)[^\s,;]+/gi,
+      /((?:["']?)(?:api[_-]?key|authorization|password|secret|token)(?:["']?)[\s\u0085]*[=:][\s\u0085]*(?:["']?))[^"'\s\u0085,;}\]]+/giu,
       '$1[redacted]',
     );
   return text.length > max ? `${text.slice(0, max)}…` : text;
