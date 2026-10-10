@@ -13,7 +13,7 @@ retention. EI must not invent permission to read an unrelated tenant or
 recover another runtime's agent work. Never distribute credentials or backup
 archives to model tool execution.
 
-The CI test `test/postgres-logical-backup-restore.test.mjs` requires
+The CI test `test/postgres-logical-dump-restore.test.mjs` requires
 `POSTGRES_URL`, `pg_dump`, `pg_restore`, Node >=22 and a testing role
 permitted to create/drop **an isolated test database**. It uses a random
 unique EI tablePrefix, backs up all five PostgreSQL durable tables and the
