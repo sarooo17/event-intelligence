@@ -96,7 +96,7 @@ test('MCP stdio adapter exposes read-only Event Intelligence tools by default', 
     const { tools } = await session.client.listTools();
     const names = tools.map((tool) => tool.name).sort();
     assertMcpWireSchemaParity(tools);
-    for (const key of ['sources','list','inspect']) {
+    for (const key of ['sources','list']) {
       const op=OPERATION_MANIFEST[key];
       const wire=tools.find(tool=>tool.name===op.name)?.outputSchema;
       assert.ok(wire,'missing MCP outputSchema for '+key);
@@ -104,7 +104,7 @@ test('MCP stdio adapter exposes read-only Event Intelligence tools by default', 
       assert.deepEqual(wire.properties,expected.properties,key);
       assert.deepEqual(wire.required,expected.required,key);
     }
-    for (const key of ['plan','update','wakeHydrate']) {
+    for (const key of ['plan','update','wakeHydrate','inspect']) {
       const op=OPERATION_MANIFEST[key];
       const wire=tools.find(tool=>tool.name===op.name)?.outputSchema;
       if (wire) throw new Error('Unmodeled output contract falsely advertised: '+key);
