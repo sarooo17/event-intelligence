@@ -7,6 +7,7 @@ import {
   parseTriggerMatchRecord,
 } from '../../dist/src/intelligenceProtocol/index.js';
 import { validateHistoryWindowLimit } from './history-window.mjs';
+import { assertPostgresSchemaShape } from './postgres-schema-shape.mjs';
 import {
   DEFAULT_EVENT_SCOPE_ID,
   normalizeEventScopeId,
@@ -145,6 +146,7 @@ export class PostgresEventStore {
         ]) {
           await client.query(statement);
         }
+        await assertPostgresSchemaShape(client, this.tablePrefix);
         // Under the same advisory transaction lock as DDL, require a known
         // persisted contract BEFORE exposing the store to workers. Unknown
         // versions or unversioned nonempty state must never be reinterpreted.
