@@ -36,8 +36,8 @@ export const MCP_OPERATION_SCHEMAS = Object.freeze({
   simulate: z.object({
     definition: z.record(z.string(), z.unknown()),
     events: z.array(z.record(z.string(), z.unknown())),
-    until: z.string().optional(),
-    startAt: z.string().datetime({ offset: true }).optional(),
+    until: z.iso.datetime({ offset: true }).optional(),
+    startAt: z.iso.datetime({ offset: true }).optional(),
     order: z.enum(['provided', 'event_time']).default('provided'),
   }),
   derivedContracts: z.object({
