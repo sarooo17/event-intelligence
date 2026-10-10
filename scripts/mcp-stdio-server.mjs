@@ -147,6 +147,7 @@ function registerReadTools(server, runtime, env) {
       description:
         'Explain a trigger deterministically, including missing clauses, temporal state, deadlines, lineage, derived outputs and wake receipt.',
       inputSchema: MCP_OPERATION_SCHEMAS.inspect,
+      outputSchema: OPERATION_OUTPUT_CONTRACTS.inspect.stdio,
     },
     async (input) => {
       try {
@@ -156,7 +157,7 @@ function registerReadTools(server, runtime, env) {
           // Never let Inspector select a newer, foreign-owned version when
           // the caller omits the version. The authorization is version-bound.
           version: owned.definition.version,
-        }));
+        }), 'inspect');
       } catch (error) {
         return errorResult(error);
       }
@@ -169,10 +170,11 @@ function registerReadTools(server, runtime, env) {
       description:
         'Run a trigger definition against an isolated event sequence without mutating live state.',
       inputSchema: MCP_OPERATION_SCHEMAS.simulate,
+      outputSchema: OPERATION_OUTPUT_CONTRACTS.simulate.stdio,
     },
     async (input) => {
       try {
-        return jsonResult(await simulateTrigger(input));
+        return jsonResult(await simulateTrigger(input), 'simulate');
       } catch (error) {
         return errorResult(error);
       }
@@ -204,11 +206,12 @@ function registerReadTools(server, runtime, env) {
       description:
         'Hydrate a composite wake into an Activation Envelope containing the configured continuation and matched event evidence. Evidence data is included only according to the trigger context policy.',
       inputSchema: MCP_OPERATION_SCHEMAS.wakeHydrate,
+      outputSchema: OPERATION_OUTPUT_CONTRACTS.wakeHydrate.stdio,
     },
     async ({ wakeId }) => {
       try {
         await ownerGuard.assertWake(wakeId);
-        return jsonResult(await runtime.activationHydrator.hydrateWake(wakeId));
+        return jsonResult(await runtime.activationHydrator.hydrateWake(wakeId), 'wakeHydrate');
       } catch (error) {
         return errorResult(error);
       }
