@@ -1,5 +1,6 @@
 import * as z from 'zod/v4';
 import { OPERATION_MANIFEST } from './operation-manifest.mjs';
+import { ActivationEnvelopeSchema } from '../../dist/src/intelligenceProtocol/index.js';
 
 /**
  * Phase one of public tool output parity (#43): only operations with a
@@ -63,6 +64,59 @@ const stdioRuntimeStatus = z.object({
   writeEnabled: z.boolean(),
 }).passthrough();
 
+// These read-only operations are exposed only by the optional MCP stdio
+// adapter. They use the same in-process TriggerInspector, simulator and
+// ActivationHydrator as embedded hosts. Validate the stable public envelope
+// without stripping provider-owned evidence or inventing host authority.
+const stdioInspect = z.object({
+  trigger: z.object({
+    triggerId: z.string().min(1),
+    version: z.string().min(1),
+  }).passthrough(),
+  lifecycle: z.object({
+    status: z.string().min(1),
+  }).passthrough(),
+  match: z.record(z.string(), z.unknown()).nullable(),
+  clauses: z.array(z.object({
+    clauseId: z.string().min(1),
+    status: z.enum(['waiting', 'observed']),
+    observedCount: z.number().int().nonnegative(),
+  }).passthrough()),
+  evidenceSummary: z.object({
+    selectionBasis: z.enum(['explicit_match', 'latest_match', 'no_match']),
+    observedClauseIds: z.array(z.string()),
+    unobservedClauseIds: z.array(z.string()),
+    pendingDeadlineCount: z.number().int().nonnegative(),
+  }).passthrough(),
+  deadlines: z.array(z.unknown()),
+  nextEvaluationAt: z.string().nullable(),
+  wake: z.record(z.string(), z.unknown()).nullable(),
+  lineage: z.object({
+    evidence: z.array(z.unknown()),
+    derivedOutputs: z.array(z.unknown()),
+    matchHistory: z.array(z.unknown()),
+    historyTruncated: z.boolean(),
+    historyLimit: z.number().int().positive().nullable(),
+  }).passthrough(),
+  why: z.object({
+    code: z.string().min(1),
+    summary: z.string().min(1),
+  }).passthrough(),
+}).passthrough();
+
+const stdioSimulation = z.object({
+  isolated: z.literal(true),
+  order: z.enum(['provided', 'event_time']),
+  evaluatedUntil: z.iso.datetime({ offset: true }),
+  steps: z.array(z.unknown()),
+  inspection: stdioInspect,
+  auditRecords: z.number().int().nonnegative(),
+}).passthrough();
+
+// The hydrator already parses this exact canonical protocol schema; do not
+// maintain an independent, potentially weaker copy in the MCP projection.
+const stdioWakeHydration = ActivationEnvelopeSchema;
+
 export const OPERATION_OUTPUT_CONTRACTS = Object.freeze({
   sources: Object.freeze({
     stdio: sourceList,
@@ -74,6 +128,15 @@ export const OPERATION_OUTPUT_CONTRACTS = Object.freeze({
   }),
   plan: Object.freeze({
     stdio: stdioPlan,
+  }),
+  inspect: Object.freeze({
+    stdio: stdioInspect,
+  }),
+  simulate: Object.freeze({
+    stdio: stdioSimulation,
+  }),
+  wakeHydrate: Object.freeze({
+    stdio: stdioWakeHydration,
   }),
   languageDescribe: Object.freeze({
     stdio: stdioLanguage,
@@ -96,7 +159,11 @@ export function outputValidator(surface, operation) {
   if (!OPERATION_MANIFEST[operation]?.surfaces[surface]) {
     throw new Error('Operation not exposed on EI surface: ' + operation);
   }
-  return OPERATION_OUTPUT_CONTRACTS[operation][surface];
+  const validator = OPERATION_OUTPUT_CONTRACTS[operation][surface];
+  if (!validator) {
+    throw new Error('Unmodeled EI output projection: ' + surface + ' ' + operation);
+  }
+  return validator;
 }
 
 export function validateOperationOutput(surface, operation, value) {
