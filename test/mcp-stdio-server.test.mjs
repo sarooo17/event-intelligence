@@ -96,7 +96,7 @@ test('MCP stdio adapter exposes read-only Event Intelligence tools by default', 
     const { tools } = await session.client.listTools();
     const names = tools.map((tool) => tool.name).sort();
     assertMcpWireSchemaParity(tools);
-    for (const key of ['sources','list','plan']) {
+    for (const key of ['sources','list','plan','languageDescribe','derivedContracts','runtimeStatus']) {
       const op=OPERATION_MANIFEST[key];
       const wire=tools.find(tool=>tool.name===op.name)?.outputSchema;
       assert.ok(wire,'missing MCP outputSchema for '+key);
@@ -193,6 +193,14 @@ test('MCP stdio adapter exposes read-only Event Intelligence tools by default', 
     });
     assert.equal(status.isError, undefined);
     assert.equal(status.structuredContent.writeEnabled, false);
+    assert.equal(typeof status.structuredContent.pendingTemporalDeadlines, 'number');
+
+    const derived = await session.client.callTool({
+      name: 'derived_contracts_list',
+      arguments: {},
+    });
+    assert.equal(derived.isError, undefined);
+    assert.deepEqual(derived.structuredContent.contracts, []);
 
     const language = await session.client.callTool({
       name: 'trigger_language_describe',
