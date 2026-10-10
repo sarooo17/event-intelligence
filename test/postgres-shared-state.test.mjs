@@ -691,3 +691,146 @@ integrationTest('same-worker ABA reclaim cannot finish or fail a newer generatio
     await dbPool.end();
   }
 });
+
+integrationTest('bounded adversarial wake claims: four workers, 20 independent lease handovers', async () => {
+  const poolA = pool();
+  const poolB = pool();
+  const base = Date.parse('2026-10-06T00:00:00.000Z');
+  try {
+    const workers = [
+      store(poolA, 'chaos-wake'),
+      store(poolB, 'chaos-wake'),
+      store(poolA, 'chaos-wake'),
+      store(poolB, 'chaos-wake'),
+    ];
+    await Promise.all(workers.map((worker) => worker.init()));
+
+    for (let round = 0; round < 20; round += 1) {
+      const wakeId = 'chaos-wake-' + round;
+      const now = base + round * 100000;
+      await workers[0].ensureWakeDelivery({
+        wakeId,
+        matchId: 'chaos-match-' + round,
+        triggerId: 'chaos-trigger',
+        triggerVersion: '1',
+        runtime: 'ha-chaos',
+        now: new Date(now).toISOString(),
+      });
+      const claimed = await Promise.all(workers.map((worker, index) =>
+        worker.claimWakeDelivery(wakeId, {
+          workerId: 'worker-' + index,
+          now: new Date(now).toISOString(),
+          leaseMs: 1000,
+        }),
+      ));
+      const winners = claimed.flatMap((row, index) =>
+        row ? [index] : []
+      );
+      assert.equal(winners.length, 1, 'round=' + round);
+
+      const winner = winners[0];
+      // Alternate between a different worker and the SAME worker reclaiming
+      // its expired generation (the ABA case). Old attempts must be fenced.
+      const successor = round % 2 === 0
+        ? winner
+        : (winner + 1) % workers.length;
+      assert.equal(
+        await workers[successor].claimWakeDelivery(wakeId, {
+          workerId: 'worker-' + successor,
+          now: new Date(now + 999).toISOString(),
+          leaseMs: 1000,
+        }),
+        null,
+        'lease must not expire a millisecond early',
+      );
+
+      const takeover = await workers[successor].claimWakeDelivery(wakeId, {
+        workerId: 'worker-' + successor,
+        now: new Date(now + 1000).toISOString(),
+        leaseMs: 1000,
+      });
+      assert.ok(takeover, 'round=' + round + ' takeover missing');
+      assert.equal(takeover.attemptCount, 2);
+
+      await assert.rejects(
+        () => workers[winner].completeWakeDelivery(wakeId, {
+          workerId: 'worker-' + winner,
+          attemptCount: claimed[winner].attemptCount,
+          runtimeReceiptId: 'obsolete-' + round,
+          now: new Date(now + 1100).toISOString(),
+        }),
+        (error) => error.code === 'WAKE_DELIVERY_CLAIM_LOST',
+      );
+
+      const accepted = await workers[successor].completeWakeDelivery(wakeId, {
+        workerId: 'worker-' + successor,
+        attemptCount: takeover.attemptCount,
+        runtimeReceiptId: 'receipt-' + round,
+        now: new Date(now + 1200).toISOString(),
+      });
+      assert.equal(accepted.status, 'delivered');
+      const after = await workers[(successor + 1) % workers.length]
+        .getWakeDelivery(wakeId);
+      assert.equal(after.runtimeReceiptId, 'receipt-' + round);
+      assert.equal(await workers[winner].claimWakeDelivery(wakeId, {
+        workerId: 'worker-' + winner,
+        now: new Date(now + 2000).toISOString(),
+        leaseMs: 1000,
+      }), null);
+    }
+  } finally {
+    await dropTables(poolA);
+    await Promise.all([poolA.end(), poolB.end()]);
+  }
+});
+
+integrationTest('identical wake IDs can be claimed independently by two isolated scopes', async () => {
+  const dbPool = pool();
+  try {
+    const scopeA = store(dbPool, 'tenant-A');
+    const scopeB = store(dbPool, 'tenant-B');
+    await Promise.all([scopeA.init(), scopeB.init()]);
+    const input = {
+      wakeId: 'shared-wake-id',
+      matchId: 'shared-match-id',
+      triggerId: 'shared-trigger-id',
+      triggerVersion: '1',
+      runtime: 'scope-test',
+      now: '2026-10-06T01:00:00.000Z',
+    };
+    await Promise.all([
+      scopeA.ensureWakeDelivery(input),
+      scopeB.ensureWakeDelivery(input),
+    ]);
+    const [a, b] = await Promise.all([
+      scopeA.claimWakeDelivery('shared-wake-id', {
+        workerId: 'scope-a-owner', now: input.now, leaseMs: 1000,
+      }),
+      scopeB.claimWakeDelivery('shared-wake-id', {
+        workerId: 'scope-b-owner', now: input.now, leaseMs: 1000,
+      }),
+    ]);
+    assert.ok(a);
+    assert.ok(b);
+    await scopeA.completeWakeDelivery('shared-wake-id', {
+      workerId: 'scope-a-owner',
+      attemptCount: a.attemptCount,
+      runtimeReceiptId: 'receipt-A',
+      now: '2026-10-06T01:00:00.100Z',
+    });
+    const stillB = await scopeB.getWakeDelivery('shared-wake-id');
+    assert.equal(stillB.status, 'claimed');
+    assert.equal(stillB.runtimeReceiptId, null);
+    await scopeB.completeWakeDelivery('shared-wake-id', {
+      workerId: 'scope-b-owner',
+      attemptCount: b.attemptCount,
+      runtimeReceiptId: 'receipt-B',
+      now: '2026-10-06T01:00:00.100Z',
+    });
+    assert.equal((await scopeA.getWakeDelivery('shared-wake-id')).runtimeReceiptId, 'receipt-A');
+    assert.equal((await scopeB.getWakeDelivery('shared-wake-id')).runtimeReceiptId, 'receipt-B');
+  } finally {
+    await dropTables(dbPool);
+    await dbPool.end();
+  }
+});
