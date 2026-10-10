@@ -49,3 +49,7 @@ jobs:
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm install --no-save --ignore-scripts --no-audit --no-fund pg@8
       - run: npm run test:postgres
+      - name: PostgreSQL scale harness smoke (isolated 16 triggers)
+        env:
+          EI_PG_BENCHMARK_CONFIRM: YES_ISOLATED
+        run: node scripts/evidence/postgres-durable-scale.mjs --profile smoke --wakes 4 --concurrency 2
