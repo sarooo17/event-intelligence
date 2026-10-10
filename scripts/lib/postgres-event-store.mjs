@@ -1086,7 +1086,7 @@ export class PostgresEventStore {
       " WHERE scope_id = $1 AND kind = 'semantic_cache'" +
       ' AND updated_at < $2::timestamptz' +
       ' ORDER BY updated_at ASC, record_key ASC' +
-      ' FOR UPDATE SKIP LOCKED LIMIT $3' +
+      ' LIMIT $3 FOR UPDATE SKIP LOCKED' +
       ') DELETE FROM ' + this.records + ' AS retained' +
       ' USING aged WHERE retained.scope_id = $1' +
       " AND retained.kind = 'semantic_cache'" +
