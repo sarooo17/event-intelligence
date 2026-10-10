@@ -14,14 +14,15 @@ import {
 test('three shared semantic output operations expose intentional transport projections', () => {
   assert.equal(OPERATION_OUTPUT_CONTRACT_VERSION, '1');
   assert.deepEqual(Object.keys(OPERATION_OUTPUT_CONTRACTS), [
-    'sources', 'list', 'plan', 'languageDescribe', 'derivedContracts', 'runtimeStatus',
+    'sources', 'list', 'plan', 'inspect', 'simulate', 'wakeHydrate',
+    'languageDescribe', 'derivedContracts', 'runtimeStatus',
   ]);
   assert.equal(outputValidator('stdio','sources'),
     outputValidator('embedded','sources'));
   assert.notEqual(outputValidator('stdio','list'),
     outputValidator('embedded','list'));
-  for (const key of ['sources', 'list', 'plan', 'languageDescribe', 'derivedContracts', 'runtimeStatus']) {
-    const surfaces = ['plan', 'languageDescribe', 'derivedContracts', 'runtimeStatus'].includes(key) ? ['stdio'] : ['stdio', 'embedded'];
+  for (const key of Object.keys(OPERATION_OUTPUT_CONTRACTS)) {
+    const surfaces = ['sources', 'list'].includes(key) ? ['stdio', 'embedded'] : ['stdio'];
     for (const surface of surfaces) {
       const json = outputJsonSchema(surface, key);
       assert.equal(json.type, 'object');
@@ -30,7 +31,7 @@ test('three shared semantic output operations expose intentional transport proje
   }
   assert.throws(() => outputValidator('embedded', 'plan'),
     /Operation not exposed on EI surface/);
-  for (const operation of ['languageDescribe', 'derivedContracts', 'runtimeStatus']) {
+  for (const operation of ['inspect', 'simulate', 'wakeHydrate', 'languageDescribe', 'derivedContracts', 'runtimeStatus']) {
     assert.throws(() => outputValidator('embedded', operation),
       /Operation not exposed on EI surface/);
   }
@@ -94,6 +95,70 @@ test('runtime output validation rejects missing/wrong shapes without mutating da
       operation,
     );
   }
+});
+
+
+test('read-only inspector and simulator output contracts reject malformed wire envelopes', () => {
+  const inspection = {
+    trigger: { triggerId: 'trigger-1', version: '1', pattern: {} },
+    lifecycle: { status: 'active' },
+    match: null,
+    clauses: [{ clauseId: 'ready', status: 'waiting', observedCount: 0 }],
+    evidenceSummary: {
+      selectionBasis: 'no_match', observedClauseIds: [],
+      unobservedClauseIds: ['ready'], pendingDeadlineCount: 0,
+    },
+    deadlines: [],
+    nextEvaluationAt: null,
+    wake: null,
+    lineage: {
+      evidence: [], derivedOutputs: [], matchHistory: [],
+      historyTruncated: false, historyLimit: null,
+    },
+    why: { code: 'waiting_for_pattern_evidence', summary: 'Awaiting events' },
+  };
+  assert.equal(validateOperationOutput('stdio', 'inspect', inspection), inspection);
+  for (const bad of [
+    { ...inspection, clauses: 'not-an-array' },
+    { ...inspection, why: { code: '', summary: 'missing' } },
+    { ...inspection, evidenceSummary: { ...inspection.evidenceSummary, pendingDeadlineCount: -1 } },
+    { ...inspection, lineage: { ...inspection.lineage, matchHistory: null } },
+  ]) {
+    assert.throws(
+      () => validateOperationOutput('stdio', 'inspect', bad),
+      error => error.code === 'EI_OUTPUT_CONTRACT_INVALID',
+    );
+  }
+
+  const simulation = {
+    isolated: true, order: 'provided',
+    evaluatedUntil: '2026-10-10T12:00:00.000Z',
+    steps: [], inspection, auditRecords: 0,
+  };
+  assert.equal(validateOperationOutput('stdio', 'simulate', simulation), simulation);
+  for (const bad of [
+    { ...simulation, isolated: false },
+    { ...simulation, order: 'random' },
+    { ...simulation, evaluatedUntil: '2026-10-10' },
+    { ...simulation, inspection: { ...inspection, trigger: null } },
+    { ...simulation, auditRecords: -1 },
+  ]) {
+    assert.throws(
+      () => validateOperationOutput('stdio', 'simulate', bad),
+      error => error.code === 'EI_OUTPUT_CONTRACT_INVALID',
+    );
+  }
+
+  const schema = outputJsonSchema('stdio', 'wakeHydrate');
+  assert.equal(schema.properties.activationVersion.const, '2');
+  assert.ok(schema.required.includes('trust'));
+  assert.throws(
+    () => validateOperationOutput('stdio', 'wakeHydrate', {
+      activationVersion: '2',
+      trust: { evidence: 'trusted_external_signal' },
+    }),
+    error => error.code === 'EI_OUTPUT_CONTRACT_INVALID',
+  );
 });
 
 test('real embedded list validates canonical projected response before host projection',async()=>{
