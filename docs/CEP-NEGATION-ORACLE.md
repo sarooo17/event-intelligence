@@ -9,7 +9,7 @@ npm run build
 node --test test/pattern-v2-negation-oracle.test.mjs
 ```
 
-The suite compares 250 fixed seeds, varying stream lengths from 1–10, three shuffled arrival orders and three deterministic wall-clock positions per seed. It additionally checks exact deadline semantics (+0 ms blocks, +1 ms does not) and input validation.
+The suite compares 250 fixed seeds, varying stream lengths from 1–10, three shuffled arrival orders and three deterministic wall-clock positions per seed. It additionally checks both ends of the forbidden interval: an event at the **same instant as the anchor does not block**; an event exactly on the future deadline blocks, while deadline +1 ms does not. Unblocked matches remain pending at **finalAt−1 ms** and become eligible at **finalAt**. Invalid timing parameters are rejected.
 
 **Scope exclusions:** This is NOT a formal proof for all CEP, nor a streaming-watermark recovery oracle. It excludes partitioning, nested forbidden patterns, timer persistence, real MCP delivery, probabilistic semantics and crash/restart. Even with passing results, negative conditions must be verified with real event-source cursors and persistent deadline recovery. Extend #44 with those separately.
 
