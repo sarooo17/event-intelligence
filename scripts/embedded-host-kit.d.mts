@@ -70,6 +70,8 @@ export interface PortableAgentTool<RuntimeContext = unknown> {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
+  /** Present for operations with a v1 modeled canonical result shape. */
+  outputSchema?: Record<string, unknown>;
   capability: EventIntelligenceCapabilityMetadata;
   execute(
     args: unknown,
