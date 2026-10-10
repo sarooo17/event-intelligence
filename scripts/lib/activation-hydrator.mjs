@@ -61,12 +61,42 @@ export class ActivationHydrator {
       typeof this.store.getWakeDelivery === 'function'
         ? await this.store.getWakeDelivery(wakeId)
         : null;
+    // A delivery row and its wire wake are two durable records of the same
+    // activation. If they disagree, do not hydrate untrusted event evidence
+    // into an unrelated host continuation.
+    if (
+      wake.subscriptionId?.startsWith('trigger:') &&
+      delivery?.matchId &&
+      String(wake.sourceEventId) !== String(delivery.matchId)
+    ) {
+      const error = new Error(
+        'Wake and delivery refer to different trigger matches',
+      );
+      error.code = 'ACTIVATION_PROVENANCE_MISMATCH';
+      throw error;
+    }
+
     const match = await latestMatchForWake(this.store, wake, delivery);
     if (!match) {
       const error = new Error(
         `Wake ${wakeId} is not backed by a composite trigger match`,
       );
       error.code = 'ACTIVATION_TRIGGER_MATCH_NOT_FOUND';
+      throw error;
+    }
+
+    if (
+      delivery && (
+        (delivery.triggerId &&
+          String(delivery.triggerId) !== String(match.triggerId)) ||
+        (delivery.triggerVersion &&
+          String(delivery.triggerVersion) !== String(match.triggerVersion))
+      )
+    ) {
+      const error = new Error(
+        'Wake delivery ownership differs from the matched trigger',
+      );
+      error.code = 'ACTIVATION_PROVENANCE_MISMATCH';
       throw error;
     }
 
