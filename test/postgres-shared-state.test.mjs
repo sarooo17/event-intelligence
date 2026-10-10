@@ -459,3 +459,40 @@ integrationTest('scope isolation and audit ordering remain authoritative across 
     await Promise.all([poolA.end(), poolB.end()]);
   }
 });
+
+
+integrationTest('Postgres history window uses stable order and isolates tenant scopes', async () => {
+  const dbPool = pool();
+  try {
+    const a = store(dbPool, 'history-tenant-a');
+    const b = store(dbPool, 'history-tenant-b');
+    await Promise.all([a.init(), b.init()]);
+    const matchId = 'history-one';
+    for (let i = 0; i < 6; i += 1) {
+      await a.appendTriggerMatch({
+        ...matchedRecord('ha-history', matchId),
+        updatedAt: new Date(Date.UTC(2026, 9, 5, 10, 0, i)).toISOString(),
+      });
+    }
+    const recent = await a.getRecentTriggerMatchHistory(matchId, { limit: 2 });
+    assert.equal(recent.limit, 2);
+    assert.equal(recent.hasMore, true);
+    assert.deepEqual(recent.records.map((entry) => entry.updatedAt), [
+      '2026-10-05T10:00:04.000Z',
+      '2026-10-05T10:00:05.000Z',
+    ]);
+    const all = await a.getRecentTriggerMatchHistory(matchId, { limit: 6 });
+    assert.equal(all.records.length, 6);
+    assert.equal(all.hasMore, false);
+    const foreign = await b.getRecentTriggerMatchHistory(matchId, { limit: 2 });
+    assert.deepEqual(foreign.records, []);
+    assert.equal(foreign.hasMore, false);
+    await assert.rejects(
+      () => a.getRecentTriggerMatchHistory(matchId, { limit: 0 }),
+      (error) => error.code === 'EVENT_INTELLIGENCE_HISTORY_LIMIT_INVALID',
+    );
+  } finally {
+    await dropTables(dbPool);
+    await dbPool.end();
+  }
+});

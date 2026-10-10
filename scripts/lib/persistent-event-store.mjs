@@ -7,6 +7,7 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import path from 'node:path';
+import { validateHistoryWindowLimit } from './history-window.mjs';
 import {
   REFERENCE_STORE_CAPABILITIES,
 } from './store-capabilities.mjs';
@@ -842,6 +843,21 @@ export class PersistentEventStore {
   listTriggerMatchHistory(matchId) {
     return this.#triggerMatchHistory
       .filter((record) => !matchId || record.matchId === matchId);
+  }
+
+  /**
+   * Bounded projection from the already materialized JSONL reference store.
+   * Does not claim disk-level pagination or shared-state behavior.
+   */
+  getRecentTriggerMatchHistory(matchId, { limit = 100 } = {}) {
+    const safeLimit = validateHistoryWindowLimit(limit);
+    const matches = this.#triggerMatchHistory
+      .filter((record) => record.matchId === String(matchId));
+    return {
+      records: matches.slice(-safeLimit),
+      hasMore: matches.length > safeLimit,
+      limit: safeLimit,
+    };
   }
 
   async appendMcpOccurrence(serverId, eventInput, subscriptionIdInput = null) {

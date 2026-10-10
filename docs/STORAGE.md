@@ -118,6 +118,21 @@ A completed runtime receipt is also persistent. On restart, the existing EI wake
 
 Partition leases use the same expiry model: ownership can move to another worker after expiry, allowing a crashed CEP worker's partition to recover.
 
+### Bounded match-history reads
+
+Both bundled stores expose a new opt-in read API:
+
+```js
+const { records, hasMore, limit } =
+  await store.getRecentTriggerMatchHistory(matchId, { limit: 100 });
+```
+
+The method accepts integer limits from 1 to 500 and returns records in chronological order **within the most recent window**, plus `hasMore` to signal omitted older revisions.
+
+In PostgreSQL, this is an indexed, scope-constrained `ORDER BY history_id DESC LIMIT limit+1` query; it does not first load the entire append-only history. In the JSONL reference store, it slices the in-process materialized revision list after filtering by match ID, so it cannot claim disk paging or HA behavior. PostgreSQL and JSONL preserve the same returned contract.
+
+This API deliberately does not change the existing `listTriggerMatchHistory` semantics, so callers requiring a complete history receive it until they opt into a bounded view. Never assume a window with `hasMore: true` is a complete audit record.
+
 ## Reference JSONL store
 
 `PersistentEventStore` remains the zero-dependency default. It publishes process-atomic wake/partition leases and physically namespaces non-default scopes, but it is **not** a multi-replica database.
