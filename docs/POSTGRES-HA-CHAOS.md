@@ -5,7 +5,7 @@ Tracking [#47](https://github.com/sarooo17/event-intelligence/issues/47) and [#2
 The PG16 integration suite now repeats a known hazardous worker handover under controlled logical timestamps, without sleeps or random scheduling delays:
 
 - 20 separately persisted wake deliveries; four contenders (two independent `pg.Pool` instances) attempt the same wake at once.
-- Exactly one winner per wake. Another worker cannot take over **one millisecond before** lease expiry but can take over once expired.
+- Exactly one winner per wake. On alternating rounds, either a different worker **or the same worker with a new claim generation** takes over after expiry. Attempts cannot take over at expiry−1ms but may at the exact expiry boundary.
 - Previous owner's stale completion is rejected even if it arrives after the successor's claim.
 - Only the successor's receipt is durable; completed deliveries cannot be re-claimed.
 - Two independent tenant scopes may use the *same* wake/match/trigger ID concurrently and persist different receipts, without overwriting each other.
