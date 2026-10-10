@@ -15,17 +15,6 @@ const sourceList = z.object({
   sources: z.array(z.unknown()),
 }).passthrough();
 
-const inspectedTrigger = z.object({
-  trigger: z.object({
-    triggerId: z.string().min(1),
-    version: z.string().min(1),
-  }).passthrough(),
-  lifecycle: z.unknown(),
-  why: z.object({
-    code: z.string().min(1),
-  }).passthrough(),
-}).passthrough();
-
 const stdioList = z.object({
   triggers: z.array(z.unknown()),
 }).passthrough();
@@ -43,10 +32,6 @@ export const OPERATION_OUTPUT_CONTRACTS = Object.freeze({
   list: Object.freeze({
     stdio: stdioList,
     embedded: embeddedList,
-  }),
-  inspect: Object.freeze({
-    stdio: inspectedTrigger,
-    embedded: inspectedTrigger,
   }),
 });
 
