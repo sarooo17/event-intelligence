@@ -61,7 +61,9 @@ for (const contiguity of ['next', 'followedBy']) {
     const definition = pattern(contiguity);
     for (let seed = 1; seed <= 250; seed += 1) {
       const random = deterministicRandom(seed);
-      const length = 1 + Math.floor(random() * 8);
+      // Cycle through every bounded stream length; consecutive LCG seeds
+      // otherwise produce almost identical first draws.
+      const length = 1 + ((seed - 1) % 8);
       const chronological = Array.from({ length }, (_, i) => {
         const choice = Math.floor(random() * 3);
         return sourceEvent('s' + seed + 'e' + i, ['a', 'b', 'noise'][choice], i);
