@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { z } from 'zod';
+
 import {
   RuntimeTargetSchema,
   parseActivationEnvelope,
@@ -11,6 +11,14 @@ import {
   createMcpRegistryAdapter,
 } from './host-integration.mjs';
 import { OPERATION_MANIFEST } from './lib/operation-manifest.mjs';
+import {
+  TriggerCreateInput,
+  TriggerListInput,
+  TriggerInspectInput,
+  TriggerLifecycleInput,
+  TriggerUpdateInput,
+  EMBEDDED_INPUT_JSON_SCHEMAS,
+} from './lib/embedded-operation-schemas.mjs';
 
 const DEFAULT_TOOL_NAMES = Object.freeze({
   sources: OPERATION_MANIFEST.sources.name,
@@ -34,194 +42,16 @@ export const EVENT_INTELLIGENCE_CAPABILITIES = Object.freeze({
   triggerUpdate: OPERATION_MANIFEST.update.capability,
 });
 
-const TriggerClauseInput = z.object({
-  id: z.string().min(1).max(200).optional(),
-  event: z.string().min(1).max(200),
-  serverId: z.string().min(1).max(200).optional(),
-  arguments: z.record(z.string(), z.unknown()).optional(),
-  where: z.array(z.record(z.string(), z.unknown())).max(32).optional(),
-}).strict();
-
-const TriggerCreateInput = z.object({
-  trigger_id: z.string().min(1).max(200).optional(),
-  version: z.string().min(1).max(100).optional(),
-  description: z.string().max(500).optional(),
-  events: z.array(TriggerClauseInput).min(1).max(32),
-  pattern: z.record(z.string(), z.unknown()).optional(),
-  within_ms: z.number().int().positive().max(30 * 24 * 60 * 60 * 1000)
-    .optional(),
-  event_time: z.object({
-    allowed_lateness_ms: z.number().int().nonnegative()
-      .max(30 * 24 * 60 * 60 * 1000),
-  }).strict().optional(),
-  instruction: z.string().min(1).max(4000),
-  one_shot: z.boolean().optional(),
-  max_firings: z.number().int().min(1).optional(),
-  cooldown_ms: z.number().int().nonnegative().optional(),
-  expires_at: z.string().datetime({ offset: true }).optional(),
-  lease_until: z.string().datetime({ offset: true }).optional(),
-  complete_on_goal: z.boolean().optional(),
-}).strict();
-
-const SOURCES_INPUT_SCHEMA = Object.freeze({
-  type: 'object',
-  additionalProperties: false,
-  properties: {},
-});
-
-const CREATE_INPUT_SCHEMA = Object.freeze({
-  type: 'object',
-  additionalProperties: false,
-  required: ['events', 'instruction'],
-  properties: {
-    trigger_id: { type: 'string', minLength: 1, maxLength: 200 },
-    version: { type: 'string', minLength: 1, maxLength: 100 },
-    description: { type: 'string', maxLength: 500 },
-    events: {
-      type: 'array',
-      minItems: 1,
-      maxItems: 32,
-      items: {
-        type: 'object',
-        additionalProperties: false,
-        required: ['event'],
-        properties: {
-          id: { type: 'string', minLength: 1, maxLength: 200 },
-          event: { type: 'string', minLength: 1, maxLength: 200 },
-          serverId: { type: 'string', minLength: 1, maxLength: 200 },
-          arguments: { type: 'object', additionalProperties: true },
-          where: {
-            type: 'array',
-            maxItems: 32,
-            items: { type: 'object', additionalProperties: true },
-          },
-        },
-      },
-    },
-    pattern: { type: 'object', additionalProperties: true },
-    within_ms: {
-      type: 'integer',
-      minimum: 1,
-      maximum: 30 * 24 * 60 * 60 * 1000,
-    },
-    event_time: {
-      type: 'object',
-      additionalProperties: false,
-      required: ['allowed_lateness_ms'],
-      properties: {
-        allowed_lateness_ms: {
-          type: 'integer',
-          minimum: 0,
-          maximum: 30 * 24 * 60 * 60 * 1000,
-        },
-      },
-    },
-    instruction: { type: 'string', minLength: 1, maxLength: 4000 },
-    one_shot: { type: 'boolean' },
-    max_firings: { type: 'integer', minimum: 1 },
-    cooldown_ms: { type: 'integer', minimum: 0 },
-    expires_at: { type: 'string' },
-    lease_until: { type: 'string' },
-    complete_on_goal: { type: 'boolean' },
-  },
-});
-
-
-const TriggerListInput = z.object({
-  status: z.union([z.string().min(1), z.array(z.string().min(1)).min(1).max(16)]).optional(),
-  trigger_id: z.string().min(1).max(200).optional(),
-  version: z.string().min(1).max(100).optional(),
-  connection_id: z.string().min(1).max(200).optional(),
-  event: z.string().min(1).max(200).optional(),
-  target_runtime: z.string().min(1).max(200).optional(),
-  target_kind: z.string().min(1).max(200).optional(),
-  target_id: z.string().min(1).max(500).optional(),
-  one_shot: z.boolean().optional(),
-  remaining_only: z.boolean().optional(),
-  include_definition: z.boolean().optional(),
-  limit: z.number().int().min(1).max(200).optional(),
-}).strict();
-
-const TriggerInspectInput = z.object({
-  trigger_id: z.string().min(1).max(200),
-  version: z.string().min(1).max(100).optional(),
-  match_id: z.string().min(1).max(200).optional(),
-}).strict();
-
-const TriggerLifecycleInput = z.object({
-  trigger_id: z.string().min(1).max(200),
-  version: z.string().min(1).max(100).optional(),
-}).strict();
-
-const TriggerUpdateInput = TriggerCreateInput.omit({
-  trigger_id: true,
-  version: true,
-}).extend({
-  trigger_id: z.string().min(1).max(200),
-  expected_version: z.string().min(1).max(100).optional(),
-  version: z.string().min(1).max(100).optional(),
-}).strict();
-
-const LIST_INPUT_SCHEMA = Object.freeze({
-  type: 'object',
-  additionalProperties: false,
-  properties: {
-    status: {
-      oneOf: [
-        { type: 'string', minLength: 1 },
-        {
-          type: 'array',
-          minItems: 1,
-          maxItems: 16,
-          items: { type: 'string', minLength: 1 },
-        },
-      ],
-    },
-    trigger_id: { type: 'string', minLength: 1, maxLength: 200 },
-    version: { type: 'string', minLength: 1, maxLength: 100 },
-    connection_id: { type: 'string', minLength: 1, maxLength: 200 },
-    event: { type: 'string', minLength: 1, maxLength: 200 },
-    target_runtime: { type: 'string', minLength: 1, maxLength: 200 },
-    target_kind: { type: 'string', minLength: 1, maxLength: 200 },
-    target_id: { type: 'string', minLength: 1, maxLength: 500 },
-    one_shot: { type: 'boolean' },
-    remaining_only: { type: 'boolean' },
-    include_definition: { type: 'boolean' },
-    limit: { type: 'integer', minimum: 1, maximum: 200 },
-  },
-});
-
-const INSPECT_INPUT_SCHEMA = Object.freeze({
-  type: 'object',
-  additionalProperties: false,
-  required: ['trigger_id'],
-  properties: {
-    trigger_id: { type: 'string', minLength: 1, maxLength: 200 },
-    version: { type: 'string', minLength: 1, maxLength: 100 },
-    match_id: { type: 'string', minLength: 1, maxLength: 200 },
-  },
-});
-
-const LIFECYCLE_INPUT_SCHEMA = Object.freeze({
-  type: 'object',
-  additionalProperties: false,
-  required: ['trigger_id'],
-  properties: {
-    trigger_id: { type: 'string', minLength: 1, maxLength: 200 },
-    version: { type: 'string', minLength: 1, maxLength: 100 },
-  },
-});
-
-const UPDATE_INPUT_SCHEMA = Object.freeze({
-  ...CREATE_INPUT_SCHEMA,
-  required: ['trigger_id', 'events', 'instruction'],
-  properties: {
-    ...CREATE_INPUT_SCHEMA.properties,
-    trigger_id: { type: 'string', minLength: 1, maxLength: 200 },
-    expected_version: { type: 'string', minLength: 1, maxLength: 100 },
-    version: { type: 'string', minLength: 1, maxLength: 100 },
-  },
-});
+// Shared Zod validators and derived JSON Schema descriptors. The same
+// runtime validation rules are now the source of model tool documentation.
+const {
+  sources: SOURCES_INPUT_SCHEMA,
+  create: CREATE_INPUT_SCHEMA,
+  list: LIST_INPUT_SCHEMA,
+  inspect: INSPECT_INPUT_SCHEMA,
+  pause: LIFECYCLE_INPUT_SCHEMA,
+  update: UPDATE_INPUT_SCHEMA,
+} = EMBEDDED_INPUT_JSON_SCHEMAS;
 
 /**
  * Keep publicly exposed JSON schema trees immutable, not merely their
