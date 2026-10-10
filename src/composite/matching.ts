@@ -12,6 +12,9 @@ function getByPath(source: unknown, path: string): unknown {
       typeof current !== 'object' ||
       Array.isArray(current)
     ) return undefined;
+    // Event payloads are untrusted: never use prototype-chain properties
+    // such as constructor/toString/__proto__ as pattern evidence.
+    if (!Object.hasOwn(current, part)) return undefined;
     current = (current as Record<string, unknown>)[part];
   }
   return current;
