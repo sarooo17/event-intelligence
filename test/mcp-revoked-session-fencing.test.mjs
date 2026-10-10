@@ -186,3 +186,162 @@ test('push subscription opening after revocation closes orphan without re-regist
   assert.equal(manager.deliverySessions.size,0);
   assert.equal(changes.cursors,0);
 });
+
+
+function deferred() {
+  let resolve;
+  const promise = new Promise((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
+test('an old in-flight cursor write cannot overwrite the reattached session cursor', async () => {
+  const entered = deferred();
+  const release = deferred();
+  const { manager, store, add } = fixture();
+  let persisted = null;
+  store.putMcpClientState = async (value) => {
+    if (value.cursor === 'old-cursor') {
+      entered.resolve();
+      await release.promise;
+    }
+    persisted = value;
+    return value;
+  };
+  store.getMcpClientState = async () => persisted;
+  const old = add();
+  const context = await manager.scopeContext(old);
+  const subscription = {
+    subscriptionId: 'state', eventName: 'item.changed', arguments: {},
+  };
+  const oldMutation = manager.saveSubscriptionState(
+    old, context, subscription, { cursor: 'old-cursor' },
+  );
+  await entered.promise;
+  const detach = manager.detachConnection('same-id');
+  const fresh = add();
+  const freshMutation = manager.saveSubscriptionState(
+    fresh, context, subscription, { cursor: 'new-cursor' },
+  );
+  release.resolve();
+  await Promise.all([oldMutation, detach, freshMutation]);
+  assert.equal(persisted.cursor, 'new-cursor');
+  assert.equal(persisted.serverId, 'mcp-server');
+});
+
+test('revoked discovery cannot re-enable a source after cleanup and replacement', async () => {
+  const entered = deferred();
+  const release = deferred();
+  const { manager, store, add } = fixture();
+  const sources = new Map();
+  store.listEventSources = async () => [...sources.values()];
+  manager.registerEventSource = async (source) => {
+    if (source.enabled && source.serverId === 'old-server') {
+      entered.resolve();
+      await release.promise;
+    }
+    sources.set(source.sourceId, source);
+  };
+  const request = async () => ({
+    events: [{
+      name: 'item.changed',
+      delivery: ['poll'],
+      inputSchema: { type: 'object' },
+      payloadSchema: { type: 'object' },
+    }],
+  });
+  const getCapabilities = async () => ({
+    extensions: { 'io.modelcontextprotocol/events': { listChanged: false } },
+  });
+  add({ serverId: 'old-server', request, getCapabilities });
+  const oldDiscovery = manager.discoverConnection('same-id');
+  await entered.promise;
+  const detach = manager.detachConnection('same-id');
+  add({ serverId: 'new-server', request, getCapabilities });
+  const newDiscovery = manager.discoverConnection('same-id');
+  release.resolve();
+  await assert.rejects(oldDiscovery, e =>
+    e.code === 'MCP_EVENTS_CONNECTION_DETACHED');
+  await Promise.all([detach, newDiscovery]);
+  const source = sources.get('mcp:same-id:item.changed');
+  assert.equal(source.enabled, true);
+  assert.equal(source.serverId, 'new-server');
+});
+
+test('old detach cleanup cannot close a replacement stream', async () => {
+  const closeEntered = deferred();
+  const releaseClose = deferred();
+  let first = true;
+  let replacementCloseCount = 0;
+  const { manager, descriptor, add } = fixture({
+    delivery: 'push',
+    openEventStream: async () => {
+      if (first) {
+        first = false;
+        return {
+          async close() {
+            closeEntered.resolve();
+            await releaseClose.promise;
+          },
+        };
+      }
+      return { close() { replacementCloseCount++; } };
+    },
+  });
+  const old = add();
+  const context = await manager.scopeContext(old);
+  const subscription = {
+    subscriptionId: 'shared-subscription',
+    eventName: 'item.changed',
+    arguments: {}, descriptor, consumerRefs: [],
+  };
+  assert.equal((await manager.ensureDeliverySession(
+    old, context, subscription, 'push',
+  )).status, 'active');
+  const detach = manager.detachConnection('same-id');
+  await closeEntered.promise;
+  const replacement = add();
+  assert.equal((await manager.ensureDeliverySession(
+    replacement, context, subscription, 'push',
+  )).status, 'active');
+  releaseClose.resolve();
+  await detach;
+  assert.equal(manager.deliverySessions.get(
+    subscription.subscriptionId,
+  ).connection, replacement);
+  assert.equal(replacementCloseCount, 0);
+});
+
+test('revoking during stream cursor initialization closes orphan stream', async () => {
+  const entered = deferred();
+  const release = deferred();
+  const { manager, store, descriptor, add } = fixture({
+    delivery: 'push',
+    openEventStream: async () => ({
+      close() { closed++; },
+    }),
+  });
+  let closed = 0;
+  store.putMcpClientState = async (row) => {
+    entered.resolve();
+    await release.promise;
+    return row;
+  };
+  const connection = add();
+  const context = await manager.scopeContext(connection);
+  const subscription = {
+    subscriptionId: 'init-inflight',
+    eventName: 'item.changed',
+    arguments: {}, descriptor, consumerRefs: [],
+  };
+  const opening = manager.ensureDeliverySession(
+    connection, context, subscription, 'push',
+  );
+  await entered.promise;
+  const detach = manager.detachConnection('same-id');
+  release.resolve();
+  const result = await opening;
+  await detach;
+  assert.equal(result.status, 'detached');
+  assert.equal(closed, 1);
+  assert.equal(manager.deliverySessions.size, 0);
+});
