@@ -1,3 +1,4 @@
+import { readOwnEventPath } from '../protocol/ownPath.js';
 import {
   evaluatePatternV2,
   patternV2CandidateSignature,
@@ -42,18 +43,6 @@ export interface CompositeIngestResult {
   fired: boolean;
 }
 
-function getByPath(source: unknown, path: string): unknown {
-  let current = source;
-  for (const part of path.split('.')) {
-    if (
-      current === null ||
-      typeof current !== 'object' ||
-      Array.isArray(current)
-    ) return undefined;
-    current = (current as Record<string, unknown>)[part];
-  }
-  return current;
-}
 
 function sourceEventOrder(
   left: TriggerMatchRecord['sourceEvents'][number],
@@ -395,7 +384,7 @@ export class CompositeTriggerEngine {
         );
       }
 
-      const values = fields.map((field) => getByPath(event.data, field.path));
+      const values = fields.map((field) => readOwnEventPath(event.data, field.path));
       const first = values[0];
       if (
         first === undefined ||
