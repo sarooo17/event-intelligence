@@ -12,6 +12,7 @@ import {
 import {
   createLocalEventIntelligenceRuntime,
 } from './lib/local-event-intelligence-runtime.mjs';
+import { createOwnerReadGuard } from './lib/mcp-owner-read-guard.mjs';
 
 function jsonResult(value) {
   return {
@@ -80,7 +81,12 @@ const triggerLanguageDescribeInputSchema = z.object({
   operator: z.string().min(1).optional(),
 }).strict();
 
-function registerReadTools(server, runtime) {
+function registerReadTools(server, runtime, env) {
+  const ownerGuard = createOwnerReadGuard({
+    triggerControl: runtime.triggerControl,
+    store: runtime.store,
+    owner: ownerFromEnv(env),
+  });
   server.registerTool(
     'event_sources_list',
     {
@@ -139,17 +145,15 @@ function registerReadTools(server, runtime) {
     'trigger_list',
     {
       description:
-        'List durable triggers and lifecycle state, optionally scoped to the configured owner.',
-      inputSchema: z.object({
-        ownerOnly: z.boolean().default(true),
-      }),
+        'List durable triggers and lifecycle state for the configured owner only.',
+      inputSchema: z.object({}).strict(),
     },
-    async ({ ownerOnly }) => {
+    async () => {
       try {
         return jsonResult({
-          triggers: await runtime.triggerControl.listTriggers(
-            ownerOnly ? { owner: ownerFromEnv(process.env) } : {},
-          ),
+          triggers: await runtime.triggerControl.listTriggers({
+            owner: ownerFromEnv(env),
+          }),
         });
       } catch (error) {
         return errorResult(error);
@@ -170,7 +174,13 @@ function registerReadTools(server, runtime) {
     },
     async (input) => {
       try {
-        return jsonResult(runtime.triggerInspector.inspect(input));
+        const owned = await ownerGuard.assertTrigger(input.triggerId, input.version);
+        return jsonResult(await runtime.triggerInspector.inspect({
+          ...input,
+          // Never let Inspector select a newer, foreign-owned version when
+          // the caller omits the version. The authorization is version-bound.
+          version: owned.definition.version,
+        }));
       } catch (error) {
         return errorResult(error);
       }
@@ -229,6 +239,7 @@ function registerReadTools(server, runtime) {
     },
     async ({ wakeId }) => {
       try {
+        await ownerGuard.assertWake(wakeId);
         return jsonResult(await runtime.activationHydrator.hydrateWake(wakeId));
       } catch (error) {
         return errorResult(error);
@@ -252,7 +263,7 @@ function registerReadTools(server, runtime) {
             (await runtime.store.listTemporalDeadlines({ status: 'pending' })).length,
           derivedEvents: (await runtime.store.listDerivedEvents()).length,
           derivedContracts: (await runtime.store.listDerivedContracts()).length,
-          writeEnabled: process.env.MCP_WRITE_ENABLED === 'true',
+          writeEnabled: env.MCP_WRITE_ENABLED === 'true',
         });
       } catch (error) {
         return errorResult(error);
@@ -261,9 +272,9 @@ function registerReadTools(server, runtime) {
   );
 }
 
-function registerWriteTools(server, runtime) {
-  const actor = () => actorFromEnv(process.env);
-  const owner = () => ownerFromEnv(process.env);
+function registerWriteTools(server, runtime, env) {
+  const actor = () => actorFromEnv(env);
+  const owner = () => ownerFromEnv(env);
 
   server.registerTool(
     'trigger_create',
@@ -445,9 +456,9 @@ export async function buildEventIntelligenceMcpServer({
     },
   );
 
-  registerReadTools(server, runtime);
+  registerReadTools(server, runtime, env);
   if (env.MCP_WRITE_ENABLED === 'true') {
-    registerWriteTools(server, runtime);
+    registerWriteTools(server, runtime, env);
   }
 
   return { server, runtime };
