@@ -10,8 +10,10 @@ import {
 import { createOwnerReadGuard } from './lib/mcp-owner-read-guard.mjs';
 import { OPERATION_MANIFEST } from './lib/operation-manifest.mjs';
 import { MCP_OPERATION_SCHEMAS } from './lib/mcp-operation-schemas.mjs';
+import { OPERATION_OUTPUT_CONTRACTS, validateOperationOutput } from './lib/operation-output-contracts.mjs';
 
-function jsonResult(value) {
+function jsonResult(value, operation) {
+  if (operation) validateOperationOutput('stdio', operation, value);
   return {
     content: [
       {
@@ -69,6 +71,7 @@ function registerReadTools(server, runtime, env) {
       description:
         'List active event sources currently available to Event Intelligence.',
       inputSchema: MCP_OPERATION_SCHEMAS.sources,
+      outputSchema: OPERATION_OUTPUT_CONTRACTS.sources.stdio,
     },
     async ({ connectionIds }) => {
       try {
@@ -76,7 +79,7 @@ function registerReadTools(server, runtime, env) {
           sources: await runtime.triggerControl.listEventSources({
             ...(connectionIds ? { connectionIds } : {}),
           }),
-        });
+        }, 'sources');
       } catch (error) {
         return errorResult(error);
       }
@@ -121,6 +124,7 @@ function registerReadTools(server, runtime, env) {
       description:
         'List durable triggers and lifecycle state for the configured owner only.',
       inputSchema: MCP_OPERATION_SCHEMAS.list,
+      outputSchema: OPERATION_OUTPUT_CONTRACTS.list.stdio,
     },
     async () => {
       try {
@@ -128,7 +132,7 @@ function registerReadTools(server, runtime, env) {
           triggers: await runtime.triggerControl.listTriggers({
             owner: ownerFromEnv(env),
           }),
-        });
+        }, 'list');
       } catch (error) {
         return errorResult(error);
       }
@@ -141,6 +145,7 @@ function registerReadTools(server, runtime, env) {
       description:
         'Explain a trigger deterministically, including missing clauses, temporal state, deadlines, lineage, derived outputs and wake receipt.',
       inputSchema: MCP_OPERATION_SCHEMAS.inspect,
+      outputSchema: OPERATION_OUTPUT_CONTRACTS.inspect.stdio,
     },
     async (input) => {
       try {
@@ -150,7 +155,7 @@ function registerReadTools(server, runtime, env) {
           // Never let Inspector select a newer, foreign-owned version when
           // the caller omits the version. The authorization is version-bound.
           version: owned.definition.version,
-        }));
+        }), 'inspect');
       } catch (error) {
         return errorResult(error);
       }
