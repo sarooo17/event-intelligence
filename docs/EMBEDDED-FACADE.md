@@ -76,3 +76,26 @@ node --test test/embedded-host-kit.test.mjs
 ```
 
 Tests check that the facade uses the same engine/portable catalog and delegates wake, host policy and control without creating its own authority path. This is the first integration ergonomics slice; full independent-host clean-room conformance remains tracked under [#42](https://github.com/sarooo17/event-intelligence/issues/42).
+
+### Fail-fast configuration diagnostics
+
+The neutral `createEventIntelligence()` entry point raises `TypeError` before
+creating a host when mandatory callbacks or mutually exclusive receipt settings
+are invalid. Integrators can use `error.code` rather than matching English
+messages. These are **configuration** errors, not event-processing failures:
+
+| Code | Meaning |
+| --- | --- |
+| `EI_HOST_DELIVERY_REQUIRED` | Missing or noncallable `runtime.deliver()` |
+| `EI_HOST_MCP_REGISTRY_INVALID` | `mcp.list()` missing, or `subscribe` not callable |
+| `EI_HOST_CONTROL_REQUIRED` | Only one of `resolveContext()` and `control()` supplied |
+| `EI_HOST_CALLBACK_INVALID` | Invalid optional runtime callback |
+| `EI_HOST_RECEIPT_CONFIG_INVALID` | Blank namespace or conflicting receipt strategies |
+
+The host still owns identity resolution, approval/policy, receipts, and data
+storage. A valid shape does not mean the host was authorized or that a
+connection is healthy; runtime failures keep their existing codes.
+These diagnostics add no historical compatibility adapter.
+
+Run the focused probes with `node --test test/host-configuration-errors.test.mjs`
+after `npm run build`.
