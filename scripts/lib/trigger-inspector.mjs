@@ -138,10 +138,11 @@ export class TriggerInspector {
   constructor({
     store,
     now = () => new Date(),
-    matchHistoryLimit = 100,
+    matchHistoryLimit = null,
   }) {
-    if (!Number.isInteger(matchHistoryLimit) ||
-        matchHistoryLimit < 1 || matchHistoryLimit > 500) {
+    if (matchHistoryLimit !== null &&
+        (!Number.isInteger(matchHistoryLimit) ||
+          matchHistoryLimit < 1 || matchHistoryLimit > 500)) {
       throw new RangeError('matchHistoryLimit must be an integer from 1 to 500');
     }
     this.store = store;
@@ -214,7 +215,9 @@ export class TriggerInspector {
     // Bound the serialized explanation even if the historical store contains
     // thousands of transitions. Full history remains available from the
     // authorized store itself; explain output is a recent-window projection.
-    const recentHistory = rawHistory.slice(-this.matchHistoryLimit);
+    const recentHistory = this.matchHistoryLimit === null
+      ? rawHistory
+      : rawHistory.slice(-this.matchHistoryLimit);
     const matchHistory = recentHistory.map((record) => ({
       status: record.status,
       updatedAt: record.updatedAt,
@@ -249,12 +252,14 @@ export class TriggerInspector {
           }
         : null,
       clauses,
-      progress: {
-        evidenceBasis: 'latest_match_only',
+      evidenceSummary: {
+        selectionBasis: matchId
+          ? 'explicit_match'
+          : match ? 'latest_match' : 'no_match',
         observedClauseIds: clauses.filter((clause) =>
           clause.status === 'observed'
         ).map((clause) => clause.clauseId),
-        waitingClauseIds: clauses.filter((clause) =>
+        unobservedClauseIds: clauses.filter((clause) =>
           clause.status === 'waiting'
         ).map((clause) => clause.clauseId),
         pendingDeadlineCount: pendingDeadlines.length,
