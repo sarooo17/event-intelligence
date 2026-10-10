@@ -41,3 +41,38 @@ node --test test/trigger-explain-bounds.test.mjs
 ```
 
 Remaining #48 work: versioned explain contract; unavailability/watermark/truncation distinctions; bounded store queries; causal trace correlation; redaction validation and optional OTel bridge.
+
+## Optional OpenTelemetry bridge (partial #48)
+
+A host with its own OTel SDK can inject a tracer into the EI observability sink,
+with no OTel dependency added to EI or host credential management moved into EI:
+
+```js
+import {
+  createOpenTelemetrySink,
+} from 'mcp-event-intelligence/observability';
+import {
+  createEventIntelligence,
+} from 'mcp-event-intelligence/embedded';
+
+// hostRuntime, hostStore and hostOwnedTracer are supplied by the embedding host.
+const otelSink = createOpenTelemetrySink(hostOwnedTracer);
+const integration = await createEventIntelligence({
+  runtime: hostRuntime, observability: otelSink, store: hostStore,
+});
+```
+
+The bridge emits one completed span for each sanitized `ei.*` telemetry
+record. By default, **only** event name, schema, level, component, status and
+attempt count are included; no raw payload, error message, metadata, tenant or
+trace/wake ID is forwarded. `includeCorrelations: true` optionally adds
+length-bounded/redacted trace, scope, trigger, match and wake identifiers for
+hosts that have approved the privacy, cardinality and retention implications.
+The adapter re-sanitizes even direct uses, and failures in the host tracer
+are swallowed so matching/delivery cannot depend on telemetry.
+
+**Limits:** This is a minimal span sink, not full distributed propagation:
+it does not establish parent-child causal context, automatic span duration,
+external metrics, sampling or traces across an embedding runtime. Hosts own
+the OTel exporter, SDK, authentication and sampling. Those and other
+explainability acceptance tests remain part of #48.

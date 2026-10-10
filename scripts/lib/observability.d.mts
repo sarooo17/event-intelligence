@@ -75,3 +75,18 @@ export function createObservabilityEmitter(
     component?: string;
   },
 ): EventIntelligenceObservabilityEmitter;
+
+/** Optional host-supplied OTel tracer, with no SDK dependency or exporter. */
+export interface EventIntelligenceSpan {
+  end(): void;
+}
+export interface EventIntelligenceTracer {
+  startSpan(
+    name: string,
+    options: { attributes: Record<string, string | number> },
+  ): EventIntelligenceSpan;
+}
+export function createOpenTelemetrySink(
+  tracer: EventIntelligenceTracer,
+  options?: { includeCorrelations?: boolean },
+): { readonly emit: (event: EventIntelligenceObservabilityEvent) => void };
