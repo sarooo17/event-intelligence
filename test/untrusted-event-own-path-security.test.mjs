@@ -202,3 +202,44 @@ test('terminal array values cannot see inherited indices or element accessors', 
   assert.equal(invoked, 0);
   assert.deepEqual(readOwnEventPath({ roles: ['admin'] }, 'roles'), ['admin']);
 });
+
+test('event Proxy traps are rejected before ownKeys, descriptors or accessors run', () => {
+  let traps = 0;
+  const forged = new Proxy({ tenant: 'victim' }, {
+    ownKeys() { traps++; return ['tenant']; },
+    getOwnPropertyDescriptor() {
+      traps++;
+      return { configurable: true, enumerable: true, value: 'victim' };
+    },
+    get() { traps++; return 'victim'; },
+  });
+  assert.throws(
+    () => parseCorrelatableEvent(occurrence({ account: forged })),
+    error => error.code === 'EVENT_UNTRUSTED_DATA_INVALID',
+    'nested proxy must fail before Zod parsing',
+  );
+  assert.equal(readOwnEventPath({ account: forged }, 'account.tenant'), undefined);
+  assert.equal(readOwnEventPath({ account: forged }, 'account'), undefined);
+  assert.equal(traps, 0, 'event evidence must not invoke any trap');
+
+  const proxiedArray = new Proxy(['admin'], {
+    get() { traps++; return 'admin'; },
+    ownKeys() { traps++; return ['0', 'length']; },
+    getOwnPropertyDescriptor() { traps++; return { enumerable: true, value: 'admin', configurable: true }; },
+  });
+  assert.throws(
+    () => snapshotUntrustedEventData({ roles: proxiedArray }),
+    error => error.code === 'EVENT_UNTRUSTED_DATA_INVALID',
+  );
+  assert.equal(readOwnEventPath({ roles: proxiedArray }, 'roles'), undefined);
+  assert.equal(traps, 0, 'array proxy must be rejected without reading length');
+
+  const topLevel = new Proxy(occurrence({ tenant: 'victim' }), {
+    ownKeys() { traps++; return ['data']; },
+  });
+  assert.throws(
+    () => parseCorrelatableEvent(topLevel),
+    error => error.code === 'EVENT_UNTRUSTED_DATA_INVALID',
+  );
+  assert.equal(traps, 0, 'top-level event proxy also must be rejected');
+});
