@@ -1,3 +1,5 @@
+import { isProxy } from 'node:util/types';
+
 /**
  * Clone a JSON-shaped event value using OWN DATA DESCRIPTORS only.
  *
@@ -25,6 +27,9 @@ export function snapshotUntrustedEventData(source: unknown): unknown {
       return value;
     }
     if (typeof value !== 'object') invalid('non-JSON value');
+    // Node's intrinsic proxy check cannot invoke userland traps. Reject
+    // before Array.isArray(), descriptor reflection, length reads or hashing.
+    if (isProxy(value)) invalid('proxy objects are not event data');
     if (seen.has(value)) invalid('circular reference');
     seen.add(value);
     try {
@@ -70,8 +75,9 @@ export function snapshotUntrustedEventData(source: unknown): unknown {
 export function readOwnEventPath(source: unknown, path: string): unknown {
   let current: unknown = source;
   for (const part of String(path).split('.')) {
-    if (current === null || typeof current !== 'object' ||
-        Array.isArray(current)) return undefined;
+    if (current === null || typeof current !== 'object') return undefined;
+    // Never introspect a proxy, including a nested object at any level.
+    if (isProxy(current) || Array.isArray(current)) return undefined;
     const property = Object.getOwnPropertyDescriptor(current, part);
     if (!property || !Object.hasOwn(property, 'value')) return undefined;
     current = property.value;
