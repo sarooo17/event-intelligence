@@ -19,7 +19,9 @@ console.log(report.evaluatedUntil, report.inspection.why);
 ```
 
 The standalone MCP `trigger_simulate` tool also accepts `startAt` as an
-optional offset-aware ISO timestamp. The simulation clock starts at `startAt`
+optional offset-aware ISO timestamp. Both the public JavaScript API and MCP
+reject timezone-less values and impossible calendar dates (such as February 30)
+instead of accepting locale-dependent `Date.parse()` normalization. The simulation clock starts at `startAt`
 when supplied, otherwise it retains the existing initial event-time anchor
 (and historically falls back to actual time when no events are provided).
 Processing time never moves backwards; input events may be older than the
