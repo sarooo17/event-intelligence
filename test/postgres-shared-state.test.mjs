@@ -933,7 +933,11 @@ integrationTest('pool restart fencing: persisted claimed wakes survive disconnec
       await dropTables(cleanupPool);
     } finally {
       await cleanupPool.end();
-      if (!abandonedClosed) await abandonedPool.end();
+      // When a setup/assertion fails before the initial shutdown,
+      // cleanupPool IS abandonedPool. pg.Pool.end() is not idempotent.
+      if (!abandonedClosed && cleanupPool !== abandonedPool) {
+        await abandonedPool.end();
+      }
     }
   }
 });
