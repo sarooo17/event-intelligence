@@ -15,6 +15,7 @@ test('three shared semantic output operations expose intentional transport proje
   assert.equal(OPERATION_OUTPUT_CONTRACT_VERSION, '1');
   assert.deepEqual(Object.keys(OPERATION_OUTPUT_CONTRACTS), [
     'sources', 'list', 'plan', 'inspect', 'simulate', 'wakeHydrate',
+    'create', 'update', 'pause', 'resume', 'delete',
     'languageDescribe', 'derivedContracts', 'runtimeStatus',
   ]);
   assert.equal(outputValidator('stdio','sources'),
@@ -31,7 +32,7 @@ test('three shared semantic output operations expose intentional transport proje
   }
   assert.throws(() => outputValidator('embedded', 'plan'),
     /Operation not exposed on EI surface/);
-  for (const operation of ['inspect']) {
+  for (const operation of ['inspect', 'create', 'update', 'pause', 'resume', 'delete']) {
     // The host may supply an inspector, but its arbitrary projection has no
     // portable output contract. Never return undefined as a validator.
     assert.throws(() => outputValidator('embedded', operation),
@@ -59,7 +60,7 @@ test('runtime output validation rejects missing/wrong shapes without mutating da
   assert.deepEqual(validateOperationOutput('stdio','list',
     {triggers:[]}),{triggers:[]});
   assert.throws(()=>outputValidator('muffin','list'),/Unknown EI output surface/);
-  assert.throws(()=>outputValidator('stdio','create'),/Unmodeled/);
+  assert.throws(()=>outputValidator('stdio','operationThatDoesNotExist'),/Unmodeled/);
   const validPlan = {
     planVersion: '2',
     definition: { triggerId: 'test' },
@@ -165,6 +166,57 @@ test('read-only inspector and simulator output contracts reject malformed wire e
     }),
     error => error.code === 'EI_OUTPUT_CONTRACT_INVALID',
   );
+});
+
+test('stdio mutation outputs require coherent durable receipts and canonical definitions', async () => {
+  const { parseCompositeTriggerDefinition } = await import(
+    '../dist/src/intelligenceProtocol/index.js'
+  );
+  const definition = parseCompositeTriggerDefinition({
+    triggerId: 'mutation-output-1', version: '1',
+    clauses: [{ id: 'a', event: 'demo.ready', serverId: 'demo', where: [] }],
+    pattern: { root: { kind: 'event', ref: 'a' } },
+    withinMs: 60000,
+    target: { runtime: 'fixture', kind: 'task', id: 'task-1' },
+  });
+  const state = { status: 'active', owner: { type: 'user', principal_id: 'owner-1' } };
+  const base = { receiptId: 'receipt-1', definition, state };
+  for (const operation of ['create', 'update', 'pause', 'resume', 'delete']) {
+    const expectedStatus = operation === 'pause' ? 'paused' :
+      operation === 'delete' ? 'deleted' : 'active';
+    const candidate = {
+      ...base, action: operation,
+      state: { ...state, status: expectedStatus },
+      ...(operation === 'update' ? {
+        previous: { definition, state: { ...state, status: 'completed' } },
+      } : {}),
+    };
+    assert.equal(validateOperationOutput('stdio', operation, candidate), candidate);
+    assert.equal(outputJsonSchema('stdio', operation).properties.action.const, operation);
+    for (const bad of [
+      { ...candidate, action: 'delete-other' },
+      { ...candidate, receiptId: '' },
+      { ...candidate, state: { owner: state.owner } },
+      { ...candidate, state: { ...state, status: expectedStatus + '-wrong' } },
+      { ...candidate, definition: { triggerId: 'invalid' } },
+      { ...candidate, definition: { ...definition, protocolVersion: undefined } },
+      { ...candidate, definition: { ...definition, clauses: definition.clauses.map(
+        c => ({ ...c, arguments: undefined })
+      ) } },
+      ...(operation === 'update' ? [
+        { ...candidate, previous: undefined },
+        { ...candidate, previous: { definition, state } },
+      ] : []),
+    ]) {
+      assert.throws(
+        () => validateOperationOutput('stdio', operation, bad),
+        e => e.code === 'EI_OUTPUT_CONTRACT_INVALID',
+        operation,
+      );
+    }
+    assert.throws(() => outputValidator('embedded', operation),
+      /Unmodeled EI output projection/);
+  }
 });
 
 test('real embedded list validates canonical projected response before host projection',async()=>{

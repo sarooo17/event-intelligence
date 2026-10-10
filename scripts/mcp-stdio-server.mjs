@@ -254,6 +254,7 @@ function registerWriteTools(server, runtime, env) {
       description:
         'Create a durable trigger. Persistent MCP mutations require explicit confirmationId and MCP_WRITE_ENABLED=true.',
       inputSchema: MCP_OPERATION_SCHEMAS.create,
+      outputSchema: OPERATION_OUTPUT_CONTRACTS.create.stdio,
     },
     async ({ definition, plan, connectionIds, confirmationId }) => {
       try {
@@ -287,7 +288,7 @@ function registerWriteTools(server, runtime, env) {
         return jsonResult({
           ...receipt,
           ...(planning ? { planning } : {}),
-        });
+        }, 'create');
       } catch (error) {
         return errorResult(error);
       }
@@ -299,6 +300,7 @@ function registerWriteTools(server, runtime, env) {
     {
       description: 'Pause a durable trigger after explicit confirmation.',
       inputSchema: MCP_OPERATION_SCHEMAS.pause,
+      outputSchema: OPERATION_OUTPUT_CONTRACTS.pause.stdio,
     },
     async ({ triggerId, version, confirmationId }) => {
       try {
@@ -310,6 +312,7 @@ function registerWriteTools(server, runtime, env) {
             owner: owner(),
             confirmationId,
           }),
+          'pause',
         );
       } catch (error) {
         return errorResult(error);
@@ -322,6 +325,7 @@ function registerWriteTools(server, runtime, env) {
     {
       description: 'Resume a paused durable trigger after explicit confirmation.',
       inputSchema: MCP_OPERATION_SCHEMAS.resume,
+      outputSchema: OPERATION_OUTPUT_CONTRACTS.resume.stdio,
     },
     async ({ triggerId, version, confirmationId }) => {
       try {
@@ -333,6 +337,7 @@ function registerWriteTools(server, runtime, env) {
             owner: owner(),
             confirmationId,
           }),
+          'resume',
         );
       } catch (error) {
         return errorResult(error);
@@ -345,6 +350,7 @@ function registerWriteTools(server, runtime, env) {
     {
       description: 'Delete a durable trigger after explicit confirmation.',
       inputSchema: MCP_OPERATION_SCHEMAS.delete,
+      outputSchema: OPERATION_OUTPUT_CONTRACTS.delete.stdio,
     },
     async ({ triggerId, version, confirmationId }) => {
       try {
@@ -356,6 +362,7 @@ function registerWriteTools(server, runtime, env) {
             owner: owner(),
             confirmationId,
           }),
+          'delete',
         );
       } catch (error) {
         return errorResult(error);
@@ -369,6 +376,7 @@ function registerWriteTools(server, runtime, env) {
       description:
         'Create a new immutable version of an existing durable trigger after explicit confirmation.',
       inputSchema: MCP_OPERATION_SCHEMAS.update,
+      outputSchema: OPERATION_OUTPUT_CONTRACTS.update.stdio,
     },
     async ({
       triggerId,
@@ -388,6 +396,7 @@ function registerWriteTools(server, runtime, env) {
             owner: owner(),
             confirmationId,
           }),
+          'update',
         );
       } catch (error) {
         return errorResult(error);

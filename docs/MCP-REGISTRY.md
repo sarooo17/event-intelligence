@@ -83,3 +83,25 @@ This is not full #43 parity: embedded host-specific inspection projections
 and mutating-operation output contracts remain separate work. In particular,
 do not advertise a full inspection schema for an arbitrary host-supplied
 inspector without validating that host's own contract.
+
+
+### Durable mutation output contracts
+
+The optional stdio adapter now advertises and validates the **five**
+write-operation output projections (`trigger_create`, `trigger_update`,
+`trigger_pause`, `trigger_resume`, `trigger_delete`) only when mutations
+are explicitly enabled. Successful responses must include a non-empty
+durable `receiptId`, the exact `action`, a canonical validated trigger
+`definition`, and a lifecycle `state`. Update results must also include
+the previous definition/state; create results may include a canonical
+planner result. The validator does **not** coerce or strip a response and
+does not grant mutation authority. Existing authorization, confirmation,
+source scope and owner checks remain authoritative in the host/control
+plane. Invalid success outputs fail closed with `EI_OUTPUT_CONTRACT_INVALID`.
+
+The primary embedded facade intentionally returns **compact host-scoped**
+results rather than these stdio-shaped receipts. Never apply the stdio
+schema to the embedded adapter without an explicit canonical embedded
+projection contract. This is a #43 implementation slice, not proof that
+every host's supplied inspector or model-facing tool projections are
+identical.
