@@ -414,11 +414,12 @@ export class McpEventsClientManager {
         `${connection.connectionId}::${connection.scopeId}`,
       );
     }
-    if (removed && context) {
+    if (removed && context && !this.connections.has(connectionId)) {
       const sources = await context.store.listEventSources({
         connectionIds: [connectionId],
       });
       for (const source of sources) {
+        if (this.connections.has(connectionId)) break;
         if (source.enabled === false) continue;
         const register = context.triggerControl?.registerEventSource
           ? (sourceInput, actor) =>
@@ -459,6 +460,7 @@ export class McpEventsClientManager {
 
     const context = await this.scopeContext(connection);
     const capabilities = (await connection.getCapabilities()) ?? {};
+    this.assertConnectionAttached(connection);
     const profile = resolveMcpEventsCompatibilityProfile({
       capabilities,
       requested: connection.compatibilityProfile,
@@ -483,6 +485,7 @@ export class McpEventsClientManager {
         profile.listMethod,
         cursor ? { cursor } : {},
       );
+      this.assertConnectionAttached(connection);
       if (!Array.isArray(listed?.events)) {
         throw new Error(
           `MCP server ${connectionId} returned invalid events/list`,
@@ -505,6 +508,7 @@ export class McpEventsClientManager {
     } while (cursor);
 
     for (const normalized of descriptors) {
+      this.assertConnectionAttached(connection);
       const sourceId =
         `mcp:${connection.connectionId}:${normalized.name}`;
       const existing = (
@@ -526,6 +530,7 @@ export class McpEventsClientManager {
         existing.metadata?.extensionId === profile.extensionId;
 
       if (!same) {
+        this.assertConnectionAttached(connection);
         const register = context.triggerControl?.registerEventSource
           ? (sourceInput, actor) =>
               context.triggerControl.registerEventSource(sourceInput, actor)
@@ -558,6 +563,7 @@ export class McpEventsClientManager {
       }
     }
 
+    this.assertConnectionAttached(connection);
     this.descriptors.set(connection.connectionId, descriptors);
     this.profiles.set(connection.connectionId, profile);
     this.lastErrors.delete(connection.connectionId);
@@ -965,6 +971,28 @@ export class McpEventsClientManager {
       onError,
       onTerminated,
     });
+
+    // A stream subscription can finish opening after the host revokes its
+    // connection. Close the orphan immediately; do not install a session or
+    // persist cursor metadata after revocation.
+    if (!this.isConnectionAttached(connection)) {
+      try {
+        if (typeof handle === 'function') await handle();
+        else if (typeof handle?.close === 'function') await handle.close();
+        else if (typeof handle?.cancel === 'function') await handle.cancel();
+        else if (typeof handle?.unsubscribe === 'function') await handle.unsubscribe();
+      } catch {
+        // Orphan cleanup is best-effort; ingress remains fenced above.
+      }
+      return {
+        subscriptionId: subscription.subscriptionId,
+        eventName: subscription.eventName,
+        delivery,
+        status: 'detached',
+        accepted: 0,
+        consumerCount: subscription.consumerRefs.length,
+      };
+    }
 
     const close =
       typeof handle === 'function'
