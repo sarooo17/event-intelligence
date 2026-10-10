@@ -67,3 +67,15 @@ and independently measure ingress, partition correlation, crash/rebalance and
 end-to-end delivery at several event rates. Attach generated JSON, failures,
 CI artifacts and workload-specific SLO criteria. There is no claim of 100k
 readiness merely because the harness accepts a `100k` flag.
+
+## Manual raw-evidence GitHub Actions runs
+
+The **PostgreSQL Scale Evidence (manual)** workflow offers explicit 1k, 10k
+and 100k inputs. It creates a fresh PostgreSQL 16 service, records hardware
+characteristics, runs the same isolated benchmark, and uploads JSON results,
+stderr failures and host specifications as a 90-day artifact.
+
+The workflow is `workflow_dispatch` only: it does not run 100k workloads
+automatically on every PR, and its presence does not mean any large profile
+has been executed. Save artifacts externally before their retention expires
+if they are used as release acceptance evidence.
