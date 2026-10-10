@@ -110,8 +110,11 @@ export class PostgresEventStore {
     }
     this.pool = pool;
     this.scopeId = normalizeEventScopeId(scopeId);
-    this.tablePrefix = ident(tablePrefix, 'tablePrefix');
-    if (Buffer.byteLength(this.tablePrefix) > MAX_POSTGRES_TABLE_PREFIX_BYTES) {
+    // Validate the full length before ident() rejects 64+ characters
+    // generically. All overlong otherwise-valid identifiers receive the
+    // specific fail-closed error, including values beyond PostgreSQL's 63.
+    const candidatePrefix = String(tablePrefix || '').trim();
+    if (Buffer.byteLength(candidatePrefix) > MAX_POSTGRES_TABLE_PREFIX_BYTES) {
       const error = new Error(
         'tablePrefix is too long for PostgreSQL tables and indexes; ' +
         'maximum ' + MAX_POSTGRES_TABLE_PREFIX_BYTES + ' ASCII bytes',
@@ -119,6 +122,7 @@ export class PostgresEventStore {
       error.code = 'EVENT_INTELLIGENCE_POSTGRES_PREFIX_TOO_LONG';
       throw error;
     }
+    this.tablePrefix = ident(candidatePrefix, 'tablePrefix');
     this.ownsPool = ownsPool === true;
     this.adoptUnversionedSchema = adoptUnversionedSchema === true;
     this.initialized = false;
