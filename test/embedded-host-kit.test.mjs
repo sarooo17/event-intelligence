@@ -1553,6 +1553,8 @@ test('unknown or malformed capability allowlists fail before any registration', 
     ['event-intelligence.event-sources.list', 'unknown'],
     'event-intelligence.event-sources.list',
     [null],
+    new Array(1),
+    ['event-intelligence.event-sources.list', ,],
   ]) {
     assert.throws(
       () => bindEmbeddedRuntimeIntegration(integration, {
