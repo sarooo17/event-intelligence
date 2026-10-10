@@ -19,3 +19,22 @@ POSTGRES_URL='postgresql://...' npm run test:postgres
 ```
 
 The package's existing PG suite also verifies lifecycle CAS, audit chain and trigger mutation locking; this adds many repeated wake-claim handover attempts and exact cross-tenant key isolation. Additional chaos and scale acceptance criteria remain open in #47.
+
+## Reconnect and stale-generation fencing (additional bounded regression)
+
+The PG16 integration suite also seeds eight independent claimed wakes through
+one connection pool, fully closes that pool, constructs a new PostgreSQL pool
+and store instance, and verifies:
+
+- Claimed records remain durable and unread receipt state is not fabricated
+- A new claimant cannot take over at expiry−1ms, but can at the exact boundary
+- A restarted worker reusing the **same logical worker ID** receives a new
+  attempt generation; the old generation is denied with
+  `WAKE_DELIVERY_CLAIM_LOST` even when the worker name matches
+- Only the newer receipt survives subsequent store reconstruction and delivered
+  wakes cannot be claimed again
+
+This explicitly tests **pool reconnect**, not independent operating-system
+process termination, PostgreSQL primary failover or a real network partition.
+It adds restart evidence but does not discharge the soak / partition-rebalance
+or performance SLO checkboxes in #21 and #47.
