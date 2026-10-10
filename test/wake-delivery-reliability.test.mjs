@@ -461,6 +461,7 @@ test('a persisted runtime receipt is reconciled after restart without redelivery
     assert.ok(claim);
     await firstStore.completeWakeDelivery(wakeId, {
       workerId: 'worker-crashed-after-receipt',
+      attemptCount: claim.attemptCount,
       runtimeReceiptId: 'receipt-already-returned',
       now: now.toISOString(),
     });
