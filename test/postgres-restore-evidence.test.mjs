@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { PostgresEventStore } from '../scripts/lib/postgres-event-store.mjs';
+import { CompositeWakeCoordinator } from '../scripts/lib/composite-wake-coordinator.mjs';
+import { CompositeTriggerEngine } from '../dist/src/composite/engine.js';
+import { WakeRetryScheduler } from '../scripts/lib/wake-retry-scheduler.mjs';
 
 const url = process.env.POSTGRES_URL;
 const integrationTest = url ? test : test.skip;
@@ -115,25 +118,37 @@ integrationTest('PostgreSQL restart/restore keeps tenant, wake, audit and histor
       sourceA.putTrigger(definition('shared-trigger')),
       sourceB.putTrigger(definition('shared-trigger')),
     ]);
+    // Create the delivery through the production coordinator. Its wake ID
+    // must be deterministic from the actual match/target identity; synthetic
+    // wake IDs would not prove protection against post-restore redispatch.
     await sourceA.setTriggerState(
-      'shared-trigger','1','paused',
+      'shared-trigger','1','active',
       { type:'system', principal_id:'restore-test' },
       { owner:{type:'user',principal_id:'alice',tenant_id:'tenant-A'} },
     );
-    await sourceA.appendTriggerMatch(match('shared-trigger','match-1'));
-    await sourceA.ensureWakeDelivery({
-      wakeId:'wake-1', matchId:'match-1',
-      triggerId:'shared-trigger',triggerVersion:'1',
-      runtime:'restore-test',now:iso,
+    const sourceMatch = await sourceA.appendTriggerMatch(
+      match('shared-trigger','match-1'),
+    );
+    let originalDeliveries = 0;
+    const sourceCoordinator = new CompositeWakeCoordinator({
+      store: sourceA,
+      triggerEngine: new CompositeTriggerEngine(sourceA),
+      workerId: 'source-worker',
+      now: () => new Date(iso),
+      deliverer: async () => {
+        originalDeliveries++;
+        return { runtimeReceiptId: 'receipt-original' };
+      },
     });
-    const claim = await sourceA.claimWakeDelivery('wake-1',{
-      workerId:'worker-a', now:iso, leaseMs:1000,
-    });
-    assert.equal(claim.attemptCount,1);
-    await sourceA.completeWakeDelivery('wake-1',{
-      workerId:'worker-a',attemptCount:claim.attemptCount,
-      runtimeReceiptId:'receipt-original',now:iso,
-    });
+    const delivered = await sourceCoordinator.deliverMatched(sourceMatch);
+    assert.equal(delivered.status, 'wake_delivered');
+    assert.equal(originalDeliveries, 1);
+    const wakeId = delivered.wake.wakeId;
+    assert.match(wakeId, /^wake_/);
+    await sourceA.setTriggerState(
+      'shared-trigger','1','paused',
+      { type:'system', principal_id:'restore-test' },
+    );
     await sourceA.appendAudit({
       auditId:'dr-audit-1',traceId:'trace-1',timestamp:iso,
       kind:'trigger.created',entityType:'trigger',
@@ -171,14 +186,37 @@ integrationTest('PostgreSQL restart/restore keeps tenant, wake, audit and histor
     assert.equal(await reopenedA.verifyAudit(),true);
     assert.deepEqual(await reopenedA.listTriggerMatchHistory('match-1'),srcHistory);
     assert.equal((await reopenedA.getTriggerState('shared-trigger','1')).status,'paused');
-    assert.equal((await reopenedA.getWakeDelivery('wake-1')).runtimeReceiptId,'receipt-original');
-    assert.equal(await reopenedA.claimWakeDelivery('wake-1',{
+    assert.equal((await reopenedA.getWakeDelivery(wakeId)).runtimeReceiptId,'receipt-original');
+    assert.equal(await reopenedA.claimWakeDelivery(wakeId,{
       workerId:'restored-worker',
       now:'2026-10-09T13:00:00.000Z',leaseMs:1000,
     }),null);
+    let restoredDeliveries = 0;
+    const restoredCoordinator = new CompositeWakeCoordinator({
+      store: reopenedA,
+      triggerEngine: new CompositeTriggerEngine(reopenedA),
+      workerId: 'restored-worker',
+      now: () => new Date('2026-10-09T13:00:00.000Z'),
+      deliverer: async () => {
+        restoredDeliveries++;
+        return { runtimeReceiptId: 'SHOULD-NOT-BE-CALLED' };
+      },
+    });
+    const retry = new WakeRetryScheduler({
+      store: reopenedA,
+      now: () => new Date('2026-10-09T13:00:00.000Z'),
+      resolveCoordinator: () => restoredCoordinator,
+    });
+    assert.deepEqual(await retry.runDue(), []);
+    const restoredMatch = (await reopenedA.listTriggerMatches('shared-trigger'))
+      .find((row) => row.matchId === 'match-1');
+    assert.equal(restoredMatch.status, 'fired');
+    const replay = await restoredCoordinator.deliverMatched(restoredMatch);
+    assert.equal(replay.status, 'already_fired');
+    assert.equal(restoredDeliveries, 0);
     assert.equal((await reopenedB.listTriggers()).length,1);
     assert.equal((await reopenedB.listAudit()).length,0);
-    assert.equal((await reopenedB.getWakeDelivery('wake-1')),null);
+    assert.equal((await reopenedB.getWakeDelivery(wakeId)),null);
 
     await reopenedA.appendAudit({
       auditId:'dr-audit-post-restore',traceId:'trace-3',
@@ -190,9 +228,9 @@ integrationTest('PostgreSQL restart/restore keeps tenant, wake, audit and histor
       ...match('shared-trigger','match-1'),
       updatedAt:'2026-10-09T13:00:00.000Z',
     });
-    assert.equal((await reopenedA.listAudit()).length,3);
+    assert.equal((await reopenedA.listAudit()).length,srcAudit.length+1);
     assert.equal(await reopenedA.verifyAudit(),true);
-    assert.equal((await reopenedA.listTriggerMatchHistory('match-1')).length,2);
+    assert.equal((await reopenedA.listTriggerMatchHistory('match-1')).length,srcHistory.length+1);
     const sequence = await pool.query(
       'SELECT max(history_id)::bigint AS max FROM ' + table(restoredPrefix,'history'),
     );
