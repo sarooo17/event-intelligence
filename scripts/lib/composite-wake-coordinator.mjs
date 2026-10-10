@@ -321,6 +321,7 @@ export class CompositeWakeCoordinator {
 
       const delivery = await this.store.completeWakeDelivery(wakeId, {
         workerId: this.workerId,
+        attemptCount: claim.attemptCount,
         runtimeReceiptId: receipt.runtimeReceiptId,
         now: this.now().toISOString(),
       });
@@ -381,6 +382,7 @@ export class CompositeWakeCoordinator {
       const failureAt = this.now();
       const delivery = await this.store.failWakeDelivery(wakeId, {
         workerId: this.workerId,
+        attemptCount: claim.attemptCount,
         error,
         now: failureAt.toISOString(),
         maxAttempts: this.maxAttempts,
