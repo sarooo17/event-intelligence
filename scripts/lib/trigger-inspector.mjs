@@ -138,9 +138,16 @@ export class TriggerInspector {
   constructor({
     store,
     now = () => new Date(),
+    matchHistoryLimit = null,
   }) {
+    if (matchHistoryLimit !== null &&
+        (!Number.isInteger(matchHistoryLimit) ||
+          matchHistoryLimit < 1 || matchHistoryLimit > 500)) {
+      throw new RangeError('matchHistoryLimit must be an integer from 1 to 500');
+    }
     this.store = store;
     this.now = now;
+    this.matchHistoryLimit = matchHistoryLimit;
   }
 
   async inspect({
@@ -205,7 +212,13 @@ export class TriggerInspector {
     const rawHistory = match && this.store.listTriggerMatchHistory
       ? await this.store.listTriggerMatchHistory(match.matchId)
       : (match ? [match] : []);
-    const matchHistory = rawHistory.map((record) => ({
+    // Bound the serialized explanation even if the historical store contains
+    // thousands of transitions. Full history remains available from the
+    // authorized store itself; explain output is a recent-window projection.
+    const recentHistory = this.matchHistoryLimit === null
+      ? rawHistory
+      : rawHistory.slice(-this.matchHistoryLimit);
+    const matchHistory = recentHistory.map((record) => ({
       status: record.status,
       updatedAt: record.updatedAt,
       firedWakeId: record.firedWakeId,
@@ -239,6 +252,19 @@ export class TriggerInspector {
           }
         : null,
       clauses,
+      evidenceSummary: {
+        selectionBasis: matchId
+          ? 'explicit_match'
+          : match ? 'latest_match' : 'no_match',
+        observedClauseIds: clauses.filter((clause) =>
+          clause.status === 'observed'
+        ).map((clause) => clause.clauseId),
+        unobservedClauseIds: clauses.filter((clause) =>
+          clause.status === 'waiting'
+        ).map((clause) => clause.clauseId),
+        pendingDeadlineCount: pendingDeadlines.length,
+        nextEvaluationAt,
+      },
       deadlines: deadlines.map((deadline) => ({
         deadlineId: deadline.deadlineId,
         conditionId: deadline.conditionId,
@@ -269,6 +295,8 @@ export class TriggerInspector {
           rootEvidence: record.rootEvidence,
         })),
         matchHistory,
+        historyTruncated: rawHistory.length > recentHistory.length,
+        historyLimit: this.matchHistoryLimit,
         patternState: match?.patternState ?? null,
       },
       why: explain({ state, match, wake }),
