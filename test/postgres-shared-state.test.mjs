@@ -656,7 +656,11 @@ integrationTest('bounded adversarial wake claims: four workers, 20 independent l
       assert.equal(winners.length, 1, 'round=' + round);
 
       const winner = winners[0];
-      const successor = (winner + 1) % workers.length;
+      // Alternate between a different worker and the SAME worker reclaiming
+      // its expired generation (the ABA case). Old attempts must be fenced.
+      const successor = round % 2 === 0
+        ? winner
+        : (winner + 1) % workers.length;
       assert.equal(
         await workers[successor].claimWakeDelivery(wakeId, {
           workerId: 'worker-' + successor,
