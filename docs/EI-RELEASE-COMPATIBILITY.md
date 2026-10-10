@@ -98,3 +98,18 @@ Do not claim production-ready 1.0 if incompatible DB transitions are unrecognize
 - Runtime-specific install hooks, `toMuffin()` or `toChatGPT()` in the EI package; deprecated compatibility code retained solely for older hosts.
 - Automatically installing/reloading the new package in a running host.
 - Replacing the host's OAuth/session, policy/approval, durable Turn/Work or CI/CD process.
+
+## Automated release identity gate (incremental implementation)
+
+The pure `scripts/check-release-manifest.mjs` release gate compares package
+identity/version across `package.json`, the root and `packages[""]` entries
+in `package-lock.json`, and the MCP Registry entry in `server.json`.
+CI runs it before tests and the npm publish workflow runs it before its release
+verification. A mismatch exits nonzero with
+`EI_RELEASE_MANIFEST_MISMATCH`. Negative tests mutate every relevant field
+independently to prove the gate detects skew.
+
+This ensures metadata *consistency only*. It does not prove a safe database
+migration, protocol conformance, vulnerability review or v1.0 readiness. It
+does not bump `package.json`, publish an npm version, tag a release, or update
+Muffin/Artemis. The release policy and #50 remain open.
