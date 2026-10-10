@@ -180,3 +180,15 @@ Production hardening should use:
 Event Intelligence does not contain a general-purpose agent or natural-language model planner. The surrounding harness/agent performs natural-language reasoning. Event Intelligence can then deterministically compile an agent-friendly trigger plan into the canonical Pattern trigger.
 
 The only bundled AI adapter is the optional TypeSafe Jev semantic evaluator, used only by an explicit Pattern `semantic` node. A model cannot gain authority by inventing an event source, field, runtime target or contract version because the deterministic control plane validates the submitted program against scoped live sources and schemas.
+
+## Untrusted JSON property resolution
+
+Predicate and Pattern v2 field selectors now traverse **own properties only**.
+Inherited `constructor`, `toString`, `__proto__` and custom prototype
+properties do not count as event evidence. Actual own keys that arrive in JSON
+remain readable. The check applies to both regular event-clause predicates
+and the Pattern v2 evaluator; it does not grant source trust or bypass
+post-wake host authority. Deterministic negative tests cover both paths.
+
+This closes a specific event-evidence ambiguity under #45. Other trust-boundary
+hypotheses, complete tenant fuzzing and independent security review remain open.
