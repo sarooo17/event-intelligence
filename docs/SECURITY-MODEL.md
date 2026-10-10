@@ -25,6 +25,41 @@ Agent-authored persistent mutations require a confirmation identifier. For commo
 
 Planning does not grant authority. Source scope and advertised predicate, Pattern, partition and projection paths fail closed when the source provides a payload schema. The embedding host remains responsible for deciding which user/agent may create or mutate triggers.
 
+## MCP connection revocation and in-flight delivery
+
+A host-managed MCP session may be removed while an Events poll is in flight,
+a push/webhook callback has been queued, or a replacement MCP client is
+attached under the **same** connection ID. The connection ID by itself is
+not sufficient authority to ingest new events.
+
+`McpEventsClientManager.detachConnection()` now removes the active connection
+object **before the first awaited cleanup step**. Poll ingestion, callback
+handling, cursor persistence, discovery and stream subscription setup must
+recheck that their **exact connection object** is still attached. An old
+callback cannot gain authorization by reusing a new session's connection ID.
+
+- A poll response that arrives after the detach is rejected with
+  `MCP_EVENTS_CONNECTION_DETACHED` before its events are processed.
+- Late push/webhook `onEvent`, cursor, error and termination callbacks are
+  ignored. A stream that completes opening after detach is closed without
+  being installed.
+- Source descriptors are disabled by detach as before; old sessions cannot
+  re-register descriptors after returning from an awaited discovery step.
+- The host must explicitly reattach/re-authorize a new MCP connection; no
+  private tokens are retained by EI.
+
+**Race boundary:** A store append that started before revocation may commit
+while detach is in progress. EI checks the session again after the append and
+does **not** pass that occurrence to the CEP consumer if authorization was
+revoked. However, without a shared transactional connection-epoch fence an
+accepted occurrence record can remain in durable storage; on subsequent
+re-authorization its deduplication ID may suppress the same event. Treat
+this as a fail-closed, at-least-once boundary with possible replay gaps—not
+an exactly-once guarantee or complete provider-level revocation protocol.
+Previously queued and matched events may still require host-owned
+cancellation policy before waking an agent. Stronger atomic cursor/append
+fencing and explicit queued-work revocation belong to #45.
+
 ## Standalone MCP read authority
 
 The standalone stdio server is configured with a trusted `MCP_OWNER_ID` and optional
