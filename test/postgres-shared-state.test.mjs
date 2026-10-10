@@ -814,6 +814,7 @@ integrationTest('identical wake IDs can be claimed independently by two isolated
     assert.ok(b);
     await scopeA.completeWakeDelivery('shared-wake-id', {
       workerId: 'scope-a-owner',
+      attemptCount: a.attemptCount,
       runtimeReceiptId: 'receipt-A',
       now: '2026-10-06T01:00:00.100Z',
     });
@@ -822,6 +823,7 @@ integrationTest('identical wake IDs can be claimed independently by two isolated
     assert.equal(stillB.runtimeReceiptId, null);
     await scopeB.completeWakeDelivery('shared-wake-id', {
       workerId: 'scope-b-owner',
+      attemptCount: b.attemptCount,
       runtimeReceiptId: 'receipt-B',
       now: '2026-10-06T01:00:00.100Z',
     });
