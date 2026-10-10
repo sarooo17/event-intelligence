@@ -24,6 +24,22 @@ const embeddedList = stdioList.extend({
   returned: z.number().int().nonnegative(),
 });
 
+// Only the standalone MCP planner exposes this result. The embedded
+// integration calls its scoped planner directly, not a model-facing
+// trigger_plan operation. Keep the contract aligned to the canonical
+// TriggerPlanner.plan result while preserving nested Pattern/evidence data.
+const stdioPlan = z.object({
+  planVersion: z.literal('2'),
+  definition: z.record(z.string(), z.unknown()),
+  connectionIds: z.array(z.string().min(1)),
+  resolvedSources: z.array(z.unknown()),
+  warnings: z.array(z.unknown()),
+  explanation: z.object({
+    when: z.record(z.string(), z.unknown()),
+    then: z.record(z.string(), z.unknown()),
+  }).passthrough(),
+}).passthrough();
+
 export const OPERATION_OUTPUT_CONTRACTS = Object.freeze({
   sources: Object.freeze({
     stdio: sourceList,
@@ -32,6 +48,9 @@ export const OPERATION_OUTPUT_CONTRACTS = Object.freeze({
   list: Object.freeze({
     stdio: stdioList,
     embedded: embeddedList,
+  }),
+  plan: Object.freeze({
+    stdio: stdioPlan,
   }),
 });
 
