@@ -126,3 +126,50 @@ test('oracle rejects unsupported timing parameters', () => {
     /Invalid bounded negative-window/,
   );
 });
+
+test('forbidden event at exactly the anchor timestamp does not block a future-only window', async () => {
+  const source = [
+    event('a', 0, 'same-time'),
+    {
+      ...event('b', 1, 'same-time'),
+      occurredAt: new Date(start).toISOString(),
+    },
+  ];
+  const nowMs = start + withinMs + allowedLatenessMs;
+  const expected = referenceNotFollowedBy(source, {
+    withinMs, allowedLatenessMs, nowMs,
+  });
+  for (const order of [source, [...source].reverse()]) {
+    const actual = await evaluatePatternV2({
+      definition,
+      events: order,
+      now: new Date(nowMs),
+      allowedLatenessMs,
+    });
+    assert.deepEqual(ids(actual.matches), expected.matches);
+    assert.deepEqual(ids(actual.pending), expected.pending);
+    assert.equal(actual.matches.length, 1);
+  }
+});
+
+test('negative window stays pending until finalAt - 1ms and finalizes at finalAt', async () => {
+  const source = [event('a', 0, 'final-boundary')];
+  const finalAt = start + withinMs + allowedLatenessMs;
+  for (const nowMs of [finalAt - 1, finalAt]) {
+    const expected = referenceNotFollowedBy(source, {
+      withinMs, allowedLatenessMs, nowMs,
+    });
+    const actual = await evaluatePatternV2({
+      definition,
+      events: source,
+      now: new Date(nowMs),
+      allowedLatenessMs,
+    });
+    assert.deepEqual(
+      { matches: ids(actual.matches), pending: ids(actual.pending) },
+      expected,
+    );
+    assert.equal(actual.pending.length, nowMs < finalAt ? 1 : 0);
+    assert.equal(actual.matches.length, nowMs < finalAt ? 0 : 1);
+  }
+});
