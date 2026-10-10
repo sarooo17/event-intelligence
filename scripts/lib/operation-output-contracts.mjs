@@ -1,4 +1,5 @@
 import * as z from 'zod/v4';
+import { isDeepStrictEqual } from 'node:util';
 import { OPERATION_MANIFEST } from './operation-manifest.mjs';
 import { ActivationEnvelopeSchema } from '../../dist/src/intelligenceProtocol/index.js';
 import { CompositeTriggerDefinitionSchema } from '../../dist/src/intelligenceProtocol/triggerSchemas.js';
@@ -121,32 +122,34 @@ const stdioWakeHydration = ActivationEnvelopeSchema;
 // Control plane mutations are host-authorized BEFORE these validators run.
 // Validate the durable receipt envelope, not arbitrary host credentials, while
 // preserving canonical definition and owner-scoped lifecycle state evidence.
-const triggerState = z.object({
-  status: z.string().min(1),
+const triggerState = (status) => z.object({
+  status: z.literal(status),
 }).passthrough();
 
 const mutationBase = z.object({
   receiptId: z.string().min(1),
   action: z.enum(['create', 'update', 'pause', 'resume', 'delete']),
   definition: CompositeTriggerDefinitionSchema,
-  state: triggerState,
+  state: z.object({ status: z.string().min(1) }).passthrough(),
 }).passthrough();
 
 const stdioMutation = Object.freeze({
   create: mutationBase.extend({
     action: z.literal('create'),
+    state: triggerState('active'),
     planning: stdioPlan.optional(),
   }),
   update: mutationBase.extend({
     action: z.literal('update'),
+    state: triggerState('active'),
     previous: z.object({
       definition: CompositeTriggerDefinitionSchema,
-      state: triggerState,
+      state: triggerState('completed'),
     }).passthrough(),
   }),
-  pause: mutationBase.extend({ action: z.literal('pause') }),
-  resume: mutationBase.extend({ action: z.literal('resume') }),
-  delete: mutationBase.extend({ action: z.literal('delete') }),
+  pause: mutationBase.extend({ action: z.literal('pause'), state: triggerState('paused') }),
+  resume: mutationBase.extend({ action: z.literal('resume'), state: triggerState('active') }),
+  delete: mutationBase.extend({ action: z.literal('delete'), state: triggerState('deleted') }),
 });
 
 export const OPERATION_OUTPUT_CONTRACTS = Object.freeze({
@@ -205,7 +208,20 @@ export function outputValidator(surface, operation) {
 
 export function validateOperationOutput(surface, operation, value) {
   const result = outputValidator(surface, operation).safeParse(value);
-  if (!result.success) {
+  // Canonical output schemas mark defaulted fields as PRESENT, unlike input
+  // parsers. The normal parser would fabricate missing fields; since we
+  // intentionally return the untransformed original, reject that drift.
+  const isMutation = surface === 'stdio' &&
+    ['create', 'update', 'pause', 'resume', 'delete'].includes(operation);
+  const canonicalDefinition = (raw) => {
+    const parsed = CompositeTriggerDefinitionSchema.safeParse(raw);
+    return parsed.success && isDeepStrictEqual(parsed.data, raw);
+  };
+  const canonical = !isMutation || (
+    canonicalDefinition(value?.definition) &&
+    (operation !== 'update' || canonicalDefinition(value?.previous?.definition))
+  );
+  if (!result.success || !canonical) {
     const error = new Error(
       'EI ' + surface + ' ' + operation + ' response violates v' +
       OPERATION_OUTPUT_CONTRACT_VERSION + ' output contract',
