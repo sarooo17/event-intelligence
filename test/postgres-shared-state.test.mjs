@@ -586,3 +586,34 @@ integrationTest('nonempty unversioned store demands explicit operator adoption',
     await dbPool.end();
   }
 });
+
+integrationTest('empty malformed legacy table cannot receive a trusted schema marker', async () => {
+  const dbPool = pool();
+  try {
+    // A colliding relation with only indexed columns must never be treated
+    // as a fresh v1 store just because it contains no rows.
+    await dbPool.query(
+      'CREATE TABLE "' + prefix + '_records" (scope_id TEXT, kind TEXT)',
+    );
+    await assert.rejects(
+      () => store(dbPool).init(),
+      (error) => error.code === 'EVENT_INTELLIGENCE_POSTGRES_SCHEMA_SHAPE_INVALID',
+    );
+    const marker = await dbPool.query(
+      'SELECT to_regclass($1) AS relation',
+      [prefix + '_metadata'],
+    );
+    assert.equal(marker.rows[0].relation, null);
+    await dbPool.query('DROP TABLE "' + prefix + '_records"');
+    const valid = store(dbPool);
+    await valid.init();
+    const version = await dbPool.query(
+      'SELECT version FROM "' + prefix + '_metadata" WHERE component = $1',
+      ['store'],
+    );
+    assert.equal(Number(version.rows[0].version), 1);
+  } finally {
+    await dropTables(dbPool);
+    await dbPool.end();
+  }
+});
