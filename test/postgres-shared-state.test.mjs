@@ -834,3 +834,106 @@ integrationTest('identical wake IDs can be claimed independently by two isolated
     await dbPool.end();
   }
 });
+
+integrationTest('pool restart fencing: persisted claimed wakes survive disconnect and reject stale worker receipts', async () => {
+  // Crash-window approximation: completely close the original PostgreSQL
+  // connection pool and reconstruct the store on a new physical pool. This is
+  // not an OS process-kill or a network partition test.
+  const abandonedPool = pool();
+  let recoveredPool = null;
+  let abandonedClosed = false;
+  const wakeCount = 8;
+  const origin = Date.parse('2026-10-08T10:00:00.000Z');
+  const scopeId = 'pool-restart-test';
+  const previous = [];
+  try {
+    const first = store(abandonedPool, scopeId);
+    await first.init();
+    for (let i = 0; i < wakeCount; i++) {
+      const wakeId = 'restart-wake-' + i;
+      const now = new Date(origin + i * 10_000).toISOString();
+      await first.ensureWakeDelivery({
+        wakeId,
+        matchId: 'restart-match-' + i,
+        triggerId: 'restart-trigger',
+        triggerVersion: '1',
+        runtime: 'ha-restart',
+        now,
+      });
+      const claim = await first.claimWakeDelivery(wakeId, {
+        workerId: 'same-worker-after-restart',
+        now,
+        leaseMs: 1000,
+      });
+      assert.ok(claim);
+      assert.equal(claim.attemptCount, 1);
+      previous.push({ wakeId, nowMs: origin + i * 10_000, claim });
+    }
+
+    await abandonedPool.end();
+    abandonedClosed = true;
+
+    recoveredPool = pool();
+    const recovered = store(recoveredPool, scopeId);
+    await recovered.init();
+    for (const [i, item] of previous.entries()) {
+      const { wakeId, nowMs, claim } = item;
+      const stored = await recovered.getWakeDelivery(wakeId);
+      assert.equal(stored.status, 'claimed', 'wake must survive pool loss');
+      assert.equal(stored.attemptCount, 1);
+
+      assert.equal(await recovered.claimWakeDelivery(wakeId, {
+        workerId: 'same-worker-after-restart',
+        now: new Date(nowMs + 999).toISOString(),
+        leaseMs: 1000,
+      }), null, 'claim must stay fenced until exact expiry');
+
+      const successor = await recovered.claimWakeDelivery(wakeId, {
+        // Same logical worker ID simulates a restarted process or pod.
+        workerId: 'same-worker-after-restart',
+        now: new Date(nowMs + 1000).toISOString(),
+        leaseMs: 1000,
+      });
+      assert.ok(successor, 'successor missing ' + i);
+      assert.equal(successor.attemptCount, 2);
+
+      await assert.rejects(
+        () => recovered.completeWakeDelivery(wakeId, {
+          workerId: 'same-worker-after-restart',
+          attemptCount: claim.attemptCount,
+          runtimeReceiptId: 'stale-receipt-' + i,
+          now: new Date(nowMs + 1100).toISOString(),
+        }),
+        error => error.code === 'WAKE_DELIVERY_CLAIM_LOST',
+        'old generation must not complete after reconnect',
+      );
+
+      const persisted = await recovered.completeWakeDelivery(wakeId, {
+        workerId: 'same-worker-after-restart',
+        attemptCount: successor.attemptCount,
+        runtimeReceiptId: 'accepted-receipt-' + i,
+        now: new Date(nowMs + 1200).toISOString(),
+      });
+      assert.equal(persisted.runtimeReceiptId, 'accepted-receipt-' + i);
+      assert.equal(persisted.status, 'delivered');
+
+      const reread = await store(recoveredPool, scopeId).getWakeDelivery(wakeId);
+      assert.equal(reread.runtimeReceiptId, 'accepted-receipt-' + i);
+      assert.equal(await recovered.claimWakeDelivery(wakeId, {
+        workerId: 'another-worker',
+        now: new Date(nowMs + 2000).toISOString(),
+        leaseMs: 1000,
+      }), null, 'delivered wakes must not re-claim');
+    }
+  } finally {
+    // Cleanup only via a live pool, never accidentally against another
+    // schema. Test uses the existing unique per-process test table prefix.
+    const cleanupPool = recoveredPool ?? (abandonedClosed ? pool() : abandonedPool);
+    try {
+      await dropTables(cleanupPool);
+    } finally {
+      await cleanupPool.end();
+      if (!abandonedClosed) await abandonedPool.end();
+    }
+  }
+});
