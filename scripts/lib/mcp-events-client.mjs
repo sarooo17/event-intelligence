@@ -345,6 +345,22 @@ export class McpEventsClientManager {
     return connection;
   }
 
+  /** Compare the actual host-owned connection object, not just its ID.
+   * A revoked session and a replacement can legitimately reuse connectionId.
+   */
+  isConnectionAttached(connection) {
+    return connection?.enabled !== false &&
+      this.connections.get(connection?.connectionId) === connection;
+  }
+
+  assertConnectionAttached(connection) {
+    if (!this.isConnectionAttached(connection)) {
+      const error = new Error('Host MCP Events connection is detached');
+      error.code = 'MCP_EVENTS_CONNECTION_DETACHED';
+      throw error;
+    }
+  }
+
   async attachConnection(input, { discover = true } = {}) {
     const connection = this.addConnection(input);
     let events = [];
@@ -373,6 +389,11 @@ export class McpEventsClientManager {
   }
 
   async detachConnection(connectionId) {
+    // Revoke synchronously BEFORE awaiting session closure, scope lookups or
+    // source deactivation. Every in-flight poll/push callback must observe
+    // that its exact session object is no longer authorized to ingest.
+    const connection = this.connections.get(connectionId);
+    const removed = this.connections.delete(connectionId);
     const timer = this.timers.get(connectionId);
     if (timer) clearTimeout(timer);
     this.timers.delete(connectionId);
@@ -387,14 +408,12 @@ export class McpEventsClientManager {
       }
     }
 
-    const connection = this.connections.get(connectionId);
     const context = connection ? await this.scopeContext(connection) : null;
-    if (connection) {
+    if (connection && !this.connections.has(connectionId)) {
       this.scopeContexts.delete(
         `${connection.connectionId}::${connection.scopeId}`,
       );
     }
-    const removed = this.connections.delete(connectionId);
     if (removed && context) {
       const sources = await context.store.listEventSources({
         connectionIds: [connectionId],
@@ -632,6 +651,10 @@ export class McpEventsClientManager {
   }
 
   async ingestOccurrence(connection, context, subscription, raw) {
+    // Do not even parse untrusted payloads from a revoked/replaced session.
+    if (!this.isConnectionAttached(connection)) {
+      return { accepted: false, reason: 'detached' };
+    }
     const descriptor = subscription.descriptor;
     const occurrence = McpEventOccurrenceSchema.parse(raw);
     if (occurrence.name !== descriptor.name) {
@@ -648,6 +671,12 @@ export class McpEventsClientManager {
       subscription.subscriptionId,
     );
     if (!receipt.accepted) return { accepted: false, occurrence };
+    // The host might revoke the MCP session while appendMcpOccurrence was
+    // awaiting storage. Failing closed takes precedence over delivery.
+    // A raced append may remain durable: see explicit race limitation docs.
+    if (!this.isConnectionAttached(connection)) {
+      return { accepted: false, reason: 'detached' };
+    }
 
     await context.compositeEventConsumer.ingestMcpOccurrence({
       event: occurrence,
@@ -667,11 +696,13 @@ export class McpEventsClientManager {
     subscription,
     patch = {},
   ) {
+    this.assertConnectionAttached(connection);
     const previous = await context.store.getMcpClientState(
       connection.connectionId,
       subscription.eventName,
       subscription.arguments,
     );
+    this.assertConnectionAttached(connection);
     return context.store.putMcpClientState({
       ...(previous || {}),
       connectionId: connection.connectionId,
@@ -689,6 +720,7 @@ export class McpEventsClientManager {
     subscription,
     { respectSchedule = false } = {},
   ) {
+    this.assertConnectionAttached(connection);
     const store = context.store;
     const current = await store.getMcpClientState(
       connection.connectionId,
@@ -730,6 +762,9 @@ export class McpEventsClientManager {
         cursor,
         maxEvents: connection.maxEvents,
       });
+      // Do not process an RPC response which completed after detach or after
+      // another session replaced this connectionId.
+      this.assertConnectionAttached(connection);
 
       if (!Array.isArray(result?.events)) {
         throw new Error(
@@ -763,6 +798,7 @@ export class McpEventsClientManager {
       const nextPollAt = new Date(
         this.now().getTime() + (hasMore ? 0 : nextPollMs),
       ).toISOString();
+      this.assertConnectionAttached(connection);
       await this.saveSubscriptionState(
         connection,
         context,
@@ -821,12 +857,14 @@ export class McpEventsClientManager {
     let accepted = 0;
 
     const onEvent = async (raw) => {
+      if (!this.isConnectionAttached(connection)) return;
       const receipt = await this.ingestOccurrence(
         connection,
         context,
         subscription,
         raw,
       );
+      if (!this.isConnectionAttached(connection)) return;
       if (receipt.accepted) accepted += 1;
       if (Object.prototype.hasOwnProperty.call(raw ?? {}, 'cursor')) {
         await this.saveSubscriptionState(
@@ -848,6 +886,7 @@ export class McpEventsClientManager {
     };
 
     const onActive = async (update = {}) => {
+      if (!this.isConnectionAttached(connection)) return;
       const patch = {
         deliveryMode: delivery,
         ...(Object.prototype.hasOwnProperty.call(update, 'cursor')
@@ -875,6 +914,7 @@ export class McpEventsClientManager {
     };
 
     const onError = (error) => {
+      if (!this.isConnectionAttached(connection)) return;
       this.lastErrors.set(
         connection.connectionId,
         error instanceof Error ? error.message : String(error),
@@ -891,6 +931,7 @@ export class McpEventsClientManager {
     };
 
     const onTerminated = async (detail) => {
+      if (!this.isConnectionAttached(connection)) return;
       this.deliverySessions.delete(subscription.subscriptionId);
       if (detail) {
         this.lastErrors.set(
@@ -1011,6 +1052,7 @@ export class McpEventsClientManager {
     }
 
     const context = await this.scopeContext(connection);
+    this.assertConnectionAttached(connection);
     let descriptors = this.descriptors.get(connectionId);
     if (!descriptors) {
       descriptors = await this.discoverConnection(connectionId);
@@ -1021,6 +1063,7 @@ export class McpEventsClientManager {
     const results = [];
 
     for (const subscription of desired.values()) {
+      this.assertConnectionAttached(connection);
       const delivery = chooseDelivery(connection, subscription.descriptor);
       if (!delivery) {
         results.push({
