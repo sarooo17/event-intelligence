@@ -181,6 +181,12 @@ export interface EmbeddedRuntimeBindOptions<
     portableTool: PortableAgentTool<RuntimeContext>,
   ): void;
   onClose?(close: () => Promise<void>): void;
+  /**
+   * Static allowlist for installation/discovery. [] exposes nothing.
+   * Unknown IDs fail before any registration. The host must separately
+   * enforce actor/tenant authority at every tool execution.
+   */
+  capabilityIds?: readonly string[];
 }
 
 export type EmbeddedToolAction =

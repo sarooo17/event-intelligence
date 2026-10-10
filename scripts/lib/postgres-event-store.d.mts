@@ -63,11 +63,15 @@ export declare class PostgresEventStore {
   }): Promise<any | null>;
   completeWakeDelivery(wakeId: string, options: {
     workerId: string;
+    /** Fencing generation returned by claimWakeDelivery. */
+    attemptCount: number;
     runtimeReceiptId: string;
     now?: string;
   }): Promise<any | null>;
   failWakeDelivery(wakeId: string, options: {
     workerId: string;
+    /** Fencing generation returned by claimWakeDelivery. */
+    attemptCount: number;
     error?: unknown;
     now?: string;
     maxAttempts?: number;

@@ -7,6 +7,7 @@ import test from 'node:test';
 
 import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
+import { operationNamesForSurface } from '../scripts/lib/operation-manifest.mjs';
 
 const rootDir = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -54,6 +55,11 @@ test('MCP stdio adapter exposes read-only Event Intelligence tools by default', 
     const { tools } = await session.client.listTools();
     const names = tools.map((tool) => tool.name).sort();
 
+    assert.deepEqual(
+      names,
+      operationNamesForSurface('stdio', { allowMutations: false }).sort(),
+    );
+
     assert.deepEqual(names, [
       'derived_contracts_list',
       'event_sources_list',
@@ -91,6 +97,38 @@ test('MCP stdio adapter exposes read-only Event Intelligence tools by default', 
         triggerPlanSchema,
         new RegExp(`"${operator}"`),
         `trigger_plan schema does not advertise Pattern operator ${operator}`,
+      );
+    }
+
+    // Owner cannot be overridden through a model-supplied argument.
+    const triggerList = tools.find((tool) => tool.name === 'trigger_list');
+    assert.ok(triggerList);
+    assert.equal(
+      Object.hasOwn(triggerList.inputSchema.properties ?? {}, 'ownerOnly'),
+      false,
+    );
+    assert.deepEqual(
+      (await session.client.callTool({
+        name: 'trigger_list',
+        arguments: {},
+      })).structuredContent.triggers,
+      [],
+    );
+    for (const [name, args] of [
+      ['trigger_inspect', { triggerId: 'someone-elses-trigger' }],
+      ['wake_hydrate', { wakeId: 'someone-elses-wake' }],
+    ]) {
+      const forbidden = await session.client.callTool({
+        name, arguments: args,
+      });
+      assert.equal(forbidden.isError, true);
+      assert.equal(
+        forbidden.structuredContent.code,
+        'EVENT_INTELLIGENCE_RESOURCE_NOT_FOUND',
+      );
+      assert.doesNotMatch(
+        JSON.stringify(forbidden),
+        /someone-elses-(trigger|wake)/,
       );
     }
 
@@ -178,6 +216,10 @@ test('MCP stdio write tools require explicit operator opt-in', async () => {
   try {
     const { tools } = await session.client.listTools();
     const names = new Set(tools.map((tool) => tool.name));
+    assert.deepEqual(
+      [...names].sort(),
+      operationNamesForSurface('stdio').sort(),
+    );
 
     for (const name of [
       'trigger_create',

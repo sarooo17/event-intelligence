@@ -7,6 +7,7 @@ import {
   parseTriggerMatchRecord,
 } from '../../dist/src/intelligenceProtocol/index.js';
 import { validateHistoryWindowLimit } from './history-window.mjs';
+import { assertWakeClaimGeneration } from './wake-claim-generation.mjs';
 import { assertPostgresSchemaShape } from './postgres-schema-shape.mjs';
 import {
   DEFAULT_EVENT_SCOPE_ID,
@@ -479,6 +480,7 @@ export class PostgresEventStore {
 
   async completeWakeDelivery(wakeIdInput, {
     workerId,
+    attemptCount,
     runtimeReceiptId,
     now = new Date().toISOString(),
   } = {}) {
@@ -486,12 +488,10 @@ export class PostgresEventStore {
     return this.tx(async (client) => {
       const current = await this.get('wake_delivery', wakeId, client, true);
       if (!current) return null;
+      assertWakeClaimGeneration(current, {
+        workerId, attemptCount, wakeId, allowDelivered: true,
+      });
       if (current.status === 'delivered') return current;
-      if (current.status !== 'claimed' || current.leaseOwner !== String(workerId || '')) {
-        const error = new Error('Wake delivery ' + wakeId + ' is not owned by this worker');
-        error.code = 'WAKE_DELIVERY_CLAIM_LOST';
-        throw error;
-      }
       const record = {
         ...current,
         status: 'delivered',
@@ -509,6 +509,7 @@ export class PostgresEventStore {
 
   async failWakeDelivery(wakeIdInput, {
     workerId,
+    attemptCount,
     error,
     now = new Date().toISOString(),
     maxAttempts = 5,
@@ -518,11 +519,7 @@ export class PostgresEventStore {
     return this.tx(async (client) => {
       const current = await this.get('wake_delivery', wakeId, client, true);
       if (!current) return null;
-      if (current.status !== 'claimed' || current.leaseOwner !== String(workerId || '')) {
-        const lost = new Error('Wake delivery ' + wakeId + ' is not owned by this worker');
-        lost.code = 'WAKE_DELIVERY_CLAIM_LOST';
-        throw lost;
-      }
+      assertWakeClaimGeneration(current, { workerId, attemptCount, wakeId });
       const terminal =
         Number(current.attemptCount || 0) >= Math.max(1, Number(maxAttempts) || 5);
       const record = {

@@ -126,6 +126,33 @@ For state whose row may not exist yet, such as the first lifecycle mutation, MCP
 
 The audit chain is serialized per EI scope, so concurrent workers still produce one monotonic sequence and one valid hash chain.
 
+### Wake claim-generation fencing
+
+Each `claimWakeDelivery` increments the persisted, per-wake `attemptCount`.
+The same numeric attempt generation **must** be presented with `workerId`
+to `completeWakeDelivery` and `failWakeDelivery`, and is checked under the
+same atomic transaction/serialized JSONL update as the delivery status.
+Missing generations fail with `WAKE_DELIVERY_CLAIM_GENERATION_REQUIRED`;
+stale generations fail with `WAKE_DELIVERY_CLAIM_LOST`.
+
+This closes the **same-worker ABA** gap: a worker process may reclaim its own
+expired lease before its previous delivery attempt returns. The old attempt
+cannot complete the new claim or schedule a retry/dead-letter with stale state,
+even though both attempts have the same `workerId`. No schema migration is
+needed because `attemptCount` was already persisted before this change.
+The coordinator now forwards the generation from each claim to both terminal
+store operations. If its callback loses ownership while in flight, it returns a
+non-terminal `claim_lost` outcome (with current delivery state) instead of
+scheduling a retry/dead-letter for the successor or throwing out of the
+retry scheduler. This is a deliberate pre-v1 change to the advanced store
+mutation contract; custom adapters must follow the same generation fencing.
+
+**Important limitation:** state fencing does not prevent the external runtime
+from receiving an event twice if a lease expires during its side effect.
+Hosts must still make delivery idempotent using the stable EI wake/host receipt
+identity; the fence protects durable EI state transitions, not arbitrary
+external actions.
+
 ### Crash and retry recovery
 
 Wake retry/DLQ state is shared database state. If a worker disappears after claiming a wake, another worker can reclaim it after `leaseUntil`. Retry attempt count, next attempt time and dead-letter state remain visible to every worker.

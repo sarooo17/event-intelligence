@@ -10,83 +10,28 @@ import {
   createEventIntelligenceHost,
   createMcpRegistryAdapter,
 } from './host-integration.mjs';
+import { OPERATION_MANIFEST } from './lib/operation-manifest.mjs';
 
 const DEFAULT_TOOL_NAMES = Object.freeze({
-  sources: 'event_sources_list',
-  create: 'trigger_create',
-  list: 'trigger_list',
-  inspect: 'trigger_inspect',
-  pause: 'trigger_pause',
-  resume: 'trigger_resume',
-  delete: 'trigger_delete',
-  update: 'trigger_update',
+  sources: OPERATION_MANIFEST.sources.name,
+  create: OPERATION_MANIFEST.create.name,
+  list: OPERATION_MANIFEST.list.name,
+  inspect: OPERATION_MANIFEST.inspect.name,
+  pause: OPERATION_MANIFEST.pause.name,
+  resume: OPERATION_MANIFEST.resume.name,
+  delete: OPERATION_MANIFEST.delete.name,
+  update: OPERATION_MANIFEST.update.name,
 });
 
 export const EVENT_INTELLIGENCE_CAPABILITIES = Object.freeze({
-  eventSourcesList: Object.freeze({
-    id: 'event-intelligence.event-sources.list',
-    operation: 'read',
-    resource: 'event-source',
-    effect: 'none',
-    durability: 'ephemeral',
-    hostControl: 'none',
-  }),
-  triggerCreate: Object.freeze({
-    id: 'event-intelligence.trigger.create',
-    operation: 'create',
-    resource: 'trigger',
-    effect: 'durable-state',
-    durability: 'durable',
-    hostControl: 'required',
-  }),
-  triggerList: Object.freeze({
-    id: 'event-intelligence.trigger.list',
-    operation: 'read',
-    resource: 'trigger',
-    effect: 'none',
-    durability: 'ephemeral',
-    hostControl: 'none',
-  }),
-  triggerInspect: Object.freeze({
-    id: 'event-intelligence.trigger.inspect',
-    operation: 'read',
-    resource: 'trigger',
-    effect: 'none',
-    durability: 'ephemeral',
-    hostControl: 'none',
-  }),
-  triggerPause: Object.freeze({
-    id: 'event-intelligence.trigger.pause',
-    operation: 'update',
-    resource: 'trigger',
-    effect: 'durable-state',
-    durability: 'durable',
-    hostControl: 'required',
-  }),
-  triggerResume: Object.freeze({
-    id: 'event-intelligence.trigger.resume',
-    operation: 'update',
-    resource: 'trigger',
-    effect: 'durable-state',
-    durability: 'durable',
-    hostControl: 'required',
-  }),
-  triggerDelete: Object.freeze({
-    id: 'event-intelligence.trigger.delete',
-    operation: 'delete',
-    resource: 'trigger',
-    effect: 'durable-state',
-    durability: 'durable',
-    hostControl: 'required',
-  }),
-  triggerUpdate: Object.freeze({
-    id: 'event-intelligence.trigger.update',
-    operation: 'update',
-    resource: 'trigger',
-    effect: 'durable-state',
-    durability: 'durable',
-    hostControl: 'required',
-  }),
+  eventSourcesList: OPERATION_MANIFEST.sources.capability,
+  triggerCreate: OPERATION_MANIFEST.create.capability,
+  triggerList: OPERATION_MANIFEST.list.capability,
+  triggerInspect: OPERATION_MANIFEST.inspect.capability,
+  triggerPause: OPERATION_MANIFEST.pause.capability,
+  triggerResume: OPERATION_MANIFEST.resume.capability,
+  triggerDelete: OPERATION_MANIFEST.delete.capability,
+  triggerUpdate: OPERATION_MANIFEST.update.capability,
 });
 
 const TriggerClauseInput = z.object({
@@ -640,7 +585,7 @@ export function summarizeEventSourceStatus(
 
 export function bindEmbeddedRuntimeIntegration(
   integration,
-  { adapt, register, onClose } = {},
+  { adapt, register, onClose, capabilityIds } = {},
 ) {
   if (!integration || typeof integration !== 'object') {
     throw new Error('embedded integration is required');
@@ -655,7 +600,31 @@ export function bindEmbeddedRuntimeIntegration(
     throw new Error('bind onClose must be a function');
   }
 
-  const adapted = integration.tools.map((portableTool) => {
+  // Apply static capability filtering BEFORE calling a host tool adapter or
+  // registration hook. Discovery must never preload an unexposed capability.
+  // The host remains responsible for per-actor policy at execution time.
+  let selected = integration.tools;
+  if (capabilityIds !== undefined) {
+    // Iterating converts sparse holes to undefined; Array.some() silently
+    // skips empty slots, which would otherwise bypass fail-closed validation.
+    if (!Array.isArray(capabilityIds) ||
+        [...capabilityIds].some((id) => typeof id !== 'string' || !id.trim())) {
+      throw new TypeError('capabilityIds must be an array of non-empty capability IDs');
+    }
+    const known = new Set(
+      integration.tools.map((tool) => tool?.capability?.id),
+    );
+    const unavailable = capabilityIds.find((id) => !known.has(id));
+    if (unavailable) {
+      throw new Error('Cannot expose unknown EI capability: ' + unavailable);
+    }
+    const allowed = new Set(capabilityIds);
+    selected = integration.tools.filter((tool) =>
+      allowed.has(tool.capability?.id)
+    );
+  }
+
+  const adapted = selected.map((portableTool) => {
     const hostTool = adapt(portableTool);
     register(hostTool, portableTool);
     return hostTool;

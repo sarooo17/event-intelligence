@@ -304,6 +304,15 @@ export class CompositeWakeCoordinator {
       });
     }
 
+    const claimLostOutcome = async (error) => ({
+      // Another attempt owns the durable delivery now. Do not overwrite its
+      // state, append retry/DLQ audit, or abort the due-wake scheduler.
+      status: 'claim_lost',
+      wake: await this.store.latestWake(wakeId) ?? persistedQueued,
+      delivery: await this.store.getWakeDelivery(wakeId),
+      error,
+    });
+
     try {
       const packet = this.packetBuilder({
         wakeId,
@@ -321,6 +330,7 @@ export class CompositeWakeCoordinator {
 
       const delivery = await this.store.completeWakeDelivery(wakeId, {
         workerId: this.workerId,
+        attemptCount: claim.attemptCount,
         runtimeReceiptId: receipt.runtimeReceiptId,
         now: this.now().toISOString(),
       });
@@ -373,19 +383,31 @@ export class CompositeWakeCoordinator {
         delivery,
       };
     } catch (error) {
+      if (error?.code === 'WAKE_DELIVERY_CLAIM_LOST') {
+        return claimLostOutcome(error);
+      }
       const delay = retryDelayMs(
         claim.attemptCount,
         this.retryBaseDelayMs,
         this.retryMaxDelayMs,
       );
       const failureAt = this.now();
-      const delivery = await this.store.failWakeDelivery(wakeId, {
-        workerId: this.workerId,
-        error,
-        now: failureAt.toISOString(),
-        maxAttempts: this.maxAttempts,
-        nextAttemptAt: new Date(failureAt.getTime() + delay).toISOString(),
-      });
+      let delivery;
+      try {
+        delivery = await this.store.failWakeDelivery(wakeId, {
+          workerId: this.workerId,
+          attemptCount: claim.attemptCount,
+          error,
+          now: failureAt.toISOString(),
+          maxAttempts: this.maxAttempts,
+          nextAttemptAt: new Date(failureAt.getTime() + delay).toISOString(),
+        });
+      } catch (failError) {
+        if (failError?.code === 'WAKE_DELIVERY_CLAIM_LOST') {
+          return claimLostOutcome(failError);
+        }
+        throw failError;
+      }
 
       if (delivery?.status !== 'dead_letter') {
         await this.store.appendAudit({

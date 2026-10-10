@@ -1495,3 +1495,75 @@ test('neutral facade preserves class registry receivers for listing and subscrip
   assert.equal(mcp.listeners.length, 0);
   await ei.close();
 });
+
+test('embedded bind filters capability discovery before adapt or register', () => {
+  const tools = [
+    {
+      name: 'event_sources_list',
+      capability: EVENT_INTELLIGENCE_CAPABILITIES.eventSourcesList,
+    },
+    {
+      name: 'trigger_create',
+      capability: EVENT_INTELLIGENCE_CAPABILITIES.triggerCreate,
+    },
+    {
+      name: 'trigger_delete',
+      capability: EVENT_INTELLIGENCE_CAPABILITIES.triggerDelete,
+    },
+  ];
+  const adapted = [];
+  const registered = [];
+  const integration = {
+    tools,
+    async close() {},
+  };
+  const installed = bindEmbeddedRuntimeIntegration(integration, {
+    capabilityIds: ['event-intelligence.event-sources.list'],
+    adapt(tool) {
+      adapted.push(tool.name);
+      return { name: tool.name };
+    },
+    register(hostTool) {
+      registered.push(hostTool.name);
+    },
+  });
+  assert.deepEqual(installed, [{ name: 'event_sources_list' }]);
+  assert.deepEqual(adapted, ['event_sources_list']);
+  assert.deepEqual(registered, ['event_sources_list']);
+
+  const none = bindEmbeddedRuntimeIntegration(integration, {
+    capabilityIds: [],
+    adapt() { throw new Error('must not adapt'); },
+    register() { throw new Error('must not register'); },
+  });
+  assert.deepEqual(none, []);
+});
+
+test('unknown or malformed capability allowlists fail before any registration', () => {
+  let registrations = 0;
+  const integration = {
+    tools: [{
+      name: 'event_sources_list',
+      capability: EVENT_INTELLIGENCE_CAPABILITIES.eventSourcesList,
+    }],
+    async close() {},
+  };
+  for (const capabilityIds of [
+    ['event-intelligence.trigger.delete'],
+    ['event-intelligence.event-sources.list', 'unknown'],
+    'event-intelligence.event-sources.list',
+    [null],
+    new Array(1),
+    ['event-intelligence.event-sources.list', ,],
+  ]) {
+    assert.throws(
+      () => bindEmbeddedRuntimeIntegration(integration, {
+        capabilityIds,
+        adapt: () => ({ name: 'never' }),
+        register: () => { registrations++; },
+      }),
+      /capabilityIds must|unknown EI capability/,
+    );
+  }
+  assert.equal(registrations, 0);
+});

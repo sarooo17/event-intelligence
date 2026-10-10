@@ -233,6 +233,7 @@ integrationTest('expired wake and partition leases recover on another worker and
     await assert.rejects(
       () => storeA.completeWakeDelivery('recover-wake', {
         workerId: 'worker-a',
+        attemptCount: claimA.attemptCount,
         runtimeReceiptId: 'stale-owner',
         now: new Date(t0.getTime() + 1200).toISOString(),
       }),
@@ -241,6 +242,7 @@ integrationTest('expired wake and partition leases recover on another worker and
 
     const failed = await storeB.failWakeDelivery('recover-wake', {
       workerId: 'worker-b',
+      attemptCount: claimB.attemptCount,
       error: new Error('retry me'),
       now: new Date(t0.getTime() + 1200).toISOString(),
       nextAttemptAt: new Date(t0.getTime() + 2200).toISOString(),
@@ -257,6 +259,7 @@ integrationTest('expired wake and partition leases recover on another worker and
     assert.equal(claimA2.attemptCount, 3);
     const dead = await storeA.failWakeDelivery('recover-wake', {
       workerId: 'worker-a',
+      attemptCount: claimA2.attemptCount,
       error: new Error('permanent'),
       now: new Date(t0.getTime() + 2400).toISOString(),
       maxAttempts: 3,
@@ -618,6 +621,76 @@ integrationTest('empty malformed legacy table cannot receive a trusted schema ma
   }
 });
 
+
+integrationTest('same-worker ABA reclaim cannot finish or fail a newer generation', async () => {
+  const dbPool = pool();
+  const start = Date.parse('2026-10-08T09:00:00.000Z');
+  try {
+    const first = store(dbPool, 'same-worker-aba');
+    const second = store(dbPool, 'same-worker-aba');
+    await Promise.all([first.init(), second.init()]);
+    await first.ensureWakeDelivery({
+      wakeId: 'aba-wake', matchId: 'aba-match',
+      triggerId: 'aba-trigger', triggerVersion: '1',
+      runtime: 'runtime-aba', now: new Date(start).toISOString(),
+    });
+    const old = await first.claimWakeDelivery('aba-wake', {
+      workerId: 'same-worker',
+      now: new Date(start).toISOString(),
+      leaseMs: 1000,
+    });
+    assert.equal(old.attemptCount, 1);
+    const newer = await second.claimWakeDelivery('aba-wake', {
+      workerId: 'same-worker',
+      now: new Date(start + 1000).toISOString(),
+      leaseMs: 1000,
+    });
+    assert.equal(newer.attemptCount, 2);
+    for (const method of ['complete', 'fail']) {
+      await assert.rejects(
+        () => method === 'complete'
+          ? first.completeWakeDelivery('aba-wake', {
+              workerId: 'same-worker',
+              attemptCount: old.attemptCount,
+              runtimeReceiptId: 'stale-receipt',
+              now: new Date(start + 1100).toISOString(),
+            })
+          : first.failWakeDelivery('aba-wake', {
+              workerId: 'same-worker',
+              attemptCount: old.attemptCount,
+              error: new Error('stale error'),
+              now: new Date(start + 1100).toISOString(),
+            }),
+        (error) => error.code === 'WAKE_DELIVERY_CLAIM_LOST',
+      );
+    }
+    await assert.rejects(
+      () => first.completeWakeDelivery('aba-wake', {
+        workerId: 'same-worker', runtimeReceiptId: 'missing token',
+      }),
+      (error) => error.code === 'WAKE_DELIVERY_CLAIM_GENERATION_REQUIRED',
+    );
+    const accepted = await second.completeWakeDelivery('aba-wake', {
+      workerId: 'same-worker',
+      attemptCount: newer.attemptCount,
+      runtimeReceiptId: 'new-receipt',
+      now: new Date(start + 1200).toISOString(),
+    });
+    assert.equal(accepted.runtimeReceiptId, 'new-receipt');
+    assert.equal((await first.getWakeDelivery('aba-wake')).runtimeReceiptId, 'new-receipt');
+    await assert.rejects(
+      () => first.completeWakeDelivery('aba-wake', {
+        workerId: 'same-worker',
+        attemptCount: old.attemptCount,
+        runtimeReceiptId: 'stale-receipt-after-delivery',
+      }),
+      (error) => error.code === 'WAKE_DELIVERY_CLAIM_LOST',
+    );
+  } finally {
+    await dropTables(dbPool);
+    await dbPool.end();
+  }
+});
 
 integrationTest('bounded adversarial wake claims: four workers, 20 independent lease handovers', async () => {
   const poolA = pool();
