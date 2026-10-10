@@ -6,6 +6,7 @@ import {
   parseDerivedEventRecord,
   parseTriggerMatchRecord,
 } from '../../dist/src/intelligenceProtocol/index.js';
+import { validateHistoryWindowLimit } from './history-window.mjs';
 import {
   DEFAULT_EVENT_SCOPE_ID,
   normalizeEventScopeId,
@@ -631,6 +632,29 @@ export class PostgresEventStore {
   async listTriggerMatchHistory(matchId) {
     return (await this.historyList('trigger_match_history', matchId))
       .map(parseTriggerMatchRecord);
+  }
+
+  /**
+   * Scope-constrained, index-backed bounded history. Request limit + 1 so
+   * callers can distinguish truncated history without loading all revisions.
+   * Returned records preserve oldest-to-newest order within the window.
+   */
+  async getRecentTriggerMatchHistory(matchId, { limit = 100 } = {}) {
+    const safeLimit = validateHistoryWindowLimit(limit);
+    const result = await this.pool.query(
+      'SELECT payload FROM ' + this.history +
+        ' WHERE scope_id = $1 AND kind = $2 AND record_key = $3' +
+        ' ORDER BY history_id DESC LIMIT $4',
+      [this.scopeId, 'trigger_match_history', String(matchId), safeLimit + 1],
+    );
+    const rows = result.rows;
+    return {
+      records: rows.slice(0, safeLimit).map((row) =>
+        parseTriggerMatchRecord(row.payload)
+      ).reverse(),
+      hasMore: rows.length > safeLimit,
+      limit: safeLimit,
+    };
   }
 
   async appendMcpOccurrence(serverId, eventInput, subscriptionIdInput = null) {
