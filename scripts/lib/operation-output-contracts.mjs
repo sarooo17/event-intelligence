@@ -159,7 +159,11 @@ export function outputValidator(surface, operation) {
   if (!OPERATION_MANIFEST[operation]?.surfaces[surface]) {
     throw new Error('Operation not exposed on EI surface: ' + operation);
   }
-  return OPERATION_OUTPUT_CONTRACTS[operation][surface];
+  const validator = OPERATION_OUTPUT_CONTRACTS[operation][surface];
+  if (!validator) {
+    throw new Error('Unmodeled EI output projection: ' + surface + ' ' + operation);
+  }
+  return validator;
 }
 
 export function validateOperationOutput(surface, operation, value) {
