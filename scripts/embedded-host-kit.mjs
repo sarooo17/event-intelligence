@@ -22,6 +22,17 @@ import {
   EMBEDDED_INPUT_VALIDATORS,
 } from './lib/embedded-operation-schemas.mjs';
 
+/**
+ * Stable configuration diagnostics for the neutral host boundary.
+ * Preserve TypeError for invalid caller configuration while giving
+ * integrations a machine-readable reason without parsing English text.
+ */
+function hostConfigurationError(message, code) {
+  const error = new TypeError(message);
+  error.code = code;
+  return error;
+}
+
 const DEFAULT_TOOL_NAMES = Object.freeze({
   sources: OPERATION_MANIFEST.sources.name,
   create: OPERATION_MANIFEST.create.name,
@@ -1729,16 +1740,18 @@ export async function createEventIntelligence({
 } = {}) {
   if (!runtime || typeof runtime !== 'object' ||
       typeof runtime.deliver !== 'function') {
-    throw new TypeError(
+    throw hostConfigurationError(
       'createEventIntelligence requires runtime.deliver() for host-owned continuation delivery',
+      'EI_HOST_DELIVERY_REQUIRED',
     );
   }
 
   if (mcp !== undefined &&
       (!mcp || typeof mcp.list !== 'function' ||
         (mcp.subscribe !== undefined && typeof mcp.subscribe !== 'function'))) {
-    throw new TypeError(
+    throw hostConfigurationError(
       'createEventIntelligence mcp must provide list() and optional subscribe()',
+      'EI_HOST_MCP_REGISTRY_INVALID',
     );
   }
 
@@ -1747,23 +1760,33 @@ export async function createEventIntelligence({
   if (wantsTools &&
       (typeof runtime.resolveContext !== 'function' ||
         typeof runtime.control !== 'function')) {
-    throw new TypeError(
+    throw hostConfigurationError(
       'Agent-facing EI tools require BOTH runtime.resolveContext() and runtime.control(); missing control must never grant mutations',
+      'EI_HOST_CONTROL_REQUIRED',
     );
   }
   for (const name of ['hasReceipt', 'resolveTarget', 'receiptId',
     'projectResult', 'projectError']) {
     if (runtime[name] !== undefined && typeof runtime[name] !== 'function') {
-      throw new TypeError(`runtime.${name} must be a function when supplied`);
+      throw hostConfigurationError(
+        `runtime.${name} must be a function when supplied`,
+        'EI_HOST_CALLBACK_INVALID',
+      );
     }
   }
   if (runtime.receiptNamespace !== undefined &&
       (typeof runtime.receiptNamespace !== 'string' ||
         !runtime.receiptNamespace.trim())) {
-    throw new TypeError('runtime.receiptNamespace must be a non-empty string');
+    throw hostConfigurationError(
+      'runtime.receiptNamespace must be a non-empty string',
+      'EI_HOST_RECEIPT_CONFIG_INVALID',
+    );
   }
   if (runtime.receiptId && runtime.receiptNamespace) {
-    throw new TypeError('Provide runtime.receiptId or receiptNamespace, not both');
+    throw hostConfigurationError(
+      'Provide runtime.receiptId or receiptNamespace, not both',
+      'EI_HOST_RECEIPT_CONFIG_INVALID',
+    );
   }
 
   // Forward through runtime so ordinary object methods keep their receiver.
