@@ -1,0 +1,77 @@
+name: PostgreSQL Scale Evidence (manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: 'Durable trigger workload to measure (not a capacity claim)'
+        required: true
+        type: choice
+        options:
+          - 1k
+          - 10k
+          - 100k
+      wakes:
+        description: 'Number of measured wake cycles (1 to 1000)'
+        required: true
+        type: number
+        default: 128
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: event_intelligence
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d event_intelligence"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      POSTGRES_URL: postgresql://postgres:postgres@127.0.0.1:5432/event_intelligence
+      EI_PG_BENCHMARK_CONFIRM: YES_ISOLATED
+      PROFILE: ${{ inputs.profile }}
+      WAKES: ${{ inputs.wakes }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install and build
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm install --no-save --ignore-scripts --no-audit --no-fund pg@8
+          npm run build
+      - name: Record reproducibility environment
+        shell: bash
+        run: |
+          { uname -a; node --version; npm --version; lscpu; free -m; } > benchmark-host.txt
+      - name: Benchmark durable PostgreSQL operations
+        shell: bash
+        run: |
+          set -o pipefail
+          node scripts/evidence/postgres-durable-scale.mjs \
+            --profile "$PROFILE" --wakes "$WAKES" --concurrency 4 \
+            > benchmark-result.json 2> benchmark-errors.jsonl
+          cat benchmark-result.json
+      - name: Retain raw results and failure diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ei-postgres-scale-${{ inputs.profile }}-${{ github.run_id }}
+          path: |
+            benchmark-result.json
+            benchmark-errors.jsonl
+            benchmark-host.txt
+          if-no-files-found: warn
+          retention-days: 90
