@@ -14,15 +14,13 @@ import {
 test('three shared semantic output operations expose intentional transport projections', () => {
   assert.equal(OPERATION_OUTPUT_CONTRACT_VERSION, '1');
   assert.deepEqual(Object.keys(OPERATION_OUTPUT_CONTRACTS),[
-    'sources','list','inspect',
+    'sources','list',
   ]);
   assert.equal(outputValidator('stdio','sources'),
     outputValidator('embedded','sources'));
-  assert.equal(outputValidator('stdio','inspect'),
-    outputValidator('embedded','inspect'));
   assert.notEqual(outputValidator('stdio','list'),
     outputValidator('embedded','list'));
-  for (const key of ['sources','list','inspect']) {
+  for (const key of ['sources','list']) {
     for (const surface of ['stdio','embedded']) {
       const json=outputJsonSchema(surface,key);
       assert.equal(json.type,'object');
@@ -32,18 +30,10 @@ test('three shared semantic output operations expose intentional transport proje
 });
 
 test('runtime output validation rejects missing/wrong shapes without mutating data',()=>{
-  const valid={
-    trigger:{triggerId:'trigger-1',version:'2',continuation:{instruction:'untrusted'}},
-    lifecycle:{status:'active'},why:{code:'pattern_waiting'},
-    evidence:[{payload:'untrusted'}],
-  };
-  assert.equal(validateOperationOutput('stdio','inspect',valid),valid);
-  assert.equal(validateOperationOutput('embedded','inspect',valid),valid);
   for(const surface of ['stdio','embedded']){
     for(const [operation,bad] of [
       ['sources',{sources:'not-an-array'}],
       ['list',{triggers:'not-an-array'}],
-      ['inspect',{trigger:{triggerId:'x'},why:{code:4}}],
     ]) {
       assert.throws(()=>validateOperationOutput(surface,operation,bad),
         err=>err.code==='EI_OUTPUT_CONTRACT_INVALID');
@@ -83,7 +73,7 @@ test('real embedded list validates canonical projected response before host proj
   for(const key of ['event_sources_list','trigger_inspect']){
     assert.ok(tools.find(item=>item.name===key)?.outputSchema);
   }
-  for(const key of ['trigger_create','trigger_pause','trigger_update']){
+  for(const key of ['trigger_create','trigger_pause','trigger_update','trigger_inspect']){
     assert.equal(tools.find(item=>item.name===key)?.outputSchema,undefined);
   }
 });
