@@ -5,12 +5,21 @@ export const EI_OBSERVABILITY_SCHEMA_VERSION = '1';
 
 function truncate(value, max = 1000) {
   const text = String(value ?? '')
-    .replace(/Bearer\\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer [redacted]')
+    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer [redacted]')
     .replace(
-      /((?:api[_-]?key|authorization|password|secret|token)\\s*[=:]\\s*)[^\\s,;]+/gi,
+      /((?:api[_-]?key|authorization|password|secret|token)\s*[=:]\s*)[^\s,;]+/gi,
       '$1[redacted]',
     );
   return text.length > max ? `${text.slice(0, max)}…` : text;
+}
+
+/**
+ * Public telemetry dimensions are not trusted just because their field name
+ * is approved: MCP/provider-controlled identifiers and status text can still
+ * contain bearer credentials or key=value fragments.
+ */
+function dimension(value, max = 200) {
+  return truncate(value, max);
 }
 
 function sanitize(value, depth = 0) {
@@ -94,23 +103,23 @@ export function createObservabilityEmitter(
       const record = {
         schema: `event-intelligence.observability.v${EI_OBSERVABILITY_SCHEMA_VERSION}`,
         timestamp: input.timestamp
-          ? String(input.timestamp)
+          ? dimension(input.timestamp)
           : now().toISOString(),
         level,
-        event,
-        component: String(input.component ?? component),
-        ...(input.traceId ? { traceId: String(input.traceId) } : {}),
-        ...(input.scopeId ? { scopeId: String(input.scopeId) } : {}),
-        ...(input.triggerId ? { triggerId: String(input.triggerId) } : {}),
-        ...(input.matchId ? { matchId: String(input.matchId) } : {}),
-        ...(input.wakeId ? { wakeId: String(input.wakeId) } : {}),
-        ...(input.connectionId ? { connectionId: String(input.connectionId) } : {}),
-        ...(input.serverId ? { serverId: String(input.serverId) } : {}),
-        ...(input.eventName ? { eventName: String(input.eventName) } : {}),
-        ...(input.status ? { status: String(input.status) } : {}),
+        event: dimension(event),
+        component: dimension(input.component ?? component),
+        ...(input.traceId ? { traceId: dimension(input.traceId) } : {}),
+        ...(input.scopeId ? { scopeId: dimension(input.scopeId) } : {}),
+        ...(input.triggerId ? { triggerId: dimension(input.triggerId) } : {}),
+        ...(input.matchId ? { matchId: dimension(input.matchId) } : {}),
+        ...(input.wakeId ? { wakeId: dimension(input.wakeId) } : {}),
+        ...(input.connectionId ? { connectionId: dimension(input.connectionId) } : {}),
+        ...(input.serverId ? { serverId: dimension(input.serverId) } : {}),
+        ...(input.eventName ? { eventName: dimension(input.eventName) } : {}),
+        ...(input.status ? { status: dimension(input.status) } : {}),
         ...(input.attempt != null ? { attempt: Number(input.attempt) } : {}),
         ...(input.nextAttemptAt
-          ? { nextAttemptAt: String(input.nextAttemptAt) }
+          ? { nextAttemptAt: dimension(input.nextAttemptAt) }
           : {}),
         ...(input.error
           ? { error: serializeObservabilityError(input.error) }
