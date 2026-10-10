@@ -95,3 +95,25 @@ test('hydration does not fabricate missing trigger matches', async () => {
     (error) => error.code === 'ACTIVATION_TRIGGER_MATCH_NOT_FOUND',
   );
 });
+
+test('hydration rejects forged wake subscription even when other references agree', async () => {
+  // Wake claims trigger a, while delivery and match consistently point to b.
+  const input = fakeStore({
+    delivery: {
+      wakeId: 'wake-a',
+      matchId: 'match-a',
+      triggerId: 'b',
+      triggerVersion: '1',
+    },
+    matches: [{
+      matchId: 'match-a',
+      triggerId: 'b',
+      triggerVersion: '1',
+      sourceEvents: [{ data: { text: 'foreign evidence' } }],
+    }],
+  });
+  await assert.rejects(
+    () => new ActivationHydrator({ store: input.store }).hydrateWake('wake-a'),
+    assertProvenanceFailure,
+  );
+});
