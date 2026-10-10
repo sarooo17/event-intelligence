@@ -69,6 +69,23 @@ Previously queued and matched events may still require host-owned
 cancellation policy before waking an agent. Stronger atomic cursor/append
 fencing and explicit queued-work revocation belong to #45.
 
+## Telemetry redaction at the observability boundary
+
+The `ei.*` best-effort observability emitter uses an allowlisted record
+shape, drops sensitive metadata keys and redacts bearer credentials and
+key/value tokens in **all accepted string dimensions**, nested metadata and
+serialized error messages. These filters run before handing the record to
+host-provided telemetry sinks. A deterministic synthetic 64-case mutation
+corpus exercises metadata, errors and top-level dimensions.
+
+**Limitations:** Pattern-based redaction is defense in depth, not a guarantee
+that all possible arbitrary secrets can be recognized in unlabelled text.
+The producer/host **must not submit private event payloads, tokens or
+continuation instructions as telemetry dimensions**. A sink may store any
+record it receives; host retention and data-transfer policies remain
+host-owned. Disabling the emitter or sink failure does not change EI event
+matching or wake delivery.
+
 ## Standalone MCP read authority
 
 The standalone stdio server is configured with a trusted `MCP_OWNER_ID` and optional
