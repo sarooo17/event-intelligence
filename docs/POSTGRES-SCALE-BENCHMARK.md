@@ -48,7 +48,11 @@ Optional `--concurrency 4` (1–16) controls bounded registration workers and
 
 The JSON result has schema `event-intelligence.postgres-durable-scale.v1` and
 records p50/p95/p99/max/mean, observation counts, duration, throughput and
-runtime information. Save raw stdout plus hardware/container/database specs
+runtime information. A `status: "completed"` report is emitted **only after**
+temporary table cleanup and pool close succeed. Configuration, driver,
+database, workload, cleanup and connection-close failures produce a structured
+`status: "failed"` record on stderr with a phase, code and error list; a run
+that leaves temporary tables behind is never reported as completed. Save raw stdout plus hardware/container/database specs
 alongside the report. A failed run prints machine-readable phase/error data
 and exits nonzero — failures are data too.
 
