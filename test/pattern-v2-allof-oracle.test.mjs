@@ -49,12 +49,23 @@ function actualPairs(result) {
 }
 
 test('allOf independently matches 250 seeded Cartesian corpora under 3 arrival permutations', async () => {
+  const coverage = { noA: 0, noB: 0, both: 0, neither: 0 };
   for (let seed = 1; seed <= 250; seed++) {
-    const random = deterministicRandom(seed);
+    // Consecutive raw LCG seeds share their first output bucket; scramble
+    // seeds so the first event can be a, b or noise.
+    const random = deterministicRandom(
+      (Math.imul(seed, 2654435761) ^ 0x85ebca6b) >>> 0,
+    );
     const length = 1 + ((seed - 1) % 9);
     const events = Array.from({ length }, (_, i) => inputEvent(
       seed, i, ['a', 'b', 'noise'][Math.floor(random() * 3)],
     ));
+    const hasA = events.some(event => event.clauseId === 'a');
+    const hasB = events.some(event => event.clauseId === 'b');
+    if (!hasA) coverage.noA++;
+    if (!hasB) coverage.noB++;
+    if (hasA && hasB) coverage.both++;
+    if (!hasA && !hasB) coverage.neither++;
     const expected = referenceAllOfPairs(events);
     for (let round = 0; round < 3; round++) {
       const arrival = shuffled(events, random);
@@ -66,6 +77,9 @@ test('allOf independently matches 250 seeded Cartesian corpora under 3 arrival p
       assert.deepEqual(actualPairs(result), expected,
         `allOf differential mismatch seed=${seed},round=${round},sequence=${events.map(x => x.clauseId).join(',')}`);
     }
+  }
+  for (const [caseName, observed] of Object.entries(coverage)) {
+    assert.ok(observed > 0, 'missing seeded coverage for ' + caseName);
   }
 });
 
