@@ -10,7 +10,7 @@ import {
   COMPOSITE_TRIGGER_PROTOCOL_VERSION,
   COMPOSITE_TRIGGER_SCHEMA_VERSION,
   CompositeTriggerDefinitionSchema,
-  CorrelatableEventSchema,
+  parseCorrelatableEvent,
   TriggerMatchRecordSchema,
   type CompositeTriggerDefinition,
   type CorrelatableEvent,
@@ -131,7 +131,7 @@ export class CompositeTriggerEngine {
   }
 
   async ingest(eventInput: unknown): Promise<CompositeIngestResult[]> {
-    const event = CorrelatableEventSchema.parse(eventInput);
+    const event = parseCorrelatableEvent(eventInput);
 
     if (event.name === 'event-intelligence.timer.reached') {
       return this.ingestTimerEvent(event);
