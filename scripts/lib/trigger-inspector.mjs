@@ -7,6 +7,24 @@ import {
   parseTriggerMatchRecord,
 } from '../../dist/src/intelligenceProtocol/index.js';
 
+function validHistoryProjection(record) {
+  return Boolean(
+    record && typeof record === 'object' && !Array.isArray(record) &&
+    typeof record.status === 'string' && record.status.length > 0 &&
+    typeof record.updatedAt === 'string' &&
+    Number.isFinite(Date.parse(record.updatedAt)) &&
+    Array.isArray(record.sourceEvents) &&
+    record.sourceEvents.every((event) =>
+      event && typeof event === 'object' &&
+      typeof event.sourceEventId === 'string' &&
+      event.sourceEventId.length > 0
+    ) &&
+    (record.derivedEventIds === undefined ||
+      (Array.isArray(record.derivedEventIds) &&
+        record.derivedEventIds.every((id) => typeof id === 'string')))
+  );
+}
+
 function latest(records) {
   const rank = (record) => {
     if (record.status === 'fired') return 5;
@@ -222,7 +240,8 @@ export class TriggerInspector {
       );
       if (!window || !Array.isArray(window.records) ||
           window.records.length > this.matchHistoryLimit ||
-          typeof window.hasMore !== 'boolean') {
+          typeof window.hasMore !== 'boolean' ||
+          !window.records.every(validHistoryProjection)) {
         const error = new Error('Store returned invalid bounded history window');
         error.code = 'EVENT_INTELLIGENCE_HISTORY_WINDOW_INVALID';
         throw error;
