@@ -221,6 +221,7 @@ export class TriggerInspector {
         { limit: this.matchHistoryLimit },
       );
       if (!window || !Array.isArray(window.records) ||
+          window.records.length > this.matchHistoryLimit ||
           typeof window.hasMore !== 'boolean') {
         const error = new Error('Store returned invalid bounded history window');
         error.code = 'EVENT_INTELLIGENCE_HISTORY_WINDOW_INVALID';
