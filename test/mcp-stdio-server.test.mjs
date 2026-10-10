@@ -8,6 +8,9 @@ import test from 'node:test';
 import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import { operationNamesForSurface } from '../scripts/lib/operation-manifest.mjs';
+import * as z from 'zod/v4';
+import { OPERATION_MANIFEST } from '../scripts/lib/operation-manifest.mjs';
+import { MCP_OPERATION_SCHEMAS } from '../scripts/lib/mcp-operation-schemas.mjs';
 
 const rootDir = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -49,11 +52,49 @@ async function connect({ writeEnabled = false } = {}) {
   };
 }
 
+function assertMcpWireSchemaParity(tools) {
+  const entries = Object.entries(OPERATION_MANIFEST);
+  for (const tool of tools) {
+    const pair = entries.find(([, entry]) => entry.name === tool.name);
+    assert.ok(pair, 'missing operation metadata for ' + tool.name);
+    const [key] = pair;
+    // Compare full nested JSON schemas, including enum values, bounds,
+    // defaults and additionalProperties—not just top-level property names.
+    // input mode matches the schema seen by a model/tool caller.
+    const expected = z.toJSONSchema(MCP_OPERATION_SCHEMAS[key], {
+      io: 'input',
+    });
+    assert.deepEqual(
+      tool.inputSchema.properties ?? {},
+      expected.properties ?? {},
+      'MCP wire nested input schema drifted for ' + key,
+    );
+    assert.equal(
+      tool.inputSchema.additionalProperties,
+      expected.additionalProperties,
+      'MCP wire additionalProperties drifted for ' + key,
+    );
+    // MCP's SDK treats Zod defaults as optional at the wire boundary.
+    // A direct z.toJSONSchema() marks defaulted fields as required in its
+    // output projection; derive actual input requiredness from the same
+    // underlying Zod shape instead of treating that SDK difference as drift.
+    const requiredByValidator = Object.entries(MCP_OPERATION_SCHEMAS[key].shape)
+      .filter(([, field]) => !field.isOptional())
+      .map(([name]) => name).sort();
+    assert.deepEqual(
+      [...(tool.inputSchema.required ?? [])].sort(),
+      requiredByValidator,
+      'MCP wire required fields drifted for ' + key,
+    );
+  }
+}
+
 test('MCP stdio adapter exposes read-only Event Intelligence tools by default', async () => {
   const session = await connect();
   try {
     const { tools } = await session.client.listTools();
     const names = tools.map((tool) => tool.name).sort();
+    assertMcpWireSchemaParity(tools);
 
     assert.deepEqual(
       names,
@@ -216,6 +257,7 @@ test('MCP stdio write tools require explicit operator opt-in', async () => {
   try {
     const { tools } = await session.client.listTools();
     const names = new Set(tools.map((tool) => tool.name));
+    assertMcpWireSchemaParity(tools);
     assert.deepEqual(
       [...names].sort(),
       operationNamesForSurface('stdio').sort(),

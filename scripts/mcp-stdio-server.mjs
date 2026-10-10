@@ -1,11 +1,6 @@
 import { McpServer } from '@modelcontextprotocol/server';
 import { serveStdio } from '@modelcontextprotocol/server/stdio';
-import * as z from 'zod/v4';
-import {
-  TriggerPlanInputSchema,
-  describeTriggerLanguage,
-  parseCompositeTriggerDefinition,
-} from '../dist/src/intelligenceProtocol/index.js';
+import { describeTriggerLanguage } from '../dist/src/intelligenceProtocol/index.js';
 import {
   simulateTrigger,
 } from './lib/trigger-inspector.mjs';
@@ -14,6 +9,7 @@ import {
 } from './lib/local-event-intelligence-runtime.mjs';
 import { createOwnerReadGuard } from './lib/mcp-owner-read-guard.mjs';
 import { OPERATION_MANIFEST } from './lib/operation-manifest.mjs';
+import { MCP_OPERATION_SCHEMAS } from './lib/mcp-operation-schemas.mjs';
 
 function jsonResult(value) {
   return {
@@ -61,27 +57,6 @@ function ownerFromEnv(env) {
   };
 }
 
-const triggerPlanInputSchema = TriggerPlanInputSchema;
-
-const triggerLanguageDescribeInputSchema = z.object({
-  category: z.enum([
-    'predicates',
-    'composition',
-    'temporal',
-    'pattern',
-    'windows',
-    'aggregates',
-    'state',
-    'selection',
-    'semantic',
-    'execution',
-    'correlation',
-    'timing',
-    'lifecycle',
-  ]).optional(),
-  operator: z.string().min(1).optional(),
-}).strict();
-
 function registerReadTools(server, runtime, env) {
   const ownerGuard = createOwnerReadGuard({
     triggerControl: runtime.triggerControl,
@@ -93,9 +68,7 @@ function registerReadTools(server, runtime, env) {
     {
       description:
         'List active event sources currently available to Event Intelligence.',
-      inputSchema: z.object({
-        connectionIds: z.array(z.string()).optional(),
-      }),
+      inputSchema: MCP_OPERATION_SCHEMAS.sources,
     },
     async ({ connectionIds }) => {
       try {
@@ -115,7 +88,7 @@ function registerReadTools(server, runtime, env) {
     {
       description:
         'Describe the public Event Intelligence trigger authoring language. Use this when you need to discover supported predicates, composition, temporal, correlation, timing, or lifecycle operators before planning a trigger.',
-      inputSchema: triggerLanguageDescribeInputSchema,
+      inputSchema: MCP_OPERATION_SCHEMAS.languageDescribe,
     },
     async (input) => {
       try {
@@ -131,7 +104,7 @@ function registerReadTools(server, runtime, env) {
     {
       description:
         'Compile an agent-friendly trigger plan into a validated durable trigger definition using the event sources currently available. This does not mutate state and does not call another model.',
-      inputSchema: triggerPlanInputSchema,
+      inputSchema: MCP_OPERATION_SCHEMAS.plan,
     },
     async (input) => {
       try {
@@ -147,7 +120,7 @@ function registerReadTools(server, runtime, env) {
     {
       description:
         'List durable triggers and lifecycle state for the configured owner only.',
-      inputSchema: z.object({}).strict(),
+      inputSchema: MCP_OPERATION_SCHEMAS.list,
     },
     async () => {
       try {
@@ -167,11 +140,7 @@ function registerReadTools(server, runtime, env) {
     {
       description:
         'Explain a trigger deterministically, including missing clauses, temporal state, deadlines, lineage, derived outputs and wake receipt.',
-      inputSchema: z.object({
-        triggerId: z.string().min(1),
-        version: z.string().min(1).optional(),
-        matchId: z.string().min(1).optional(),
-      }),
+      inputSchema: MCP_OPERATION_SCHEMAS.inspect,
     },
     async (input) => {
       try {
@@ -193,12 +162,7 @@ function registerReadTools(server, runtime, env) {
     {
       description:
         'Run a trigger definition against an isolated event sequence without mutating live state.',
-      inputSchema: z.object({
-        definition: z.record(z.string(), z.unknown()),
-        events: z.array(z.record(z.string(), z.unknown())),
-        until: z.string().optional(),
-        order: z.enum(['provided', 'event_time']).default('provided'),
-      }),
+      inputSchema: MCP_OPERATION_SCHEMAS.simulate,
     },
     async (input) => {
       try {
@@ -214,9 +178,7 @@ function registerReadTools(server, runtime, env) {
     {
       description:
         'List versioned derived-event contracts, canonical schemas, fingerprints and registered producers.',
-      inputSchema: z.object({
-        eventName: z.string().min(1).optional(),
-      }),
+      inputSchema: MCP_OPERATION_SCHEMAS.derivedContracts,
     },
     async ({ eventName }) => {
       try {
@@ -234,9 +196,7 @@ function registerReadTools(server, runtime, env) {
     {
       description:
         'Hydrate a composite wake into an Activation Envelope containing the configured continuation and matched event evidence. Evidence data is included only according to the trigger context policy.',
-      inputSchema: z.object({
-        wakeId: z.string().min(1),
-      }),
+      inputSchema: MCP_OPERATION_SCHEMAS.wakeHydrate,
     },
     async ({ wakeId }) => {
       try {
@@ -253,7 +213,7 @@ function registerReadTools(server, runtime, env) {
     {
       description:
         'Return local Event Intelligence runtime status, restored counts, host-managed MCP event connections and pending temporal deadlines.',
-      inputSchema: z.object({}),
+      inputSchema: MCP_OPERATION_SCHEMAS.runtimeStatus,
     },
     async () => {
       try {
@@ -282,12 +242,7 @@ function registerWriteTools(server, runtime, env) {
     {
       description:
         'Create a durable trigger. Persistent MCP mutations require explicit confirmationId and MCP_WRITE_ENABLED=true.',
-      inputSchema: z.object({
-        definition: z.record(z.string(), z.unknown()).optional(),
-        plan: triggerPlanInputSchema.optional(),
-        connectionIds: z.array(z.string()).min(1).optional(),
-        confirmationId: z.string().min(1),
-      }),
+      inputSchema: MCP_OPERATION_SCHEMAS.create,
     },
     async ({ definition, plan, connectionIds, confirmationId }) => {
       try {
@@ -328,17 +283,11 @@ function registerWriteTools(server, runtime, env) {
     },
   );
 
-  const lifecycleSchema = z.object({
-    triggerId: z.string().min(1),
-    version: z.string().min(1),
-    confirmationId: z.string().min(1),
-  });
-
   server.registerTool(
     OPERATION_MANIFEST.pause.name,
     {
       description: 'Pause a durable trigger after explicit confirmation.',
-      inputSchema: lifecycleSchema,
+      inputSchema: MCP_OPERATION_SCHEMAS.pause,
     },
     async ({ triggerId, version, confirmationId }) => {
       try {
@@ -361,7 +310,7 @@ function registerWriteTools(server, runtime, env) {
     OPERATION_MANIFEST.resume.name,
     {
       description: 'Resume a paused durable trigger after explicit confirmation.',
-      inputSchema: lifecycleSchema,
+      inputSchema: MCP_OPERATION_SCHEMAS.resume,
     },
     async ({ triggerId, version, confirmationId }) => {
       try {
@@ -384,7 +333,7 @@ function registerWriteTools(server, runtime, env) {
     OPERATION_MANIFEST.delete.name,
     {
       description: 'Delete a durable trigger after explicit confirmation.',
-      inputSchema: lifecycleSchema,
+      inputSchema: MCP_OPERATION_SCHEMAS.delete,
     },
     async ({ triggerId, version, confirmationId }) => {
       try {
@@ -408,13 +357,7 @@ function registerWriteTools(server, runtime, env) {
     {
       description:
         'Create a new immutable version of an existing durable trigger after explicit confirmation.',
-      inputSchema: z.object({
-        triggerId: z.string().min(1),
-        expectedVersion: z.string().min(1),
-        definition: z.record(z.string(), z.unknown()),
-        connectionIds: z.array(z.string()).optional(),
-        confirmationId: z.string().min(1),
-      }),
+      inputSchema: MCP_OPERATION_SCHEMAS.update,
     },
     async ({
       triggerId,
