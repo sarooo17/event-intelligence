@@ -1,6 +1,7 @@
 import * as z from 'zod/v4';
 import { OPERATION_MANIFEST } from './operation-manifest.mjs';
 import { ActivationEnvelopeSchema } from '../../dist/src/intelligenceProtocol/index.js';
+import { CompositeTriggerDefinitionSchema } from '../../dist/src/intelligenceProtocol/triggerSchemas.js';
 
 /**
  * Phase one of public tool output parity (#43): only operations with a
@@ -117,6 +118,37 @@ const stdioSimulation = z.object({
 // maintain an independent, potentially weaker copy in the MCP projection.
 const stdioWakeHydration = ActivationEnvelopeSchema;
 
+// Control plane mutations are host-authorized BEFORE these validators run.
+// Validate the durable receipt envelope, not arbitrary host credentials, while
+// preserving canonical definition and owner-scoped lifecycle state evidence.
+const triggerState = z.object({
+  status: z.string().min(1),
+}).passthrough();
+
+const mutationBase = z.object({
+  receiptId: z.string().min(1),
+  action: z.enum(['create', 'update', 'pause', 'resume', 'delete']),
+  definition: CompositeTriggerDefinitionSchema,
+  state: triggerState,
+}).passthrough();
+
+const stdioMutation = Object.freeze({
+  create: mutationBase.extend({
+    action: z.literal('create'),
+    planning: stdioPlan.optional(),
+  }),
+  update: mutationBase.extend({
+    action: z.literal('update'),
+    previous: z.object({
+      definition: CompositeTriggerDefinitionSchema,
+      state: triggerState,
+    }).passthrough(),
+  }),
+  pause: mutationBase.extend({ action: z.literal('pause') }),
+  resume: mutationBase.extend({ action: z.literal('resume') }),
+  delete: mutationBase.extend({ action: z.literal('delete') }),
+});
+
 export const OPERATION_OUTPUT_CONTRACTS = Object.freeze({
   sources: Object.freeze({
     stdio: sourceList,
@@ -138,6 +170,11 @@ export const OPERATION_OUTPUT_CONTRACTS = Object.freeze({
   wakeHydrate: Object.freeze({
     stdio: stdioWakeHydration,
   }),
+  create: Object.freeze({ stdio: stdioMutation.create }),
+  update: Object.freeze({ stdio: stdioMutation.update }),
+  pause: Object.freeze({ stdio: stdioMutation.pause }),
+  resume: Object.freeze({ stdio: stdioMutation.resume }),
+  delete: Object.freeze({ stdio: stdioMutation.delete }),
   languageDescribe: Object.freeze({
     stdio: stdioLanguage,
   }),
