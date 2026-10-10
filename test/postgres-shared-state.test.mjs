@@ -881,6 +881,8 @@ integrationTest('pool restart fencing: persisted claimed wakes survive disconnec
       const stored = await recovered.getWakeDelivery(wakeId);
       assert.equal(stored.status, 'claimed', 'wake must survive pool loss');
       assert.equal(stored.attemptCount, 1);
+      assert.equal(stored.runtimeReceiptId, null,
+        'reconnecting must not fabricate a delivered runtime receipt');
 
       assert.equal(await recovered.claimWakeDelivery(wakeId, {
         workerId: 'same-worker-after-restart',
