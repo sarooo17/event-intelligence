@@ -1,3 +1,4 @@
+import * as z from 'zod/v4';
 import {
   AuditChain,
   McpEventOccurrenceSchema,
@@ -1060,8 +1061,50 @@ export class PostgresEventStore {
     return result.rowCount > 0;
   }
 
-  async compactMutableState() {
-    return { ok: true, strategy: 'database-managed', compacted: [] };
+  async compactMutableState({
+    semanticCacheBefore,
+    maxRows = 500,
+  } = {}) {
+    // This is deliberately NOT general event/audit/match retention. Wake
+    // receipts, trigger definitions, leases, causal evidence and the append-only
+    // audit hash chain remain intact. Only dispensable semantic model decision
+    // caches may be reclaimed, with explicit host/operator cutoff.
+    if (semanticCacheBefore === undefined) {
+      return { ok: true, strategy: 'database-managed', compacted: [] };
+    }
+    if (!z.iso.datetime({ offset: true }).safeParse(semanticCacheBefore).success ||
+        !Number.isSafeInteger(maxRows) || maxRows < 1 || maxRows > 1000) {
+      const error = new TypeError(
+        'Semantic cache compaction needs offset-aware ISO cutoff and maxRows 1..1000',
+      );
+      error.code = 'EVENT_INTELLIGENCE_RETENTION_POLICY_INVALID';
+      throw error;
+    }
+    const result = await this.tx(async (client) => client.query(
+      'WITH aged AS (' +
+      ' SELECT record_key FROM ' + this.records +
+      " WHERE scope_id = $1 AND kind = 'semantic_cache'" +
+      ' AND updated_at < $2::timestamptz' +
+      ' ORDER BY updated_at ASC, record_key ASC' +
+      ' LIMIT $3 FOR UPDATE SKIP LOCKED' +
+      ') DELETE FROM ' + this.records + ' AS retained' +
+      ' USING aged WHERE retained.scope_id = $1' +
+      " AND retained.kind = 'semantic_cache'" +
+      ' AND retained.record_key = aged.record_key' +
+      ' RETURNING retained.record_key',
+      [this.scopeId, semanticCacheBefore, maxRows],
+    ));
+    return {
+      ok: true,
+      strategy: 'bounded-semantic-cache-retention',
+      scopeId: this.scopeId,
+      cutoff: semanticCacheBefore,
+      deleted: result.rowCount,
+      capped: result.rowCount === maxRows,
+      // Caches are advisory. Future semantic evaluations recompute missing
+      // decisions under their normal evaluator budget; no fake AI result.
+      compacted: [{ kind: 'semantic_cache', records: result.rowCount }],
+    };
   }
 
   async getSemanticDecisionCache(key) {
