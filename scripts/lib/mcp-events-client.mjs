@@ -301,6 +301,10 @@ export class McpEventsClientManager {
     this.lastErrors = new Map();
     this.scopeContexts = new Map();
     this.pollInFlight = new Map();
+    // Serialize durable source/cursor mutations by connection ID, including
+    // detach's disable operation. A new session cannot overwrite or race
+    // old-session cleanup even when it reuses the same connection ID.
+    this.connectionMutations = new Map();
     this.deliverySessions = new Map();
     this.started = false;
 
@@ -361,6 +365,21 @@ export class McpEventsClientManager {
     }
   }
 
+  withConnectionMutation(connectionId, operation) {
+    const previous = this.connectionMutations.get(connectionId)
+      ?? Promise.resolve();
+    // Never leave the queue poisoned by a failed previous mutation.
+    const result = previous.then(operation);
+    const settled = result.then(() => {}, () => {});
+    this.connectionMutations.set(connectionId, settled);
+    void settled.then(() => {
+      if (this.connectionMutations.get(connectionId) === settled) {
+        this.connectionMutations.delete(connectionId);
+      }
+    });
+    return result;
+  }
+
   async attachConnection(input, { discover = true } = {}) {
     const connection = this.addConnection(input);
     let events = [];
@@ -376,9 +395,9 @@ export class McpEventsClientManager {
     };
   }
 
-  async closeSession(subscriptionId) {
+  async closeSession(subscriptionId, expectedSession = null) {
     const session = this.deliverySessions.get(subscriptionId);
-    if (!session) return false;
+    if (!session || (expectedSession && session !== expectedSession)) return false;
     this.deliverySessions.delete(subscriptionId);
     try {
       if (typeof session.close === 'function') await session.close();
@@ -389,11 +408,33 @@ export class McpEventsClientManager {
   }
 
   async detachConnection(connectionId) {
-    // Revoke synchronously BEFORE awaiting session closure, scope lookups or
-    // source deactivation. Every in-flight poll/push callback must observe
-    // that its exact session object is no longer authorized to ingest.
+    // Revoke authority synchronously. Reserve cleanup in the *same* durable
+    // mutation queue before the first await, so new sessions cannot discover
+    // sources or persist cursors ahead of the old disable operation.
     const connection = this.connections.get(connectionId);
     const removed = this.connections.delete(connectionId);
+    const cleanup = removed
+      ? this.withConnectionMutation(connectionId, async () => {
+          const context = await this.scopeContext(connection);
+          const sources = await context.store.listEventSources({
+            connectionIds: [connectionId],
+          });
+          for (const source of sources) {
+            if (source.enabled === false) continue;
+            const register = context.triggerControl?.registerEventSource
+              ? (input, actor) =>
+                  context.triggerControl.registerEventSource(input, actor)
+              : async (input) => this.registerEventSource(input);
+            await register(
+              { ...source, enabled: false },
+              {
+                type: 'system',
+                principal_id: 'event-intelligence:host-mcp-client',
+              },
+            );
+          }
+        })
+      : Promise.resolve();
     const timer = this.timers.get(connectionId);
     if (timer) clearTimeout(timer);
     this.timers.delete(connectionId);
@@ -402,39 +443,22 @@ export class McpEventsClientManager {
     this.lastErrors.delete(connectionId);
     this.pollInFlight.delete(connectionId);
 
-    for (const [subscriptionId, session] of this.deliverySessions) {
-      if (session.connectionId === connectionId) {
-        await this.closeSession(subscriptionId);
-      }
-    }
-
-    const context = connection ? await this.scopeContext(connection) : null;
-    if (connection && !this.connections.has(connectionId)) {
-      this.scopeContexts.delete(
-        `${connection.connectionId}::${connection.scopeId}`,
-      );
-    }
-    if (removed && context && !this.connections.has(connectionId)) {
-      const sources = await context.store.listEventSources({
-        connectionIds: [connectionId],
-      });
-      for (const source of sources) {
-        if (this.connections.has(connectionId)) break;
-        if (source.enabled === false) continue;
-        const register = context.triggerControl?.registerEventSource
-          ? (sourceInput, actor) =>
-              context.triggerControl.registerEventSource(sourceInput, actor)
-          : async (sourceInput) => this.registerEventSource(sourceInput);
-        await register(
-          {
-            ...source,
-            enabled: false,
-          },
-          {
-            type: 'system',
-            principal_id: 'event-intelligence:host-mcp-client',
-          },
-        );
+    // Snapshot ONLY sessions owned by this connection object. Async close
+    // must never visit or remove replacement sessions registered mid-cleanup.
+    const previousSessions = [...this.deliverySessions].filter(
+      ([, session]) => session.connection === connection,
+    );
+    await Promise.all(previousSessions.map(([id,session]) =>
+      this.closeSession(id,session)
+    ));
+    try {
+      await cleanup;
+    } finally {
+      const key = `${connection?.connectionId}::${connection?.scopeId}`;
+      // Scope contexts are keyed by ID+scope, and may already be reused by
+      // a replacement. Never clear a context while a replacement is live.
+      if (connection && !this.connections.has(connectionId)) {
+        this.scopeContexts.delete(key);
       }
     }
     return removed;
@@ -508,8 +532,9 @@ export class McpEventsClientManager {
     } while (cursor);
 
     for (const normalized of descriptors) {
-      this.assertConnectionAttached(connection);
-      const sourceId =
+      await this.withConnectionMutation(connectionId, async () => {
+        this.assertConnectionAttached(connection);
+        const sourceId =
         `mcp:${connection.connectionId}:${normalized.name}`;
       const existing = (
         await context.store.listEventSources()
@@ -561,6 +586,8 @@ export class McpEventsClientManager {
           },
         );
       }
+        this.assertConnectionAttached(connection);
+      });
     }
 
     this.assertConnectionAttached(connection);
@@ -702,21 +729,26 @@ export class McpEventsClientManager {
     subscription,
     patch = {},
   ) {
-    this.assertConnectionAttached(connection);
-    const previous = await context.store.getMcpClientState(
-      connection.connectionId,
-      subscription.eventName,
-      subscription.arguments,
-    );
-    this.assertConnectionAttached(connection);
-    return context.store.putMcpClientState({
-      ...(previous || {}),
-      connectionId: connection.connectionId,
-      serverId: connection.serverId,
-      eventName: subscription.eventName,
-      arguments: subscription.arguments,
-      subscriptionId: subscription.subscriptionId,
-      ...patch,
+    // Serialize both read and write with source registration and detach.
+    // An already-started old put finishes BEFORE new-session cursor writes,
+    // while a not-yet-started old operation rejects after revoke.
+    return this.withConnectionMutation(connection.connectionId, async () => {
+      this.assertConnectionAttached(connection);
+      const previous = await context.store.getMcpClientState(
+        connection.connectionId,
+        subscription.eventName,
+        subscription.arguments,
+      );
+      this.assertConnectionAttached(connection);
+      return context.store.putMcpClientState({
+        ...(previous || {}),
+        connectionId: connection.connectionId,
+        serverId: connection.serverId,
+        eventName: subscription.eventName,
+        arguments: subscription.arguments,
+        subscriptionId: subscription.subscriptionId,
+        ...patch,
+      });
     });
   }
 
