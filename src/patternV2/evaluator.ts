@@ -283,6 +283,9 @@ function getByPath(source: unknown, path: string): unknown {
     ) {
       return undefined;
     }
+    // Event payloads are untrusted: never use prototype-chain properties
+    // such as constructor/toString/__proto__ as pattern evidence.
+    if (!Object.hasOwn(current, part)) return undefined;
     current = (current as Record<string, unknown>)[part];
   }
   return current;
