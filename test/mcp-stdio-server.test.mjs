@@ -94,6 +94,38 @@ test('MCP stdio adapter exposes read-only Event Intelligence tools by default', 
       );
     }
 
+    // Owner cannot be overridden through a model-supplied argument.
+    const triggerList = tools.find((tool) => tool.name === 'trigger_list');
+    assert.ok(triggerList);
+    assert.equal(
+      Object.hasOwn(triggerList.inputSchema.properties ?? {}, 'ownerOnly'),
+      false,
+    );
+    assert.deepEqual(
+      (await session.client.callTool({
+        name: 'trigger_list',
+        arguments: {},
+      })).structuredContent.triggers,
+      [],
+    );
+    for (const [name, args] of [
+      ['trigger_inspect', { triggerId: 'someone-elses-trigger' }],
+      ['wake_hydrate', { wakeId: 'someone-elses-wake' }],
+    ]) {
+      const forbidden = await session.client.callTool({
+        name, arguments: args,
+      });
+      assert.equal(forbidden.isError, true);
+      assert.equal(
+        forbidden.structuredContent.code,
+        'EVENT_INTELLIGENCE_RESOURCE_NOT_FOUND',
+      );
+      assert.doesNotMatch(
+        JSON.stringify(forbidden),
+        /someone-elses-(trigger|wake)/,
+      );
+    }
+
     const status = await session.client.callTool({
       name: 'runtime_status',
       arguments: {},
