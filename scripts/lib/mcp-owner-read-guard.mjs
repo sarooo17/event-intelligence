@@ -22,10 +22,16 @@ export function createOwnerReadGuard({ triggerControl, store, owner }) {
 
   async function assertTrigger(triggerId, version) {
     const rows = await triggerControl.listTriggers({ owner });
-    const owned = rows.find((row) =>
-      row?.definition?.triggerId === triggerId &&
-      (version === undefined || row.definition.version === version)
-    );
+    const owned = rows
+      .filter((row) =>
+        row?.definition?.triggerId === triggerId &&
+        (version === undefined || row.definition.version === version)
+      )
+      .sort((left, right) =>
+        String(right.definition.version).localeCompare(
+          String(left.definition.version), undefined, { numeric: true },
+        )
+      )[0];
     if (!owned) throw notFound();
     return owned;
   }
