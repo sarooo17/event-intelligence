@@ -14,14 +14,14 @@ import {
 test('three shared semantic output operations expose intentional transport projections', () => {
   assert.equal(OPERATION_OUTPUT_CONTRACT_VERSION, '1');
   assert.deepEqual(Object.keys(OPERATION_OUTPUT_CONTRACTS), [
-    'sources', 'list', 'plan',
+    'sources', 'list', 'plan', 'languageDescribe', 'derivedContracts', 'runtimeStatus',
   ]);
   assert.equal(outputValidator('stdio','sources'),
     outputValidator('embedded','sources'));
   assert.notEqual(outputValidator('stdio','list'),
     outputValidator('embedded','list'));
-  for (const key of ['sources', 'list', 'plan']) {
-    const surfaces = key === 'plan' ? ['stdio'] : ['stdio', 'embedded'];
+  for (const key of ['sources', 'list', 'plan', 'languageDescribe', 'derivedContracts', 'runtimeStatus']) {
+    const surfaces = ['plan', 'languageDescribe', 'derivedContracts', 'runtimeStatus'].includes(key) ? ['stdio'] : ['stdio', 'embedded'];
     for (const surface of surfaces) {
       const json = outputJsonSchema(surface, key);
       assert.equal(json.type, 'object');
@@ -30,6 +30,10 @@ test('three shared semantic output operations expose intentional transport proje
   }
   assert.throws(() => outputValidator('embedded', 'plan'),
     /Operation not exposed on EI surface/);
+  for (const operation of ['languageDescribe', 'derivedContracts', 'runtimeStatus']) {
+    assert.throws(() => outputValidator('embedded', operation),
+      /Operation not exposed on EI surface/);
+  }
 });
 
 test('runtime output validation rejects missing/wrong shapes without mutating data',()=>{
@@ -66,6 +70,29 @@ test('runtime output validation rejects missing/wrong shapes without mutating da
   ]) {
     assert.throws(() => validateOperationOutput('stdio', 'plan', invalid),
       err => err.code === 'EI_OUTPUT_CONTRACT_INVALID');
+  }
+  const examples = [
+    ['languageDescribe', {
+      version: '3', authoringSurface: 'TriggerPlanInput',
+      planner: 'trigger_plan', preferredAuthoring: 'TriggerPlanInput.pattern',
+      canonicalRepresentation: 'CompositeTriggerDefinition.pattern',
+      pattern: [],
+    }, { version: '2' }],
+    ['derivedContracts', { contracts: [] }, { contracts: null }],
+    ['runtimeStatus', {
+      restored: {}, hostMcpEventConnections: [],
+      pendingTemporalDeadlines: 0, derivedEvents: 0,
+      derivedContracts: 0, writeEnabled: false,
+    }, { restored: {}, hostMcpEventConnections: [], pendingTemporalDeadlines: -1,
+         derivedEvents: 0, derivedContracts: 0, writeEnabled: false }],
+  ];
+  for (const [operation, valid, invalidFields] of examples) {
+    assert.equal(validateOperationOutput('stdio', operation, valid), valid);
+    assert.throws(
+      () => validateOperationOutput('stdio', operation, { ...valid, ...invalidFields }),
+      error => error.code === 'EI_OUTPUT_CONTRACT_INVALID',
+      operation,
+    );
   }
 });
 

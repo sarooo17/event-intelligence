@@ -40,6 +40,29 @@ const stdioPlan = z.object({
   }).passthrough(),
 }).passthrough();
 
+// Stdio-only read contracts. Do not claim matching model-facing tools exist
+// in the embedded facade, and do not try to parse provider-owned event data.
+const stdioLanguage = z.object({
+  version: z.literal('3'),
+  authoringSurface: z.literal('TriggerPlanInput'),
+  planner: z.literal('trigger_plan'),
+  preferredAuthoring: z.string().min(1),
+  canonicalRepresentation: z.string().min(1),
+}).passthrough();
+
+const stdioDerivedContracts = z.object({
+  contracts: z.array(z.unknown()),
+}).passthrough();
+
+const stdioRuntimeStatus = z.object({
+  restored: z.unknown(),
+  hostMcpEventConnections: z.array(z.unknown()),
+  pendingTemporalDeadlines: z.number().int().nonnegative(),
+  derivedEvents: z.number().int().nonnegative(),
+  derivedContracts: z.number().int().nonnegative(),
+  writeEnabled: z.boolean(),
+}).passthrough();
+
 export const OPERATION_OUTPUT_CONTRACTS = Object.freeze({
   sources: Object.freeze({
     stdio: sourceList,
@@ -51,6 +74,15 @@ export const OPERATION_OUTPUT_CONTRACTS = Object.freeze({
   }),
   plan: Object.freeze({
     stdio: stdioPlan,
+  }),
+  languageDescribe: Object.freeze({
+    stdio: stdioLanguage,
+  }),
+  derivedContracts: Object.freeze({
+    stdio: stdioDerivedContracts,
+  }),
+  runtimeStatus: Object.freeze({
+    stdio: stdioRuntimeStatus,
   }),
 });
 

@@ -9,10 +9,13 @@ Both the embedded host-facing descriptors and standalone MCP `tools/list` expose
 | event_sources_list | `sources` array | Embedded sources are compact host-neutral summaries, MCP may return richer provider information |
 | trigger_list | `triggers` array | Embedded additionally requires nonnegative `total` and `returned`; MCP continues returning full owner-scoped records |
 | trigger_plan | `planVersion: '2'`, `definition`, `connectionIds`, `resolvedSources`, `warnings`, `explanation.when/then` | Stdio only. Embedded callers use a scoped `planTrigger()` method and have no `trigger_plan` model tool |
+| trigger_language_describe | Version 3 with declared canonical authoring surface and planner | Stdio-only; optional categories are preserved without fabricating fields |
+| derived_contracts_list | `contracts` array | Stdio-only, nested provider-owned schemas remain opaque/untrusted |
+| runtime_status | Connection list, counts, enabled-write flag and restore metadata | Stdio-only, status is operational telemetry, not an authorization claim |
 
 `OPERATION_OUTPUT_CONTRACT_VERSION='1'` versions only this minimal output contract, not the overall Event Intelligence protocol. The schemas use permissive nested records deliberately: fully constraining provider payloads, event evidence, match lineage and runtime-specific projectResult references would be misleading and may leak/strip information unexpectedly.
 
-**Not modeled yet:** `trigger_inspect`, `trigger_create`, `trigger_pause`, `trigger_resume`, `trigger_delete`, `trigger_update`, `trigger_simulate`, `trigger_language_describe`, `derived_contracts_list`, `wake_hydrate`, `runtime_status`. These operations retain their existing wire responses, and **no output schema is advertised** for them. Full cross-surface output equivalence is not claimed. No legacy compatibility shims are added; hosts already customize inline/reference output with `projectResult`.
+**Not modeled yet:** `trigger_inspect`, `trigger_create`, `trigger_pause`, `trigger_resume`, `trigger_delete`, `trigger_update`, `trigger_simulate`, `wake_hydrate`. These operations retain their existing wire responses, and **no output schema is advertised** for them. Full cross-surface output equivalence is not claimed. No legacy compatibility shims are added; hosts already customize inline/reference output with `projectResult`.
 
 Validation does not grant authority: MCP ownership checks and embedded `resolveContext/control` occur separately before response generation. Untrusted MCP producer data must remain untrusted across host activation.
 
