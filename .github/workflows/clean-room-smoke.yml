@@ -86,6 +86,64 @@ jobs:
           test "$(npx --no-install mcp-event-intelligence --version)" = "$EXPECTED_VERSION"
           npx --no-install mcp-event-intelligence --help | grep -qi "standard MCP stdio control plane"
 
+      - name: Exercise neutral embedded facade in two empty external Node hosts
+        shell: bash
+        run: |
+          set -euo pipefail
+          WORKDIR="$(mktemp -d)"
+          cd "$WORKDIR"
+          npm init -y >/dev/null
+          npm install --ignore-scripts --no-audit --no-fund "$TARBALL"
+
+          node --input-type=module <<'EOF'
+          import assert from 'node:assert/strict';
+          import { createEventIntelligence } from 'mcp-event-intelligence/embedded';
+
+          const env = {
+            TYPESAFE_API_KEY: '',
+            RUNTIME_WAKE_TARGETS_JSON: '{}',
+            TEMPORAL_TICK_MS: '100000',
+            WAKE_RETRY_TICK_MS: '100000',
+          };
+
+          // Fixture A: headless workflow owner. No model SDK or EI source
+          // checkout; event delivery always remains a host callback.
+          const headless = await createEventIntelligence({
+            mcp: { list: () => [] },
+            runtime: {
+              receiptNamespace: 'consumer-headless',
+              deliver: () => ({ runtimeReceiptId: 'host-owned-receipt' }),
+            },
+            env, dataDir: './headless-state',
+          });
+          assert.equal(headless.toolCatalog.all.length, 0);
+          assert.equal((await headless.diagnostics()).errors, 0);
+          await headless.close();
+
+          // Fixture B: a separate actor-scoped host exposing EI tools.
+          // Host control remains mandatory; EI never invents approval.
+          const managed = await createEventIntelligence({
+            mcp: { list: () => [] },
+            runtime: {
+              deliver: () => ({ runtimeReceiptId: 'host-managed' }),
+              resolveContext: () => ({
+                owner: { type: 'user', principal_id: 'owner-consumer' },
+                actor: { type: 'agent', principal_id: 'actor-consumer' },
+              }),
+              control: () => ({
+                action: 'return',
+                result: { ok: false, error: { code: 'HOST_APPROVAL_REQUIRED' } },
+              }),
+            },
+            env, dataDir: './managed-state',
+          });
+          assert.equal(managed.toolCatalog.all.length, 8);
+          const list = await managed.toolCatalog.get('trigger_list').execute({}, {});
+          assert.equal(list.ok, true);
+          assert.deepEqual(list.data.triggers, []);
+          await managed.close();
+          EOF
+
       - name: Confirm candidate MCP stdio entrypoint starts
         shell: bash
         run: |
