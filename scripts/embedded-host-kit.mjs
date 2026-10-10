@@ -11,6 +11,7 @@ import {
   createMcpRegistryAdapter,
 } from './host-integration.mjs';
 import { OPERATION_MANIFEST } from './lib/operation-manifest.mjs';
+import { outputJsonSchema, validateOperationOutput } from './lib/operation-output-contracts.mjs';
 import {
   TriggerCreateInput,
   TriggerListInput,
@@ -119,6 +120,9 @@ function portableDescriptor(key, name) {
   return {
     name,
     inputSchema: descriptor.inputSchema,
+    ...(key === 'sources' || key === 'list'
+      ? { outputSchema: deepFreezeSchema(outputJsonSchema('embedded', key)) }
+      : {}),
     capability: descriptor.capability,
   };
 }
@@ -260,6 +264,9 @@ async function projectPortableFailure(projectError, input, canonical) {
 }
 
 async function projectPortableResult(projectResult, input) {
+  if (input.operation) {
+    validateOperationOutput('embedded', input.operation, input.value);
+  }
   if (typeof projectResult !== 'function') {
     return { ok: true, data: input.value };
   }
@@ -892,6 +899,7 @@ export function createEventIntelligenceAgentTools({
               : [],
           };
           return await projectPortableResult(projectResult, {
+            operation: 'sources',
             capability: sourcesCapability,
             runtimeContext,
             context: resolved,
@@ -1105,6 +1113,7 @@ export function createEventIntelligenceAgentTools({
             returned: Math.min(filtered.length, limit),
           };
           return await projectPortableResult(projectResult, {
+            operation: 'list',
             capability: listCapability,
             runtimeContext,
             context: resolved,

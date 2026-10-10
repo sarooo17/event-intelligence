@@ -11,6 +11,7 @@ import { operationNamesForSurface } from '../scripts/lib/operation-manifest.mjs'
 import * as z from 'zod/v4';
 import { OPERATION_MANIFEST } from '../scripts/lib/operation-manifest.mjs';
 import { MCP_OPERATION_SCHEMAS } from '../scripts/lib/mcp-operation-schemas.mjs';
+import { outputJsonSchema } from '../scripts/lib/operation-output-contracts.mjs';
 
 const rootDir = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -95,6 +96,19 @@ test('MCP stdio adapter exposes read-only Event Intelligence tools by default', 
     const { tools } = await session.client.listTools();
     const names = tools.map((tool) => tool.name).sort();
     assertMcpWireSchemaParity(tools);
+    for (const key of ['sources','list']) {
+      const op=OPERATION_MANIFEST[key];
+      const wire=tools.find(tool=>tool.name===op.name)?.outputSchema;
+      assert.ok(wire,'missing MCP outputSchema for '+key);
+      const expected=outputJsonSchema('stdio',key);
+      assert.deepEqual(wire.properties,expected.properties,key);
+      assert.deepEqual(wire.required,expected.required,key);
+    }
+    for (const key of ['plan','update','wakeHydrate','inspect']) {
+      const op=OPERATION_MANIFEST[key];
+      const wire=tools.find(tool=>tool.name===op.name)?.outputSchema;
+      if (wire) throw new Error('Unmodeled output contract falsely advertised: '+key);
+    }
 
     assert.deepEqual(
       names,
