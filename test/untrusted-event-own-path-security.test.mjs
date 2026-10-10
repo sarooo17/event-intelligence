@@ -141,10 +141,12 @@ test('Pattern partition fields do not correlate synthetic inherited tenant ident
       { account: { tenant: 'victim' } }, 0);
     assert.equal(initial.some(row => row.matched), false);
     const inherited = Object.create({ tenant: 'victim' });
-    const notTrusted = await ingest('payment-inherited', 'fixture.payment',
-      { account: inherited }, 1);
-    assert.equal(notTrusted.some(row => row.matched), false,
-      'no match may be created using a prototype-provided tenant value');
+    await assert.rejects(
+      () => ingest('payment-inherited', 'fixture.payment',
+        { account: inherited }, 1),
+      /partition tenant resolved to a non-scalar value/,
+      'undefined inherited partition data must fail closed, not correlate as victim',
+    );
     const allowed = await ingest('payment-owned', 'fixture.payment',
       { account: { tenant: 'victim' } }, 2);
     assert.equal(allowed.some(row => row.matched), true,
