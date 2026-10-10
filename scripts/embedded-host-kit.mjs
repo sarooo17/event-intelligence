@@ -120,7 +120,7 @@ function portableDescriptor(key, name) {
   return {
     name,
     inputSchema: descriptor.inputSchema,
-    ...(key === 'sources' || key === 'list' || key === 'inspect'
+    ...(key === 'sources' || key === 'list'
       ? { outputSchema: deepFreezeSchema(outputJsonSchema('embedded', key)) }
       : {}),
     capability: descriptor.capability,
@@ -1189,7 +1189,6 @@ export function createEventIntelligenceAgentTools({
             }),
           );
           return await projectPortableResult(projectResult, {
-            operation: 'inspect',
             capability: inspectCapability,
             runtimeContext,
             context: resolved,
