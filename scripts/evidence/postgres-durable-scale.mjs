@@ -105,7 +105,7 @@ async function main() {
     failures.push({
       phase: stage,
       code: error?.code ?? 'EI_PG_BENCHMARK_FAILED',
-      message: raw.replace(/postgres(?:ql)?:\\/\\/[^\\s]+/gi,
+      message: raw.replace(/postgres(?:ql)?:\/\/[^\s]+/gi,
         'postgresql://[redacted]'),
     });
   }
