@@ -18,6 +18,18 @@ export { assertJsonSchemaValue } from './json-schema.mjs';
 export { MCP_EVENTS_EXTENSION_ID } from './mcp-events-compatibility.mjs';
 const UnknownResultSchema = z.unknown();
 
+// Bound untrusted paginated MCP Events source catalogues before parsing or
+// persisting descriptors. These limits apply per host-managed MCP connection.
+export const MAX_MCP_EVENT_DISCOVERY_PAGES = 32;
+export const MAX_MCP_EVENT_DISCOVERY_SOURCES = 256;
+export const MAX_MCP_EVENT_CURSOR_BYTES = 4096;
+
+function discoveryLimitError(detail) {
+  const error = new Error('MCP Events discovery rejected: ' + detail);
+  error.code = 'MCP_EVENTS_DISCOVERY_LIMIT_EXCEEDED';
+  return error;
+}
+
 function assertObject(value, message) {
   if (!value || Array.isArray(value) || typeof value !== 'object') {
     throw new Error(message);
@@ -502,8 +514,13 @@ export class McpEventsClientManager {
 
     const descriptors = [];
     const names = new Set();
+    const seenCursors = new Set();
+    let pageCount = 0;
     let cursor = null;
     do {
+      if (++pageCount > MAX_MCP_EVENT_DISCOVERY_PAGES) {
+        throw discoveryLimitError('too many events/list pages');
+      }
       const listed = await this.rpc(
         connection,
         profile.listMethod,
@@ -514,6 +531,10 @@ export class McpEventsClientManager {
         throw new Error(
           `MCP server ${connectionId} returned invalid events/list`,
         );
+      }
+      if (listed.events.length >
+        MAX_MCP_EVENT_DISCOVERY_SOURCES - descriptors.length) {
+        throw discoveryLimitError('too many event descriptors');
       }
       for (const raw of listed.events) {
         const descriptor = sourceDescriptor(raw, profile);
@@ -529,6 +550,15 @@ export class McpEventsClientManager {
         listed?.nextCursor === undefined || listed?.nextCursor === null
           ? null
           : String(listed.nextCursor);
+      if (cursor) {
+        if (Buffer.byteLength(cursor, 'utf8') > MAX_MCP_EVENT_CURSOR_BYTES) {
+          throw discoveryLimitError('events/list cursor too long');
+        }
+        if (seenCursors.has(cursor)) {
+          throw discoveryLimitError('events/list cursor cycle');
+        }
+        seenCursors.add(cursor);
+      }
     } while (cursor);
 
     for (const normalized of descriptors) {
