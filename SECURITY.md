@@ -2,12 +2,20 @@
 
 ## Supported versions
 
-The public package is pre-1.0. Security fixes are supported on the current 0.6.x line.
+The public package is pre-1.0; the current published baseline is **0.11.0**.
+Security maintenance is focused on the latest 0.11.x release line and future
+current releases. Older pre-1.0 lines are **not** promised backports.
 
-| Version | Supported |
+| Version | Security maintenance |
 | --- | --- |
-| 0.6.x | Yes |
-| < 0.6 | No |
+| 0.11.x | Current release line; receive fixes where practical |
+| 0.1.x–0.10.x | Unsupported; upgrade deliberately |
+| Unreleased main | Under CI and review; **not** a published security release |
+
+Publishing a new package version does not change downstream applications
+pinned to an exact version; consuming hosts must opt into any upgrade.
+This table describes the repository's support policy, not a certification
+or evidence that any particular release is free of vulnerabilities.
 
 ## Reporting a vulnerability
 
@@ -26,7 +34,7 @@ Useful reports include:
 
 ## Security boundaries
 
-Event Intelligence 0.6.x is an experimental reference implementation with scoped multi-tenant host support. It is not a turnkey hardened hosted service.
+Event Intelligence 0.11.x is an experimental reference implementation with scoped multi-tenant host support. It is not a turnkey hardened hosted service.
 
 Important defaults and constraints:
 
