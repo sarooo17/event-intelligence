@@ -1,3 +1,4 @@
+import { readOwnEventPath } from '../../dist/src/protocol/ownPath.js';
 import {
   parseDerivedEventRecord,
   sha256Hex,
@@ -9,18 +10,6 @@ import {
 export const DERIVED_EVENT_SERVER_ID = 'event-intelligence:derived';
 export const DERIVED_EVENT_CONNECTION_ID = 'event-intelligence:derived';
 
-function getByPath(source, path) {
-  let current = source;
-  for (const part of String(path).split('.')) {
-    if (
-      current === null ||
-      typeof current !== 'object' ||
-      Array.isArray(current)
-    ) return undefined;
-    current = current[part];
-  }
-  return current;
-}
 
 function evidenceRef(source) {
   return {
@@ -171,7 +160,7 @@ export class DerivedEventCoordinator {
           `Derived event projection source missing: ${projection.ref}`,
         );
       }
-      const value = getByPath(source.data, projection.path);
+      const value = readOwnEventPath(source.data, projection.path);
       if (
         value !== undefined &&
         (
