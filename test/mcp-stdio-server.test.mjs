@@ -58,11 +58,21 @@ function assertMcpWireSchemaParity(tools) {
     const pair = entries.find(([, entry]) => entry.name === tool.name);
     assert.ok(pair, 'missing operation metadata for ' + tool.name);
     const [key] = pair;
-    const expected = z.toJSONSchema(MCP_OPERATION_SCHEMAS[key]);
+    // Compare full nested JSON schemas, including enum values, bounds,
+    // defaults and additionalProperties—not just top-level property names.
+    // input mode matches the schema seen by a model/tool caller.
+    const expected = z.toJSONSchema(MCP_OPERATION_SCHEMAS[key], {
+      io: 'input',
+    });
     assert.deepEqual(
-      Object.keys(tool.inputSchema.properties ?? {}).sort(),
-      Object.keys(expected.properties ?? {}).sort(),
-      'MCP wire argument fields drifted for ' + key,
+      tool.inputSchema.properties ?? {},
+      expected.properties ?? {},
+      'MCP wire nested input schema drifted for ' + key,
+    );
+    assert.equal(
+      tool.inputSchema.additionalProperties,
+      expected.additionalProperties,
+      'MCP wire additionalProperties drifted for ' + key,
     );
     // MCP's SDK treats Zod defaults as optional at the wire boundary.
     // A direct z.toJSONSchema() marks defaulted fields as required in its
