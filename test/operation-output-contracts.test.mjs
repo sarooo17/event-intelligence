@@ -31,7 +31,13 @@ test('three shared semantic output operations expose intentional transport proje
   }
   assert.throws(() => outputValidator('embedded', 'plan'),
     /Operation not exposed on EI surface/);
-  for (const operation of ['inspect', 'simulate', 'wakeHydrate', 'languageDescribe', 'derivedContracts', 'runtimeStatus']) {
+  for (const operation of ['inspect']) {
+    // The host may supply an inspector, but its arbitrary projection has no
+    // portable output contract. Never return undefined as a validator.
+    assert.throws(() => outputValidator('embedded', operation),
+      /Unmodeled EI output projection/);
+  }
+  for (const operation of ['simulate', 'wakeHydrate', 'languageDescribe', 'derivedContracts', 'runtimeStatus']) {
     assert.throws(() => outputValidator('embedded', operation),
       /Operation not exposed on EI surface/);
   }
