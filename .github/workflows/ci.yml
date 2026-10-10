@@ -48,6 +48,12 @@ jobs:
           node-version: 22
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm install --no-save --ignore-scripts --no-audit --no-fund pg@8
+      - name: Install PostgreSQL client backup tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y postgresql-client
+          pg_dump --version
+          pg_restore --version
       - run: npm run test:postgres
       - name: PostgreSQL scale harness smoke (isolated 16 triggers)
         env:
