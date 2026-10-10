@@ -5,6 +5,8 @@ on:
     paths:
       - ".github/workflows/clean-room-smoke.yml"
       - "README.md"
+      - "docs/examples/packed-simple-trigger.mjs"
+      - "docs/SIMPLE-TRIGGER-AUTHORING.md"
       - "package.json"
       - "package-lock.json"
       - "server.json"
