@@ -640,7 +640,7 @@ export function summarizeEventSourceStatus(
 
 export function bindEmbeddedRuntimeIntegration(
   integration,
-  { adapt, register, onClose } = {},
+  { adapt, register, onClose, capabilityIds } = {},
 ) {
   if (!integration || typeof integration !== 'object') {
     throw new Error('embedded integration is required');
@@ -655,7 +655,31 @@ export function bindEmbeddedRuntimeIntegration(
     throw new Error('bind onClose must be a function');
   }
 
-  const adapted = integration.tools.map((portableTool) => {
+  // Apply static capability filtering BEFORE calling a host tool adapter or
+  // registration hook. Discovery must never preload an unexposed capability.
+  // The host remains responsible for per-actor policy at execution time.
+  let selected = integration.tools;
+  if (capabilityIds !== undefined) {
+    // Iterating converts sparse holes to undefined; Array.some() silently
+    // skips empty slots, which would otherwise bypass fail-closed validation.
+    if (!Array.isArray(capabilityIds) ||
+        [...capabilityIds].some((id) => typeof id !== 'string' || !id.trim())) {
+      throw new TypeError('capabilityIds must be an array of non-empty capability IDs');
+    }
+    const known = new Set(
+      integration.tools.map((tool) => tool?.capability?.id),
+    );
+    const unavailable = capabilityIds.find((id) => !known.has(id));
+    if (unavailable) {
+      throw new Error('Cannot expose unknown EI capability: ' + unavailable);
+    }
+    const allowed = new Set(capabilityIds);
+    selected = integration.tools.filter((tool) =>
+      allowed.has(tool.capability?.id)
+    );
+  }
+
+  const adapted = selected.map((portableTool) => {
     const hostTool = adapt(portableTool);
     register(hostTool, portableTool);
     return hostTool;
