@@ -207,6 +207,11 @@ The host must continue to enforce owner permissions on every wake.
 This closes a specific event-evidence ambiguity under #45. Other trust-boundary
 hypotheses, complete tenant fuzzing and independent security review remain open.
 
+Both direct composite ingestion and MCP Events occurrence conversion
+snapshot provider data before schema validation or canonical payload hashing.
+MCP conversion also snapshots subscription arguments; tests verify zero
+accessor or Proxy trap execution before hashing.
+
 The JavaScript ingress explicitly rejects native `Proxy` values (including
 nested and array proxies) via Node's `node:util/types.isProxy` before any
 reflection or traversal can trigger attacker-defined proxy traps. This is a
