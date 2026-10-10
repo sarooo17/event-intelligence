@@ -32,7 +32,7 @@ The standalone stdio server is configured with a trusted `MCP_OWNER_ID` and opti
 
 - `trigger_list` always uses the configured owner and has no `ownerOnly:false` bypass.
 - `trigger_inspect` first checks an owner-scoped trigger entry for the requested
-  ID/version and refuses foreign IDs with the same generic not-found error.
+  ID/version and refuses foreign IDs with the same generic not-found error. When a version is omitted, it explicitly chooses the latest **owned** version and pins that version for the subsequent inspector lookup, so another owner's newer version cannot be selected.
 - `wake_hydrate` requires a trigger-scoped wake whose subscription ID,
   matched event ID, trigger identity/version and optional persisted delivery
   row are consistent. It checks trigger ownership **before** retrieving matched
