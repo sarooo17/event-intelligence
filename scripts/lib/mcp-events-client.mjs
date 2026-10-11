@@ -32,6 +32,32 @@ function discoveryLimitError(detail) {
   return error;
 }
 
+// The transport is owned by the host, but decoded events/list objects are
+// producer-controlled input. Never access their fields through ordinary JS
+// property reads: a host adapter could supply Proxies or getter-backed values.
+function ownDiscoveryPage(raw, connectionId) {
+  const invalid = () => {
+    const error = new Error(
+      `MCP server ${connectionId} returned unsafe events/list page`,
+    );
+    error.code = 'MCP_EVENTS_DISCOVERY_PAGE_INVALID';
+    throw error;
+  };
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw) || isProxy(raw)) {
+    invalid();
+  }
+  const events = Object.getOwnPropertyDescriptor(raw, 'events');
+  const cursor = Object.getOwnPropertyDescriptor(raw, 'nextCursor');
+  if (!events || !Object.hasOwn(events, 'value') ||
+      (cursor && !Object.hasOwn(cursor, 'value'))) {
+    invalid();
+  }
+  if (isProxy(events.value) || !Array.isArray(events.value)) {
+    invalid();
+  }
+  return { events: events.value, nextCursor: cursor?.value };
+}
+
 function assertObject(value, message) {
   if (!value || Array.isArray(value) || typeof value !== 'object') {
     throw new Error(message);
@@ -523,17 +549,13 @@ export class McpEventsClientManager {
       if (++pageCount > MAX_MCP_EVENT_DISCOVERY_PAGES) {
         throw discoveryLimitError('too many events/list pages');
       }
-      const listed = await this.rpc(
+      const rawPage = await this.rpc(
         connection,
         profile.listMethod,
         cursor ? { cursor } : {},
       );
       this.assertConnectionAttached(connection);
-      if (!Array.isArray(listed?.events)) {
-        throw new Error(
-          `MCP server ${connectionId} returned invalid events/list`,
-        );
-      }
+      const listed = ownDiscoveryPage(rawPage, connectionId);
       // Validate the *original* cursor shape and cycle before parsing any
       // untrusted descriptor on this page. Never coerce objects/arrays with
       // String(): doing so can allocate huge strings and fabricate cursors.
@@ -560,7 +582,12 @@ export class McpEventsClientManager {
         MAX_MCP_EVENT_DISCOVERY_SOURCES - descriptors.length) {
         throw discoveryLimitError('too many event descriptors');
       }
-      for (const raw of listed.events) {
+      // The bounded page is detached before descriptor normalization and
+      // before the first asynchronous source-registration operation. This
+      // ignores custom iterators and rejects Proxy, getters, sparse slots,
+      // non-JSON nested schemas and cycles without running provider code.
+      const safeDescriptors = snapshotUntrustedEventData(listed.events);
+      for (const raw of safeDescriptors) {
         const descriptor = sourceDescriptor(raw, profile);
         if (names.has(descriptor.name)) {
           throw new Error(
