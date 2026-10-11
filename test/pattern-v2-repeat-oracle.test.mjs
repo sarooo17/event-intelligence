@@ -52,10 +52,12 @@ function signatures(result) {
   return result.matches.map((candidate) => {
     assert.deepEqual(Object.keys(candidate.bindings).sort(), ['x'],
       'repeat(event(x)) attached an unrelated reference');
-    const bound = candidate.bindings.x.map(event => event.sourceEventId).sort();
-    const provenance = candidate.events.map(event => event.sourceEventId).sort();
+    // Keep the inner event sequences chronological: openedAt/source event
+    // provenance depends on candidate.events[0], not merely set membership.
+    const bound = candidate.bindings.x.map(event => event.sourceEventId);
+    const provenance = candidate.events.map(event => event.sourceEventId);
     assert.deepEqual(provenance, bound,
-      'candidate.events must contain exactly its x binding, no noise or duplicates');
+      'candidate.events must exactly match the ordered x binding, no noise or duplicates');
     assert.ok(candidate.events.every(event => event.clauseId === 'x'),
       'candidate provenance contains unrelated clause');
     return bound;
@@ -152,6 +154,27 @@ test('independent repeat oracle distinguishes noise, x-adjacency and subset sema
   assert.notDeepEqual(relaxed, combinations);
   const admitNoise = [...combinations, ['repeat-0-1', 'repeat-0-2']];
   assert.notDeepEqual(admitNoise, combinations);
+});
+
+test('repeat differential detects reordered inner event provenance', () => {
+  const a = occurrence(999, 0, 'x');
+  const b = occurrence(999, 1, 'x');
+  assert.deepEqual(signatures({ matches: [{
+    bindings: { x: [a, b] },
+    events: [a, b],
+  }] }), [[a.sourceEventId, b.sourceEventId]]);
+  assert.throws(() => signatures({ matches: [{
+    bindings: { x: [a, b] },
+    events: [b, a],
+  }] }), /ordered x binding/);
+  // If both binding and provenance are incorrectly reversed, the
+  // independent chronological oracle still rejects the resulting order.
+  assert.notDeepEqual(signatures({ matches: [{
+    bindings: { x: [b, a] },
+    events: [b, a],
+  }] }), referenceRepeatIds([a, b], {
+    min: 2, max: 2, contiguity: 'consecutive',
+  }));
 });
 
 test('repeat oracle rejects ambiguous/out-of-domain corpora instead of overclaiming', () => {
