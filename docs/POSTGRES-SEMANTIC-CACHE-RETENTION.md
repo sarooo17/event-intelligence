@@ -32,12 +32,18 @@ during many workers' initialization can deadlock with active startup snapshots.
 To enable retention on an older database, the operator must explicitly run
 `await store.init(); await store.migrateRetentionIndex()` on an initialized
 store. The migration uses `CREATE INDEX CONCURRENTLY` outside a transaction,
-with an immediate, non-waiting advisory try-lock to prevent overlapping index
-builders. Ordinary trigger/event writes remain governed by existing locks and
+with an atomic, **durable migration claim** in the existing metadata table to
+prevent overlapping index builders. No session advisory locks are used, so the
+claim remains valid with PgBouncer transaction pooling. Ordinary trigger/event writes remain governed by existing locks and
 can proceed. This operation may consume IO and wait for active transactions;
 schedule it during low traffic and monitor Postgres activity. An invalid index
 left after an interrupted build is **not** silently repaired: inspect it and
-rebuild it concurrently under operator control. Never blindly drop a shared
+rebuild it concurrently under operator control. The claim lives in the
+`metadata` table as component `retention-age-index-migration` with a unique
+token. A clean completion removes the claim. A process crash can leave a stale
+claim: operator intervention is required to inspect any partial index, verify
+no other migration is executing and explicitly clear the stale metadata row.
+Do **not** automatically steal a claim based only on elapsed time. Never blindly drop a shared
 index while another worker is building it.
 
 Retention with a cutoff refuses to delete anything until the ordered index
