@@ -1,4 +1,5 @@
 import * as z from 'zod/v4';
+import { isProxy } from 'node:util/types';
 
 import {
   CompositeTriggerEngine,
@@ -48,6 +49,33 @@ function latest(records) {
   )[0] ?? null;
 }
 
+// The untrusted event payload is NEVER an inspector output contract. Some
+// older/host-provided stores may carry malformed _derived metadata (including
+// nested objects or accessor properties). Project only canonical scalar
+// provenance labels through own data descriptors; never serialize payload
+// objects, getters, or arbitrary values as causal evidence.
+function derivedMetadata(data) {
+  // A proxy may execute arbitrary userland traps on descriptor reflection.
+  // The Node intrinsic tests proxy identity without invoking those traps.
+  if (!data || typeof data !== 'object' ||
+      isProxy(data) || Array.isArray(data)) {
+    return { contractVersion: null, schemaFingerprint: null };
+  }
+  const metadata = Object.getOwnPropertyDescriptor(data, '_derived')?.value;
+  if (!metadata || typeof metadata !== 'object' ||
+      isProxy(metadata) || Array.isArray(metadata)) {
+    return { contractVersion: null, schemaFingerprint: null };
+  }
+  const version = Object.getOwnPropertyDescriptor(metadata, 'contractVersion')?.value;
+  const hash = Object.getOwnPropertyDescriptor(metadata, 'schemaFingerprint')?.value;
+  return {
+    contractVersion: typeof version === 'string' &&
+      version.length >= 1 && version.length <= 50 ? version : null,
+    schemaFingerprint: typeof hash === 'string' &&
+      /^[a-f0-9]{64}$/.test(hash) ? hash : null,
+  };
+}
+
 function sourceRef(event) {
   return {
     clauseId: event.clauseId,
@@ -57,10 +85,7 @@ function sourceRef(event) {
     occurredAt: event.occurredAt,
     traceId: event.traceId,
     payloadHash: event.payloadHash ?? null,
-    contractVersion:
-      event.data?._derived?.contractVersion ?? null,
-    schemaFingerprint:
-      event.data?._derived?.schemaFingerprint ?? null,
+    ...derivedMetadata(event.data),
   };
 }
 
@@ -330,10 +355,7 @@ export class TriggerInspector {
         derivedOutputs: derivedOutputs.map((record) => ({
           eventId: record.event.sourceEventId,
           eventName: record.event.name,
-          contractVersion:
-            record.event.data?._derived?.contractVersion ?? null,
-          schemaFingerprint:
-            record.event.data?._derived?.schemaFingerprint ?? null,
+          ...derivedMetadata(record.event.data),
           occurredAt: record.event.occurredAt,
           directParents: record.directParents,
           rootEvidence: record.rootEvidence,

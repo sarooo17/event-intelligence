@@ -173,3 +173,110 @@ test('invalid bounded-window records fail with the stable contract error', async
     );
   }
 });
+
+test('inspector rejects payload-shaped derived metadata without executing accessors', async () => {
+  const store = testStore();
+  const match = store.listTriggerMatches()[0];
+  const dirtyMetadata = { contractVersion: { secret: 'RAW-SECRET-VERSION' } };
+  Object.defineProperty(dirtyMetadata, 'schemaFingerprint', {
+    enumerable: true,
+    get() { throw new Error('inspector must not execute metadata getter'); },
+  });
+  const eventData = { _derived: dirtyMetadata, body: 'RAW-SECRET-BODY' };
+  const dirtyEvent = { ...match.sourceEvents[0], data: eventData };
+  const safeEvent = {
+    ...match.sourceEvents[0],
+    sourceEventId: 'valid-derived-ref',
+    data: {
+      _derived: {
+        contractVersion: 'v2',
+        schemaFingerprint: 'a'.repeat(64),
+      },
+    },
+  };
+  store.listTriggerMatches = () => [{
+    ...match,
+    sourceEvents: [dirtyEvent, safeEvent],
+  }];
+  store.listTriggerMatchHistory = () => [{
+    ...match,
+    sourceEvents: [dirtyEvent, safeEvent],
+  }];
+  store.listDerivedEvents = async () => [{
+    event: {
+      sourceEventId: 'derived-id',
+      name: 'derived.changed',
+      occurredAt: '2026-10-01T12:00:00.000Z',
+      data: {
+        _derived: {
+          contractVersion: { secret: 'RAW-DERIVED-OBJECT' },
+          schemaFingerprint: 'NOT-A-SHA-256',
+        },
+      },
+    },
+    directParents: [],
+    rootEvidence: [],
+  }];
+  const view = await new TriggerInspector({
+    store, matchHistoryLimit: 1,
+  }).inspect({ triggerId: 'release' });
+  assert.equal(view.lineage.evidence[0].contractVersion, null);
+  assert.equal(view.lineage.evidence[0].schemaFingerprint, null);
+  assert.equal(view.lineage.evidence[1].contractVersion, 'v2');
+  assert.equal(view.lineage.evidence[1].schemaFingerprint, 'a'.repeat(64));
+  assert.equal(view.lineage.derivedOutputs[0].contractVersion, null);
+  assert.equal(view.lineage.derivedOutputs[0].schemaFingerprint, null);
+  for (const secret of ['RAW-SECRET-VERSION', 'RAW-SECRET-BODY', 'RAW-DERIVED-OBJECT']) {
+    assert.equal(JSON.stringify(view).includes(secret), false, 'private payload leak ' + secret);
+  }
+});
+
+test('inspector does not access an accessor-backed _derived field', async () => {
+  const store = testStore();
+  const match = store.listTriggerMatches()[0];
+  const data = {};
+  Object.defineProperty(data, '_derived', {
+    enumerable: true,
+    get() { throw new Error('host payload getter must not be invoked'); },
+  });
+  const guarded = { ...match, sourceEvents: [{
+    ...match.sourceEvents[0], data,
+  }] };
+  store.listTriggerMatches = () => [guarded];
+  store.listTriggerMatchHistory = () => [guarded];
+  const view = await new TriggerInspector({
+    store, matchHistoryLimit: 1,
+  }).inspect({ triggerId: 'release' });
+  assert.equal(view.lineage.evidence[0].contractVersion, null);
+  assert.equal(view.lineage.evidence[0].schemaFingerprint, null);
+});
+
+test('inspector ignores direct and nested proxy provenance without invoking traps', async () => {
+  let called = 0;
+  const explodingProxy = new Proxy({}, {
+    get() { called++; throw new Error('proxy get trap'); },
+    getOwnPropertyDescriptor() {
+      called++;
+      throw new Error('proxy descriptor trap');
+    },
+    ownKeys() { called++; throw new Error('proxy keys trap'); },
+  });
+  for (const data of [
+    explodingProxy,
+    { _derived: explodingProxy },
+  ]) {
+    const store = testStore();
+    const match = store.listTriggerMatches()[0];
+    const guarded = { ...match, sourceEvents: [
+      { ...match.sourceEvents[0], data },
+    ] };
+    store.listTriggerMatches = () => [guarded];
+    store.listTriggerMatchHistory = () => [guarded];
+    const view = await new TriggerInspector({
+      store, matchHistoryLimit: 1,
+    }).inspect({ triggerId: 'release' });
+    assert.equal(view.lineage.evidence[0].contractVersion, null);
+    assert.equal(view.lineage.evidence[0].schemaFingerprint, null);
+  }
+  assert.equal(called, 0, 'proxy handler must never execute during inspection');
+});
