@@ -133,3 +133,92 @@ test('global producer limit of 500 events is enforced even when the page adverti
   assert.equal(f.receipts.persisted.length, 0);
   assert.equal(f.getCursor(), null);
 });
+
+test('a mutated provider array or custom iterator cannot inject after the cap check', async () => {
+  let firstStarted;
+  let continueFirst;
+  const started = new Promise(resolve => { firstStarted = resolve; });
+  const release = new Promise(resolve => { continueFirst = resolve; });
+  const page = [occurrence('a'), occurrence('b')];
+  const f = fixture({
+    maxEvents: 2,
+    responses: [{ events: page, cursor: 'safe-next', hasMore: false }],
+  });
+  // The host adapter's iterator advertises a third event even though the
+  // JSON array has only two own indices.
+  page[Symbol.iterator] = function* () {
+    yield page[0];
+    yield page[1];
+    yield occurrence('iterator-excess');
+  };
+  let initial = true;
+  f.manager.compositeEventConsumer.ingestMcpOccurrence = async ({ event }) => {
+    if (initial) {
+      initial = false;
+      firstStarted();
+      await release;
+    }
+    f.receipts.ingested.push(event.eventId);
+  };
+  const running = f.poll();
+  await started;
+  page.push(occurrence('appended-while-ingesting'));
+  page[1].eventId = 'producer-mutated-second-event';
+  continueFirst();
+  const result = await running;
+  assert.equal(result.accepted, 2);
+  assert.deepEqual(f.receipts.appended.map(x => x.id), ['order-a', 'order-b']);
+  assert.deepEqual(f.receipts.ingested, ['order-a', 'order-b']);
+  assert.equal(f.getCursor(), 'safe-next');
+});
+
+test('poll page snapshots reject accessor entries without executing getters or writing state', async () => {
+  let accessorInvocations = 0;
+  const page = [occurrence('a')];
+  Object.defineProperty(page, '0', {
+    enumerable: true,
+    configurable: true,
+    get() {
+      accessorInvocations++;
+      return occurrence('malicious');
+    },
+  });
+  const f = fixture({
+    maxEvents: 2,
+    responses: [{ events: page, cursor: 'bad-accessor', hasMore: false }],
+  });
+  await assert.rejects(f.poll(),
+    error => error.code === 'MCP_EVENTS_POLL_BATCH_INVALID');
+  assert.equal(accessorInvocations, 0);
+  assert.deepEqual(f.receipts.appended, []);
+  assert.deepEqual(f.receipts.persisted, []);
+});
+
+test('poll page snapshots reject nested getters and JS Proxies before append', async () => {
+  let called = 0;
+  const nested = { order: 'legitimate' };
+  Object.defineProperty(nested, 'secret', {
+    enumerable: true,
+    get() {
+      called++;
+      return 'private';
+    },
+  });
+  for (const data of [nested, new Proxy({ order: 'legitimate' }, {
+    ownKeys() {
+      called++;
+      return ['order'];
+    },
+  })]) {
+    const event = { ...occurrence('unsafe'), data };
+    const f = fixture({
+      maxEvents: 1,
+      responses: [{ events: [event], cursor: 'never', hasMore: false }],
+    });
+    await assert.rejects(f.poll(),
+      error => error.code === 'EVENT_UNTRUSTED_DATA_INVALID');
+    assert.equal(f.receipts.appended.length, 0);
+    assert.equal(f.receipts.persisted.length, 0);
+  }
+  assert.equal(called, 0, 'unsafe accessor or proxy code must not execute');
+});
