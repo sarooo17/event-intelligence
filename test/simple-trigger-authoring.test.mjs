@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { toTriggerPlan } from '../scripts/embedded-host-kit.mjs';
 import { TriggerPlanner } from '../scripts/lib/trigger-planner.mjs';
+import { canonicalJson, parseTriggerPlanInput } from '../dist/src/intelligenceProtocol/index.js';
 
 const target = { runtime: 'clean-room', kind: 'workflow', id: 'wf-1' };
 
@@ -140,4 +141,79 @@ test('simple authoring rejects silent predicate modifier stripping but keeps val
   assert.equal(plan.events[0].where[0].flags, 'i');
   assert.equal(plan.continuation.contextPolicy.evidence, 'refs_only');
   assert.equal(plan.continuation.contextPolicy.maxEvents, 50);
+});
+
+test('simple authoring is byte-identical to canonical wire planning for 96 option combinations', async () => {
+  const planner = new TriggerPlanner({
+    store: {
+      async listEventSources() {
+        return [{
+          sourceId: 'github:issue-updated',
+          connectionId: 'conn-github', serverId: 'github',
+          eventName: 'github.issue.updated', enabled: true,
+          inputSchema: {
+            type: 'object',
+            properties: { repo: { type: 'string' } },
+            additionalProperties: false,
+          },
+          payloadSchema: {
+            type: 'object',
+            properties: {
+              priority: { type: 'number' },
+              title: { type: 'string' },
+            },
+          },
+        }];
+      },
+    },
+  });
+  for (let seed = 0; seed < 96; seed += 1) {
+    const when = {
+      event: 'github.issue.updated',
+      ...(seed % 2 ? { id: 'issue' } : {}),
+      ...(seed % 3 ? { serverId: 'github' } : {}),
+      ...(seed % 4 ? { arguments: { repo: 'example/project' } } : {}),
+      ...(seed % 5 ? { where: [{ path: 'priority', op: 'gte', value: 2 }] } : {}),
+    };
+    const then = {
+      target,
+      instruction: 'Review the issue change for importance.',
+      ...(seed % 6 ? { contextPolicy: { evidence: 'refs_only' } } : {}),
+    };
+    const options = {
+      ...(seed % 7 ? { triggerId: 'same-id-' + seed } : {}),
+      ...(seed % 2 ? { version: '3' } : {}),
+      ...(seed % 3 ? { description: 'Issue watch' } : {}),
+      ...(seed % 4 ? { withinMs: 120000 } : {}),
+      ...(seed % 5 ? { lifecycle: { oneShot: true, maxFirings: 2 } } : {}),
+    };
+    const simple = toTriggerPlan({ when, then, ...options });
+    const manual = parseTriggerPlanInput({
+      events: [{
+        ...(when.id ? { id: when.id } : {}),
+        event: when.event,
+        ...(when.serverId ? { serverId: when.serverId } : {}),
+        ...(when.arguments ? { arguments: when.arguments } : {}),
+        ...(when.where ? { where: when.where } : {}),
+      }],
+      target: then.target,
+      continuation: {
+        instruction: then.instruction,
+        ...(then.contextPolicy ? { contextPolicy: then.contextPolicy } : {}),
+      },
+      ...options,
+    });
+    assert.deepEqual(
+      Buffer.from(canonicalJson(simple), 'utf8'),
+      Buffer.from(canonicalJson(manual), 'utf8'),
+      'canonical plan byte parity seed=' + seed,
+    );
+    const simpleResolved = await planner.plan(simple);
+    const manuallyResolved = await planner.plan(manual);
+    assert.deepEqual(
+      Buffer.from(canonicalJson(simpleResolved), 'utf8'),
+      Buffer.from(canonicalJson(manuallyResolved), 'utf8'),
+      'planned definition, source resolution, ID and receipt byte parity seed=' + seed,
+    );
+  }
 });
