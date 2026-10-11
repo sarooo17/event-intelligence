@@ -76,3 +76,30 @@ it does not establish parent-child causal context, automatic span duration,
 external metrics, sampling or traces across an embedding runtime. Hosts own
 the OTel exporter, SDK, authentication and sampling. Those and other
 explainability acceptance tests remain part of #48.
+
+
+## Verified PostgreSQL read/restart boundary (bounded regression, v1 preparation)
+
+`test/postgres-inspector-restart.test.mjs` uses two **real independent PG16
+connection pools** and two tenant scopes with the *same* trigger ID, version
+and match ID. It appends multiple revisions of a partially observed trigger,
+then verifies:
+
+- Owner-scoped `TriggerControlPlane`/MCP read guard authorizes the
+  configured owner and refuses a foreign principal *in the same queried
+  scope*, before exposing an inspection. The bare `TriggerInspector` is a
+  low-level trusted-store API; **it does not supply user authorization**.
+- With an explicit bounded history limit, each tenant sees only its own
+  2/3 latest revisions and accurate `historyTruncated`, evidence refs and
+  factual observed/waiting clauses; raw event `data` stays out of outputs.
+- The first worker pool is completely closed, another independent pool
+  opens the same persisted tenant scope and reinitializes the Postgres store,
+  and the full ref-only inspector result is **deep-equal** across restart.
+  The second tenant's colliding logical IDs remain isolated.
+
+Run `POSTGRES_URL=... npm run test:postgres`; without a configured
+PostgreSQL connection this integration test skips. This covers bounded
+restart and owner guard evidence, **not** runtime-wide authorization,
+network failover, actual OS process kill, a total causal graph, or every
+explanation status code. Do not mark all of #48 as production-ready based on
+this single scenario.
