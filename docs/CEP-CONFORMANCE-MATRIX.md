@@ -53,6 +53,8 @@ Reproduction inputs:
   three contiguity variants, 3 arrival permutations, and 2 preference modes;
   seeded LCG `Math.imul(seed, 2654435761) ^ 0x51bca607` assigns each
   event `x` or unrelated `noise`. UTC origin is `2026-10-02T12:00:00Z`.
+  IDs use a **reverse lexicographic suffix** relative to monotonically increasing
+  timestamps, so accidental ID-sorting cannot masquerade as event-time order.
   The independent oracle exhaustively enumerates subsets of the `x` events
   under three contiguity variants, without invoking evaluator helpers.
   Differential tests verify complete candidate bindings and the **exact
