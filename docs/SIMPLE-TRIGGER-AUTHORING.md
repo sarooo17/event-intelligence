@@ -77,12 +77,15 @@ const plan = toTriggerPlan<z.infer<typeof schema>>({
 ```
 
 The generic checks top-level field names, scalar value types and applicable
-operators at compile time. For example, an unknown field, a string supplied
+operators at compile time. It supports `contains` for strings and scalar
+array members, and `between` only for comparable strings or numbers; For example, an unknown field, a string supplied
 to numeric `gte`, or `gt` on a string field is rejected by TypeScript.
 Use an independently verified provider SDK TypeScript payload type when
 a Zod schema is unavailable. Types cannot be inferred automatically from
-an arbitrary runtime JSON Schema response: **deep dot-paths and live payload
-validation remain the canonical planner's responsibility**. The normal
+an arbitrary runtime JSON Schema response. **Deep dot-paths and source-schema
+validation remain the canonical planner's responsibility; live payload data
+must be validated at the trusted MCP ingestion boundary**, not in the planner.
+The normal
 unannotated `toTriggerPlan()` call remains unchanged.
 
 The exported types are `TypedSourcePredicate<Payload>` and
