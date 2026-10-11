@@ -121,3 +121,61 @@ test('conformance rejects a fresh delivery that reuses a completed wake identity
   assert.equal(regression?.status, 'fail');
   assert.match(regression.error, /fresh delivery reused the previous durable wake identity/);
 });
+
+test('v3 conformance accepts resettable newest-first delivery observers', async () => {
+  const adapter = {
+    name: 'restart-reset-newest-first-host',
+    async createHarness(options) {
+      const harness = await referenceHostAdapter.createHarness(options);
+      const originalDeliveries = harness.deliveries.bind(harness);
+      const originalRestart = harness.restart.bind(harness);
+      let baselineLength = 0;
+      return {
+        ...harness,
+        async restart() {
+          await originalRestart();
+          // A new host process may keep its EI durable data yet expose only
+          // new callback deliveries from its new in-process observer.
+          baselineLength = originalDeliveries().length;
+        },
+        deliveries() {
+          // The conformance contract never requires chronological order.
+          return originalDeliveries().slice(baselineLength).reverse();
+        },
+      };
+    },
+  };
+  const report = await runHostConformance(adapter, { profile: 'management' });
+  assert.equal(report.passed, true, JSON.stringify(report, null, 2));
+});
+
+test('v3 conformance rejects empty fresh runtime receipt after restart', async () => {
+  const faulty = {
+    name: 'faulty-empty-fresh-receipt-host',
+    async createHarness(options) {
+      const harness = await referenceHostAdapter.createHarness(options);
+      const originalDeliveries = harness.deliveries.bind(harness);
+      return {
+        ...harness,
+        deliveries() {
+          const rows = originalDeliveries();
+          return rows.map((row) =>
+            row.triggerId === 'conformance-delivered-restart' &&
+              row.wakeId !== rows.find(x =>
+                x.triggerId === 'conformance-delivered-restart'
+              )?.wakeId
+              ? { ...row, runtimeReceiptId: '' }
+              : row
+          );
+        },
+      };
+    },
+  };
+  const report = await runHostConformance(faulty, { profile: 'core' });
+  assert.equal(report.passed, false);
+  const regression = report.results.find(
+    result => result.id === 'core.restart-after-delivery-replay',
+  );
+  assert.equal(regression?.status, 'fail');
+  assert.match(regression.error, /fresh delivery reused the previous host receipt identity/);
+});
