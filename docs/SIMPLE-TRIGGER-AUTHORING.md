@@ -77,7 +77,9 @@ const plan = toTriggerPlan<z.infer<typeof schema>>({
 ```
 
 The generic checks top-level field names, scalar value types and applicable
-operators at compile time. It supports `contains` for strings and scalar
+operators at compile time. Discriminated-union source payload types are
+supported: fields belonging to any declared variant remain eligible, but
+static typing does **not** prove that a field exists on every emitted variant. It supports `contains` for strings and scalar
 array members, and `between` only for comparable strings or numbers; For example, an unknown field, a string supplied
 to numeric `gte`, or `gt` on a string field is rejected by TypeScript.
 Use an independently verified provider SDK TypeScript payload type when
