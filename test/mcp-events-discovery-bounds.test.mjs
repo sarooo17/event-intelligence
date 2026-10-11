@@ -212,6 +212,43 @@ test('events/list uses the bounded own slots instead of producer-defined iterato
   assert.equal(iterated,0);
 });
 
+test('events/list discards unbounded non-index array metadata before snapshot',async()=>{
+  let getterCalls=0;
+  const events=[descriptor(1)];
+  // The array has one valid event but thousands of irrelevant own keys.
+  // Deep snapshotting this original array would enumerate all of them.
+  for(let i=0;i<12000;i++){
+    Object.defineProperty(events,'noise_'+i,{
+      configurable:true,enumerable:true,value:'ignored',
+    });
+  }
+  Object.defineProperty(events,'nonindex_accessor',{
+    enumerable:true,
+    get(){getterCalls++;return 'never-read';},
+  });
+  const f=fixture(()=>({events}));
+  const result=await f.manager.discoverConnection('untrusted-source');
+  assert.deepEqual(result.map(item=>item.name),['security.event.1']);
+  assert.equal(f.registered.length,1);
+  assert.equal(getterCalls,0);
+});
+
+test('events/list rejects accessor array indices without reading getters',async()=>{
+  let reads=0;
+  const events=[descriptor(1)];
+  Object.defineProperty(events,'0',{
+    configurable:true,enumerable:true,
+    get(){reads++;return descriptor(2);},
+  });
+  const f=fixture(()=>({events}));
+  await assert.rejects(
+    ()=>f.manager.discoverConnection('untrusted-source'),
+    error=>error.code==='EVENT_UNTRUSTED_DATA_INVALID',
+  );
+  assert.equal(f.registered.length,0);
+  assert.equal(reads,0);
+});
+
 test('events/list snapshots nested descriptor schemas before any asynchronous registration',async()=>{
   let enter,release;
   const entered=new Promise(resolve=>{enter=resolve;});
