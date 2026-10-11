@@ -972,17 +972,23 @@ export class McpEventsClientManager {
     let activeSession = null;
     let terminatedDuringOpen = false;
 
+    // Push and webhook transport callbacks are still untrusted ingress.
+    // Like bounded poll pages, take an own-data JSON snapshot synchronously
+    // before any parser, async store append or later cursor access. A provider
+    // cannot use getters/proxies or mutate a queued payload after this point.
     const onEvent = async (raw) => {
       if (!this.isConnectionAttached(connection)) return;
+      const safeEvent = snapshotUntrustedEventData(raw);
+      this.assertConnectionAttached(connection);
       const receipt = await this.ingestOccurrence(
         connection,
         context,
         subscription,
-        raw,
+        safeEvent,
       );
       if (!this.isConnectionAttached(connection)) return;
       if (receipt.accepted) accepted += 1;
-      if (Object.prototype.hasOwnProperty.call(raw ?? {}, 'cursor')) {
+      if (Object.hasOwn(safeEvent, 'cursor')) {
         await this.saveSubscriptionState(
           connection,
           context,
@@ -990,7 +996,7 @@ export class McpEventsClientManager {
           {
             deliveryMode: delivery,
             cursor: normalizeCursor(
-              raw.cursor,
+              safeEvent.cursor,
               `${delivery} event ${subscription.eventName}`,
             ),
             ...(receipt.accepted
@@ -1001,11 +1007,23 @@ export class McpEventsClientManager {
       }
     };
 
-    const onActive = async (update = {}) => {
+    const safeCallbackUpdate = (raw = {}) => {
+      const update = snapshotUntrustedEventData(raw ?? {});
+      if (!update || Array.isArray(update) || typeof update !== 'object') {
+        const error = new TypeError('MCP Events callback update must be a JSON object');
+        error.code = 'EVENT_UNTRUSTED_DATA_INVALID';
+        throw error;
+      }
+      return update;
+    };
+
+    const onActive = async (raw = {}) => {
       if (!this.isConnectionAttached(connection)) return;
+      const update = safeCallbackUpdate(raw);
+      this.assertConnectionAttached(connection);
       const patch = {
         deliveryMode: delivery,
-        ...(Object.prototype.hasOwnProperty.call(update, 'cursor')
+        ...(Object.hasOwn(update, 'cursor')
           ? {
               cursor: normalizeCursor(
                 update.cursor,
@@ -1025,7 +1043,9 @@ export class McpEventsClientManager {
       );
     };
 
-    const onGap = async (update = {}) => {
+    const onGap = async (raw = {}) => {
+      if (!this.isConnectionAttached(connection)) return;
+      const update = safeCallbackUpdate(raw);
       await onActive({ ...update, truncated: true });
     };
 
