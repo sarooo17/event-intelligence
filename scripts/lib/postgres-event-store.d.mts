@@ -149,7 +149,23 @@ export declare class PostgresEventStore {
     now?: string;
   }): Promise<boolean>;
 
-  compactMutableState(): Promise<any>;
+  /** Operator-triggered, nonblocking online index migration for existing populated stores. Call after init(). */
+  migrateRetentionIndex(): Promise<{ ok: true; index: string }>;
+  /** Only disposable semantic decision cache is eligible; histories, audit and receipts are never removed. */
+  compactMutableState(options?: {
+    /** Exclusive cutoff: prune cached decisions older than this offset-aware ISO timestamp. */
+    semanticCacheBefore?: string;
+    /** Maximum rows per transaction (1..1000; default 500). */
+    maxRows?: number;
+  }): Promise<{
+    ok: true;
+    strategy: 'database-managed' | 'bounded-semantic-cache-retention';
+    compacted: Array<{ kind: 'semantic_cache'; records: number }>;
+    scopeId?: string;
+    cutoff?: string;
+    deleted?: number;
+    capped?: boolean;
+  }>;
   getSemanticDecisionCache(key: string): Promise<any | null>;
   putSemanticDecisionCache(key: string, decision: any): Promise<any>;
   semanticDecisionCacheSize(): Promise<number>;
