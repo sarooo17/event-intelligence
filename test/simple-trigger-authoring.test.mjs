@@ -185,7 +185,9 @@ test('simple authoring is byte-identical to canonical wire planning for 96 optio
       ...(seed % 2 ? { version: '3' } : {}),
       ...(seed % 3 ? { description: 'Issue watch' } : {}),
       ...(seed % 4 ? { withinMs: 120000 } : {}),
-      ...(seed % 5 ? { lifecycle: { oneShot: true, maxFirings: 2 } } : {}),
+      ...(seed % 5 ? { lifecycle: seed % 2
+        ? { oneShot: true, maxFirings: 1 }
+        : { oneShot: false, maxFirings: 2 } } : {}),
     };
     const simple = toTriggerPlan({ when, then, ...options });
     const manual = parseTriggerPlanInput({
