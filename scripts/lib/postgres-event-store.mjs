@@ -1,4 +1,5 @@
 import * as z from 'zod/v4';
+import { randomUUID } from 'node:crypto';
 import {
   AuditChain,
   McpEventOccurrenceSchema,
@@ -301,46 +302,53 @@ export class PostgresEventStore {
       error.code = 'EVENT_INTELLIGENCE_RETENTION_MIGRATION_NOT_INITIALIZED';
       throw error;
     }
-    const lockName = this.tablePrefix + ':retention-online-migration';
-    const client = await this.pool.connect();
-    let locked = false;
-    try {
-      const lock = await client.query(
-        'SELECT pg_try_advisory_lock(hashtextextended($1, 0)) AS acquired',
-        [lockName],
+    // Store a durable, unique operator migration claim in the existing
+    // versioned metadata table. PostgreSQL transaction pools (PgBouncer)
+    // cannot safely hold session advisory locks across CREATE INDEX
+    // CONCURRENTLY, which must run OUTSIDE a transaction.
+    const component = 'retention-age-index-migration';
+    const claim = randomUUID();
+    const inserted = await this.tx(async client => client.query(
+      'INSERT INTO ' + this.metadata +
+      ' (component, version, adopted_from) VALUES ($1, $2, $3) ' +
+      'ON CONFLICT (component) DO NOTHING RETURNING component',
+      [component, 1, claim],
+    ));
+    if (inserted.rows.length !== 1) {
+      const error = new Error(
+        'Online retention migration is claimed by another operator or ' +
+        'has an unresolved interrupted claim. Inspect metadata before retrying.',
       );
-      if (lock.rows[0]?.acquired !== true) {
-        const error = new Error('Another online retention index migration is active');
-        error.code = 'EVENT_INTELLIGENCE_RETENTION_MIGRATION_BUSY';
-        throw error;
-      }
-      locked = true;
-      const existing = await client.query(
+      error.code = 'EVENT_INTELLIGENCE_RETENTION_MIGRATION_BUSY';
+      throw error;
+    }
+    try {
+      const existing = await this.pool.query(
         'SELECT 1 FROM pg_class idx JOIN pg_namespace n ' +
         'ON n.oid = idx.relnamespace WHERE n.nspname = current_schema() ' +
         'AND idx.relname = $1',
         [this.tablePrefix + '_records_age_idx'],
       );
       if (!existing.rows.length) {
-        // This session has no open transaction. CONCURRENTLY does not take
-        // PostgreSQL's blocking ShareLock for an online index build.
-        await client.query(
+        // Individual autocommit statement, not a BEGIN transaction:
+        // CONCURRENTLY can run without blocking normal trigger writes.
+        await this.pool.query(
           'CREATE INDEX CONCURRENTLY IF NOT EXISTS "' + this.tablePrefix +
           '_records_age_idx" ON ' + this.records +
           ' (scope_id, kind, updated_at, record_key)',
         );
       }
-      await this.assertRetentionIndex(client);
+      await this.assertRetentionIndex();
       return { ok: true, index: this.tablePrefix + '_records_age_idx' };
     } finally {
-      try {
-        if (locked) await client.query(
-          'SELECT pg_advisory_unlock(hashtextextended($1, 0))',
-          [lockName],
-        );
-      } finally {
-        client.release();
-      }
+      // Compare-and-delete never frees a different operator's claim. A
+      // process kill can strand this durable claim: require manual review
+      // rather than automatic unsafe lease stealing / concurrent DDL.
+      await this.pool.query(
+        'DELETE FROM ' + this.metadata +
+        ' WHERE component = $1 AND adopted_from = $2',
+        [component, claim],
+      );
     }
   }
 
