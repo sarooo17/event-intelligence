@@ -57,3 +57,33 @@ test('conformance catches a host that loses source-event dedup across restart', 
   assert.equal(regression?.status, 'fail');
   assert.match(regression.error, /replayed event|fireCount/);
 });
+
+test('conformance rejects a host missing durable wake receipts after restart', async () => {
+  const regressed = {
+    name: 'faulty-persisted-receipt-host',
+    async createHarness(options) {
+      const harness = await referenceHostAdapter.createHarness(options);
+      const restart = harness.restart.bind(harness);
+      let didRestart = false;
+      return {
+        ...harness,
+        async restart() {
+          await restart();
+          didRestart = true;
+        },
+        async readWakeReceipt(wakeId) {
+          // Fault injection: no persisted receipt is recoverable after
+          // restart although the external deliveries closure survived.
+          return didRestart ? null : harness.readWakeReceipt(wakeId);
+        },
+      };
+    },
+  };
+  const report = await runHostConformance(regressed, { profile: 'core' });
+  assert.equal(report.passed, false, 'lost receipt must fail conformance');
+  const regression = report.results.find(
+    (result) => result.id === 'core.restart-after-delivery-replay',
+  );
+  assert.equal(regression?.status, 'fail');
+  assert.match(regression.error, /durable store lost the completed wake receipt/);
+});
