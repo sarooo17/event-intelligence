@@ -1,4 +1,5 @@
 import * as z from 'zod/v4';
+import { isProxy } from 'node:util/types';
 
 import {
   CompositeTriggerEngine,
@@ -54,10 +55,15 @@ function latest(records) {
 // provenance labels through own data descriptors; never serialize payload
 // objects, getters, or arbitrary values as causal evidence.
 function derivedMetadata(data) {
-  const metadata = data && typeof data === 'object' && !Array.isArray(data)
-    ? Object.getOwnPropertyDescriptor(data, '_derived')?.value
-    : null;
-  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
+  // A proxy may execute arbitrary userland traps on descriptor reflection.
+  // The Node intrinsic tests proxy identity without invoking those traps.
+  if (!data || typeof data !== 'object' ||
+      isProxy(data) || Array.isArray(data)) {
+    return { contractVersion: null, schemaFingerprint: null };
+  }
+  const metadata = Object.getOwnPropertyDescriptor(data, '_derived')?.value;
+  if (!metadata || typeof metadata !== 'object' ||
+      isProxy(metadata) || Array.isArray(metadata)) {
     return { contractVersion: null, schemaFingerprint: null };
   }
   const version = Object.getOwnPropertyDescriptor(metadata, 'contractVersion')?.value;
