@@ -260,7 +260,7 @@ export class PostgresEventStore {
     );
     const row = current.rows[0];
     if (current.rows.length !== 1 || row.valid !== true ||
-        !/\\(scope_id, kind, updated_at, record_key\\)/.test(row.definition)) {
+        !/\(scope_id, kind, updated_at, record_key\)/.test(row.definition)) {
       const error = new Error(
         'Semantic cache TTL requires a valid scoped age index. ' +
         'Run store.migrateRetentionIndex() as an explicit online migration ' +
