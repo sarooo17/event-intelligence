@@ -260,9 +260,10 @@ export class PostgresEventStore {
       'i.indisunique AS is_unique, am.amname AS method, ' +
       'i.indnkeyatts AS key_count, i.indnatts AS attr_count, ' +
       'tbl.relname AS table_name, ' +
-      'ARRAY(SELECT a.attname FROM generate_series(0, i.indnkeyatts - 1) AS p(n) ' +
-      'JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = i.indkey[p.n] ' +
-      'ORDER BY p.n) AS key_columns ' +
+      'ARRAY[pg_get_indexdef(i.indexrelid, 1, true), ' +
+      'pg_get_indexdef(i.indexrelid, 2, true), ' +
+      'pg_get_indexdef(i.indexrelid, 3, true), ' +
+      'pg_get_indexdef(i.indexrelid, 4, true)] AS key_columns ' +
       'FROM pg_class idx JOIN pg_index i ON i.indexrelid = idx.oid ' +
       'JOIN pg_class tbl ON tbl.oid = i.indrelid ' +
       'JOIN pg_am am ON am.oid = idx.relam ' +
