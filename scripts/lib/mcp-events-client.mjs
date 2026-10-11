@@ -979,6 +979,15 @@ export class McpEventsClientManager {
     const onEvent = async (raw) => {
       if (!this.isConnectionAttached(connection)) return;
       const safeEvent = snapshotUntrustedEventData(raw);
+      // Reject an invalid cursor before any durable append. Otherwise the
+      // event could be accepted but its continuation point be uncommittable.
+      const hasCursor = Object.hasOwn(safeEvent ?? {}, 'cursor');
+      const eventCursor = hasCursor
+        ? normalizeCursor(
+            safeEvent.cursor,
+            `${delivery} event ${subscription.eventName}`,
+          )
+        : null;
       this.assertConnectionAttached(connection);
       const receipt = await this.ingestOccurrence(
         connection,
@@ -988,17 +997,14 @@ export class McpEventsClientManager {
       );
       if (!this.isConnectionAttached(connection)) return;
       if (receipt.accepted) accepted += 1;
-      if (Object.hasOwn(safeEvent, 'cursor')) {
+      if (hasCursor) {
         await this.saveSubscriptionState(
           connection,
           context,
           subscription,
           {
             deliveryMode: delivery,
-            cursor: normalizeCursor(
-              safeEvent.cursor,
-              `${delivery} event ${subscription.eventName}`,
-            ),
+            cursor: eventCursor,
             ...(receipt.accepted
               ? { lastEventAt: receipt.occurrence.timestamp }
               : {}),
