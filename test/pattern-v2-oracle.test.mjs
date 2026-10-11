@@ -95,3 +95,28 @@ test('bounded oracle rejects unsupported semantics instead of pretending to vali
     /Unknown reference contiguity/,
   );
 });
+
+test('sequence reference oracle rejects out-of-domain evidence', () => {
+  const a = sourceEvent('a', 'a', 0);
+  const b = sourceEvent('b', 'b', 1);
+  assert.throws(() => referenceSequencePairs([], 'next'), /1\.\.8/);
+  assert.throws(() => referenceSequencePairs(Array.from({ length: 9 },
+    (_,i)=>sourceEvent(String(i),'a',i)), 'next'), /1\.\.8/);
+  assert.throws(() => referenceSequencePairs([a,a], 'next'), /unique chronological/);
+  assert.throws(() => referenceSequencePairs([
+    { ...a, occurredAt: '1' },
+  ], 'next'), /unique chronological/);
+  assert.throws(() => referenceSequencePairs([
+    { ...a, occurredAt: '2026-10-01T12:00:00' },
+  ], 'next'), /unique chronological/);
+  assert.throws(() => referenceSequencePairs([b,a], 'followedBy'), /unique chronological/);
+  // Evaluator orders equal timestamps by event ID; this independent oracle
+  // intentionally accepts strictly increasing timestamps only.
+  assert.throws(() => referenceSequencePairs([
+    { ...a, sourceEventId: 'z' },
+    { ...b, sourceEventId: 'a', occurredAt: a.occurredAt },
+  ], 'followedBy'), /unique chronological/);
+  assert.throws(() => referenceSequencePairs([
+    { ...a, clauseId: 'unmodeled' },
+  ], 'next'), /unique chronological/);
+});

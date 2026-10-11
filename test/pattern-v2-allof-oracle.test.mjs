@@ -84,10 +84,16 @@ test('allOf independently matches 250 seeded Cartesian corpora under 3 arrival p
 });
 
 test('allOf oracle rejects unsupported or duplicate-id corpora rather than overclaiming', () => {
-  assert.throws(() => referenceAllOfPairs(Array(10).fill({ clauseId: 'a', sourceEventId: 'x' })), /<=9/);
+  assert.throws(() => referenceAllOfPairs([]), /1\.\.9/);
+  assert.throws(() => referenceAllOfPairs(Array(10).fill({ clauseId: 'a', sourceEventId: 'x' })), /1\.\.9/);
   assert.throws(() => referenceAllOfPairs([
     { clauseId: 'a', sourceEventId: 'same' },
     { clauseId: 'b', sourceEventId: 'same' },
   ]), /unique/);
   assert.throws(() => referenceAllOfPairs([{ clauseId: 'semantic', sourceEventId: 's' }]), /supported/);
+  assert.throws(() => referenceAllOfPairs([{ clauseId: 'a', sourceEventId: '' }]), /unique supported/);
+  assert.throws(() => referenceAllOfPairs([
+    { clauseId: 'a', sourceEventId: 'valid' },
+    { clauseId: 'b', sourceEventId: '' },
+  ]), /unique supported/);
 });

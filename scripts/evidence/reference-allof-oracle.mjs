@@ -7,14 +7,15 @@
  * allow-overlap + keepAll; unlimited enough execution caps.
  */
 export function referenceAllOfPairs(events) {
-  if (!Array.isArray(events) || events.length > 9) {
-    throw new TypeError('AllOf reference corpus must contain <=9 events');
+  if (!Array.isArray(events) || events.length < 1 || events.length > 9) {
+    throw new TypeError('AllOf reference corpus must contain 1..9 events');
   }
   const seen = new Set();
   for (const entry of events) {
     if (!entry || typeof entry !== 'object' ||
         !['a', 'b', 'noise'].includes(entry.clauseId) ||
         typeof entry.sourceEventId !== 'string' ||
+        entry.sourceEventId.length === 0 ||
         seen.has(entry.sourceEventId)) {
       throw new TypeError('AllOf reference oracle needs unique supported events');
     }

@@ -1,3 +1,7 @@
+import * as z from 'zod/v4';
+
+const eventTimestamp = z.iso.datetime({ offset: true });
+
 /**
  * Tiny independent reference for the event-time notFollowedBy subset.
  * It intentionally does not import Pattern AST implementation helpers.
@@ -12,6 +16,20 @@ export function referenceNotFollowedBy(events, {
       !Number.isFinite(allowedLatenessMs) || allowedLatenessMs < 0 ||
       !Number.isFinite(nowMs)) {
     throw new TypeError('Invalid bounded negative-window oracle parameters');
+  }
+  if (!Array.isArray(events) || events.length < 1 || events.length > 10) {
+    throw new TypeError('Negative-window oracle requires 1..10 events');
+  }
+  const seen = new Set();
+  for (const item of events) {
+    if (!item || !['a','b','noise'].includes(item.clauseId) ||
+        typeof item.sourceEventId !== 'string' || !item.sourceEventId ||
+        seen.has(item.sourceEventId) ||
+        !eventTimestamp.safeParse(item.occurredAt).success ||
+        !Number.isFinite(Date.parse(item.occurredAt))) {
+      throw new TypeError('Negative-window oracle requires unique valid a/b/noise events');
+    }
+    seen.add(item.sourceEventId);
   }
   const matches = [];
   const pending = [];

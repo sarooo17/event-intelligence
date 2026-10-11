@@ -1,3 +1,7 @@
+import * as z from 'zod/v4';
+
+const eventTimestamp = z.iso.datetime({ offset: true });
+
 /**
  * Deliberately small independent oracle for the two-event sequence subset.
  *
@@ -9,6 +13,24 @@
 export function referenceSequencePairs(ordered, contiguity) {
   if (contiguity !== 'next' && contiguity !== 'followedBy') {
     throw new Error('Unknown reference contiguity: ' + contiguity);
+  }
+  if (!Array.isArray(ordered) || ordered.length < 1 || ordered.length > 8) {
+    throw new TypeError('Sequence reference oracle requires 1..8 events');
+  }
+  const seen = new Set();
+  let lastTime = -Infinity;
+  for (const item of ordered) {
+    const at = Date.parse(item?.occurredAt);
+    if (!item || !['a','b','noise'].includes(item.clauseId) ||
+        typeof item.sourceEventId !== 'string' || !item.sourceEventId ||
+        seen.has(item.sourceEventId) ||
+        !eventTimestamp.safeParse(item.occurredAt).success ||
+        !Number.isFinite(at) ||
+        at <= lastTime) {
+      throw new TypeError('Sequence reference oracle needs unique chronological a/b/noise events');
+    }
+    seen.add(item.sourceEventId);
+    lastTime = at;
   }
   const pairs = [];
   for (let i = 0; i < ordered.length; i += 1) {
