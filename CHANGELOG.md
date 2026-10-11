@@ -2,6 +2,11 @@
 
 ## Unreleased (v1.0 development)
 
+### DX source-payload typing and packed headless reference
+
+- add a **type-only**, optional `toTriggerPlan<Payload>()` overload for provider SDK/Zod-inferred top-level fields, scalar values and relevant operators; no runtime DSL or changes to the canonical parser/planner;
+- add compile-positive and compile-negative TypeScript regression checks locally and against packed npm artifacts, plus a headless external consumer lifecycle/reopen reference. Untyped callers and downstream locked consumers remain unchanged.
+
 ### MCP Events poll page ingestion bounds
 
 - reject `events/poll` pages exceeding host-configured `maxEvents` (1–500) before any occurrence append or cursor advancement; fail closed using `MCP_EVENTS_POLL_BATCH_LIMIT_EXCEEDED` and preserve retry from the previous cursor;
