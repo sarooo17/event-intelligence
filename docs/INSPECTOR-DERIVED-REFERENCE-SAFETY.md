@@ -16,6 +16,8 @@ calling accessor getters, and emits `null` for malformed provenance:
   wire label maximum).
 - `schemaFingerprint`: lowercase 64-hex-character SHA-256 fingerprint.
 - Any object, array, accessor property, or invalid value: `null`.
+- A proxy-backed payload object or nested `_derived` object is rejected **before**
+  descriptor reflection, avoiding invocation of proxy traps.
 
 This applies to both raw source-event refs and the
 `lineage.derivedOutputs` projection. Valid canonical scalar metadata is
