@@ -133,3 +133,100 @@ test('cursor cycle takes priority over parsing duplicated or corrupt descriptors
   assert.equal(f.calls,2);
   assert.equal(f.registered.length,0);
 });
+
+
+test('events/list rejects top-level Proxy and getter properties without executing traps', async () => {
+  let invoked=0;
+  const getterPage={ nextCursor:null };
+  Object.defineProperty(getterPage,'events',{
+    enumerable:true,
+    get(){invoked++;return [descriptor(1)];},
+  });
+  const cursorPage={events:[descriptor(1)]};
+  Object.defineProperty(cursorPage,'nextCursor',{
+    enumerable:true,
+    get(){invoked++;return 'forged';},
+  });
+  const outerProxy=new Proxy({events:[descriptor(1)]},{
+    get(){invoked++;return null;},
+    getOwnPropertyDescriptor(){invoked++;return undefined;},
+  });
+  const arrayProxy=new Proxy([descriptor(1)],{
+    get(){invoked++;return [];},
+    getOwnPropertyDescriptor(){invoked++;return undefined;},
+  });
+  for(const page of [getterPage,cursorPage,outerProxy,{events:arrayProxy}]) {
+    const f=fixture(()=>page);
+    await assert.rejects(
+      ()=>f.manager.discoverConnection('untrusted-source'),
+      error=>error.code==='MCP_EVENTS_DISCOVERY_PAGE_INVALID',
+    );
+    assert.equal(f.registered.length,0);
+  }
+  assert.equal(invoked,0);
+});
+
+test('events/list rejects descriptor and schema getters or proxies before source mutation',async()=>{
+  let invoked=0;
+  const getterName=descriptor(1);
+  Object.defineProperty(getterName,'name',{
+    enumerable:true,
+    get(){invoked++;return 'forged';},
+  });
+  const getterSchema=descriptor(1);
+  Object.defineProperty(getterSchema.payloadSchema,'secret',{
+    enumerable:true,
+    get(){invoked++;return 'private';},
+  });
+  const proxy=new Proxy(descriptor(1),{
+    get(){invoked++;return 'forged';},
+    ownKeys(){invoked++;return ['name'];},
+  });
+  for(const unsafe of [getterName,getterSchema,proxy]) {
+    const f=fixture(()=>({events:[unsafe]}));
+    await assert.rejects(
+      ()=>f.manager.discoverConnection('untrusted-source'),
+      error=>error.code==='EVENT_UNTRUSTED_DATA_INVALID',
+    );
+    assert.equal(f.registered.length,0);
+  }
+  assert.equal(invoked,0);
+});
+
+test('events/list uses the bounded own slots instead of producer-defined iterators',async()=>{
+  let iterated=0;
+  const events=[descriptor(1)];
+  Object.defineProperty(events,Symbol.iterator,{
+    configurable:true,enumerable:false,
+    value:function*(){iterated++;yield descriptor(999);},
+  });
+  const f=fixture(()=>({events,nextCursor:null}));
+  const discovered=await f.manager.discoverConnection('untrusted-source');
+  assert.deepEqual(discovered.map(x=>x.name),['security.event.1']);
+  assert.equal(f.registered.length,1);
+  assert.equal(iterated,0);
+});
+
+test('events/list snapshots nested descriptor schemas before any asynchronous registration',async()=>{
+  let enter,release;
+  const entered=new Promise(resolve=>{enter=resolve;});
+  const proceed=new Promise(resolve=>{release=resolve;});
+  const raw=descriptor(1);
+  raw.payloadSchema={type:'object',properties:{owner:{const:'initial-owner'}}};
+  const f=fixture(()=>({events:[raw]}));
+  f.manager.registerEventSource=async source=>{
+    enter();
+    await proceed;
+    f.registered.push(source);
+  };
+  const pending=f.manager.discoverConnection('untrusted-source');
+  await entered;
+  raw.name='forged-name';
+  raw.payloadSchema.properties.owner.const='other-owner';
+  release();
+  const discovered=await pending;
+  assert.equal(discovered[0].name,'security.event.1');
+  assert.equal(f.registered.length,1);
+  assert.equal(f.registered[0].eventName,'security.event.1');
+  assert.equal(f.registered[0].payloadSchema.properties.owner.const,'initial-owner');
+});
