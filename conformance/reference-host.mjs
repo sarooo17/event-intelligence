@@ -146,6 +146,18 @@ export const referenceHostAdapter = {
         return [...externalDeliveries];
       },
 
+      async readWakeReceipt(wakeId) {
+        // Read authoritative EI state, not the externalDeliveries closure.
+        // This must still work after the host has closed and reopened storage.
+        const persisted = await host.store.getWakeDelivery(wakeId);
+        return persisted
+          ? {
+              status: persisted.status,
+              runtimeReceiptId: persisted.runtimeReceiptId,
+            }
+          : null;
+      },
+
       async restart() {
         await host.close();
         await start();

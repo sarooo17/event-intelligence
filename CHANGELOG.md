@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased (v1.0 development)
+
+### Host conformance v3 (breaking pre-v1 test interface)
+
+- strengthen core conformance with a post-delivery restart + source event replay test; a new event must still yield a distinct wake/receipt;
+- bump report identity from `event-intelligence.host-conformance.v2` to `event-intelligence.host-conformance.v3`;
+- require `wakeId`, `runtimeReceiptId` and `readWakeReceipt(wakeId)` on conformance adapters so the restarted host must demonstrate authoritative durable EI receipt state rather than an in-memory delivery array;
+- intentionally do not provide a v2 adapter shim; no change to the production wake transport or pinned downstream installations.
+
 ## [0.11.0] - 2026-10-05
 
 ### Transactional Postgres shared state

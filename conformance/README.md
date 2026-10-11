@@ -23,13 +23,14 @@ npm run check
 The public `mcp-event-intelligence/conformance` entry point validates an
 embedding runtime without teaching EI about that runtime.
 
-Implement `createHarness({ observability })` and return six operations:
+Implement `createHarness({ observability })` and return seven operations (host conformance v3):
 
 - `createTrigger()`
 - `emitEvent()`
 - `deliveries()`
 - `restart()`
 - `inspectTrigger()`
+- `readWakeReceipt(wakeId)` (authoritative persisted status and runtime receipt)
 - `close()`
 
 Then run:
@@ -42,8 +43,9 @@ const report = await runHostConformance(myRuntimeAdapter, {
 });
 ```
 
-Core v1 checks cover one-shot delivery, replay deduplication, restart
-persistence, bounded `maxFirings`, and required structured observability
+Core v3 checks cover one-shot delivery, replay deduplication, restart
+persistence, post-delivery replay and a **durable receipt read after reopening**
+the host, fresh-event continuity, bounded `maxFirings`, and required structured observability
 (`ei.trigger.created`, `ei.match.matched`, `ei.wake.delivered`).
 
 The scenarios are intentionally isolated and synthetic. Do not point the
@@ -57,3 +59,16 @@ npm run conformance:host
 
 The MCP Events draft remains upstream and experimental. These checks certify
 Event Intelligence host behavior, not official MCP conformance.
+
+**Breaking pre-v1 conformance contract:** reports use
+`event-intelligence.host-conformance.v3`. Adapter delivery rows must supply
+both `wakeId` and `runtimeReceiptId`, and `readWakeReceipt(wakeId)` must read
+from the restored authoritative EI store, not a process-local delivery list.
+Older v2 adapters must deliberately upgrade; EI does not provide a compatibility
+shim. A restored delivery observer may start empty or contain exactly one
+completed prior wake identity; duplicates observed during restart fail the
+suite. An observer that **resets** and then silently redelivers the *same*
+identity once is indistinguishable without independent host effect accounting:
+the host must independently enforce receipt idempotency. This test verifies EI
+receipt persistence, not external runtime checkpoint persistence, distributed
+exactly-once effects or true OS process-kill recovery.

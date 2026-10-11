@@ -1,4 +1,4 @@
-const REPORT_SCHEMA = 'event-intelligence.host-conformance.v2';
+const REPORT_SCHEMA = 'event-intelligence.host-conformance.v3';
 
 function assertFunction(value, name) {
   if (typeof value !== 'function') {
@@ -16,6 +16,7 @@ function validateHarness(harness, profile) {
     'deliveries',
     'restart',
     'inspectTrigger',
+    'readWakeReceipt',
     'close',
   ];
   if (profile === 'management') {
@@ -146,6 +147,122 @@ export async function runHostConformance(
       requireCondition(
         Number(state?.fireCount) === 1,
         `replayed event advanced fireCount to ${state?.fireCount}`,
+      );
+    }));
+
+    results.push(await runCase('core.restart-after-delivery-replay', async () => {
+      const triggerId = 'conformance-delivered-restart';
+      const originalEvent = {
+        eventId: 'delivered-before-restart',
+        value: 1901,
+        secretProbe: 'ei-conformance-secret-probe',
+      };
+      await harness.createTrigger({
+        triggerId,
+        threshold: 1900,
+        oneShot: false,
+        maxFirings: 2,
+      });
+      await harness.emitEvent(originalEvent);
+
+      const before = (await harness.deliveries())
+        .filter((entry) => entry?.triggerId === triggerId);
+      requireCondition(before.length === 1, 'pre-restart event did not deliver exactly once');
+      const firstReceipt = before[0]?.runtimeReceiptId;
+      const firstWakeId = before[0]?.wakeId;
+      requireCondition(
+        typeof firstWakeId === 'string' && firstWakeId.length > 0,
+        'first delivery did not return a stable wake ID',
+      );
+      requireCondition(
+        typeof firstReceipt === 'string' && firstReceipt.length > 0,
+        'first delivery did not return a stable host receipt identifier',
+      );
+
+      // Restart AFTER a successful external delivery. The same durable
+      // source event must not produce an additional match, wake or receipt.
+      await harness.restart();
+      const durableReceipt = await harness.readWakeReceipt(firstWakeId);
+      requireCondition(
+        durableReceipt?.status === 'delivered' &&
+          durableReceipt.runtimeReceiptId === firstReceipt,
+        'restarted durable store lost the completed wake receipt',
+      );
+      // Hosts may clear their in-process observer history on restart and
+      // may return rows in any order. Capture their actual post-restart
+      // baseline rather than requiring the pre-restart row to remain visible.
+      const baseline = (await harness.deliveries())
+        .filter((entry) => entry?.triggerId === triggerId);
+      // A restarted host may clear its observer (zero rows) or preserve the
+      // historical delivery (one row). More rows imply a duplicate callback
+      // during restart, which must never be mistaken for existing history.
+      requireCondition(
+        baseline.length <= 1 &&
+          (baseline.length === 0 || (
+            baseline[0]?.wakeId === firstWakeId &&
+            baseline[0]?.runtimeReceiptId === firstReceipt
+          )),
+        'restart observer has duplicated or changed the completed delivery',
+      );
+      const identitySignature = (rows) => JSON.stringify(
+        rows.map((entry) => [entry?.wakeId, entry?.runtimeReceiptId])
+          .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))),
+      );
+      const baselineIdentity = identitySignature(baseline);
+      await harness.emitEvent(originalEvent);
+      const replayed = (await harness.deliveries())
+        .filter((entry) => entry?.triggerId === triggerId);
+      requireCondition(
+        identitySignature(replayed) === baselineIdentity,
+        'delivered event replayed after restart or changed prior delivery identity',
+      );
+      const afterReplayState = await harness.inspectTrigger(triggerId);
+      requireCondition(
+        Number(afterReplayState?.fireCount) === 1,
+        `replayed event advanced durable fireCount to ${afterReplayState?.fireCount}`,
+      );
+
+      // A fresh source event still activates the surviving trigger. This
+      // prevents a test-only implementation from disabling all deliveries.
+      await harness.emitEvent({
+        eventId: 'delivered-after-restart-new',
+        value: 1902,
+        secretProbe: 'ei-conformance-secret-probe',
+      });
+      const afterNew = (await harness.deliveries())
+        .filter((entry) => entry?.triggerId === triggerId);
+      requireCondition(
+        afterNew.length === baseline.length + 1,
+        'fresh event was lost or added multiple deliveries after restart',
+      );
+      const isSameDelivery = (a, b) =>
+        a?.wakeId === b?.wakeId && a?.runtimeReceiptId === b?.runtimeReceiptId;
+      requireCondition(
+        baseline.every((entry) => afterNew.some((row) => isSameDelivery(entry, row))),
+        'fresh delivery removed or changed a prior observed delivery',
+      );
+      const freshRows = afterNew.filter((entry) =>
+        !baseline.some((row) => isSameDelivery(entry, row)),
+      );
+      requireCondition(freshRows.length === 1,
+        'fresh event did not produce one newly identifiable delivery');
+      const freshDelivery = freshRows[0];
+      requireCondition(
+        typeof freshDelivery.wakeId === 'string' &&
+          freshDelivery.wakeId.length > 0 &&
+          freshDelivery.wakeId !== firstWakeId,
+        'fresh delivery reused the previous durable wake identity',
+      );
+      requireCondition(
+        typeof freshDelivery.runtimeReceiptId === 'string' &&
+          freshDelivery.runtimeReceiptId.length > 0 &&
+          freshDelivery.runtimeReceiptId !== firstReceipt,
+        'fresh delivery reused the previous host receipt identity',
+      );
+      const afterNewState = await harness.inspectTrigger(triggerId);
+      requireCondition(
+        Number(afterNewState?.fireCount) === 2,
+        `fresh event did not advance fireCount to two: ${afterNewState?.fireCount}`,
       );
     }));
 
