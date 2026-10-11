@@ -233,6 +233,25 @@ test('events/list discards unbounded non-index array metadata before snapshot',a
   assert.equal(getterCalls,0);
 });
 
+test('events/list ignores huge irrelevant descriptor metadata without reflection',async()=>{
+  let calls=0;
+  const item=descriptor(1);
+  for(let i=0;i<12000;i++){
+    Object.defineProperty(item,'irrelevant_'+i,{
+      enumerable:true,configurable:true,value:'ignored',
+    });
+  }
+  Object.defineProperty(item,'unrelated_getter',{
+    enumerable:true,
+    get(){calls++;return 'malicious';},
+  });
+  const f=fixture(()=>({events:[item]}));
+  const discovered=await f.manager.discoverConnection('untrusted-source');
+  assert.deepEqual(discovered.map(x=>x.name),['security.event.1']);
+  assert.equal(f.registered.length,1);
+  assert.equal(calls,0);
+});
+
 test('events/list rejects accessor array indices without reading getters',async()=>{
   let reads=0;
   const events=[descriptor(1)];
