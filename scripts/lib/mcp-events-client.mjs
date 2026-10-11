@@ -58,6 +58,38 @@ function ownDiscoveryPage(raw, connectionId) {
   return { events: events.value, nextCursor: cursor?.value };
 }
 
+// Only these six top-level descriptor fields are consumed by
+// sourceDescriptor(). Other own properties are ignored, not reflected as
+// untrusted JSON; a producer can otherwise attach millions of irrelevant
+// enumerable keys to a one-event discovery response.
+const DISCOVERY_DESCRIPTOR_FIELDS = Object.freeze([
+  'name', 'description', 'delivery', 'inputSchema', 'payloadSchema', '_meta',
+]);
+
+function stageDiscoveryDescriptor(raw) {
+  const invalid = () => {
+    const error = new Error('MCP Events discovery rejected: unsafe descriptor');
+    error.code = 'EVENT_UNTRUSTED_DATA_INVALID';
+    throw error;
+  };
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw) || isProxy(raw)) {
+    invalid();
+  }
+  const staged = {};
+  for (const field of DISCOVERY_DESCRIPTOR_FIELDS) {
+    const slot = Object.getOwnPropertyDescriptor(raw, field);
+    if (!slot) continue;
+    if (!Object.hasOwn(slot, 'value')) invalid();
+    Object.defineProperty(staged, field, {
+      value: slot.value,
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    });
+  }
+  return staged;
+}
+
 function assertObject(value, message) {
   if (!value || Array.isArray(value) || typeof value !== 'object') {
     throw new Error(message);
@@ -598,11 +630,12 @@ export class McpEventsClientManager {
           error.code = 'EVENT_UNTRUSTED_DATA_INVALID';
           throw error;
         }
-        indexedDescriptors.push(slot.value);
+        indexedDescriptors.push(stageDiscoveryDescriptor(slot.value));
       }
-      // A single bounded walk now deeply snapshots the only relevant
-      // descriptors before any registration await: no provider getters,
-      // proxies, custom iterators, late mutation or unbounded array keys.
+      // A single bounded walk now deeply snapshots only the six consumed
+      // top-level descriptor fields, not arbitrary producer metadata keys.
+      // Nested advertised schema and _meta bodies remain semantically
+      // relevant and need host-owned transport response-byte limits.
       const safeDescriptors = snapshotUntrustedEventData(indexedDescriptors);
       for (const raw of safeDescriptors) {
         const descriptor = sourceDescriptor(raw, profile);
