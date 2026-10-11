@@ -7,6 +7,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { PostgresEventStore } from '../scripts/lib/postgres-event-store.mjs';
+import { TriggerControlPlane } from '../scripts/lib/trigger-control-plane.mjs';
 
 const dbUrl = process.env.POSTGRES_URL;
 const integrationTest = dbUrl ? test : test.skip;
@@ -68,10 +69,17 @@ integrationTest('pg_dump + pg_restore preserves trigger, audit chain, wake recei
     });
     await source.init();
     await source.putTrigger(definition());
+    const alice = { type: 'user', principal_id: 'alice', tenant_id: 'tenant-logical' };
+    const bob = { type: 'user', principal_id: 'bob', tenant_id: 'tenant-logical' };
     await source.setTriggerState(
       'logical-restore-trigger', '1', 'paused',
       { type: 'system', principal_id: 'recovery-fixture' },
+      { owner: alice },
     );
+    const sourceControl = new TriggerControlPlane({ store: source });
+    assert.equal((await sourceControl.listTriggers({ owner: alice })).length, 1);
+    assert.deepEqual(await sourceControl.listTriggers({ owner: bob }), [],
+      'same-scope foreign owner must not inspect before snapshot');
     await source.appendAudit({
       auditId: 'logical-audit-1', traceId: 'logical-trace',
       timestamp, kind: 'trigger.created', entityType: 'trigger',
@@ -113,7 +121,17 @@ integrationTest('pg_dump + pg_restore preserves trigger, audit chain, wake recei
     });
     await target.init();
     assert.deepEqual(await target.listTriggers(), originalDefinitions);
-    assert.equal((await target.getTriggerState('logical-restore-trigger', '1')).status, 'paused');
+    const restoredState = await target.getTriggerState('logical-restore-trigger', '1');
+    assert.equal(restoredState.status, 'paused');
+    assert.deepEqual(restoredState.owner, alice,
+      'owner identity must be preserved by pg_dump/pg_restore');
+    const restoredControl = new TriggerControlPlane({ store: target });
+    assert.equal((await restoredControl.listTriggers({ owner: alice })).length, 1);
+    assert.deepEqual(await restoredControl.listTriggers({ owner: bob }), [],
+      'foreign owner in the SAME tenant must not see restored trigger');
+    assert.deepEqual(await restoredControl.listTriggers({
+      owner: { ...alice, tenant_id: 'other-tenant' },
+    }), [], 'cross-tenant owner identity must not match');
     assert.equal((await target.getWakeDelivery(wakeId)).runtimeReceiptId, 'receipt-original');
     assert.equal(await target.claimWakeDelivery(wakeId, {
       workerId: 'worker-after-restore',

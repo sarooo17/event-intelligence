@@ -23,7 +23,9 @@ It does not read or drop ordinary production EI tables. A logical dump is not Po
 The test verifies:
 - persisted trigger definition and paused lifecycle survive a logical dump
   and restoration with the schema-version marker accepted at cold startup;
-- owner/scoped read isolation still holds;
+- persisted owner identity and **same-scope** owner-scoped TriggerControlPlane
+  listing deny a different owner after restore; a different tenant scope
+  likewise cannot retrieve the restored trigger;
 - delivered wake's **host receipt ID** remains present and the wake cannot be
   claimed/delivered a second time after recovery;
 - tamper-evident audit history verifies before and after, and newly appended
