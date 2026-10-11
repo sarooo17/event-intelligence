@@ -87,3 +87,37 @@ test('conformance rejects a host missing durable wake receipts after restart', a
   assert.equal(regression?.status, 'fail');
   assert.match(regression.error, /durable store lost the completed wake receipt/);
 });
+
+test('conformance rejects a fresh delivery that reuses a completed wake identity', async () => {
+  const faulty = {
+    name: 'faulty-wake-id-identity-host',
+    async createHarness(options) {
+      const harness = await referenceHostAdapter.createHarness(options);
+      const deliveries = harness.deliveries.bind(harness);
+      return {
+        ...harness,
+        deliveries() {
+          const rows = deliveries();
+          const target = rows.filter(row =>
+            row.triggerId === 'conformance-delivered-restart'
+          );
+          if (target.length < 2) return rows;
+          // Fault injection: a fresh event has a distinct host receipt but
+          // mistakenly shares the already-completed wake's durable identity.
+          return rows.map(row =>
+            row === target[1]
+              ? { ...row, wakeId: target[0].wakeId }
+              : row
+          );
+        },
+      };
+    },
+  };
+  const report = await runHostConformance(faulty, { profile: 'core' });
+  assert.equal(report.passed, false, 'reused wake identity must fail conformance');
+  const regression = report.results.find(
+    result => result.id === 'core.restart-after-delivery-replay'
+  );
+  assert.equal(regression?.status, 'fail');
+  assert.match(regression.error, /fresh delivery reused the previous durable wake identity/);
+});
