@@ -494,7 +494,11 @@ type TypedSourceArrayElement<Value> =
     : never;
 
 type TypedSourceContained<Value> =
-  Extract<NonNullable<Value>, string> |
+  // String.prototype.includes() accepts any substring, even if the
+  // source field is a z.literal() or z.enum() of longer string values.
+  (Extract<NonNullable<Value>, string> extends never ? never : string) |
+  // Array.prototype.includes() compares complete elements, so do NOT widen
+  // literal array element types to arbitrary strings.
   TypedSourceArrayElement<NonNullable<Value>>;
 
 type TypedSourcePredicateAt<
