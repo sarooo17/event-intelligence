@@ -50,6 +50,52 @@ npm run build
 node --test test/simple-trigger-authoring.test.mjs
 ```
 
+### Optional provider-payload TypeScript inference
+
+The existing `toTriggerPlan()` accepts an **optional explicit payload type**.
+For a provider SDK exporting a Zod schema, use `z.infer<typeof schema>`.
+Typing is strictly compile-time; no alternate runtime DSL or evaluator exists.
+
+```ts
+import { z } from 'zod';
+import { toTriggerPlan } from 'mcp-event-intelligence/embedded';
+const schema = z.object({ severity: z.number(), title: z.string() });
+
+const plan = toTriggerPlan<z.infer<typeof schema>>({
+  when: {
+    event: 'test.issue.changed',
+    where: [
+      { path: 'severity', op: 'gte', value: 3 },
+      { path: 'title', op: 'startsWith', value: 'critical' },
+    ],
+  },
+  then: {
+    target: { runtime: 'host', kind: 'task', id: 'case' },
+    instruction: 'Review this issue.',
+  },
+});
+```
+
+The generic checks top-level field names, scalar value types and applicable
+operators at compile time. For example, an unknown field, a string supplied
+to numeric `gte`, or `gt` on a string field is rejected by TypeScript.
+Use an independently verified provider SDK TypeScript payload type when
+a Zod schema is unavailable. Types cannot be inferred automatically from
+an arbitrary runtime JSON Schema response: **deep dot-paths and live payload
+validation remain the canonical planner's responsibility**. The normal
+unannotated `toTriggerPlan()` call remains unchanged.
+
+The exported types are `TypedSourcePredicate<Payload>` and
+`TypedSimpleTriggerPlanInput<Payload>`. They do not authorize creation:
+the existing canonical Zod parser, scoped source validation, and host-owned
+`control()` callback are authoritative. Nothing here calls an LLM.
+
+Compile-positive and compile-negative contract tests are run by:
+
+```sh
+npm run build
+node --test test/typed-simple-trigger-contract.test.mjs
+```
 ### Runnable clean-room package example
 
 The repo includes [`docs/examples/packed-simple-trigger.mjs`](examples/packed-simple-trigger.mjs).
@@ -67,5 +113,6 @@ mistaken for full three-host integration conformance (#42).
 This is one further partial improvement toward developer experience
 issue [#46](https://github.com/sarooo17/event-intelligence/issues/46).
 Deterministic virtual time has been implemented separately (#86/#89);
-the remaining typed-source, restart, and independently run external-host
-conformance claims require their own evidence.
+bounded typed-source and restart-simulation tests now have independent
+fixtures. Clean-room third-party host conformance and PostgreSQL crash
+recovery remain separate acceptance work under #42 and #47.
