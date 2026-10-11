@@ -43,6 +43,7 @@ function trigger() {
 function partial(scope, index) {
   const occurredAt = new Date(Date.parse(at) + index * 1000).toISOString();
   return {
+    protocolVersion: '0.2.0', schemaVersion: 'trigger.v0.2',
     matchId, triggerId, triggerVersion: '1',
     status: 'partial', partitionKey: null,
     openedAt: at, expiresAt: '2026-10-11T10:01:00.000Z',
