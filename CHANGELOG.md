@@ -5,7 +5,7 @@
 ### MCP Events poll page ingestion bounds
 
 - reject `events/poll` pages exceeding host-configured `maxEvents` (1–500) before any occurrence append or cursor advancement; fail closed using `MCP_EVENTS_POLL_BATCH_LIMIT_EXCEEDED` and preserve retry from the previous cursor;
-- retain valid full pages and multiple bounded pages, with negative/retry/cursor tests. The cap is per decoded page count, not transport body bytes.
+- retain valid full pages and multiple bounded pages, with negative/retry/cursor tests. Source arrays are snapshotted before asynchronous ingestion, so host-adapter mutations and custom iterators cannot bypass the cap; unsafe array entries and nested getters/proxies are rejected. The cap is per decoded page count, not transport body bytes.
 
 ### Remove deprecated boolean authorize hook (breaking)
 
