@@ -11,6 +11,7 @@ const payloadSchema = z.object({
   severity: z.number(),
   title: z.string(),
   active: z.boolean(),
+  tags: z.array(z.string()),
   metadata: z.object({ owner: z.string() }).optional(),
 });
 type IssueEvent = z.infer<typeof payloadSchema>;
@@ -24,6 +25,10 @@ const typed = toTriggerPlan<IssueEvent>({
     where: [
       { path: 'severity', op: 'gte', value: 3 },
       { path: 'severity', op: 'in', value: [1, 2, 3] },
+      { path: 'severity', op: 'between', value: [1, 9] },
+      { path: 'title', op: 'between', value: ['A', 'Z'] },
+      { path: 'title', op: 'contains', value: 'urgent' },
+      { path: 'tags', op: 'contains', value: 'urgent' },
       { path: 'title', op: 'regex', value: 'critical', flags: 'i' },
       { path: 'title', op: 'startsWith', value: 'urgent' },
       { path: 'active', op: 'eq', value: true },
@@ -56,6 +61,16 @@ toTriggerPlan<IssueEvent>({ when: { event: 'x', where: [{ path: 'severity', op: 
 toTriggerPlan<IssueEvent>({ when: { event: 'x', where: [{ path: 'severity', op: 'startsWith', value: '1' }] }, then });
 // @ts-expect-error boolean field cannot accept string equality
 toTriggerPlan<IssueEvent>({ when: { event: 'x', where: [{ path: 'active', op: 'eq', value: 'true' }] }, then });
+// @ts-expect-error numeric field does not support contains
+toTriggerPlan<IssueEvent>({ when: { event: 'x', where: [{ path: 'severity', op: 'contains', value: 2 }] }, then });
+// @ts-expect-error boolean field does not support contains
+toTriggerPlan<IssueEvent>({ when: { event: 'x', where: [{ path: 'active', op: 'contains', value: true }] }, then });
+// @ts-expect-error boolean field does not support between
+toTriggerPlan<IssueEvent>({ when: { event: 'x', where: [{ path: 'active', op: 'between', value: [false, true] }] }, then });
+// @ts-expect-error between bounds on a string must be string/ string
+toTriggerPlan<IssueEvent>({ when: { event: 'x', where: [{ path: 'title', op: 'between', value: [1, 3] }] }, then });
+// @ts-expect-error array contains value must match array member scalar
+toTriggerPlan<IssueEvent>({ when: { event: 'x', where: [{ path: 'tags', op: 'contains', value: 1 }] }, then });
 // @ts-expect-error nested provider dot-path requires the canonical planner, not unsafe type assertion
 toTriggerPlan<IssueEvent>({ when: { event: 'x', where: [{ path: 'metadata.owner', op: 'eq', value: 'test' }] }, then });
 // @ts-expect-error unknown extra modifier remains forbidden
