@@ -213,6 +213,12 @@ export async function runHostConformance(
         .filter((entry) => entry?.triggerId === triggerId);
       requireCondition(afterNew.length === 2, 'fresh event was lost after restart');
       requireCondition(
+        typeof afterNew[1]?.wakeId === 'string' &&
+          afterNew[1].wakeId.length > 0 &&
+          afterNew[1].wakeId !== firstWakeId,
+        'fresh delivery reused the previous durable wake identity',
+      );
+      requireCondition(
         typeof afterNew[1]?.runtimeReceiptId === 'string' &&
           afterNew[1].runtimeReceiptId !== firstReceipt,
         'fresh delivery reused the previous host receipt identity',
