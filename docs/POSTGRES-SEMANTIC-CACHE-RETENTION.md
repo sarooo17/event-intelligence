@@ -40,10 +40,14 @@ schedule it during low traffic and monitor Postgres activity. An invalid index
 left after an interrupted build is **not** silently repaired: inspect it and
 rebuild it concurrently under operator control. The claim lives in the
 `metadata` table as component `retention-age-index-migration` with a unique
-token. A clean completion removes the claim. A process crash can leave a stale
-claim: operator intervention is required to inspect any partial index, verify
-no other migration is executing and explicitly clear the stale metadata row.
-Do **not** automatically steal a claim based only on elapsed time. Never blindly drop a shared
+token. Only **verified successful completion** removes the claim. A process crash,
+DDL timeout, proxy/network disconnect or failed index validation leaves the
+claim intact, because PostgreSQL could still be building the index after the
+client has received an error. Operator intervention is required to inspect
+`pg_stat_progress_create_index` / `pg_index`, verify no migration DDL is still
+active, inspect or repair any partial index, and only then explicitly clear the
+stale metadata row. Do **not** automatically steal/release a claim based only
+on elapsed time or a failed client request. Never blindly drop a shared
 index while another worker is building it.
 
 Retention with a cutoff refuses to delete anything until the ordered index
