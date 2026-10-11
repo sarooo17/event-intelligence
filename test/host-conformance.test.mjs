@@ -55,7 +55,7 @@ test('conformance catches a host that loses source-event dedup across restart', 
     (result) => result.id === 'core.restart-after-delivery-replay',
   );
   assert.equal(regression?.status, 'fail');
-  assert.match(regression.error, /replayed event|fireCount/);
+  assert.match(regression.error, /replayed after restart|fireCount/);
 });
 
 test('conformance rejects a host missing durable wake receipts after restart', async () => {
