@@ -851,6 +851,18 @@ export class McpEventsClientManager {
           `MCP server ${connection.connectionId} returned invalid events/poll`,
         );
       }
+      // The remote producer is untrusted. maxEvents is a PER-PAGE hard
+      // ingestion bound, not merely a hint sent in events/poll. Reject the
+      // entire oversized page before any occurrence append, CEP processing
+      // or cursor write; callers can retry without silently losing records.
+      // Never include event payloads or untrusted IDs in this error.
+      if (result.events.length > connection.maxEvents) {
+        const error = new Error(
+          'MCP Events poll page exceeds configured maxEvents',
+        );
+        error.code = 'MCP_EVENTS_POLL_BATCH_LIMIT_EXCEEDED';
+        throw error;
+      }
       cursor = normalizeCursor(
         result.cursor,
         `MCP server ${connection.connectionId} events/poll`,
