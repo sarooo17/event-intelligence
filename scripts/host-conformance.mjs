@@ -188,13 +188,22 @@ export async function runHostConformance(
           durableReceipt.runtimeReceiptId === firstReceipt,
         'restarted durable store lost the completed wake receipt',
       );
+      // Hosts may clear their in-process observer history on restart and
+      // may return rows in any order. Capture their actual post-restart
+      // baseline rather than requiring the pre-restart row to remain visible.
+      const baseline = (await harness.deliveries())
+        .filter((entry) => entry?.triggerId === triggerId);
+      const identitySignature = (rows) => JSON.stringify(
+        rows.map((entry) => [entry?.wakeId, entry?.runtimeReceiptId])
+          .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))),
+      );
+      const baselineIdentity = identitySignature(baseline);
       await harness.emitEvent(originalEvent);
       const replayed = (await harness.deliveries())
         .filter((entry) => entry?.triggerId === triggerId);
-      requireCondition(replayed.length === 1, 'delivered event replayed after restart');
       requireCondition(
-        replayed[0]?.runtimeReceiptId === firstReceipt,
-        'host receipt identity changed after restart',
+        identitySignature(replayed) === baselineIdentity,
+        'delivered event replayed after restart or changed prior delivery identity',
       );
       const afterReplayState = await harness.inspectTrigger(triggerId);
       requireCondition(
@@ -211,16 +220,32 @@ export async function runHostConformance(
       });
       const afterNew = (await harness.deliveries())
         .filter((entry) => entry?.triggerId === triggerId);
-      requireCondition(afterNew.length === 2, 'fresh event was lost after restart');
       requireCondition(
-        typeof afterNew[1]?.wakeId === 'string' &&
-          afterNew[1].wakeId.length > 0 &&
-          afterNew[1].wakeId !== firstWakeId,
+        afterNew.length === baseline.length + 1,
+        'fresh event was lost or added multiple deliveries after restart',
+      );
+      const isSameDelivery = (a, b) =>
+        a?.wakeId === b?.wakeId && a?.runtimeReceiptId === b?.runtimeReceiptId;
+      requireCondition(
+        baseline.every((entry) => afterNew.some((row) => isSameDelivery(entry, row))),
+        'fresh delivery removed or changed a prior observed delivery',
+      );
+      const freshRows = afterNew.filter((entry) =>
+        !baseline.some((row) => isSameDelivery(entry, row)),
+      );
+      requireCondition(freshRows.length === 1,
+        'fresh event did not produce one newly identifiable delivery');
+      const freshDelivery = freshRows[0];
+      requireCondition(
+        typeof freshDelivery.wakeId === 'string' &&
+          freshDelivery.wakeId.length > 0 &&
+          freshDelivery.wakeId !== firstWakeId,
         'fresh delivery reused the previous durable wake identity',
       );
       requireCondition(
-        typeof afterNew[1]?.runtimeReceiptId === 'string' &&
-          afterNew[1].runtimeReceiptId !== firstReceipt,
+        typeof freshDelivery.runtimeReceiptId === 'string' &&
+          freshDelivery.runtimeReceiptId.length > 0 &&
+          freshDelivery.runtimeReceiptId !== firstReceipt,
         'fresh delivery reused the previous host receipt identity',
       );
       const afterNewState = await harness.inspectTrigger(triggerId);
