@@ -147,6 +147,14 @@ export class PostgresEventStore {
           'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
           [this.tablePrefix + ':schema'],
         );
+        // Only new, empty installations may build the index transactionally.
+        // Never auto-build an index on a populated deployment at startup:
+        // CREATE INDEX blocks writers, and CONCURRENTLY while other workers
+        // initialize can deadlock with open transactions/snapshots.
+        const existing = await client.query('SELECT to_regclass($1) AS relation', [
+          this.tablePrefix + '_records',
+        ]);
+        const freshRecords = !existing.rows[0]?.relation;
         for (const statement of [
           'CREATE TABLE IF NOT EXISTS ' + this.records + ' (' +
             'scope_id TEXT NOT NULL, kind TEXT NOT NULL, record_key TEXT NOT NULL,' +
@@ -228,59 +236,83 @@ export class PostgresEventStore {
             ],
           );
         }
+        if (freshRecords) {
+          await client.query(
+            'CREATE INDEX IF NOT EXISTS ' + this.tablePrefix +
+            '_records_age_idx ON ' + this.records +
+            ' (scope_id, kind, updated_at, record_key)',
+          );
+        }
       });
-      // Never CREATE INDEX inside the startup transaction for an existing
-      // populated installation: that would block all concurrent writers.
-      // A separate session and CONCURRENTLY preserve online write traffic.
-      await this.ensureRetentionIndex();
       this.initialized = true;
     }
     return this.restoredCounts();
   }
 
-  async ensureRetentionIndex() {
+  async assertRetentionIndex(client = this.pool) {
     const indexName = this.tablePrefix + '_records_age_idx';
-    // Serialize with init()'s existing schema advisory lock as well as
-    // other concurrent index builders. A distinct lock would deadlock with
-    // CREATE INDEX in another worker's schema transaction (observed PG16).
-    const lockName = this.tablePrefix + ':schema';
+    const current = await client.query(
+      'SELECT i.indisvalid AS valid, pg_get_indexdef(i.indexrelid) AS definition ' +
+      'FROM pg_class idx JOIN pg_index i ON i.indexrelid = idx.oid ' +
+      'JOIN pg_namespace n ON n.oid = idx.relnamespace ' +
+      'WHERE n.nspname = current_schema() AND idx.relname = $1',
+      [indexName],
+    );
+    const row = current.rows[0];
+    if (current.rows.length !== 1 || row.valid !== true ||
+        !/\\(scope_id, kind, updated_at, record_key\\)/.test(row.definition)) {
+      const error = new Error(
+        'Semantic cache TTL requires a valid scoped age index. ' +
+        'Run store.migrateRetentionIndex() as an explicit online migration ' +
+        'after startup; inspect invalid/conflicting indexes before retry.',
+      );
+      error.code = 'EVENT_INTELLIGENCE_RETENTION_INDEX_INVALID';
+      throw error;
+    }
+  }
+
+  /**
+   * Explicit operator-controlled online migration for populated databases.
+   * Never part of init(): parallel startup transactions can deadlock with
+   * concurrent index build snapshots. Do not call concurrently per prefix.
+   */
+  async migrateRetentionIndex() {
+    if (!this.initialized) {
+      const error = new Error('Initialize and verify the store before migrating');
+      error.code = 'EVENT_INTELLIGENCE_RETENTION_MIGRATION_NOT_INITIALIZED';
+      throw error;
+    }
+    const lockName = this.tablePrefix + ':retention-online-migration';
     const client = await this.pool.connect();
     let locked = false;
     try {
-      // Session-level lock survives the individual implicit transactions
-      // required by CREATE INDEX CONCURRENTLY. Concurrent EI workers sharing
-      // a prefix cannot attempt the same DDL at the same time.
-      await client.query(
-        'SELECT pg_advisory_lock(hashtextextended($1, 0))',
+      const lock = await client.query(
+        'SELECT pg_try_advisory_lock(hashtextextended($1, 0)) AS acquired',
         [lockName],
       );
+      if (lock.rows[0]?.acquired !== true) {
+        const error = new Error('Another online retention index migration is active');
+        error.code = 'EVENT_INTELLIGENCE_RETENTION_MIGRATION_BUSY';
+        throw error;
+      }
       locked = true;
-      const indexState = async () => client.query(
-        'SELECT i.indisvalid AS valid FROM pg_class idx ' +
-        'JOIN pg_index i ON i.indexrelid = idx.oid ' +
-        'JOIN pg_namespace n ON n.oid = idx.relnamespace ' +
-        'WHERE n.nspname = current_schema() AND idx.relname = $1',
-        [indexName],
+      const existing = await client.query(
+        'SELECT 1 FROM pg_class idx JOIN pg_namespace n ' +
+        'ON n.oid = idx.relnamespace WHERE n.nspname = current_schema() ' +
+        'AND idx.relname = $1',
+        [this.tablePrefix + '_records_age_idx'],
       );
-      const prior = await indexState();
-      if (!prior.rows.length) {
-        // PostgreSQL forbids CONCURRENTLY inside BEGIN/COMMIT. Run on a
-        // borrowed session outside this.tx(), never against a transaction.
+      if (!existing.rows.length) {
+        // This session has no open transaction. CONCURRENTLY does not take
+        // PostgreSQL's blocking ShareLock for an online index build.
         await client.query(
-          'CREATE INDEX CONCURRENTLY IF NOT EXISTS ' + indexName +
-          ' ON ' + this.records +
+          'CREATE INDEX CONCURRENTLY IF NOT EXISTS ' + this.tablePrefix +
+          '_records_age_idx ON ' + this.records +
           ' (scope_id, kind, updated_at, record_key)',
         );
       }
-      const current = await indexState();
-      if (current.rows.length !== 1 || current.rows[0].valid !== true) {
-        const error = new Error(
-          'PostgreSQL semantic cache retention index is missing or invalid. ' +
-          'Inspect the index and rebuild it concurrently before retrying.',
-        );
-        error.code = 'EVENT_INTELLIGENCE_RETENTION_INDEX_INVALID';
-        throw error;
-      }
+      await this.assertRetentionIndex(client);
+      return { ok: true, index: this.tablePrefix + '_records_age_idx' };
     } finally {
       try {
         if (locked) await client.query(
@@ -1140,6 +1172,9 @@ export class PostgresEventStore {
       error.code = 'EVENT_INTELLIGENCE_RETENTION_POLICY_INVALID';
       throw error;
     }
+    // For a legacy populated store, online migration is explicit, never
+    // attempted implicitly during ordinary writes or trigger processing.
+    await this.assertRetentionIndex();
     const result = await this.tx(async (client) => client.query(
       'WITH aged AS (' +
       ' SELECT record_key FROM ' + this.records +
