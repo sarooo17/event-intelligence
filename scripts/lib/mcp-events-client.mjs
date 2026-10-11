@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto';
+import { isProxy } from 'node:util/types';
+import { snapshotUntrustedEventData } from '../../dist/src/protocol/ownPath.js';
 import * as z from 'zod/v4';
 import {
   McpEventOccurrenceSchema,
@@ -846,22 +848,37 @@ export class McpEventsClientManager {
       // another session replaced this connectionId.
       this.assertConnectionAttached(connection);
 
-      if (!Array.isArray(result?.events)) {
+      const remoteEvents = result?.events;
+      // A producer adapter can return a Proxy, accessor-backed array or a
+      // custom iterator, not just wire-decoded JSON. Snapshot the bounded
+      // OWN entries before the first async append; the remote array cannot
+      // grow under our feet, yield extra records or mutate later payloads.
+      if (isProxy(remoteEvents) || !Array.isArray(remoteEvents)) {
         throw new Error(
           `MCP server ${connection.connectionId} returned invalid events/poll`,
         );
       }
-      // The remote producer is untrusted. maxEvents is a PER-PAGE hard
-      // ingestion bound, not merely a hint sent in events/poll. Reject the
-      // entire oversized page before any occurrence append, CEP processing
-      // or cursor write; callers can retry without silently losing records.
-      // Never include event payloads or untrusted IDs in this error.
-      if (result.events.length > connection.maxEvents) {
+      // maxEvents is a PER-PAGE hard limit, not merely a provider hint.
+      if (remoteEvents.length > connection.maxEvents) {
         const error = new Error(
           'MCP Events poll page exceeds configured maxEvents',
         );
         error.code = 'MCP_EVENTS_POLL_BATCH_LIMIT_EXCEEDED';
         throw error;
+      }
+      const boundedEvents = [];
+      for (let index = 0; index < remoteEvents.length; index += 1) {
+        const slot = Object.getOwnPropertyDescriptor(remoteEvents, String(index));
+        if (!slot || !Object.hasOwn(slot, 'value')) {
+          const error = new Error(
+            'MCP Events poll page contains unsafe array elements',
+          );
+          error.code = 'MCP_EVENTS_POLL_BATCH_INVALID';
+          throw error;
+        }
+        // Existing own-data JSON snapshot rejects nested getters, proxies
+        // and cycles without executing hostile JavaScript, before any write.
+        boundedEvents.push(snapshotUntrustedEventData(slot.value));
       }
       cursor = normalizeCursor(
         result.cursor,
@@ -874,7 +891,7 @@ export class McpEventsClientManager {
         connection.pollIntervalMs,
       );
 
-      for (const raw of result.events) {
+      for (const raw of boundedEvents) {
         const receipt = await this.ingestOccurrence(
           connection,
           context,
