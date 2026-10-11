@@ -196,3 +196,29 @@ integrationTest('existing populated installations require an explicit online ret
     await pool.end();
   }
 });
+
+integrationTest('mixed-case table prefixes retain indexed semantic cache', async () => {
+  const pool = new Pool({ connectionString: url, max: 3 });
+  const prefix = id().replace('ei_ret_', 'EI_Ret_');
+  const scoped = store(pool, prefix, 'tenant-Mixed');
+  try {
+    await scoped.init();
+    await scoped.putSemanticDecisionCache('entry', { matched: false });
+    const outcome = await scoped.compactMutableState({
+      semanticCacheBefore: '2030-01-01T00:00:00.000Z',
+      maxRows: 2,
+    });
+    assert.equal(outcome.deleted, 1);
+    assert.equal(await scoped.semanticDecisionCacheSize(), 0);
+    const index = await pool.query(
+      'SELECT 1 FROM pg_indexes WHERE schemaname = current_schema() AND indexname = $1',
+      [prefix + '_records_age_idx'],
+    );
+    assert.equal(index.rows.length, 1, 'index name must preserve the quoted uppercase prefix');
+  } finally {
+    for (const suffix of ['metadata','leases','history','records','counters']) {
+      await pool.query('DROP TABLE IF EXISTS "' + prefix + '_' + suffix + '" CASCADE');
+    }
+    await pool.end();
+  }
+});
