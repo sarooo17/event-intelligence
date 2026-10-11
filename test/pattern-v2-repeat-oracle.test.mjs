@@ -37,7 +37,9 @@ function pattern(config, mode) {
 function occurrence(seed, index, clauseId) {
   return {
     clauseId,
-    sourceEventId: 'repeat-' + seed + '-' + index,
+    // Reverse lexical ID ordering relative to chronological timestamps;
+    // an evaluator sorting by source ID instead of event-time must fail.
+    sourceEventId: 'repeat-' + seed + '-rev' + String(9 - index),
     traceId: 'repeat-trace-' + seed + '-' + index,
     eventName: clauseId + '.changed',
     serverId: 'oracle',
@@ -138,21 +140,24 @@ test('independent repeat oracle distinguishes noise, x-adjacency and subset sema
   const consecutive = referenceRepeatIds(events, {
     min: 2, max: 2, contiguity: 'consecutive',
   });
+  const ids = events.map(event => event.sourceEventId);
+  assert.ok(ids[0] > ids[3],
+    'fixture must make source IDs sort opposite to event time');
   assert.deepEqual(combinations, [
-    ['repeat-0-0', 'repeat-0-2'],
-    ['repeat-0-0', 'repeat-0-3'],
-    ['repeat-0-2', 'repeat-0-3'],
+    [ids[0], ids[2]],
+    [ids[0], ids[3]],
+    [ids[2], ids[3]],
   ]);
   assert.deepEqual(relaxed, [
-    ['repeat-0-0', 'repeat-0-2'],
-    ['repeat-0-2', 'repeat-0-3'],
+    [ids[0], ids[2]],
+    [ids[2], ids[3]],
   ]);
-  assert.deepEqual(consecutive, [['repeat-0-2', 'repeat-0-3']]);
+  assert.deepEqual(consecutive, [[ids[2], ids[3]]);
   // Regression mutants: losing a valid across-noise pair, skipping an x
   // under relaxed contiguity, or admitting an unrelated noise as a match.
   assert.notDeepEqual(consecutive, relaxed);
   assert.notDeepEqual(relaxed, combinations);
-  const admitNoise = [...combinations, ['repeat-0-1', 'repeat-0-2']];
+  const admitNoise = [...combinations, [ids[1], ids[2]]];
   assert.notDeepEqual(admitNoise, combinations);
 });
 
