@@ -488,11 +488,14 @@ type TypedSourceScalar<Value> =
 
 // The existing matcher supports string substring and scalar array membership,
 // but never "contains" on standalone numbers or booleans.
+type TypedSourceArrayElement<Value> =
+  Value extends readonly (infer Element)[]
+    ? Extract<Element, string | number | boolean>
+    : never;
+
 type TypedSourceContained<Value> =
   Extract<NonNullable<Value>, string> |
-  (NonNullable<Value> extends readonly (infer Element)[]
-    ? Extract<Element, string | number | boolean>
-    : never);
+  TypedSourceArrayElement<NonNullable<Value>>;
 
 type TypedSourcePredicateAt<
   Payload extends object,
