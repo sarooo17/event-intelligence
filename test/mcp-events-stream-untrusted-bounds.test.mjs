@@ -126,7 +126,7 @@ for (const delivery of ['push', 'webhook']) {
     const before = f.seen.saved.length;
     await assert.rejects(
       f.callbacks.onEvent({ ...event(), cursor: { forged: 'not-opaque' } }),
-      error => /expected string\\|null/.test(error.message),
+      error => error.message.includes('expected string|null'),
     );
     assert.equal(f.seen.appended.length, 0);
     assert.equal(f.seen.ingested.length, 0);
