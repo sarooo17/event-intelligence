@@ -143,15 +143,18 @@ test('independent repeat oracle distinguishes noise, x-adjacency and subset sema
   const ids = events.map(event => event.sourceEventId);
   assert.ok(ids[0] > ids[3],
     'fixture must make source IDs sort opposite to event time');
-  assert.deepEqual(combinations, [
+  const sortOuter = pairs => pairs.sort((left, right) =>
+    left.join('|').localeCompare(right.join('|'))
+  );
+  assert.deepEqual(combinations, sortOuter([
     [ids[0], ids[2]],
     [ids[0], ids[3]],
     [ids[2], ids[3]],
-  ]);
-  assert.deepEqual(relaxed, [
+  ]));
+  assert.deepEqual(relaxed, sortOuter([
     [ids[0], ids[2]],
     [ids[2], ids[3]],
-  ]);
+  ]));
   assert.deepEqual(consecutive, [[ids[2], ids[3]]);
   // Regression mutants: losing a valid across-noise pair, skipping an x
   // under relaxed contiguity, or admitting an unrelated noise as a match.
