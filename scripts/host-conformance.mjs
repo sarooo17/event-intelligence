@@ -193,6 +193,17 @@ export async function runHostConformance(
       // baseline rather than requiring the pre-restart row to remain visible.
       const baseline = (await harness.deliveries())
         .filter((entry) => entry?.triggerId === triggerId);
+      // A restarted host may clear its observer (zero rows) or preserve the
+      // historical delivery (one row). More rows imply a duplicate callback
+      // during restart, which must never be mistaken for existing history.
+      requireCondition(
+        baseline.length <= 1 &&
+          (baseline.length === 0 || (
+            baseline[0]?.wakeId === firstWakeId &&
+            baseline[0]?.runtimeReceiptId === firstReceipt
+          )),
+        'restart observer has duplicated or changed the completed delivery',
+      );
       const identitySignature = (rows) => JSON.stringify(
         rows.map((entry) => [entry?.wakeId, entry?.runtimeReceiptId])
           .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))),
