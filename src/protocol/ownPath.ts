@@ -36,9 +36,12 @@ export function snapshotUntrustedEventData(source: unknown): unknown {
       if (Array.isArray(value)) {
         if (value.length > 50000) invalid('array too large');
         const result: unknown[] = [];
-        const descriptors = Object.getOwnPropertyDescriptors(value);
+        // Only indexed entries are semantically part of a JSON array.
+        // Reflecting every own property first (getOwnPropertyDescriptors)
+        // allocates an unbounded descriptor map for producer-added, unused
+        // array metadata, even when length is within our 50k element cap.
         for (let index = 0; index < value.length; index++) {
-          const item = descriptors[String(index)];
+          const item = Object.getOwnPropertyDescriptor(value, String(index));
           if (!item || !Object.hasOwn(item, 'value')) {
             invalid('array contains hole or accessor element');
           }
