@@ -189,6 +189,17 @@ integrationTest('existing populated installations require an explicit online ret
       () => reopened.migrateRetentionIndex(),
       error => error?.code === 'EVENT_INTELLIGENCE_RETENTION_INDEX_INVALID',
     );
+    const retainedClaim = await pool.query(
+      'SELECT adopted_from FROM "' + prefix + '_metadata" WHERE component = $1',
+      ['retention-age-index-migration'],
+    );
+    assert.equal(retainedClaim.rows.length, 1,
+      'failed validation retains its migration claim until operator review');
+    // Operator has inspected the bad index and confirmed no DDL is active.
+    await pool.query(
+      'DELETE FROM "' + prefix + '_metadata" WHERE component = $1',
+      ['retention-age-index-migration'],
+    );
     await pool.query('DROP TABLE ' + unrelated + ' CASCADE');
 
     // A partial index with the correct ordered columns is not a general
