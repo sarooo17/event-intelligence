@@ -1,3 +1,7 @@
+import * as z from 'zod/v4';
+
+const eventTimestamp = z.iso.datetime({ offset: true });
+
 /**
  * Deliberately small independent oracle for the two-event sequence subset.
  *
@@ -19,7 +23,9 @@ export function referenceSequencePairs(ordered, contiguity) {
     const at = Date.parse(item?.occurredAt);
     if (!item || !['a','b','noise'].includes(item.clauseId) ||
         typeof item.sourceEventId !== 'string' || !item.sourceEventId ||
-        seen.has(item.sourceEventId) || !Number.isFinite(at) ||
+        seen.has(item.sourceEventId) ||
+        !eventTimestamp.safeParse(item.occurredAt).success ||
+        !Number.isFinite(at) ||
         at <= lastTime) {
       throw new TypeError('Sequence reference oracle needs unique chronological a/b/noise events');
     }
