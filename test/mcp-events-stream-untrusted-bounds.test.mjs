@@ -31,6 +31,7 @@ async function fixture(delivery) {
       seen.appended.push(occurrence);
       return { accepted: true };
     },
+    async listEventSources() { return []; },
   };
   const manager = new McpEventsClientManager({
     store,
