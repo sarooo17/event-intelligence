@@ -187,4 +187,10 @@ test('notFollowedBy reference oracle rejects corpus and evidence outside its fin
   assert.throws(() => referenceNotFollowedBy([
     { ...a, occurredAt: 'not-a-time' },
   ], options), /unique valid/);
+  assert.throws(() => referenceNotFollowedBy([
+    { ...a, occurredAt: '1' },
+  ], options), /unique valid/);
+  assert.throws(() => referenceNotFollowedBy([
+    { ...a, occurredAt: '2026-10-01T12:00:00' },
+  ], options), /unique valid/);
 });
