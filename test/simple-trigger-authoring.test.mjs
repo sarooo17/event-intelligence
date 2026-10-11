@@ -143,7 +143,7 @@ test('simple authoring rejects silent predicate modifier stripping but keeps val
   assert.equal(plan.continuation.contextPolicy.maxEvents, 50);
 });
 
-test('simple authoring is byte-identical to canonical wire planning for 96 option combinations', async () => {
+test('simple authoring is byte-identical to canonical wire planning for 256 independent option combinations', async () => {
   const planner = new TriggerPlanner({
     store: {
       async listEventSources() {
@@ -167,27 +167,31 @@ test('simple authoring is byte-identical to canonical wire planning for 96 optio
       },
     },
   });
-  for (let seed = 0; seed < 96; seed += 1) {
+  // Independent bit gates cover both sides of every formerly paired field
+  // (id/version, serverId/description, arguments/withinMs, where/lifecycle).
+  // Additional coprime gates exercise eventTime, contextPolicy and triggerId.
+  for (let seed = 0; seed < 256; seed += 1) {
     const when = {
       event: 'github.issue.updated',
-      ...(seed % 2 ? { id: 'issue' } : {}),
-      ...(seed % 3 ? { serverId: 'github' } : {}),
-      ...(seed % 4 ? { arguments: { repo: 'example/project' } } : {}),
-      ...(seed % 5 ? { where: [{ path: 'priority', op: 'gte', value: 2 }] } : {}),
+      ...(seed & 1 ? { id: 'issue' } : {}),
+      ...(seed & 2 ? { serverId: 'github' } : {}),
+      ...(seed & 4 ? { arguments: { repo: 'example/project' } } : {}),
+      ...(seed & 8 ? { where: [{ path: 'priority', op: 'gte', value: 2 }] } : {}),
     };
     const then = {
       target,
       instruction: 'Review the issue change for importance.',
-      ...(seed % 6 ? { contextPolicy: { evidence: 'refs_only' } } : {}),
+      ...(seed % 5 === 0 ? { contextPolicy: { evidence: 'refs_only' } } : {}),
     };
     const options = {
-      ...(seed % 7 ? { triggerId: 'same-id-' + seed } : {}),
-      ...(seed % 2 ? { version: '3' } : {}),
-      ...(seed % 3 ? { description: 'Issue watch' } : {}),
-      ...(seed % 4 ? { withinMs: 120000 } : {}),
-      ...(seed % 5 ? { lifecycle: seed % 2
+      ...(seed % 7 === 0 ? { triggerId: 'same-id-' + seed } : {}),
+      ...(seed & 16 ? { version: '3' } : {}),
+      ...(seed & 32 ? { description: 'Issue watch' } : {}),
+      ...(seed & 64 ? { withinMs: 120000 } : {}),
+      ...(seed & 128 ? { lifecycle: seed % 2
         ? { oneShot: true, maxFirings: 1 }
         : { oneShot: false, maxFirings: 2 } } : {}),
+      ...(seed % 3 === 0 ? { eventTime: { allowedLatenessMs: 250 } } : {}),
     };
     const simple = toTriggerPlan({ when, then, ...options });
     const manual = parseTriggerPlanInput({
