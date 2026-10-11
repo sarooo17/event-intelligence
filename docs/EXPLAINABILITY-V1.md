@@ -76,23 +76,3 @@ it does not establish parent-child causal context, automatic span duration,
 external metrics, sampling or traces across an embedding runtime. Hosts own
 the OTel exporter, SDK, authentication and sampling. Those and other
 explainability acceptance tests remain part of #48.
-
-
-## Derived-evidence scalar projection hardening (security slice)
-
-A trigger inspector's ref-only output must never pass provider-controlled
-`event.data._derived` objects through as `contractVersion` or
-`schemaFingerprint`. Even if an older/custom host store bypasses normal
-source validation, the inspector now reads only own **data descriptors**,
-without invoking accessor getters, and emits `null` for malformed metadata:
-
-- `contractVersion`: non-empty string, maximum 50 characters (canonical
-  version label bound)
-- `schemaFingerprint`: lowercase 64-character hexadecimal SHA-256
-- any object, array, accessor or other value: `null`
-
-The same rule applies to direct event refs and the `derivedOutputs` lineage
-projection. Valid canonical metadata remains unchanged. This is a defense in
-depth against *malformed stored provenance projections*, not a replacement for
-MCP Events ingress limits, host authorization, tenant isolation or payload
-taint handling.
