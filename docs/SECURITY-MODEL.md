@@ -41,6 +41,25 @@ records are not removed automatically when a subsequent discovery fails;
 the host must act on producer connection revocation. Other ingress and
 backpressure acceptance items remain open in #45.
 
+### Untrusted MCP poll page count bound
+
+Each host-owned connection configures `maxEvents` between **1 and 500**
+(default 100), and `maxPollBatches` between 1 and 32. The manager sends
+`maxEvents` to the producer in each `events/poll` request **and rejects any
+response whose `events.length` exceeds that count** with
+`MCP_EVENTS_POLL_BATCH_LIMIT_EXCEEDED`. Rejection happens before appending
+any event from that page, evaluating CEP, advancing a cursor or storing the
+producer's replacement cursor. A legitimate retry starts at the old cursor.
+The error carries no event payload, subscription arguments or event IDs.
+Exactly sized pages remain valid; the total across multiple valid pages may
+exceed the per-page limit, up to `maxPollBatches`.
+
+**Limitations:** this bounds a single decoded poll response's event count,
+not transport body bytes, JSON nesting, callback-stream rate, total
+tenant-level ingress bandwidth, or the known cross-worker transaction gap
+during connection revocation. The host must separately enforce transport
+response-byte/time budgets and provider authorization.
+
 ## Trigger authority
 
 A trigger may only reference active event sources available in its scoped connection set.
