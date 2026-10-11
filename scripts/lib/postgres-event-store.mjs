@@ -240,7 +240,10 @@ export class PostgresEventStore {
 
   async ensureRetentionIndex() {
     const indexName = this.tablePrefix + '_records_age_idx';
-    const lockName = this.tablePrefix + ':records-age-index';
+    // Serialize with init()'s existing schema advisory lock as well as
+    // other concurrent index builders. A distinct lock would deadlock with
+    // CREATE INDEX in another worker's schema transaction (observed PG16).
+    const lockName = this.tablePrefix + ':schema';
     const client = await this.pool.connect();
     let locked = false;
     try {
