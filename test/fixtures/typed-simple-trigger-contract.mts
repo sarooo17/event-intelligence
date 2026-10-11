@@ -96,6 +96,23 @@ toTriggerPlan<UnionEvent>({ when: { event: 'x', where: [{ path: 'message', op: '
 // @ts-expect-error union still rejects wholly unknown fields
 toTriggerPlan<UnionEvent>({ when: { event: 'x', where: [{ path: 'private', op: 'eq', value: 'no' }] }, then });
 
+// A *single* provider field can itself be a union of string or array.
+// Array-element type extraction must distribute across field alternatives.
+const mixedFieldSchema = z.object({
+  content: z.union([z.string(), z.array(z.number())]),
+});
+type MixedFieldEvent = z.infer<typeof mixedFieldSchema>;
+toTriggerPlan<MixedFieldEvent>({
+  when: { event: 'mixed', where: [{ path: 'content', op: 'contains', value: 1 }] },
+  then,
+});
+toTriggerPlan<MixedFieldEvent>({
+  when: { event: 'mixed', where: [{ path: 'content', op: 'contains', value: 'urgent' }] },
+  then,
+});
+// @ts-expect-error neither string substring nor numeric-array membership supports boolean
+toTriggerPlan<MixedFieldEvent>({ when: { event: 'x', where: [{ path: 'content', op: 'contains', value: true }] }, then });
+
 // Existing untyped calls are API-compatible (but planner validates at runtime).
 const untyped = toTriggerPlan({
   when: { event: 'test.issue.changed', where: [{ path: 'nested.dynamic', op: 'exists', value: true }] },
