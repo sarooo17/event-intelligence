@@ -7,12 +7,13 @@ import { referenceRepeatIds } from
 import { deterministicRandom, shuffled } from
   '../scripts/evidence/reference-sequence-oracle.mjs';
 
-const configurations = [
-  { min: 1, max: 3, contiguity: 'combinations' },
-  { min: 2, max: 3, contiguity: 'combinations' },
-  { min: 2, max: 3, contiguity: 'relaxed' },
-  { min: 2, max: 3, contiguity: 'consecutive' },
-];
+// Exhaust the complete declared finite min/max domain, for each contiguity.
+// Six distinct bound pairs per mode: (1,1), (1,2), (1,3), (2,2), (2,3), (3,3).
+const configurations = ['combinations', 'relaxed', 'consecutive']
+  .flatMap(contiguity => [1, 2, 3].flatMap(min =>
+    [1, 2, 3].filter(max => max >= min)
+      .map(max => ({ min, max, contiguity }))
+  ));
 
 function pattern(config, mode) {
   return PatternAstV2DefinitionSchema.parse({
@@ -48,12 +49,20 @@ function occurrence(seed, index, clauseId) {
 }
 
 function signatures(result) {
-  return result.matches.map(candidate =>
-    candidate.bindings.x.map(event => event.sourceEventId)
-  ).sort((a, b) => a.join('|').localeCompare(b.join('|')));
+  return result.matches.map((candidate) => {
+    assert.deepEqual(Object.keys(candidate.bindings).sort(), ['x'],
+      'repeat(event(x)) attached an unrelated reference');
+    const bound = candidate.bindings.x.map(event => event.sourceEventId).sort();
+    const provenance = candidate.events.map(event => event.sourceEventId).sort();
+    assert.deepEqual(provenance, bound,
+      'candidate.events must contain exactly its x binding, no noise or duplicates');
+    assert.ok(candidate.events.every(event => event.clauseId === 'x'),
+      'candidate provenance contains unrelated clause');
+    return bound;
+  }).sort((a, b) => a.join('|').localeCompare(b.join('|')));
 }
 
-test('repeat matches finite independent subset oracle for 250 seeds, 3 arrivals and both modes', async () => {
+test('repeat matches finite independent subset oracle for 250 seeds, all 18 bound/contiguity choices, 3 arrivals and both modes', async () => {
   const coverage = {
     zeroX: 0, oneX: 0, multipleX: 0, withNoise: 0,
     consecutiveX: 0, separatedX: 0, allX: 0,
