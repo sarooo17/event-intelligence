@@ -55,8 +55,9 @@ Reproduction inputs:
   event `x` or unrelated `noise`. UTC origin is `2026-10-02T12:00:00Z`.
   The independent oracle exhaustively enumerates subsets of the `x` events
   under three contiguity variants, without invoking evaluator helpers.
-  Differential tests verify both candidate binding identities **and complete
-  candidate.events provenance** to reject stray noise/duplicate source events.
+  Differential tests verify complete candidate bindings and the **exact
+  chronological order** of `candidate.events` provenance; incorrect ordering,
+  stray noise or duplicate source events fail the test.
 - All test failures name the seed, round and source-branch sequence;
   the source file is the generator and fixture specification.
 - Mutation sensitivity: `anyOf` tests deliberately inject three
