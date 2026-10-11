@@ -252,6 +252,26 @@ test('events/list ignores huge irrelevant descriptor metadata without reflection
   assert.equal(calls,0);
 });
 
+test('events/list ignores non-index delivery array metadata without extra enumeration',async()=>{
+  const item=descriptor(1);
+  let getterReads=0;
+  for(let i=0;i<12000;i++){
+    Object.defineProperty(item.delivery,'noisy_'+i,{
+      enumerable:true,configurable:true,value:'irrelevant',
+    });
+  }
+  Object.defineProperty(item.delivery,'unrelatedGetter',{
+    enumerable:true,
+    get(){getterReads++;return 'malicious';},
+  });
+  const f=fixture(()=>({events:[item]}));
+  const events=await f.manager.discoverConnection('untrusted-source');
+  assert.deepEqual(events[0].delivery,['poll']);
+  assert.deepEqual(f.registered[0].delivery,['poll']);
+  assert.equal(f.registered.length,1);
+  assert.equal(getterReads,0);
+});
+
 test('events/list rejects accessor array indices without reading getters',async()=>{
   let reads=0;
   const events=[descriptor(1)];
