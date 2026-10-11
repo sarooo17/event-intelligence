@@ -238,8 +238,8 @@ export class PostgresEventStore {
         }
         if (freshRecords) {
           await client.query(
-            'CREATE INDEX IF NOT EXISTS ' + this.tablePrefix +
-            '_records_age_idx ON ' + this.records +
+            'CREATE INDEX IF NOT EXISTS "' + this.tablePrefix +
+            '_records_age_idx" ON ' + this.records +
             ' (scope_id, kind, updated_at, record_key)',
           );
         }
@@ -306,8 +306,8 @@ export class PostgresEventStore {
         // This session has no open transaction. CONCURRENTLY does not take
         // PostgreSQL's blocking ShareLock for an online index build.
         await client.query(
-          'CREATE INDEX CONCURRENTLY IF NOT EXISTS ' + this.tablePrefix +
-          '_records_age_idx ON ' + this.records +
+          'CREATE INDEX CONCURRENTLY IF NOT EXISTS "' + this.tablePrefix +
+          '_records_age_idx" ON ' + this.records +
           ' (scope_id, kind, updated_at, record_key)',
         );
       }
