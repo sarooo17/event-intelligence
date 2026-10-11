@@ -173,47 +173,6 @@ function normalizeIdentity(input, label) {
   };
 }
 
-function normalizeLegacyAuthorization(decision) {
-  if (decision === true) return { action: 'execute' };
-  if (decision === false || decision == null) {
-    return {
-      action: 'return',
-      result: {
-        ok: false,
-        error: {
-          code: 'EVENT_TRIGGER_AUTHORIZATION_DENIED',
-          message: 'Host denied durable trigger creation',
-        },
-      },
-    };
-  }
-  if (typeof decision !== 'object') {
-    throw new Error('authorize() must return boolean or an authorization decision');
-  }
-  if (decision.allowed === true) {
-    return {
-      action: 'execute',
-      execution: {
-        actor: decision.actor,
-        owner: decision.owner,
-        receiptId: decision.confirmationId,
-      },
-    };
-  }
-  return {
-    action: 'return',
-    result: {
-      ok: false,
-      error: {
-        code: String(decision.code || 'EVENT_TRIGGER_AUTHORIZATION_DENIED'),
-        message: String(
-          decision.message || 'Host denied durable trigger creation',
-        ),
-      },
-    },
-  };
-}
-
 function normalizeHostControlDecision(decision) {
   if (!decision || typeof decision !== 'object') {
     throw new Error(
@@ -827,7 +786,6 @@ export function createEventIntelligenceAgentTools({
   control,
   projectResult,
   projectError,
-  authorize,
   names = {},
 } = {}) {
   if (!host || typeof host !== 'object') {
@@ -836,16 +794,8 @@ export function createEventIntelligenceAgentTools({
   if (typeof resolveContext !== 'function') {
     throw new Error('Agent tools require resolveContext()');
   }
-  if (control !== undefined && typeof control !== 'function') {
-    throw new Error('Agent tools control must be a function');
-  }
-  if (authorize !== undefined && typeof authorize !== 'function') {
-    throw new Error('Agent tools authorize must be a function');
-  }
-  if (!control && !authorize) {
-    throw new Error(
-      'Durable mutations require a host control() callback',
-    );
+  if (typeof control !== 'function') {
+    throw new Error('Durable mutations require a host control() callback');
   }
   if (projectResult !== undefined && typeof projectResult !== 'function') {
     throw new Error('Agent tools projectResult must be a function');
@@ -978,44 +928,17 @@ export function createEventIntelligenceAgentTools({
           }, canonical);
         }
 
-        // Host control is intentionally outside EI's error-normalization
-        // boundary. A runtime may return an opaque result or throw its native
-        // interrupt/suspension signal; EI must not reinterpret that mechanism.
-        //
-        // The deprecated authorize() path keeps its historical behavior:
-        // ordinary callback failures are normalized into PortableToolResult
-        // errors instead of becoming rejected tool executions.
-        let rawDecision;
-        if (control) {
-          rawDecision = await control({
-            capability: createCapability,
-            action: 'trigger.create',
-            runtimeContext,
-            context: resolved,
-            input: parsed.data,
-            plan,
-          });
-        } else {
-          try {
-            rawDecision = normalizeLegacyAuthorization(
-              await authorize({
-                action: 'trigger.create',
-                runtimeContext,
-                context: resolved,
-                input: parsed.data,
-                plan,
-              }),
-            );
-          } catch (error) {
-            const canonical = fail(error, 'EVENT_TRIGGER_CREATE_FAILED');
-            return projectPortableFailure(projectError, {
-              capability: createCapability,
-              runtimeContext,
-              context: resolved,
-              phase: 'trigger.control',
-            }, canonical);
-          }
-        }
+        // The runtime owns approval, authorization and suspension. A native
+        // interrupt thrown here MUST propagate unchanged: EI does not turn it
+        // into a boolean decision or an ordinary tool error.
+        const rawDecision = await control({
+          capability: createCapability,
+          action: 'trigger.create',
+          runtimeContext,
+          context: resolved,
+          input: parsed.data,
+          plan,
+        });
         const decision = normalizeHostControlDecision(rawDecision);
 
         if (decision.action === 'return') {

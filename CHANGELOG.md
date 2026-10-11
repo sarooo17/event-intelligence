@@ -2,6 +2,12 @@
 
 ## Unreleased (v1.0 development)
 
+### Remove deprecated boolean authorize hook (breaking)
+
+- remove the old `authorize()` callback and `AuthorizationDecision` types from the embedded model-facing tools contract; `control()` is now the single required host-owned durable-mutation boundary;
+- reject authorize-only integrations before exposing any tools; native host approval/interrupt exceptions propagate without legacy error wrapping;
+- this is an intentional pre-v1 API removal. Muffin/Artemis exact package pins are unchanged; downstream code updates when its maintainer opts in.
+
 ### Host conformance v3 (breaking pre-v1 test interface)
 
 - strengthen core conformance with a post-delivery restart + source event replay test; a new event must still yield a distinct wake/receipt;

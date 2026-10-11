@@ -748,54 +748,22 @@ test('error projection failure falls back to the canonical EI error', async () =
   });
 });
 
-test('legacy authorize failures remain normalized tool results', async () => {
-  const host = {
-    async refreshMcpRegistry() {},
-    eventSources: [],
-    async planTrigger(input) {
-      return {
-        definition: {
-          triggerId: 'planned-legacy-auth',
-          version: '1',
-          target: input.target,
-        },
-        connectionIds: [],
-        warnings: [],
-      };
-    },
-    triggerControl: {
-      async createTrigger() {
-        throw new Error('must not execute');
-      },
-    },
-  };
-
-  const tools = createEventIntelligenceAgentTools({
-    host,
-    resolveContext: () => ({
-      target: {
-        runtime: 'legacy-host',
-        kind: 'continuation',
-        id: 'legacy-1',
+test('legacy authorize-only configuration cannot expose model-facing durable tools', () => {
+  let invoked = 0;
+  assert.throws(
+    () => createEventIntelligenceAgentTools({
+      host: {},
+      resolveContext: () => ({
+        target: { runtime: 'test-host', kind: 'checkpoint', id: 'c1' },
+      }),
+      authorize: () => {
+        invoked++;
+        return true;
       },
     }),
-    authorize: async () => {
-      throw new Error('legacy authorization unavailable');
-    },
-  });
-
-  const result = await tools[1].execute({
-    events: [{ event: 'demo.changed' }],
-    instruction: 'Resume later.',
-  }, {});
-
-  assert.deepEqual(result, {
-    ok: false,
-    error: {
-      code: 'EVENT_TRIGGER_CREATE_FAILED',
-      message: 'legacy authorization unavailable',
-    },
-  });
+    /Durable mutations require a host control\(\) callback/,
+  );
+  assert.equal(invoked, 0, 'deprecated boolean authorization cannot be invoked');
 });
 
 test('projection failure after durable creation falls back to success', async () => {

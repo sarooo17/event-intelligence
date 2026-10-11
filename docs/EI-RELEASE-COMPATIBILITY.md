@@ -113,3 +113,18 @@ This ensures metadata *consistency only*. It does not prove a safe database
 migration, protocol conformance, vulnerability review or v1.0 readiness. It
 does not bump `package.json`, publish an npm version, tag a release, or update
 Muffin/Artemis. The release policy and #50 remain open.
+
+## Pre-v1 removal: embedded boolean authorize hook
+
+The deprecated `createEventIntelligenceAgentTools({ authorize })` option and
+`AuthorizationDecision` public type are intentionally removed in the upcoming
+canonical release. A model-facing embedded host MUST supply the host-owned
+`control(request)` callback, which returns either `{ action: 'execute' }`
+(with host-supplied execution context) or `{ action: 'return', result }`.
+Host suspension exceptions pass through. Integrations with only `authorize`
+fail during setup; EI does not translate boolean grants into durable-write
+authority. Headless embeddings can omit model-facing tooling.
+
+This is **an unreleased breaking change** only: no npm version has been bumped,
+and downstream locked consumers stay unchanged until they opt into a new EI
+version. It does not change persisted-state schemas.

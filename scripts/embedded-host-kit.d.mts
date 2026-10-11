@@ -79,16 +79,6 @@ export interface PortableAgentTool<RuntimeContext = unknown> {
   ): Promise<PortableToolResult>;
 }
 
-/** @deprecated Prefer the host-owned control() contract. */
-export interface AuthorizationDecision {
-  allowed: boolean;
-  code?: string;
-  message?: string;
-  actor?: EmbeddedHostIdentity;
-  owner?: EmbeddedHostIdentity;
-  confirmationId?: string;
-}
-
 export interface HostControlExecuteDecision {
   action: 'execute';
   execution?: {
@@ -219,7 +209,7 @@ export interface EventIntelligenceAgentToolsOptions<RuntimeContext = unknown> {
    * action:'return' with a fully host-owned PortableToolResult to represent
    * deny/interrupt/approval/defer semantics without EI interpreting them.
    */
-  control?(input: {
+  control(input: {
     capability: EventIntelligenceCapabilityMetadata;
     action:
       | 'trigger.create'
@@ -257,20 +247,6 @@ export interface EventIntelligenceAgentToolsOptions<RuntimeContext = unknown> {
     error?: PortableToolResult['error'];
     result: PortableToolResult;
   }): PortableToolResult | void | Promise<PortableToolResult | void>;
-
-  /**
-   * @deprecated Compatibility only. New integrations should use control().
-   */
-  authorize?(input: {
-    action: 'trigger.create';
-    runtimeContext: RuntimeContext;
-    context: EmbeddedToolContext;
-    input: unknown;
-    plan: any;
-  }):
-    | boolean
-    | AuthorizationDecision
-    | Promise<boolean | AuthorizationDecision>;
 
   names?: {
     sources?: string;
