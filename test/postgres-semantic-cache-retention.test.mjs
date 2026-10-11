@@ -215,6 +215,18 @@ integrationTest('mixed-case table prefixes retain indexed semantic cache', async
       [prefix + '_records_age_idx'],
     );
     assert.equal(index.rows.length, 1, 'index name must preserve the quoted uppercase prefix');
+    await pool.query('DROP INDEX "' + prefix + '_records_age_idx"');
+    const existing = store(pool, prefix, 'tenant-Mixed');
+    await existing.init();
+    const absent = await pool.query(
+      'SELECT 1 FROM pg_indexes WHERE schemaname = current_schema() AND indexname = $1',
+      [prefix + '_records_age_idx'],
+    );
+    assert.equal(absent.rows.length, 0, 'mixed-case existing store must not silently rebuild a blocking index');
+    await assert.rejects(
+      () => existing.compactMutableState({ semanticCacheBefore: '2030-01-01T00:00:00.000Z' }),
+      error => error?.code === 'EVENT_INTELLIGENCE_RETENTION_INDEX_INVALID',
+    );
   } finally {
     for (const suffix of ['metadata','leases','history','records','counters']) {
       await pool.query('DROP TABLE IF EXISTS "' + prefix + '_' + suffix + '" CASCADE');
