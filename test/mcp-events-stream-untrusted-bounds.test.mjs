@@ -121,6 +121,19 @@ for (const delivery of ['push', 'webhook']) {
     await f.manager.detachConnection('stream-boundary');
   });
 
+  test(`${delivery}: reject malformed event cursor before durable append`, async () => {
+    const f = await fixture(delivery);
+    const before = f.seen.saved.length;
+    await assert.rejects(
+      f.callbacks.onEvent({ ...event(), cursor: { forged: 'not-opaque' } }),
+      error => /expected string\\|null/.test(error.message),
+    );
+    assert.equal(f.seen.appended.length, 0);
+    assert.equal(f.seen.ingested.length, 0);
+    assert.equal(f.seen.saved.length, before);
+    await f.manager.detachConnection('stream-boundary');
+  });
+
   test(`${delivery}: reject accessor and proxy cursor-state updates before persistence`, async () => {
     const f = await fixture(delivery);
     let traps = 0;
