@@ -132,6 +132,21 @@ toTriggerPlan<LiteralEvent>({
 // @ts-expect-error array membership requires the actual literal element, not a substring
 toTriggerPlan<LiteralEvent>({ when: { event: 'x', where: [{ path: 'tags', op: 'contains', value: 'array' }] }, then });
 
+// The runtime coerces every scalar predicate operand to String() for a
+// string-field contains check; TypeScript must not reject 12 or true.
+const stringFieldSchema = z.object({ code: z.string() });
+type StringFieldEvent = z.infer<typeof stringFieldSchema>;
+toTriggerPlan<StringFieldEvent>({
+  when: { event: 'string', where: [
+    { path: 'code', op: 'contains', value: 12 },
+    { path: 'code', op: 'contains', value: true },
+    { path: 'code', op: 'contains', value: '12' },
+  ] },
+  then,
+});
+// @ts-expect-error substring operand cannot be an object outside the canonical scalar schema
+toTriggerPlan<StringFieldEvent>({ when: { event: 'x', where: [{ path: 'code', op: 'contains', value: { nested: true } }] }, then });
+
 // Existing untyped calls are API-compatible (but planner validates at runtime).
 const untyped = toTriggerPlan({
   when: { event: 'test.issue.changed', where: [{ path: 'nested.dynamic', op: 'exists', value: true }] },
