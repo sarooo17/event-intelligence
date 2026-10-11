@@ -312,7 +312,7 @@ const report = await runHostConformance(myRuntimeAdapter, {
 The default `core` profile preserves the original six-method adapter contract
 (`createTrigger`, `emitEvent`, `deliveries`, `restart`,
 `inspectTrigger`, `close`) and checks one-shot delivery, replay
-deduplication, restart durability, bounded `maxFirings`, required operational
+deduplication, restart durability, post-delivery replay dedup across restart with durable receipt identity, bounded `maxFirings`, required operational
 events and payload non-leakage.
 
 The opt-in `management` profile additionally requires `listTriggers`,
