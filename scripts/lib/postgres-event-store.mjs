@@ -251,16 +251,34 @@ export class PostgresEventStore {
 
   async assertRetentionIndex(client = this.pool) {
     const indexName = this.tablePrefix + '_records_age_idx';
+    // An index name alone does NOT establish a valid retention access path.
+    // A same-named index on another table, partial index, hash index, or
+    // expression index must fail closed rather than claiming bounded cleanup.
     const current = await client.query(
-      'SELECT i.indisvalid AS valid, pg_get_indexdef(i.indexrelid) AS definition ' +
+      'SELECT i.indisvalid AS valid, i.indisready AS ready, ' +
+      'i.indpred IS NULL AS not_partial, i.indexprs IS NULL AS no_expr, ' +
+      'i.indisunique AS is_unique, am.amname AS method, ' +
+      'i.indnkeyatts AS key_count, i.indnatts AS attr_count, ' +
+      'tbl.relname AS table_name, ' +
+      'ARRAY(SELECT a.attname FROM generate_series(0, i.indnkeyatts - 1) AS p(n) ' +
+      'JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = i.indkey[p.n] ' +
+      'ORDER BY p.n) AS key_columns ' +
       'FROM pg_class idx JOIN pg_index i ON i.indexrelid = idx.oid ' +
+      'JOIN pg_class tbl ON tbl.oid = i.indrelid ' +
+      'JOIN pg_am am ON am.oid = idx.relam ' +
       'JOIN pg_namespace n ON n.oid = idx.relnamespace ' +
       'WHERE n.nspname = current_schema() AND idx.relname = $1',
       [indexName],
     );
     const row = current.rows[0];
     if (current.rows.length !== 1 || row.valid !== true ||
-        !/\(scope_id, kind, updated_at, record_key\)/.test(row.definition)) {
+        row.ready !== true || row.not_partial !== true ||
+        row.no_expr !== true || row.is_unique !== false ||
+        row.method !== 'btree' ||
+        row.table_name !== this.tablePrefix + '_records' ||
+        Number(row.key_count) !== 4 || Number(row.attr_count) !== 4 ||
+        JSON.stringify(row.key_columns) !==
+          JSON.stringify(['scope_id', 'kind', 'updated_at', 'record_key'])) {
       const error = new Error(
         'Semantic cache TTL requires a valid scoped age index. ' +
         'Run store.migrateRetentionIndex() as an explicit online migration ' +
