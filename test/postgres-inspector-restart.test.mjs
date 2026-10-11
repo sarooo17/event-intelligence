@@ -16,6 +16,7 @@ const matchId = 'same-match-id';
 const at = '2026-10-11T10:00:00.000Z';
 const ownA = { type: 'user', principal_id: 'alice', tenant_id: 'tenant-a' };
 const ownB = { type: 'user', principal_id: 'bob', tenant_id: 'tenant-b' };
+const sameTenantForeignOwner = { type: 'user', principal_id: 'bob', tenant_id: 'tenant-a' };
 
 function store(pool, scope) {
   return new PostgresEventStore({ pool, tablePrefix: prefix, scopeId: scope });
@@ -96,7 +97,7 @@ integrationTest('Postgres inspector is replay-stable, bounded and scope/owner is
     });
     const foreignGuard = createOwnerReadGuard({
       store: a, triggerControl: new TriggerControlPlane({ store: a }),
-      owner: ownB,
+      owner: sameTenantForeignOwner,
     });
     assert.equal((await aliceGuard.assertTrigger(triggerId, '1')).definition.triggerId, triggerId);
     await assert.rejects(
@@ -113,6 +114,12 @@ integrationTest('Postgres inspector is replay-stable, bounded and scope/owner is
     assert.equal(beforeA.lineage.historyTruncated, true);
     assert.equal(beforeB.lineage.matchHistory.length, 2);
     assert.equal(beforeB.lineage.historyTruncated, true);
+    assert.deepEqual(beforeA.lineage.matchHistory.map(item => item.updatedAt),
+      [4, 5, 6].map(i => new Date(Date.parse(at) + i * 1000).toISOString()),
+      'tenant A must have the newest three revisions in order');
+    assert.deepEqual(beforeB.lineage.matchHistory.map(item => item.updatedAt),
+      [2, 3].map(i => new Date(Date.parse(at) + i * 1000).toISOString()),
+      'tenant B must have its own newest two revisions in order');
     assert.equal(beforeA.lineage.evidence[0].sourceEventId, 'source-tenant-a');
     assert.equal(beforeB.lineage.evidence[0].sourceEventId, 'source-tenant-b');
     assert.equal(JSON.stringify(beforeA).includes('SECRET-'), false);
@@ -146,7 +153,7 @@ integrationTest('Postgres inspector is replay-stable, bounded and scope/owner is
       () => createOwnerReadGuard({
         store: aRestored,
         triggerControl: new TriggerControlPlane({ store: aRestored }),
-        owner: ownB,
+        owner: sameTenantForeignOwner,
       }).assertTrigger(triggerId, '1'),
       error => error?.code === 'EVENT_INTELLIGENCE_RESOURCE_NOT_FOUND',
     );
