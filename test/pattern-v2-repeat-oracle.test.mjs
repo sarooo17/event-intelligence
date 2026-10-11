@@ -155,7 +155,7 @@ test('independent repeat oracle distinguishes noise, x-adjacency and subset sema
     [ids[0], ids[2]],
     [ids[2], ids[3]],
   ]));
-  assert.deepEqual(consecutive, [[ids[2], ids[3]]);
+  assert.deepEqual(consecutive, [[ids[2], ids[3]]]);
   // Regression mutants: losing a valid across-noise pair, skipping an x
   // under relaxed contiguity, or admitting an unrelated noise as a match.
   assert.notDeepEqual(consecutive, relaxed);
