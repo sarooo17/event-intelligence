@@ -582,11 +582,28 @@ export class McpEventsClientManager {
         MAX_MCP_EVENT_DISCOVERY_SOURCES - descriptors.length) {
         throw discoveryLimitError('too many event descriptors');
       }
-      // The bounded page is detached before descriptor normalization and
-      // before the first asynchronous source-registration operation. This
-      // ignores custom iterators and rejects Proxy, getters, sparse slots,
-      // non-JSON nested schemas and cycles without running provider code.
-      const safeDescriptors = snapshotUntrustedEventData(listed.events);
+      // Copy ONLY the permitted own indexed slots, not arbitrary extra
+      // array metadata. Object.getOwnPropertyDescriptors(listed.events)
+      // could enumerate unbounded non-index keys despite the length cap.
+      // This indexed staging buffer is bounded by the 256-source limit.
+      const indexedDescriptors = [];
+      for (let index = 0; index < listed.events.length; index += 1) {
+        const slot = Object.getOwnPropertyDescriptor(
+          listed.events, String(index),
+        );
+        if (!slot || !Object.hasOwn(slot, 'value')) {
+          const error = new Error(
+            'MCP Events discovery rejected: unsafe descriptor array slot',
+          );
+          error.code = 'EVENT_UNTRUSTED_DATA_INVALID';
+          throw error;
+        }
+        indexedDescriptors.push(slot.value);
+      }
+      // A single bounded walk now deeply snapshots the only relevant
+      // descriptors before any registration await: no provider getters,
+      // proxies, custom iterators, late mutation or unbounded array keys.
+      const safeDescriptors = snapshotUntrustedEventData(indexedDescriptors);
       for (const raw of safeDescriptors) {
         const descriptor = sourceDescriptor(raw, profile);
         if (names.has(descriptor.name)) {
