@@ -1,4 +1,4 @@
-const REPORT_SCHEMA = 'event-intelligence.host-conformance.v2';
+const REPORT_SCHEMA = 'event-intelligence.host-conformance.v3';
 
 function assertFunction(value, name) {
   if (typeof value !== 'function') {
@@ -16,6 +16,7 @@ function validateHarness(harness, profile) {
     'deliveries',
     'restart',
     'inspectTrigger',
+    'readWakeReceipt',
     'close',
   ];
   if (profile === 'management') {
@@ -168,6 +169,11 @@ export async function runHostConformance(
         .filter((entry) => entry?.triggerId === triggerId);
       requireCondition(before.length === 1, 'pre-restart event did not deliver exactly once');
       const firstReceipt = before[0]?.runtimeReceiptId;
+      const firstWakeId = before[0]?.wakeId;
+      requireCondition(
+        typeof firstWakeId === 'string' && firstWakeId.length > 0,
+        'first delivery did not return a stable wake ID',
+      );
       requireCondition(
         typeof firstReceipt === 'string' && firstReceipt.length > 0,
         'first delivery did not return a stable host receipt identifier',
@@ -176,6 +182,12 @@ export async function runHostConformance(
       // Restart AFTER a successful external delivery. The same durable
       // source event must not produce an additional match, wake or receipt.
       await harness.restart();
+      const durableReceipt = await harness.readWakeReceipt(firstWakeId);
+      requireCondition(
+        durableReceipt?.status === 'delivered' &&
+          durableReceipt.runtimeReceiptId === firstReceipt,
+        'restarted durable store lost the completed wake receipt',
+      );
       await harness.emitEvent(originalEvent);
       const replayed = (await harness.deliveries())
         .filter((entry) => entry?.triggerId === triggerId);
