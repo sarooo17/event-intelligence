@@ -469,7 +469,96 @@ export interface SimpleTriggerPlanInput
   };
 }
 
+/**
+ * Optional compile-time checked form for the existing toTriggerPlan() function.
+ *
+ * Supply Payload from the provider SDK's exported type, z.infer<typeof schema>,
+ * or a TypeScript shape independently verified against an MCP payloadSchema.
+ * Only top-level string-keyed fields are statically checked; canonical
+ * TriggerPlanner remains authoritative for source availability, nested paths,
+ * advertised JSON schemas and runtime values.
+ *
+ * This is TYPE-ONLY: there is no additional DSL, parser or evaluator.
+ */
+type TypedSourceKey<Payload extends object> =
+  Extract<keyof Payload, string>;
+
+type TypedSourceScalar<Value> =
+  Extract<NonNullable<Value>, string | number | boolean>;
+
+// The existing matcher supports string substring and scalar array membership,
+// but never "contains" on standalone numbers or booleans.
+type TypedSourceArrayElement<Value> =
+  Value extends readonly (infer Element)[]
+    ? Extract<Element, string | number | boolean>
+    : never;
+
+type TypedSourceContained<Value> =
+  // Runtime uses String(predicate.value) before substring matching,
+  // including numeric and boolean scalar operands for literal/enum strings.
+  (Extract<NonNullable<Value>, string> extends never
+    ? never : string | number | boolean) |
+  // Array.prototype.includes() compares complete elements, so do NOT widen
+  // literal array element types to arbitrary strings.
+  TypedSourceArrayElement<NonNullable<Value>>;
+
+type TypedSourcePredicateAt<
+  Payload extends object,
+  Key extends TypedSourceKey<Payload>,
+> =
+  // Allowed even for non-scalar values: metadata/existence assertions.
+  | { path: Key; op: 'exists' | 'isNull'; value?: boolean }
+  | { path: Key; op: 'type'; value: 'string' | 'number' | 'boolean' |
+      'null' | 'object' | 'array' }
+  | (TypedSourceScalar<Payload[Key]> extends never ? never :
+      { path: Key; op: 'eq' | 'neq';
+        value: TypedSourceScalar<Payload[Key]> })
+  | (TypedSourceContained<Payload[Key]> extends never ? never :
+      { path: Key; op: 'contains';
+        value: TypedSourceContained<Payload[Key]> })
+  | (TypedSourceScalar<Payload[Key]> extends never ? never :
+      { path: Key; op: 'in' | 'notIn';
+        value: TypedSourceScalar<Payload[Key]>[] })
+  | (Extract<NonNullable<Payload[Key]>, number> extends never ? never :
+      { path: Key; op: 'between'; value: [number, number] })
+  | (Extract<NonNullable<Payload[Key]>, string> extends never ? never :
+      { path: Key; op: 'between'; value: [string, string] })
+  | (Extract<NonNullable<Payload[Key]>, number> extends never ? never :
+      { path: Key; op: 'gt' | 'gte' | 'lt' | 'lte';
+        value: number })
+  | (Extract<NonNullable<Payload[Key]>, string> extends never ? never :
+      { path: Key; op: 'startsWith' | 'endsWith';
+        value: string } |
+      { path: Key; op: 'regex'; value: string; flags?: string });
+
+// Distribute over every union member before computing keys: a provider's
+// discriminated event union may have variant-only fields that are valid on
+// just one payload shape. The runtime schema/planner still handles missing
+// fields when a different variant arrives.
+export type TypedSourcePredicate<Payload extends object> =
+  Payload extends unknown
+    ? {
+        [Key in TypedSourceKey<Payload>]: TypedSourcePredicateAt<Payload, Key>;
+      }[TypedSourceKey<Payload>]
+    : never;
+
+export type TypedSimpleTriggerPlanInput<Payload extends object> =
+  Omit<SimpleTriggerPlanInput, 'when'> & {
+    when: Omit<SimpleTriggerPlanInput['when'], 'where'> & {
+      where?: TypedSourcePredicate<Payload>[];
+    };
+  };
+
+/** Unannotated callers retain the existing canonical untyped surface. */
 export function toTriggerPlan(options: SimpleTriggerPlanInput): TriggerPlanInput;
+/**
+ * Explicit Payload binds predicate paths and scalar/operator types.
+ * For example: toTriggerPlan<z.infer<typeof payloadSchema>>({...}).
+ * This overload delegates to exactly the same runtime function.
+ */
+export function toTriggerPlan<Payload extends object>(
+  options: TypedSimpleTriggerPlanInput<Payload>,
+): TriggerPlanInput;
 
 export const EVENT_INTELLIGENCE_CAPABILITIES: Readonly<{
   eventSourcesList: Readonly<EventIntelligenceCapabilityMetadata>;
