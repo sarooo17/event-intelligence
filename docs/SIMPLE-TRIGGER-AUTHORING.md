@@ -81,7 +81,10 @@ operators at compile time. Discriminated-union source payload types are
 supported: fields belonging to any declared variant remain eligible, but
 static typing does **not** prove that a field exists on every emitted variant.
 Union-valued fields (such as `string | number[]`) are handled distributively
-for `contains`, retaining both substring and scalar-array membership types. It supports `contains` for strings and scalar
+for `contains`, retaining substring and scalar-array membership types.
+String-field substring matching accepts scalar operands (string, number,
+boolean), which the canonical matcher converts with `String(value)`; array
+membership still requires an exactly typed scalar element. It supports `contains` for strings and scalar
 array members, and `between` only for comparable strings or numbers; For example, an unknown field, a string supplied
 to numeric `gte`, or `gt` on a string field is rejected by TypeScript.
 Use an independently verified provider SDK TypeScript payload type when
