@@ -204,9 +204,32 @@ integrationTest('existing populated installations require an explicit online ret
     );
     await pool.query('DROP INDEX "' + prefix + '_records_age_idx"');
 
+    // A second operator's transactionally recorded claim must fence a new
+    // concurrent migration even if different SQL calls use different pool
+    // sessions (as under PgBouncer transaction pooling).
+    await pool.query(
+      'INSERT INTO "' + prefix + '_metadata"' +
+      ' (component, version, adopted_from) VALUES ($1, 1, $2)',
+      ['retention-age-index-migration', 'other-operator'],
+    );
+    await assert.rejects(
+      () => reopened.migrateRetentionIndex(),
+      error => error?.code === 'EVENT_INTELLIGENCE_RETENTION_MIGRATION_BUSY',
+    );
+    await pool.query(
+      'DELETE FROM "' + prefix + '_metadata"' +
+      ' WHERE component = $1 AND adopted_from = $2',
+      ['retention-age-index-migration', 'other-operator'],
+    );
+
     const migrated = await reopened.migrateRetentionIndex();
     assert.equal(migrated.ok, true);
     assert.equal(migrated.index, prefix + '_records_age_idx');
+    const claimsAfter = await pool.query(
+      'SELECT component FROM "' + prefix + '_metadata" WHERE component = $1',
+      ['retention-age-index-migration'],
+    );
+    assert.equal(claimsAfter.rows.length, 0, 'successful migration must release its durable claim');
     const indexed = await pool.query(
       'SELECT i.indisvalid AS valid, pg_get_indexdef(i.indexrelid) AS definition ' +
       'FROM pg_class idx JOIN pg_index i ON i.indexrelid = idx.oid ' +
