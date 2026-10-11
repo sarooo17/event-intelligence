@@ -64,6 +64,23 @@ tenant-level ingress bandwidth, or the known cross-worker transaction gap
 during connection revocation. The host must separately enforce transport
 response-byte/time budgets and provider authorization.
 
+### Push and webhook callback JSON boundary
+
+Push/webhook adapters are host-owned transports, but their event and cursor
+callback values are **untrusted input**. Before parsing, appending or awaiting
+storage, the embedded manager takes a synchronous bounded own-data JSON
+snapshot of each incoming event (including any optional cursor). The same
+non-executing descriptor snapshot protects `onActive` and `onGap` callback
+cursor updates before persistence. Top-level and nested Proxies, getters,
+cycles, sparse arrays and oversized decoded object graphs fail closed with
+`EVENT_UNTRUSTED_DATA_INVALID`; a caller mutating its original object while
+a write is in flight cannot change the accepted event or persisted cursor.
+
+This covers decoded callback-object integrity, **not** raw network-body byte
+limits, payload-byte limits, per-tenant rate/burst limits, cross-worker atomic
+source revocation, already queued wake cancellation, or adapter handle
+properties. Host-level transport and authorization controls remain required.
+
 ## Trigger authority
 
 A trigger may only reference active event sources available in its scoped connection set.
