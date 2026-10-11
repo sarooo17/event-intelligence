@@ -6,6 +6,8 @@ on:
       - ".github/workflows/clean-room-smoke.yml"
       - "README.md"
       - "docs/examples/packed-simple-trigger.mjs"
+      - "docs/examples/packed-headless-host.mjs"
+      - "docs/examples/packed-typed-simple-trigger.mts"
       - "docs/SIMPLE-TRIGGER-AUTHORING.md"
       - "package.json"
       - "package-lock.json"
@@ -163,6 +165,25 @@ jobs:
               throw new Error('Packed simple-trigger example did not pass');
           "
 
+      - name: Validate headless reference and typed payload API from an external packed npm consumer
+        shell: bash
+        run: |
+          set -euo pipefail
+          WORKDIR="$(mktemp -d)"
+          cd "$WORKDIR"
+          npm init -y >/dev/null
+          npm install --ignore-scripts --no-audit --no-fund "$TARBALL" typescript@6.0.3
+          cp "$GITHUB_WORKSPACE/docs/examples/packed-headless-host.mjs" ./headless.mjs
+          cp "$GITHUB_WORKSPACE/docs/examples/packed-typed-simple-trigger.mts" ./typed.mts
+          node ./headless.mjs | tee headless-report.json
+          node --input-type=module -e "
+            import fs from 'node:fs';
+            const report=JSON.parse(fs.readFileSync('headless-report.json','utf8'));
+            if(report.status!=='pass'||report.tools!==0||report.wakes!==0||report.restarts!==1)
+              throw new Error('External headless reference did not pass');
+          "
+          node ./node_modules/typescript/bin/tsc --noEmit --strict --skipLibCheck \
+            --module NodeNext --moduleResolution NodeNext --target ES2022 ./typed.mts
       - name: Confirm candidate MCP stdio entrypoint starts
         shell: bash
         run: |
