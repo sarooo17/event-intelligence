@@ -148,7 +148,12 @@ test('events/list rejects top-level Proxy and getter properties without executin
     get(){invoked++;return 'forged';},
   });
   const outerProxy=new Proxy({events:[descriptor(1)]},{
-    get(){invoked++;return null;},
+    get(_target,key) {
+      // ECMAScript Promise resolution inspects "then" before async host
+      // callback results reach EI. Count only parser-reachable accesses.
+      if (key === 'then') return undefined;
+      invoked++;return null;
+    },
     getOwnPropertyDescriptor(){invoked++;return undefined;},
   });
   const arrayProxy=new Proxy([descriptor(1)],{
