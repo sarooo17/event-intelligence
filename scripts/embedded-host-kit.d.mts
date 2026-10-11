@@ -523,9 +523,16 @@ type TypedSourcePredicateAt<
         value: string } |
       { path: Key; op: 'regex'; value: string; flags?: string });
 
-export type TypedSourcePredicate<Payload extends object> = {
-  [Key in TypedSourceKey<Payload>]: TypedSourcePredicateAt<Payload, Key>;
-}[TypedSourceKey<Payload>];
+// Distribute over every union member before computing keys: a provider's
+// discriminated event union may have variant-only fields that are valid on
+// just one payload shape. The runtime schema/planner still handles missing
+// fields when a different variant arrives.
+export type TypedSourcePredicate<Payload extends object> =
+  Payload extends unknown
+    ? {
+        [Key in TypedSourceKey<Payload>]: TypedSourcePredicateAt<Payload, Key>;
+      }[TypedSourceKey<Payload>]
+    : never;
 
 export type TypedSimpleTriggerPlanInput<Payload extends object> =
   Omit<SimpleTriggerPlanInput, 'when'> & {
