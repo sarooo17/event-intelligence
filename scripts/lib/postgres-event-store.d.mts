@@ -149,6 +149,8 @@ export declare class PostgresEventStore {
     now?: string;
   }): Promise<boolean>;
 
+  /** Operator-triggered, nonblocking online index migration for existing populated stores. Call after init(). */
+  migrateRetentionIndex(): Promise<{ ok: true; index: string }>;
   /** Only disposable semantic decision cache is eligible; histories, audit and receipts are never removed. */
   compactMutableState(options?: {
     /** Exclusive cutoff: prune cached decisions older than this offset-aware ISO timestamp. */
