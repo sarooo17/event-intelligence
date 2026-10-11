@@ -53,6 +53,8 @@ integrationTest('repeated physical worker disconnects preserve rebalance leases,
       });
       assert.ok(firstWake, 'round ' + round + ': initial wake claim missing');
       assert.ok(firstPartition, 'round ' + round + ': initial partition claim missing');
+      assert.equal(firstPartition.workerId, workerId, 'round ' + round + ': initial partition owner');
+      assert.equal(firstPartition.leaseUntil, at(t0 + 1000), 'round ' + round + ': initial partition expiry');
       assert.equal(firstWake.attemptCount, 1);
 
       // Peer cannot steal either claim before expiry even during rebalance.
@@ -81,6 +83,11 @@ integrationTest('repeated physical worker disconnects preserve rebalance leases,
         partition, { workerId: successorId, now: at(t0 + 1000), leaseMs: 1000 },
       );
       assert.ok(recoveredPartition, 'round ' + round + ': partition handover missing');
+      assert.equal(recoveredPartition.workerId, successorId, 'round ' + round + ': partition takeover owner');
+      assert.equal(recoveredPartition.leaseUntil, at(t0 + 2000), 'round ' + round + ': renewed partition expiry');
+      const independentlyReadPartition = await stores[1 - successor].getPartitionLease(partition);
+      assert.equal(independentlyReadPartition?.workerId, successorId, 'round ' + round + ': durable partition owner');
+      assert.equal(independentlyReadPartition?.leaseUntil, at(t0 + 2000), 'round ' + round + ': durable partition expiry');
       const newWake = await stores[successor].claimWakeDelivery(wakeId, {
         workerId: successorId, now: at(t0 + 1000), leaseMs: 1000,
       });
