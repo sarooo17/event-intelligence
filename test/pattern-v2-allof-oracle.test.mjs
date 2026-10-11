@@ -91,4 +91,9 @@ test('allOf oracle rejects unsupported or duplicate-id corpora rather than overc
     { clauseId: 'b', sourceEventId: 'same' },
   ]), /unique/);
   assert.throws(() => referenceAllOfPairs([{ clauseId: 'semantic', sourceEventId: 's' }]), /supported/);
+  assert.throws(() => referenceAllOfPairs([{ clauseId: 'a', sourceEventId: '' }]), /unique supported/);
+  assert.throws(() => referenceAllOfPairs([
+    { clauseId: 'a', sourceEventId: 'valid' },
+    { clauseId: 'b', sourceEventId: '' },
+  ]), /unique supported/);
 });
