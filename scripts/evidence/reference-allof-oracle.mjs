@@ -15,6 +15,7 @@ export function referenceAllOfPairs(events) {
     if (!entry || typeof entry !== 'object' ||
         !['a', 'b', 'noise'].includes(entry.clauseId) ||
         typeof entry.sourceEventId !== 'string' ||
+        entry.sourceEventId.length === 0 ||
         seen.has(entry.sourceEventId)) {
       throw new TypeError('AllOf reference oracle needs unique supported events');
     }
