@@ -18,6 +18,7 @@ import {
 const POSTGRES_OBJECT_SUFFIXES = Object.freeze([
   '_records',
   '_records_kind_idx',
+  '_records_age_idx',
   '_history',
   '_history_scope_kind_idx',
   '_history_key_idx',
@@ -153,6 +154,12 @@ export class PostgresEventStore {
             'PRIMARY KEY (scope_id, kind, record_key))',
           'CREATE INDEX IF NOT EXISTS ' + this.tablePrefix +
             '_records_kind_idx ON ' + this.records + ' (scope_id, kind)',
+          // Ordered bounded cache retention uses an index-backed range scan
+          // even when the scope contains many unrelated durable records.
+          // This additive performance index does not alter persisted payloads.
+          'CREATE INDEX IF NOT EXISTS ' + this.tablePrefix +
+            '_records_age_idx ON ' + this.records +
+            ' (scope_id, kind, updated_at, record_key)',
           'CREATE TABLE IF NOT EXISTS ' + this.history + ' (' +
             'history_id BIGSERIAL PRIMARY KEY, scope_id TEXT NOT NULL, kind TEXT NOT NULL,' +
             'record_key TEXT, payload JSONB NOT NULL,' +
