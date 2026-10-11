@@ -11,7 +11,7 @@ test('reference embedded host passes EI host conformance', async () => {
   const report = await runHostConformance(referenceHostAdapter, {
     profile: 'management',
   });
-  assert.equal(report.schema, 'event-intelligence.host-conformance.v2');
+  assert.equal(report.schema, 'event-intelligence.host-conformance.v3');
   assert.equal(report.profile, 'management');
   assert.equal(report.passed, true, JSON.stringify(report, null, 2));
   assert.deepEqual(report.summary, {
