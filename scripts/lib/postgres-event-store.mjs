@@ -228,18 +228,66 @@ export class PostgresEventStore {
             ],
           );
         }
-        // Only add a performance index after both the physical shape and
-        // persisted version are accepted. An incompatible legacy table must
-        // fail with EI's stable schema error, not raw SQL "column missing".
-        await client.query(
-          'CREATE INDEX IF NOT EXISTS ' + this.tablePrefix +
-          '_records_age_idx ON ' + this.records +
-          ' (scope_id, kind, updated_at, record_key)',
-        );
       });
+      // Never CREATE INDEX inside the startup transaction for an existing
+      // populated installation: that would block all concurrent writers.
+      // A separate session and CONCURRENTLY preserve online write traffic.
+      await this.ensureRetentionIndex();
       this.initialized = true;
     }
     return this.restoredCounts();
+  }
+
+  async ensureRetentionIndex() {
+    const indexName = this.tablePrefix + '_records_age_idx';
+    const lockName = this.tablePrefix + ':records-age-index';
+    const client = await this.pool.connect();
+    let locked = false;
+    try {
+      // Session-level lock survives the individual implicit transactions
+      // required by CREATE INDEX CONCURRENTLY. Concurrent EI workers sharing
+      // a prefix cannot attempt the same DDL at the same time.
+      await client.query(
+        'SELECT pg_advisory_lock(hashtextextended($1, 0))',
+        [lockName],
+      );
+      locked = true;
+      const indexState = async () => client.query(
+        'SELECT i.indisvalid AS valid FROM pg_class idx ' +
+        'JOIN pg_index i ON i.indexrelid = idx.oid ' +
+        'JOIN pg_namespace n ON n.oid = idx.relnamespace ' +
+        'WHERE n.nspname = current_schema() AND idx.relname = $1',
+        [indexName],
+      );
+      const prior = await indexState();
+      if (!prior.rows.length) {
+        // PostgreSQL forbids CONCURRENTLY inside BEGIN/COMMIT. Run on a
+        // borrowed session outside this.tx(), never against a transaction.
+        await client.query(
+          'CREATE INDEX CONCURRENTLY IF NOT EXISTS ' + indexName +
+          ' ON ' + this.records +
+          ' (scope_id, kind, updated_at, record_key)',
+        );
+      }
+      const current = await indexState();
+      if (current.rows.length !== 1 || current.rows[0].valid !== true) {
+        const error = new Error(
+          'PostgreSQL semantic cache retention index is missing or invalid. ' +
+          'Inspect the index and rebuild it concurrently before retrying.',
+        );
+        error.code = 'EVENT_INTELLIGENCE_RETENTION_INDEX_INVALID';
+        throw error;
+      }
+    } finally {
+      try {
+        if (locked) await client.query(
+          'SELECT pg_advisory_unlock(hashtextextended($1, 0))',
+          [lockName],
+        );
+      } finally {
+        client.release();
+      }
+    }
   }
 
   async restoredCounts() {
