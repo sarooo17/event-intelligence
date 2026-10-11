@@ -112,7 +112,12 @@ async function durableReferenceRun() {
       triggerId: definition.triggerId, version: definition.version,
     }));
     assert.equal(after.matchStatus, 'matched');
-    assert.deepEqual(after.deadlineStatuses, [{ dueAt, status: 'fired' }]);
+    // The inspector scopes deadlines to the *latest* match ID, while the
+    // fired timer belongs to the earlier partial match ID. Verify the
+    // authoritative durable deadline directly instead of demanding it in
+    // the final match's narrow inspector projection.
+    assert.equal(secondStore.listTemporalDeadlines()[0].status, 'fired');
+    assert.deepEqual(after.deadlineStatuses, []);
     assert.deepEqual(await scheduler.runDue(), [],
       'replaying the exact virtual clock must not fire twice');
     return { pending, after };
