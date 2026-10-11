@@ -65,5 +65,10 @@ Event Intelligence host behavior, not official MCP conformance.
 both `wakeId` and `runtimeReceiptId`, and `readWakeReceipt(wakeId)` must read
 from the restored authoritative EI store, not a process-local delivery list.
 Older v2 adapters must deliberately upgrade; EI does not provide a compatibility
-shim. This verifies EI receipt persistence, not external runtime checkpoint
-persistence or true OS process-kill recovery.
+shim. A restored delivery observer may start empty or contain exactly one
+completed prior wake identity; duplicates observed during restart fail the
+suite. An observer that **resets** and then silently redelivers the *same*
+identity once is indistinguishable without independent host effect accounting:
+the host must independently enforce receipt idempotency. This test verifies EI
+receipt persistence, not external runtime checkpoint persistence, distributed
+exactly-once effects or true OS process-kill recovery.
