@@ -322,6 +322,7 @@ export class PostgresEventStore {
       error.code = 'EVENT_INTELLIGENCE_RETENTION_MIGRATION_BUSY';
       throw error;
     }
+    let verifiedComplete = false;
     try {
       const existing = await this.pool.query(
         'SELECT 1 FROM pg_class idx JOIN pg_namespace n ' +
@@ -339,16 +340,22 @@ export class PostgresEventStore {
         );
       }
       await this.assertRetentionIndex();
+      verifiedComplete = true;
       return { ok: true, index: this.tablePrefix + '_records_age_idx' };
     } finally {
-      // Compare-and-delete never frees a different operator's claim. A
-      // process kill can strand this durable claim: require manual review
-      // rather than automatic unsafe lease stealing / concurrent DDL.
-      await this.pool.query(
-        'DELETE FROM ' + this.metadata +
-        ' WHERE component = $1 AND adopted_from = $2',
-        [component, claim],
-      );
+      // An error from CREATE INDEX CONCURRENTLY can be ambiguous: after a
+      // client timeout or proxy disconnect PostgreSQL may still be building
+      // the index. Never release the durable claim on uncertain completion.
+      // Operator must inspect pg_stat_progress_create_index and pg_index,
+      // then explicitly clear a stale claim after verifying no active DDL.
+      if (verifiedComplete) {
+        // Compare-and-delete never frees a different operator's claim.
+        await this.pool.query(
+          'DELETE FROM ' + this.metadata +
+          ' WHERE component = $1 AND adopted_from = $2',
+          [component, claim],
+        );
+      }
     }
   }
 
