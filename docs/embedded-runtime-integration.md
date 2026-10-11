@@ -133,9 +133,14 @@ For a durable EI mutation, the host returns one of two neutral actions:
 deny, human approval, interrupt, defer, quota, budget, tenant-policy or any
 other control path. EI returns that result without interpreting the reason.
 
-This is deliberately different from `authorize(): boolean`: a boolean cannot
-represent a runtime that pauses for approval, materializes an interrupt, asks
-for confirmation, or delegates control to another policy system.
+`control()` is **required** for every model-facing tool catalog that includes
+durable mutations. The deprecated `authorize(): boolean` integration hook has
+been **removed** from the pre-v1 canonical API, rather than retained behind a
+compatibility adapter. `authorize`-only configurations fail before any tool
+is installed. A host can instead return `{ action: 'return', result }` for a
+denial or approval request, or throw a native interrupt for suspension; EI
+preserves that outcome rather than interpreting it as a boolean. Headless
+hosts can omit model-facing tooling entirely.
 
 ## Capability metadata
 
