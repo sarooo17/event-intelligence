@@ -1,3 +1,5 @@
+import * as z from 'zod/v4';
+import { randomUUID } from 'node:crypto';
 import {
   AuditChain,
   McpEventOccurrenceSchema,
@@ -17,6 +19,7 @@ import {
 const POSTGRES_OBJECT_SUFFIXES = Object.freeze([
   '_records',
   '_records_kind_idx',
+  '_records_age_idx',
   '_history',
   '_history_scope_kind_idx',
   '_history_key_idx',
@@ -145,6 +148,14 @@ export class PostgresEventStore {
           'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
           [this.tablePrefix + ':schema'],
         );
+        // Only new, empty installations may build the index transactionally.
+        // Never auto-build an index on a populated deployment at startup:
+        // CREATE INDEX blocks writers, and CONCURRENTLY while other workers
+        // initialize can deadlock with open transactions/snapshots.
+        const existing = await client.query('SELECT to_regclass($1) AS relation', [
+          '"' + this.tablePrefix + '_records"',
+        ]);
+        const freshRecords = !existing.rows[0]?.relation;
         for (const statement of [
           'CREATE TABLE IF NOT EXISTS ' + this.records + ' (' +
             'scope_id TEXT NOT NULL, kind TEXT NOT NULL, record_key TEXT NOT NULL,' +
@@ -226,10 +237,126 @@ export class PostgresEventStore {
             ],
           );
         }
+        if (freshRecords) {
+          await client.query(
+            'CREATE INDEX IF NOT EXISTS "' + this.tablePrefix +
+            '_records_age_idx" ON ' + this.records +
+            ' (scope_id, kind, updated_at, record_key)',
+          );
+        }
       });
       this.initialized = true;
     }
     return this.restoredCounts();
+  }
+
+  async assertRetentionIndex(client = this.pool) {
+    const indexName = this.tablePrefix + '_records_age_idx';
+    // An index name alone does NOT establish a valid retention access path.
+    // A same-named index on another table, partial index, hash index, or
+    // expression index must fail closed rather than claiming bounded cleanup.
+    const current = await client.query(
+      'SELECT i.indisvalid AS valid, i.indisready AS ready, ' +
+      'i.indpred IS NULL AS not_partial, i.indexprs IS NULL AS no_expr, ' +
+      'i.indisunique AS is_unique, am.amname AS method, ' +
+      'i.indnkeyatts AS key_count, i.indnatts AS attr_count, ' +
+      'tbl.relname AS table_name, ' +
+      'ARRAY[pg_get_indexdef(i.indexrelid, 1, true), ' +
+      'pg_get_indexdef(i.indexrelid, 2, true), ' +
+      'pg_get_indexdef(i.indexrelid, 3, true), ' +
+      'pg_get_indexdef(i.indexrelid, 4, true)] AS key_columns ' +
+      'FROM pg_class idx JOIN pg_index i ON i.indexrelid = idx.oid ' +
+      'JOIN pg_class tbl ON tbl.oid = i.indrelid ' +
+      'JOIN pg_am am ON am.oid = idx.relam ' +
+      'JOIN pg_namespace n ON n.oid = idx.relnamespace ' +
+      'WHERE n.nspname = current_schema() AND idx.relname = $1',
+      [indexName],
+    );
+    const row = current.rows[0];
+    if (current.rows.length !== 1 || row.valid !== true ||
+        row.ready !== true || row.not_partial !== true ||
+        row.no_expr !== true || row.is_unique !== false ||
+        row.method !== 'btree' ||
+        row.table_name !== this.tablePrefix + '_records' ||
+        Number(row.key_count) !== 4 || Number(row.attr_count) !== 4 ||
+        JSON.stringify(row.key_columns) !==
+          JSON.stringify(['scope_id', 'kind', 'updated_at', 'record_key'])) {
+      const error = new Error(
+        'Semantic cache TTL requires a valid scoped age index. ' +
+        'Run store.migrateRetentionIndex() as an explicit online migration ' +
+        'after startup; inspect invalid/conflicting indexes before retry.',
+      );
+      error.code = 'EVENT_INTELLIGENCE_RETENTION_INDEX_INVALID';
+      throw error;
+    }
+  }
+
+  /**
+   * Explicit operator-controlled online migration for populated databases.
+   * Never part of init(): parallel startup transactions can deadlock with
+   * concurrent index build snapshots. Do not call concurrently per prefix.
+   */
+  async migrateRetentionIndex() {
+    if (!this.initialized) {
+      const error = new Error('Initialize and verify the store before migrating');
+      error.code = 'EVENT_INTELLIGENCE_RETENTION_MIGRATION_NOT_INITIALIZED';
+      throw error;
+    }
+    // Store a durable, unique operator migration claim in the existing
+    // versioned metadata table. PostgreSQL transaction pools (PgBouncer)
+    // cannot safely hold session advisory locks across CREATE INDEX
+    // CONCURRENTLY, which must run OUTSIDE a transaction.
+    const component = 'retention-age-index-migration';
+    const claim = randomUUID();
+    const inserted = await this.tx(async client => client.query(
+      'INSERT INTO ' + this.metadata +
+      ' (component, version, adopted_from) VALUES ($1, $2, $3) ' +
+      'ON CONFLICT (component) DO NOTHING RETURNING component',
+      [component, 1, claim],
+    ));
+    if (inserted.rows.length !== 1) {
+      const error = new Error(
+        'Online retention migration is claimed by another operator or ' +
+        'has an unresolved interrupted claim. Inspect metadata before retrying.',
+      );
+      error.code = 'EVENT_INTELLIGENCE_RETENTION_MIGRATION_BUSY';
+      throw error;
+    }
+    let verifiedComplete = false;
+    try {
+      const existing = await this.pool.query(
+        'SELECT 1 FROM pg_class idx JOIN pg_namespace n ' +
+        'ON n.oid = idx.relnamespace WHERE n.nspname = current_schema() ' +
+        'AND idx.relname = $1',
+        [this.tablePrefix + '_records_age_idx'],
+      );
+      if (!existing.rows.length) {
+        // Individual autocommit statement, not a BEGIN transaction:
+        // CONCURRENTLY can run without blocking normal trigger writes.
+        await this.pool.query(
+          'CREATE INDEX CONCURRENTLY IF NOT EXISTS "' + this.tablePrefix +
+          '_records_age_idx" ON ' + this.records +
+          ' (scope_id, kind, updated_at, record_key)',
+        );
+      }
+      await this.assertRetentionIndex();
+      verifiedComplete = true;
+      return { ok: true, index: this.tablePrefix + '_records_age_idx' };
+    } finally {
+      // An error from CREATE INDEX CONCURRENTLY can be ambiguous: after a
+      // client timeout or proxy disconnect PostgreSQL may still be building
+      // the index. Never release the durable claim on uncertain completion.
+      // Operator must inspect pg_stat_progress_create_index and pg_index,
+      // then explicitly clear a stale claim after verifying no active DDL.
+      if (verifiedComplete) {
+        // Compare-and-delete never frees a different operator's claim.
+        await this.pool.query(
+          'DELETE FROM ' + this.metadata +
+          ' WHERE component = $1 AND adopted_from = $2',
+          [component, claim],
+        );
+      }
+    }
   }
 
   async restoredCounts() {
@@ -1060,8 +1187,53 @@ export class PostgresEventStore {
     return result.rowCount > 0;
   }
 
-  async compactMutableState() {
-    return { ok: true, strategy: 'database-managed', compacted: [] };
+  async compactMutableState({
+    semanticCacheBefore,
+    maxRows = 500,
+  } = {}) {
+    // This is deliberately NOT general event/audit/match retention. Wake
+    // receipts, trigger definitions, leases, causal evidence and the append-only
+    // audit hash chain remain intact. Only dispensable semantic model decision
+    // caches may be reclaimed, with explicit host/operator cutoff.
+    if (semanticCacheBefore === undefined) {
+      return { ok: true, strategy: 'database-managed', compacted: [] };
+    }
+    if (!z.iso.datetime({ offset: true }).safeParse(semanticCacheBefore).success ||
+        !Number.isSafeInteger(maxRows) || maxRows < 1 || maxRows > 1000) {
+      const error = new TypeError(
+        'Semantic cache compaction needs offset-aware ISO cutoff and maxRows 1..1000',
+      );
+      error.code = 'EVENT_INTELLIGENCE_RETENTION_POLICY_INVALID';
+      throw error;
+    }
+    // For a legacy populated store, online migration is explicit, never
+    // attempted implicitly during ordinary writes or trigger processing.
+    await this.assertRetentionIndex();
+    const result = await this.tx(async (client) => client.query(
+      'WITH aged AS (' +
+      ' SELECT record_key FROM ' + this.records +
+      " WHERE scope_id = $1 AND kind = 'semantic_cache'" +
+      ' AND updated_at < $2::timestamptz' +
+      ' ORDER BY updated_at ASC, record_key ASC' +
+      ' LIMIT $3 FOR UPDATE SKIP LOCKED' +
+      ') DELETE FROM ' + this.records + ' AS retained' +
+      ' USING aged WHERE retained.scope_id = $1' +
+      " AND retained.kind = 'semantic_cache'" +
+      ' AND retained.record_key = aged.record_key' +
+      ' RETURNING retained.record_key',
+      [this.scopeId, semanticCacheBefore, maxRows],
+    ));
+    return {
+      ok: true,
+      strategy: 'bounded-semantic-cache-retention',
+      scopeId: this.scopeId,
+      cutoff: semanticCacheBefore,
+      deleted: result.rowCount,
+      capped: result.rowCount === maxRows,
+      // Caches are advisory. Future semantic evaluations recompute missing
+      // decisions under their normal evaluator budget; no fake AI result.
+      compacted: [{ kind: 'semantic_cache', records: result.rowCount }],
+    };
   }
 
   async getSemanticDecisionCache(key) {
