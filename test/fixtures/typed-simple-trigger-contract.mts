@@ -76,6 +76,26 @@ toTriggerPlan<IssueEvent>({ when: { event: 'x', where: [{ path: 'metadata.owner'
 // @ts-expect-error unknown extra modifier remains forbidden
 toTriggerPlan<IssueEvent>({ when: { event: 'x', where: [{ path: 'severity', op: 'gte', value: 1, negate: true }] }, then });
 
+// Discriminated provider schemas expose fields from individual variants,
+// not only the intersection of every variant's keys.
+const unionSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('issue'), priority: z.number() }),
+  z.object({ kind: z.literal('comment'), message: z.string() }),
+]);
+type UnionEvent = z.infer<typeof unionSchema>;
+toTriggerPlan<UnionEvent>({
+  when: { event: 'test.mixed', where: [{ path: 'priority', op: 'gte', value: 2 }] },
+  then,
+});
+toTriggerPlan<UnionEvent>({
+  when: { event: 'test.mixed', where: [{ path: 'message', op: 'contains', value: 'urgent' }] },
+  then,
+});
+// @ts-expect-error variant-only message is never numeric
+toTriggerPlan<UnionEvent>({ when: { event: 'x', where: [{ path: 'message', op: 'gte', value: 3 }] }, then });
+// @ts-expect-error union still rejects wholly unknown fields
+toTriggerPlan<UnionEvent>({ when: { event: 'x', where: [{ path: 'private', op: 'eq', value: 'no' }] }, then });
+
 // Existing untyped calls are API-compatible (but planner validates at runtime).
 const untyped = toTriggerPlan({
   when: { event: 'test.issue.changed', where: [{ path: 'nested.dynamic', op: 'exists', value: true }] },
