@@ -23,3 +23,37 @@ test('reference embedded host passes EI host conformance', async () => {
   assert.ok(report.observability.eventNames.includes('ei.match.matched'));
   assert.ok(report.observability.eventNames.includes('ei.wake.delivered'));
 });
+
+test('conformance catches a host that loses source-event dedup across restart', async () => {
+  const regressed = {
+    name: 'faulty-restart-replay-host',
+    async createHarness(options) {
+      const harness = await referenceHostAdapter.createHarness(options);
+      const emit = harness.emitEvent.bind(harness);
+      const restart = harness.restart.bind(harness);
+      let didRestart = false;
+      return {
+        ...harness,
+        async restart() {
+          await restart();
+          didRestart = true;
+        },
+        async emitEvent(input) {
+          // Fault injection: simulate an adapter losing stable event identity
+          // only after restart, turning replay into a brand-new event.
+          const eventId = didRestart && input.eventId === 'delivered-before-restart'
+            ? 'incorrectly-renamed-replay-event'
+            : input.eventId;
+          await emit({ ...input, eventId });
+        },
+      };
+    },
+  };
+  const report = await runHostConformance(regressed, { profile: 'core' });
+  assert.equal(report.passed, false, 'faulty restart replay must not pass');
+  const regression = report.results.find(
+    (result) => result.id === 'core.restart-after-delivery-replay',
+  );
+  assert.equal(regression?.status, 'fail');
+  assert.match(regression.error, /replayed event|fireCount/);
+});
