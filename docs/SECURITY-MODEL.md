@@ -50,7 +50,12 @@ from altering a schema while registration awaits storage. Only the bounded own
 indexed array slots are staged; arbitrary extra enumerable array keys are
 ignored rather than enumerated into the deep snapshot. This prevents a short
 event array with very large unrelated metadata from exhausting descriptor
-reflection budgets.
+reflection budgets. Likewise, only the six top-level descriptor
+fields actually consumed by source normalization are read through own data
+descriptors; irrelevant producer-added keys are never enumerated. Nested
+advertised payload/input schemas and descriptor metadata are semantically
+consumed and can themselves be large, so host-enforced transport response
+byte/time limits remain mandatory.
 
 The previous cursor type, cursor-byte/cycle, page-count and descriptor-count
 checks keep their ordering and error codes. These checks protect **decoded
