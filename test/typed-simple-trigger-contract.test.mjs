@@ -15,7 +15,7 @@ test('TypeScript validates typed source predicates through the public declaratio
   // @ts-expect-error. TS fails if they ever become type-accepted.
   const result = spawnSync(process.execPath, [
     tsc,
-    '--noEmit', '--strict', '--skipLibCheck',
+    '--ignoreConfig', '--noEmit', '--strict', '--skipLibCheck',
     '--module', 'NodeNext', '--moduleResolution', 'NodeNext',
     '--target', 'ES2022',
     fixture,
