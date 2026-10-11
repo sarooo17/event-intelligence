@@ -15,8 +15,8 @@ test('reference embedded host passes EI host conformance', async () => {
   assert.equal(report.profile, 'management');
   assert.equal(report.passed, true, JSON.stringify(report, null, 2));
   assert.deepEqual(report.summary, {
-    total: 6,
-    passed: 6,
+    total: 7,
+    passed: 7,
     failed: 0,
   });
   assert.ok(report.observability.eventNames.includes('ei.trigger.created'));
