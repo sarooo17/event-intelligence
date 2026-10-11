@@ -486,6 +486,14 @@ type TypedSourceKey<Payload extends object> =
 type TypedSourceScalar<Value> =
   Extract<NonNullable<Value>, string | number | boolean>;
 
+// The existing matcher supports string substring and scalar array membership,
+// but never "contains" on standalone numbers or booleans.
+type TypedSourceContained<Value> =
+  Extract<NonNullable<Value>, string> |
+  (NonNullable<Value> extends readonly (infer Element)[]
+    ? Extract<Element, string | number | boolean>
+    : never);
+
 type TypedSourcePredicateAt<
   Payload extends object,
   Key extends TypedSourceKey<Payload>,
@@ -495,15 +503,18 @@ type TypedSourcePredicateAt<
   | { path: Key; op: 'type'; value: 'string' | 'number' | 'boolean' |
       'null' | 'object' | 'array' }
   | (TypedSourceScalar<Payload[Key]> extends never ? never :
-      { path: Key; op: 'eq' | 'neq' | 'contains';
+      { path: Key; op: 'eq' | 'neq';
         value: TypedSourceScalar<Payload[Key]> })
+  | (TypedSourceContained<Payload[Key]> extends never ? never :
+      { path: Key; op: 'contains';
+        value: TypedSourceContained<Payload[Key]> })
   | (TypedSourceScalar<Payload[Key]> extends never ? never :
       { path: Key; op: 'in' | 'notIn';
         value: TypedSourceScalar<Payload[Key]>[] })
-  | (TypedSourceScalar<Payload[Key]> extends never ? never :
-      { path: Key; op: 'between';
-        value: [TypedSourceScalar<Payload[Key]>,
-          TypedSourceScalar<Payload[Key]>] })
+  | (Extract<NonNullable<Payload[Key]>, number> extends never ? never :
+      { path: Key; op: 'between'; value: [number, number] })
+  | (Extract<NonNullable<Payload[Key]>, string> extends never ? never :
+      { path: Key; op: 'between'; value: [string, string] })
   | (Extract<NonNullable<Payload[Key]>, number> extends never ? never :
       { path: Key; op: 'gt' | 'gte' | 'lt' | 'lte';
         value: number })
