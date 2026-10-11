@@ -46,7 +46,11 @@ Proxy wrappers and accessor-backed top-level fields fail with
 arrays, accessor descriptors, Proxies, cycles or non-JSON values fail with
 `EVENT_UNTRUSTED_DATA_INVALID` before source registration. The clone
 ignores non-enumerable custom iterators and prevents later provider mutation
-from altering a schema while registration awaits storage.
+from altering a schema while registration awaits storage. Only the bounded own
+indexed array slots are staged; arbitrary extra enumerable array keys are
+ignored rather than enumerated into the deep snapshot. This prevents a short
+event array with very large unrelated metadata from exhausting descriptor
+reflection budgets.
 
 The previous cursor type, cursor-byte/cycle, page-count and descriptor-count
 checks keep their ordering and error codes. These checks protect **decoded
