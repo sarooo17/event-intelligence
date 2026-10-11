@@ -96,9 +96,13 @@ async function durableReferenceRun() {
     now = new Date(beforeDue);
     const early = await scheduler.runDue();
     assert.deepEqual(early, [], 'one millisecond before due must not fire');
-    const pending = project(await inspector.inspect({
+    const pendingInspection = await inspector.inspect({
       triggerId: definition.triggerId, version: definition.version,
-    }));
+    });
+    assert.doesNotMatch(JSON.stringify(pendingInspection),
+      /private-payload-must-not-leak/,
+      'full durable pending inspection must not expose event payload');
+    const pending = project(pendingInspection);
     assert.equal(pending.nextEvaluationAt, dueAt);
     assert.deepEqual(pending.deadlineStatuses, [{
       dueAt, status: 'pending',
@@ -108,9 +112,13 @@ async function durableReferenceRun() {
     const outcomes = await scheduler.runDue();
     assert.equal(outcomes.length, 1);
     assert.equal(outcomes[0].status, 'fired');
-    const after = project(await inspector.inspect({
+    const afterInspection = await inspector.inspect({
       triggerId: definition.triggerId, version: definition.version,
-    }));
+    });
+    assert.doesNotMatch(JSON.stringify(afterInspection),
+      /private-payload-must-not-leak/,
+      'full durable matched inspection must not expose event payload');
+    const after = project(afterInspection);
     assert.equal(after.matchStatus, 'matched');
     // The inspector scopes deadlines to the *latest* match ID, while the
     // fired timer belongs to the earlier partial match ID. Verify the
@@ -151,10 +159,12 @@ test('isolated virtual simulation agrees with durable restart at the exact deadl
     'simulation before the deadline must match a restarted persistent host');
   assert.deepEqual(first.after, project(dueSim.inspection),
     'simulation at the deadline must match a restarted persistent host');
-  for (const view of [
-    first.pending, first.after,
-    project(pendingSim.inspection), project(dueSim.inspection),
+  for (const [phase, fullInspection] of [
+    ['before deadline', pendingSim.inspection],
+    ['at deadline', dueSim.inspection],
   ]) {
-    assert.doesNotMatch(JSON.stringify(view), /private-payload-must-not-leak/);
+    assert.doesNotMatch(JSON.stringify(fullInspection),
+      /private-payload-must-not-leak/,
+      'full simulation inspection leaks payload: ' + phase);
   }
 });
