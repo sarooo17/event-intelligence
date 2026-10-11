@@ -113,6 +113,25 @@ toTriggerPlan<MixedFieldEvent>({
 // @ts-expect-error neither string substring nor numeric-array membership supports boolean
 toTriggerPlan<MixedFieldEvent>({ when: { event: 'x', where: [{ path: 'content', op: 'contains', value: true }] }, then });
 
+// A z.literal()/z.enum() describes the full source value, not the only
+// allowed substring for the runtime's String.prototype.includes() check.
+const literalSchema = z.object({
+  status: z.literal('urgent-message'),
+  category: z.enum(['security-incident', 'routine-update']),
+  tags: z.array(z.literal('exact-array-member')),
+});
+type LiteralEvent = z.infer<typeof literalSchema>;
+toTriggerPlan<LiteralEvent>({
+  when: { event: 'literal', where: [
+    { path: 'status', op: 'contains', value: 'urgent' },
+    { path: 'category', op: 'contains', value: 'incident' },
+    { path: 'tags', op: 'contains', value: 'exact-array-member' },
+  ] },
+  then,
+});
+// @ts-expect-error array membership requires the actual literal element, not a substring
+toTriggerPlan<LiteralEvent>({ when: { event: 'x', where: [{ path: 'tags', op: 'contains', value: 'array' }] }, then });
+
 // Existing untyped calls are API-compatible (but planner validates at runtime).
 const untyped = toTriggerPlan({
   when: { event: 'test.issue.changed', where: [{ path: 'nested.dynamic', op: 'exists', value: true }] },
