@@ -17,8 +17,8 @@ export interface HostConformanceEventInput {
 
 export interface HostConformanceDelivery {
   triggerId: string;
-  wakeId?: string;
-  runtimeReceiptId?: string;
+  wakeId: string;
+  runtimeReceiptId: string;
   [key: string]: unknown;
 }
 
@@ -35,6 +35,11 @@ export interface HostConformanceHarness {
   emitEvent(input: HostConformanceEventInput): Promise<void>;
   deliveries(): Promise<readonly HostConformanceDelivery[]> | readonly HostConformanceDelivery[];
   restart(): Promise<void>;
+  /** Returns the authoritative persisted wake receipt after restart. */
+  readWakeReceipt(wakeId: string): Promise<{
+    status: string;
+    runtimeReceiptId: string | null;
+  } | null>;
   inspectTrigger(triggerId: string): Promise<{
     status?: string;
     fireCount?: number;
@@ -69,7 +74,7 @@ export interface HostConformanceResult {
 }
 
 export interface HostConformanceReport {
-  schema: 'event-intelligence.host-conformance.v2' | string;
+  schema: 'event-intelligence.host-conformance.v3' | string;
   profile: 'core' | 'management';
   adapter: string;
   passed: boolean;
@@ -86,7 +91,7 @@ export interface HostConformanceReport {
 }
 
 export const HOST_CONFORMANCE_REPORT_SCHEMA:
-  'event-intelligence.host-conformance.v2';
+  'event-intelligence.host-conformance.v3';
 
 export function runHostConformance(
   adapter: HostConformanceAdapter,
