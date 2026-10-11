@@ -20,7 +20,7 @@ export function referenceSequencePairs(ordered, contiguity) {
     if (!item || !['a','b','noise'].includes(item.clauseId) ||
         typeof item.sourceEventId !== 'string' || !item.sourceEventId ||
         seen.has(item.sourceEventId) || !Number.isFinite(at) ||
-        at < lastTime) {
+        at <= lastTime) {
       throw new TypeError('Sequence reference oracle needs unique chronological a/b/noise events');
     }
     seen.add(item.sourceEventId);
