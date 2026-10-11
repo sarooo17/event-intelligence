@@ -51,6 +51,10 @@ response whose `events.length` exceeds that count** with
 any event from that page, evaluating CEP, advancing a cursor or storing the
 producer's replacement cursor. A legitimate retry starts at the old cursor.
 The error carries no event payload, subscription arguments or event IDs.
+Before the first asynchronous append, EI snapshots the bounded page using
+own-data array slots and JSON-safe event copies; custom iterators, sparse
+entries, accessors and proxies cannot inject more records or mutate later
+queued events. Unsafe values are rejected before any append/cursor write.
 Exactly sized pages remain valid; the total across multiple valid pages may
 exceed the per-page limit, up to `maxPollBatches`.
 
