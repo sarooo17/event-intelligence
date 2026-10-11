@@ -55,7 +55,10 @@ fields actually consumed by source normalization are read through own data
 descriptors; irrelevant producer-added keys are never enumerated. Nested
 advertised payload/input schemas and descriptor metadata are semantically
 consumed and can themselves be large, so host-enforced transport response
-byte/time limits remain mandatory.
+byte/time limits remain mandatory. The shared JSON snapshot itself now
+inspects only own indexed array slots (without enumerating arbitrary extra
+array properties), protecting nested `delivery` arrays and other nested JSON
+arrays against metadata amplification.
 
 The previous cursor type, cursor-byte/cycle, page-count and descriptor-count
 checks keep their ordering and error codes. These checks protect **decoded
