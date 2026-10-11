@@ -96,6 +96,19 @@ Compile-positive and compile-negative contract tests are run by:
 npm run build
 node --test test/typed-simple-trigger-contract.test.mjs
 ```
+### Headless and TypeScript clean-room verification
+
+The packed release workflow also installs EI into an **independent empty Node
+project** and runs `docs/examples/packed-headless-host.mjs`: a headless
+host with no agent-facing tools, no model SDK, no provider and no wake
+delivery is opened, closed and reopened on the same temporary durable store.
+This checks the lifecycle contract, not live service recovery.
+
+In the same external consumer, `docs/examples/packed-typed-simple-trigger.mts`
+is checked using TypeScript 6 with both positive `z.infer` payload predicates
+and `@ts-expect-error` negative cases. Thus the optional source-typed API
+is verified against **the actual npm tarball's public .d.mts exports**,
+not just source checkout path imports.
 ### Runnable clean-room package example
 
 The repo includes [`docs/examples/packed-simple-trigger.mjs`](examples/packed-simple-trigger.mjs).
