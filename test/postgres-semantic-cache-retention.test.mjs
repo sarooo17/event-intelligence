@@ -173,6 +173,37 @@ integrationTest('existing populated installations require an explicit online ret
       error => error?.code === 'EVENT_INTELLIGENCE_RETENTION_INDEX_INVALID',
     );
     assert.equal(await reopened.semanticDecisionCacheSize(), 1);
+
+    // A same-named index on an unrelated table must not satisfy retention
+    // index safety (nor be blindly overwritten by the online migration).
+    const unrelated = '"' + prefix + '_unrelated"';
+    await pool.query('CREATE TABLE ' + unrelated + ' (id INTEGER PRIMARY KEY)');
+    await pool.query(
+      'CREATE INDEX "' + prefix + '_records_age_idx" ON ' + unrelated + ' (id)',
+    );
+    await assert.rejects(
+      () => reopened.compactMutableState(policy),
+      error => error?.code === 'EVENT_INTELLIGENCE_RETENTION_INDEX_INVALID',
+    );
+    await assert.rejects(
+      () => reopened.migrateRetentionIndex(),
+      error => error?.code === 'EVENT_INTELLIGENCE_RETENTION_INDEX_INVALID',
+    );
+    await pool.query('DROP TABLE ' + unrelated + ' CASCADE');
+
+    // A partial index with the correct ordered columns is not a general
+    // retention access path; the catalog validator must reject it too.
+    await pool.query(
+      'CREATE INDEX "' + prefix + '_records_age_idx" ON "' + prefix +
+      '_records" (scope_id, kind, updated_at, record_key)' +
+      " WHERE kind = 'some-other-kind'",
+    );
+    await assert.rejects(
+      () => reopened.compactMutableState(policy),
+      error => error?.code === 'EVENT_INTELLIGENCE_RETENTION_INDEX_INVALID',
+    );
+    await pool.query('DROP INDEX "' + prefix + '_records_age_idx"');
+
     const migrated = await reopened.migrateRetentionIndex();
     assert.equal(migrated.ok, true);
     assert.equal(migrated.index, prefix + '_records_age_idx');
