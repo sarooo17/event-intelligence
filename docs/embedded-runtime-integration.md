@@ -309,11 +309,14 @@ const report = await runHostConformance(myRuntimeAdapter, {
 });
 ```
 
-The default `core` profile preserves the original six-method adapter contract
-(`createTrigger`, `emitEvent`, `deliveries`, `restart`,
-`inspectTrigger`, `close`, `readWakeReceipt`) and checks one-shot delivery, replay
-deduplication, restart durability, post-delivery replay dedup across restart verified against the authoritative persisted wake receipt via `readWakeReceipt(wakeId)`, bounded `maxFirings`, required operational
-events and payload non-leakage.
+The default `core` profile now requires the **seven-method v3 adapter contract**:
+`createTrigger`, `emitEvent`, `deliveries`, `restart`, `inspectTrigger`,
+`readWakeReceipt` and `close`. This intentionally breaks the original v2
+six-method conformance interface (see the upgrade guidance in
+`conformance/README.md`). The v3 suite checks one-shot delivery, replay
+deduplication, restart durability, post-delivery replay deduplication verified
+by reading the authoritative persisted wake receipt via `readWakeReceipt(wakeId)`,
+bounded `maxFirings`, required operational events and payload non-leakage.
 
 The opt-in `management` profile additionally requires `listTriggers`,
 `pauseTrigger`, `resumeTrigger`, `updateTrigger` and `deleteTrigger`.
