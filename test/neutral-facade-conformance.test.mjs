@@ -18,7 +18,7 @@ test('neutral embedded facade passes full management conformance with real EI st
     profile: 'management',
     throwOnFailure: true,
   });
-  assert.equal(report.schema, 'event-intelligence.host-conformance.v2');
+  assert.equal(report.schema, 'event-intelligence.host-conformance.v3');
   assert.equal(report.passed, true);
   assert.deepEqual(report.summary, {
     total: 7,
