@@ -149,6 +149,69 @@ export async function runHostConformance(
       );
     }));
 
+    results.push(await runCase('core.restart-after-delivery-replay', async () => {
+      const triggerId = 'conformance-delivered-restart';
+      const originalEvent = {
+        eventId: 'delivered-before-restart',
+        value: 1901,
+        secretProbe: 'ei-conformance-secret-probe',
+      };
+      await harness.createTrigger({
+        triggerId,
+        threshold: 1900,
+        oneShot: false,
+        maxFirings: 2,
+      });
+      await harness.emitEvent(originalEvent);
+
+      const before = (await harness.deliveries())
+        .filter((entry) => entry?.triggerId === triggerId);
+      requireCondition(before.length === 1, 'pre-restart event did not deliver exactly once');
+      const firstReceipt = before[0]?.runtimeReceiptId;
+      requireCondition(
+        typeof firstReceipt === 'string' && firstReceipt.length > 0,
+        'first delivery did not return a stable host receipt identifier',
+      );
+
+      // Restart AFTER a successful external delivery. The same durable
+      // source event must not produce an additional match, wake or receipt.
+      await harness.restart();
+      await harness.emitEvent(originalEvent);
+      const replayed = (await harness.deliveries())
+        .filter((entry) => entry?.triggerId === triggerId);
+      requireCondition(replayed.length === 1, 'delivered event replayed after restart');
+      requireCondition(
+        replayed[0]?.runtimeReceiptId === firstReceipt,
+        'host receipt identity changed after restart',
+      );
+      const afterReplayState = await harness.inspectTrigger(triggerId);
+      requireCondition(
+        Number(afterReplayState?.fireCount) === 1,
+        `replayed event advanced durable fireCount to ${afterReplayState?.fireCount}`,
+      );
+
+      // A fresh source event still activates the surviving trigger. This
+      // prevents a test-only implementation from disabling all deliveries.
+      await harness.emitEvent({
+        eventId: 'delivered-after-restart-new',
+        value: 1902,
+        secretProbe: 'ei-conformance-secret-probe',
+      });
+      const afterNew = (await harness.deliveries())
+        .filter((entry) => entry?.triggerId === triggerId);
+      requireCondition(afterNew.length === 2, 'fresh event was lost after restart');
+      requireCondition(
+        typeof afterNew[1]?.runtimeReceiptId === 'string' &&
+          afterNew[1].runtimeReceiptId !== firstReceipt,
+        'fresh delivery reused the previous host receipt identity',
+      );
+      const afterNewState = await harness.inspectTrigger(triggerId);
+      requireCondition(
+        Number(afterNewState?.fireCount) === 2,
+        `fresh event did not advance fireCount to two: ${afterNewState?.fireCount}`,
+      );
+    }));
+
     results.push(await runCase('core.restart-durability', async () => {
       await harness.createTrigger({
         triggerId: 'conformance-restart',
