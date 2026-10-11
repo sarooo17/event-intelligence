@@ -179,3 +179,37 @@ test('v3 conformance rejects empty fresh runtime receipt after restart', async (
   assert.equal(regression?.status, 'fail');
   assert.match(regression.error, /fresh delivery reused the previous host receipt identity/);
 });
+
+test('v3 conformance catches duplicate completed delivery exposed on restart', async () => {
+  const faulty = {
+    name: 'faulty-restart-duplicate-delivery-host',
+    async createHarness(options) {
+      const harness = await referenceHostAdapter.createHarness(options);
+      const originalRestart = harness.restart.bind(harness);
+      const originalDeliveries = harness.deliveries.bind(harness);
+      let didRestart = false;
+      return {
+        ...harness,
+        async restart() {
+          await originalRestart();
+          didRestart = true;
+        },
+        deliveries() {
+          const rows = originalDeliveries();
+          if (!didRestart) return rows;
+          const prior = rows.find(
+            row => row.triggerId === 'conformance-delivered-restart'
+          );
+          return prior ? [...rows, { ...prior }] : rows;
+        },
+      };
+    },
+  };
+  const report = await runHostConformance(faulty, { profile: 'core' });
+  assert.equal(report.passed, false);
+  const regression = report.results.find(
+    result => result.id === 'core.restart-after-delivery-replay'
+  );
+  assert.equal(regression?.status, 'fail');
+  assert.match(regression.error, /restart observer has duplicated or changed/);
+});
