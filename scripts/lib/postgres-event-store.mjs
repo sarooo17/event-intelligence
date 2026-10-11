@@ -152,7 +152,7 @@ export class PostgresEventStore {
         // CREATE INDEX blocks writers, and CONCURRENTLY while other workers
         // initialize can deadlock with open transactions/snapshots.
         const existing = await client.query('SELECT to_regclass($1) AS relation', [
-          this.tablePrefix + '_records',
+          '"' + this.tablePrefix + '_records"',
         ]);
         const freshRecords = !existing.rows[0]?.relation;
         for (const statement of [
