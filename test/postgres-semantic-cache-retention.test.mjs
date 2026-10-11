@@ -299,3 +299,60 @@ integrationTest('mixed-case table prefixes retain indexed semantic cache', async
     await pool.end();
   }
 });
+
+integrationTest('ambiguous CREATE INDEX completion retains the durable migration claim', async () => {
+  const pool = new Pool({ connectionString: url, max: 6 });
+  const prefix = id();
+  const first = store(pool, prefix, 'tenant-uncertain');
+  try {
+    await first.init();
+    await first.putSemanticDecisionCache('old', { matched: true });
+    await pool.query('DROP INDEX "' + prefix + '_records_age_idx"');
+
+    const operator = store(pool, prefix, 'tenant-uncertain');
+    await operator.init();
+    // Simulate a transaction-pooled connection timing out AFTER the backend
+    // executed the concurrent DDL. The client cannot know whether its query
+    // is still running, so it MUST NOT release the global migration claim.
+    operator.pool = {
+      connect: (...args) => pool.connect(...args),
+      query: async (sql, ...args) => {
+        if (sql.startsWith('CREATE INDEX CONCURRENTLY')) {
+          await pool.query(sql, ...args);
+          throw Object.assign(new Error('simulated ambiguous network timeout'), {
+            code: 'ETIMEDOUT',
+          });
+        }
+        return pool.query(sql, ...args);
+      },
+    };
+    await assert.rejects(
+      () => operator.migrateRetentionIndex(),
+      error => error?.code === 'ETIMEDOUT',
+    );
+    const claim = await pool.query(
+      'SELECT adopted_from FROM "' + prefix + '_metadata" WHERE component = $1',
+      ['retention-age-index-migration'],
+    );
+    assert.equal(claim.rows.length, 1,
+      'uncertain DDL completion must retain the durable operator claim');
+    const other = store(pool, prefix, 'tenant-uncertain');
+    await other.init();
+    await assert.rejects(
+      () => other.migrateRetentionIndex(),
+      error => error?.code === 'EVENT_INTELLIGENCE_RETENTION_MIGRATION_BUSY',
+    );
+    // Manual recovery in this fixture: the test knows the backend completed
+    // DDL; operators in production must inspect PostgreSQL progress first.
+    await pool.query(
+      'DELETE FROM "' + prefix + '_metadata" WHERE component = $1',
+      ['retention-age-index-migration'],
+    );
+    assert.equal((await other.migrateRetentionIndex()).ok, true);
+  } finally {
+    for (const suffix of ['metadata', 'leases', 'history', 'records', 'counters']) {
+      await pool.query('DROP TABLE IF EXISTS "' + prefix + '_' + suffix + '" CASCADE');
+    }
+    await pool.end();
+  }
+});
