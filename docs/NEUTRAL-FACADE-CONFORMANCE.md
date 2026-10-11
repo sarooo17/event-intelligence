@@ -9,7 +9,7 @@ EI already exposes `createEventIntelligence()` for neutral, host-owned embedded 
 The existing management-profile conformance exercises:
 - threshold matching and no wake below threshold;
 - replay/deduplication;
-- replay of a **delivered** source event across restart with unchanged host receipt/fireCount, followed by successful new delivery;
+- replay of a **delivered** source event across restart with unchanged host receipt/fireCount **read back from reopened durable EI storage**, followed by successful new delivery;
 - durable trigger restart and continuation callback identity;
 - max-firings lifecycle;
 - management: create/list/pause/resume/update/delete;
