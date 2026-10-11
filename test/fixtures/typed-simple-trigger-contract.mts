@@ -110,8 +110,11 @@ toTriggerPlan<MixedFieldEvent>({
   when: { event: 'mixed', where: [{ path: 'content', op: 'contains', value: 'urgent' }] },
   then,
 });
-// @ts-expect-error neither string substring nor numeric-array membership supports boolean
+// Boolean scalar is valid on the string alternative via String(value),
+// even though the numeric-array branch alone would not accept it.
 toTriggerPlan<MixedFieldEvent>({ when: { event: 'x', where: [{ path: 'content', op: 'contains', value: true }] }, then });
+// @ts-expect-error neither string substring nor numeric-array membership supports object operands
+toTriggerPlan<MixedFieldEvent>({ when: { event: 'x', where: [{ path: 'content', op: 'contains', value: { unsafe: true } }] }, then });
 
 // A z.literal()/z.enum() describes the full source value, not the only
 // allowed substring for the runtime's String.prototype.includes() check.
