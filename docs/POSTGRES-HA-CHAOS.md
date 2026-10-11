@@ -38,3 +38,24 @@ This explicitly tests **pool reconnect**, not independent operating-system
 process termination, PostgreSQL primary failover or a real network partition.
 It adds restart evidence but does not discharge the soak / partition-rebalance
 or performance SLO checkboxes in #21 and #47.
+
+## Repeated physical-pool disconnect and partition rebalance (candidate)
+
+The additional `test/postgres-rebalance-reconnect.test.mjs` repeats **12**
+bounded logical-time rounds on an isolated PG16 schema. Each round exercises:
+
+- two independent PostgreSQL pools and competing wake/partition claims;
+- physical `pg.Pool.end()`, replacement with a new connection pool and
+  a freshly initialized store;
+- exact 999ms-before/1000ms-at lease expiry and repeated partition transfers;
+- both same-logical-worker ABA reclaim and alternate-worker takeover;
+- rejection of old claim-generation completion, persistence of only the
+  accepted runtime receipt and denial of delivered-wake redispatch;
+- final receipt verification from a third independently connected pool.
+
+This is a **candidate regression**, and the evidence is only proven once
+`postgres-ha` CI and independent review pass on the corresponding PR.
+It is a bounded deterministic process-pool restart, not a real OS-kill test,
+PostgreSQL primary failover, prolonged soak, external tool idempotency proof
+or measurement of large-scale throughput/latency. Do not close #21/#47 on
+this bounded addition alone.
