@@ -209,7 +209,7 @@ export interface EventIntelligenceAgentToolsOptions<RuntimeContext = unknown> {
    * action:'return' with a fully host-owned PortableToolResult to represent
    * deny/interrupt/approval/defer semantics without EI interpreting them.
    */
-  control?(input: {
+  control(input: {
     capability: EventIntelligenceCapabilityMetadata;
     action:
       | 'trigger.create'
