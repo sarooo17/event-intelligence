@@ -23,6 +23,15 @@ integrationTest('PostgreSQL retention prunes only old tenant semantic cache, nev
   const b = store(pool, prefix, 'tenant-B');
   try {
     await Promise.all([a.init(), b.init()]);
+    const indexInfo = await pool.query(
+      'SELECT indexdef FROM pg_indexes WHERE schemaname = current_schema() AND indexname = $1',
+      [prefix + '_records_age_idx'],
+    );
+    assert.equal(indexInfo.rows.length, 1, 'bounded TTL should have a dedicated ordered index');
+    assert.match(
+      indexInfo.rows[0].indexdef,
+      /scope_id, kind, updated_at, record_key/,
+    );
     const decision = { matched: true, evaluator: 'fixture:v1', probability: 0.9 };
     await a.putSemanticDecisionCache('old-1', decision);
     await a.putSemanticDecisionCache('old-2', decision);
