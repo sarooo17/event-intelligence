@@ -147,3 +147,52 @@ integrationTest('PostgreSQL cache retention rejects invalid policies and is conc
     await pool.end();
   }
 });
+
+integrationTest('existing populated installations require an explicit online retention index migration', async () => {
+  const pool = new Pool({ connectionString: url, max: 8 });
+  const prefix = id();
+  const initial = store(pool, prefix, 'tenant-upgrade');
+  const reopened = store(pool, prefix, 'tenant-upgrade');
+  try {
+    await initial.init();
+    await initial.putSemanticDecisionCache('expired', { matched: true });
+    await pool.query(
+      'DROP INDEX "' + prefix + '_records_age_idx"',
+    );
+    // Simulate a populated v0.11 schema. No startup DDL should rebuild the
+    // index, even when another worker initializes the very same tables.
+    await reopened.init();
+    const indexBefore = await pool.query(
+      'SELECT 1 FROM pg_indexes WHERE schemaname = current_schema() AND indexname = $1',
+      [prefix + '_records_age_idx'],
+    );
+    assert.equal(indexBefore.rows.length, 0);
+    const policy = { semanticCacheBefore: '2030-01-01T00:00:00.000Z', maxRows: 10 };
+    await assert.rejects(
+      () => reopened.compactMutableState(policy),
+      error => error?.code === 'EVENT_INTELLIGENCE_RETENTION_INDEX_INVALID',
+    );
+    assert.equal(await reopened.semanticDecisionCacheSize(), 1);
+    const migrated = await reopened.migrateRetentionIndex();
+    assert.equal(migrated.ok, true);
+    assert.equal(migrated.index, prefix + '_records_age_idx');
+    const indexed = await pool.query(
+      'SELECT i.indisvalid AS valid, pg_get_indexdef(i.indexrelid) AS definition ' +
+      'FROM pg_class idx JOIN pg_index i ON i.indexrelid = idx.oid ' +
+      'WHERE idx.relname = $1',
+      [prefix + '_records_age_idx'],
+    );
+    assert.equal(indexed.rows[0]?.valid, true);
+    assert.match(indexed.rows[0].definition, /scope_id, kind, updated_at, record_key/);
+    assert.equal((await reopened.compactMutableState(policy)).deleted, 1);
+    assert.equal(await reopened.semanticDecisionCacheSize(), 0);
+    // Replaying the operator migration is idempotent and never changes data.
+    assert.equal((await reopened.migrateRetentionIndex()).ok, true);
+    assert.equal((await initial.compactMutableState(policy)).deleted, 0);
+  } finally {
+    for (const suffix of ['metadata','leases','history','records','counters']) {
+      await pool.query('DROP TABLE IF EXISTS "' + prefix + '_' + suffix + '" CASCADE');
+    }
+    await pool.end();
+  }
+});
