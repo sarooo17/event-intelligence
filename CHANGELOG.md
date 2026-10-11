@@ -2,6 +2,11 @@
 
 ## Unreleased (v1.0 development)
 
+### MCP Events poll page ingestion bounds
+
+- reject `events/poll` pages exceeding host-configured `maxEvents` (1–500) before any occurrence append or cursor advancement; fail closed using `MCP_EVENTS_POLL_BATCH_LIMIT_EXCEEDED` and preserve retry from the previous cursor;
+- retain valid full pages and multiple bounded pages, with negative/retry/cursor tests. Source arrays are snapshotted before asynchronous ingestion, so host-adapter mutations and custom iterators cannot bypass the cap; unsafe array entries and nested getters/proxies are rejected. The cap is per decoded page count, not transport body bytes.
+
 ### Remove deprecated boolean authorize hook (breaking)
 
 - remove the old `authorize()` callback and `AuthorizationDecision` types from the embedded model-facing tools contract; `control()` is now the single required host-owned durable-mutation boundary;
