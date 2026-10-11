@@ -51,8 +51,12 @@ from altering a schema while registration awaits storage.
 The previous cursor type, cursor-byte/cycle, page-count and descriptor-count
 checks keep their ordering and error codes. These checks protect **decoded
 JavaScript objects**, not the host's raw MCP transport body size, timeout or
-provider authentication. Partial persistence after a later independent storage
-error remains possible as described above.
+provider authentication. A host adapter returning a JavaScript Proxy through
+an async function can invoke its `then` getter during ECMAScript Promise
+assimilation **before** EI receives the value; hosts must decode untrusted
+wire responses into plain JSON values at that transport boundary.
+Partial persistence after a later independent storage error remains possible
+as described above.
 
 **Scope:** These are finite `events/list` pagination limits, not a
 full per-tenant ingestion rate/size/regex complexity policy. Existing source
