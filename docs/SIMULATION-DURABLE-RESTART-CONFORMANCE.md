@@ -9,7 +9,7 @@ The same event is evaluated in two genuinely different paths:
 1. Run the isolated simulator up to **deadline −1 ms** and then separately through the exact deadline. Re-run at that same clock, checking byte-identical simulation reports.
 2. In a fresh temporary directory, register the same trigger, ingest once, and **reopen a new durable store and engine** before advancing to deadline −1 ms and the exact deadline. Run the actual temporal scheduler again at the deadline to assert no duplicate evaluation.
 
-The tests compare deterministic public inspection projections: why code, match status, next evaluation, exact deadline status, and source-event reference IDs. They do **not** compare volatile/internal record IDs or clock-dependent audit record timestamps. No host wake handler, provider, OAuth credential, real network call or model is configured; the temporary store is deleted when the test completes. Raw event payload contents must not appear in inspection evidence.
+The tests compare deterministic public inspection projections: why code, match status, next evaluation, pending deadlines and source-event reference IDs. The fired deadline is verified directly in the authoritative persisted store because the inspector's final-match view only lists deadlines belonging to that final match; the predecessor partial-match deadline is not attached to it. They do **not** compare volatile/internal record IDs or clock-dependent audit record timestamps. No host wake handler, provider, OAuth credential, real network call or model is configured; the temporary store is deleted when the test completes. Raw event payload contents must not appear in inspection evidence.
 
 Run against Node >=22:
 
