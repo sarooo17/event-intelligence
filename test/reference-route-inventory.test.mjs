@@ -231,6 +231,29 @@ test('CLI dispatch inventory rejects new positional commands and flags',()=>{
     statement.expression.getText(ast).includes("args[0] === 'doctor'")
   );
   assert.ok(dispatcher,'CLI dispatcher entrypoint missing');
+  // The flag inventory alone is insufficient: verify each branch's
+  // actual dispatch expression, so moving --json into the MCP branch
+  // or attaching --mcp to another mode fails before release.
+  const compact=node=>node.getText(ast).replace(/\s+/g,'');
+  const branches=ast.statements.filter(ts.isIfStatement);
+  assert.ok(branches.some(node=>compact(node.expression)===
+    "flags.has('--version')||flags.has('-v')"),'version flag dispatch changed');
+  assert.ok(branches.some(node=>compact(node.expression)===
+    "flags.has('--help')||flags.has('-h')"),'help flag dispatch changed');
+  assert.equal(compact(dispatcher.expression),"args[0]==='doctor'",
+    'doctor dispatch predicate changed');
+  assert.ok(ts.isIfStatement(dispatcher.elseStatement),'MCP dispatcher missing');
+  assert.equal(compact(dispatcher.elseStatement.expression),
+    "args[0]==='mcp'||flags.has('--mcp')",
+    'MCP dispatch or flag target changed');
+  const changedMcp=cli.replace(
+    "args[0] === 'mcp' || flags.has('--mcp')",
+    "args[0] === 'mcp' || flags.has('--mcp') || flags.has('--json')",
+  );
+  assert.notEqual(changedMcp,cli,'MCP flag-route mutation did not apply');
+  const alteredAst=ts.createSourceFile('cli.mjs',changedMcp,ts.ScriptTarget.Latest,true,ts.ScriptKind.JS);
+  assert.ok(changedMcp.includes("flags.has('--json')"),
+    'MCP flag mutation must be observable');
   let finalBranch=dispatcher;
   while(ts.isIfStatement(finalBranch.elseStatement)) finalBranch=finalBranch.elseStatement;
   assert.ok(finalBranch.elseStatement,'missing no-argument default CLI branch');
@@ -281,6 +304,7 @@ test('CLI dispatch inventory rejects new positional commands and flags',()=>{
   const exactTokens=(cell)=>[...(cell??'').matchAll(/`([^`]+)`/g)]
     .map(([,token])=>token.trim());
   for(const [invocation,aliases] of [
+    ['mcp-event-intelligence',[]],
     ['mcp-event-intelligence mcp',['--mcp']],
     ['mcp-event-intelligence doctor',['--json']],
     ['mcp-event-intelligence --version',['-v']],
