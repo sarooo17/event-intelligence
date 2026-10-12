@@ -31,7 +31,7 @@ test('reference service and CLI dispatcher edits require explicit route/command 
     const source=read(path);
     assert.equal(gitBlobSha(source),expected,
       path+' changed: review routing/control flow and update audited source SHA');
-    assert.equal(gitBlobSha(source.replace(/\n/g,'\r\n')),expected,
+    assert.equal(gitBlobSha(source.replace(/\r?\n/g,'\r\n')),expected,
       'Windows CRLF checkout must preserve the reviewed canonical blob hash');
     assert.notEqual(gitBlobSha(source+'\n// unreviewed edit'),expected);
   }
