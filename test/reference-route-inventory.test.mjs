@@ -302,7 +302,7 @@ test('CLI dispatch inventory rejects new positional commands and flags',()=>{
     'short help flag must not match --help');
   assert.equal(includesFlag(docs.replace('`-v`',''),'-v'),false,
     'short version flag must not match --version');
-  const cliTable=docs.split('## CLI entrypoints')[1]?.split('The lower-level exported')[0] ?? '';
+  const cliTable=docs.split('## CLI entrypoints')[1]?.split('## Public library entrypoints')[0] ?? '';
   const documentedInvocations=[...cliTable.matchAll(/^\| ([^|]+) \|/gm)]
     .slice(2)
     .flatMap(([,cell])=>[...cell.matchAll(/`(mcp-event-intelligence(?:\s+[^\`]+)?)`/g)]
@@ -367,7 +367,7 @@ test('CLI dispatch inventory rejects new positional commands and flags',()=>{
   assert.equal(recognizedCliDispatch(reversedCli).positional.includes('export'),true,
     'reversed CLI comparisons must be detected');
 
-  assert.match(docs,/not a model-facing operation/i);
+  assert.match(docs,/not additional\\s+model-visible operations/i);
   for (const [suffix,category,value] of [
     ["if (args[0] === 'export') {}",'positional','export'],
     ["if (flags.has('--export')) {}",'flags','--export'],
