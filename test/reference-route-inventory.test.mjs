@@ -29,10 +29,14 @@ function implementedRoutes(source) {
       if(ts.isBinaryExpression(node) &&
         node.operatorToken.kind===ts.SyntaxKind.EqualsEqualsEqualsToken) {
         const left=node.left.getText(ast);
-        if(left==='request.method' || left==='url.pathname') {
-          if(!isLiteral(node.right)) throw new Error('Dynamic HTTP method/path requires explicit route audit');
-          if(left==='request.method') parts.methods.add(node.right.text);
-          else parts.exact.add(node.right.text);
+        const right=node.right.getText(ast);
+        const field=left==='request.method' || left==='url.pathname' ? left :
+          right==='request.method' || right==='url.pathname' ? right : null;
+        if(field) {
+          const literal=field===left ? node.right : node.left;
+          if(!isLiteral(literal)) throw new Error('Dynamic HTTP method/path requires explicit route audit');
+          if(field==='request.method') parts.methods.add(literal.text);
+          else parts.exact.add(literal.text);
         }
       }
       if(ts.isCallExpression(node)) {
@@ -111,6 +115,9 @@ test('HTTP reference service route method+path inventory is exhaustive, no unrev
   assert.notEqual(compound,service,'compound-method fixture must change service code');
   assert.notDeepEqual(implementedRoutes(compound),described,
     'compound route added a second HTTP method without inventory change');
+  const reversed=service+"\nif ('PUT' === request.method && '/v1/export' === url.pathname) {}";
+  assert.notDeepEqual(implementedRoutes(reversed),described,
+    'reversed method/path comparison evaded inventory');
   const nested=service+"\nif (request.method === 'POST') { if (url.pathname === '/v1/nested') {} }";
   assert.notDeepEqual(implementedRoutes(nested),described,
     'route built from nested method/path guards escaped the inventory');
@@ -178,10 +185,27 @@ test('CLI dispatch inventory rejects new positional commands and flags',()=>{
     'short help flag must not match --help');
   assert.equal(includesFlag(docs.replace('`-v`',''),'-v'),false,
     'short version flag must not match --version');
-  for(const token of ['mcp-event-intelligence doctor','mcp-event-intelligence mcp',
-    'mcp-event-intelligence --version','mcp-event-intelligence --help']) {
-    assert.ok(docs.includes(token),'CLI subcommand undocumented: '+token);
-  }
+  const cliTable=docs.split('## CLI entrypoints')[1]?.split('The lower-level exported')[0] ?? '';
+  const documentedInvocations=[...cliTable.matchAll(/^\| ([^|]+) \|/gm)]
+    .slice(2)
+    .flatMap(([,cell])=>[...cell.matchAll(/`(mcp-event-intelligence(?:\s+[^\`]+)?)`/g)]
+      .map(([,invocation])=>invocation.trim()));
+  assert.deepEqual([...documentedInvocations].sort(),[
+    'mcp-event-intelligence',
+    'mcp-event-intelligence mcp',
+    'mcp-event-intelligence doctor',
+    'mcp-event-intelligence --version',
+    'mcp-event-intelligence --help',
+  ].sort(),'CLI documentation must list all complete invocations');
+  assert.equal(documentedInvocations.some(value=>value.endsWith('mcpx')),false);
+  const changedDocs=docs.replace('`mcp-event-intelligence mcp`','`mcp-event-intelligence mcpx`');
+  const changedTable=changedDocs.split('## CLI entrypoints')[1]?.split('The lower-level exported')[0] ?? '';
+  const changedInvocations=[...changedTable.matchAll(/^\| ([^|]+) \|/gm)]
+    .slice(2)
+    .flatMap(([,cell])=>[...cell.matchAll(/`(mcp-event-intelligence(?:\s+[^\`]+)?)`/g)]
+      .map(([,invocation])=>invocation.trim()));
+  assert.notDeepEqual(changedInvocations.sort(),documentedInvocations.sort(),
+    'CLI suffix mutation must change complete inventory');
   assert.match(docs,/not a model-facing operation/i);
   for (const [suffix,category,value] of [
     ["if (args[0] === 'export') {}",'positional','export'],
