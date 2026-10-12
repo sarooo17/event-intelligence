@@ -28,8 +28,9 @@ function implementedRoutes(source) {
         const leftText=node.left.getText(ast), rightText=node.right.getText(ast);
         const hasMethod=value=>value.includes('request.method');
         const hasPath=value=>value.includes('url.pathname');
-        if((hasMethod(leftText)&&hasPath(rightText)&&!hasPath(leftText)) ||
-           (hasPath(leftText)&&hasMethod(rightText)&&!hasMethod(leftText))) {
+        const leftShape=[hasMethod(leftText),hasPath(leftText)];
+        const rightShape=[hasMethod(rightText),hasPath(rightText)];
+        if(leftShape[0]!==rightShape[0] || leftShape[1]!==rightShape[1]) {
           throw new Error('Disjoined HTTP method/path guards require explicit route audit');
         }
       }
@@ -148,6 +149,13 @@ test('HTTP reference service route method+path inventory is exhaustive, no unrev
   );
   assert.notEqual(disjoined,service);
   assert.throws(()=>implementedRoutes(disjoined),/Disjoined HTTP method\/path guards/);
+  const mixedDisjunction=service.replace(
+    "request.method === 'GET' && url.pathname === '/healthz'",
+    "(request.method === 'GET' && url.pathname === '/healthz') || url.pathname === '/readyz'",
+  );
+  assert.notEqual(mixedDisjunction,service);
+  assert.throws(()=>implementedRoutes(mixedDisjunction),
+    /Disjoined HTTP method\/path guards/);
   const reversed=service+"\nif ('PUT' === request.method && '/v1/export' === url.pathname) {}";
   assert.notDeepEqual(implementedRoutes(reversed),described,
     'reversed method/path comparison evaded inventory');
@@ -178,6 +186,7 @@ function recognizedCliDispatch(cli) {
       }
     }
     if(ts.isCallExpression(node) && node.expression.getText(ast)==='flags.has') {
+      if(negated) throw new Error('Negated CLI flag predicate requires explicit audit');
       if(node.arguments.length!==1 || !isLiteral(node.arguments[0])) {
         throw new Error('Dynamic CLI flag must be audited');
       }
@@ -284,6 +293,9 @@ test('CLI dispatch inventory rejects new positional commands and flags',()=>{
   const negatedCli=cli+"\nif (!(args[0] === 'export')) {}";
   assert.throws(()=>recognizedCliDispatch(negatedCli),
     /Negated CLI dispatcher predicate/);
+  const negatedFlag=cli+"\nif (!flags.has('--export')) {}";
+  assert.throws(()=>recognizedCliDispatch(negatedFlag),
+    /Negated CLI flag predicate/);
   const reversedCli=cli+"\nif ('export' === args[0]) {}";
   assert.equal(recognizedCliDispatch(reversedCli).positional.includes('export'),true,
     'reversed CLI comparisons must be detected');
