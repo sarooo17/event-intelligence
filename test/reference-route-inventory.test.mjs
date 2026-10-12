@@ -66,7 +66,7 @@ function implementedRoutes(source) {
         }
       }
       if(ts.isCallExpression(node)) {
-        const target=node.expression.getText(ast);
+        const target=normalizedRouteAccess(node.expression.getText(ast));
         const bucket=target==='url.pathname.startsWith' ? parts.prefix :
           target==='url.pathname.endsWith' && !negated ? parts.suffix : null;
         if(bucket) {
@@ -172,6 +172,9 @@ test('HTTP reference service route method+path inventory is exhaustive, no unrev
   const bracket=service+"\nif (request['method'] === 'PUT' && url['pathname'] === '/v1/export') {}";
   assert.notDeepEqual(implementedRoutes(bracket),described,
     'bracket notation method/path evaded route inventory');
+  const bracketCall=service+"\nif (request['method'] === 'PUT' && url['pathname'].startsWith('/v1/export/')) {}";
+  assert.notDeepEqual(implementedRoutes(bracketCall),described,
+    'bracket-notation startsWith must be included in the route inventory');
   const reversed=service+"\nif ('PUT' === request.method && '/v1/export' === url.pathname) {}";
   assert.notDeepEqual(implementedRoutes(reversed),described,
     'reversed method/path comparison evaded inventory');
