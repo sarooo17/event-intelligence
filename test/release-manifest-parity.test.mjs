@@ -9,10 +9,11 @@ const read = f => JSON.parse(readFileSync(new URL('../' + f, import.meta.url)));
 const pkg = read('package.json');
 const lock = read('package-lock.json');
 const server = read('server.json');
+const registryDocs = readFileSync(new URL('../docs/MCP-REGISTRY.md', import.meta.url), 'utf8');
 const clone = value => JSON.parse(JSON.stringify(value));
 
 test('current release metadata is version/name-consistent, without a network call', () => {
-  assert.deepEqual(validateReleaseManifest(pkg, lock, server), []);
+  assert.deepEqual(validateReleaseManifest(pkg, lock, server, registryDocs), []);
   assert.deepEqual(checkReleaseManifest(new URL('..', import.meta.url).pathname), []);
 });
 
@@ -37,4 +38,20 @@ test('release contract rejects every independently drifting version and package 
   assert.notDeepEqual(validateReleaseManifest(pkg,lock,{
     ...server, packages: [{ registryType: 'docker', identifier: pkg.name, version: pkg.version }],
   }), []);
+});
+
+test('release identity gate rejects missing, stale or renamed documentation declarations', () => {
+  const current = `${pkg.name}@${pkg.version}`;
+  assert.ok(registryDocs.includes(`- npm package: \`${current}\`;`));
+  for (const badDocs of [
+    registryDocs.replace(current, `${pkg.name}@0.0.0`),
+    registryDocs.replace(current, `other-package@${pkg.version}`),
+    registryDocs.replace(`- npm package: \`${current}\`;`, ''),
+    registryDocs + `\n- npm package: \`${current}\`;\n`,
+  ]) {
+    const errors = validateReleaseManifest(pkg, lock, server, badDocs);
+    assert.ok(errors.some(message =>
+      message.startsWith('docs/MCP-REGISTRY.md:')), errors.join('; '));
+  }
+  assert.notDeepEqual(validateReleaseManifest(pkg,lock,server,{}), []);
 });

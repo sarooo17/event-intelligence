@@ -46,7 +46,7 @@ The npm package declares the same identity through `package.json#mcpName`.
 
 `server.json` declares:
 
-- npm package: `mcp-event-intelligence@0.6.0`;
+- npm package: `mcp-event-intelligence@0.11.0`;
 - transport: `stdio`;
 - positional package argument: `mcp`;
 - only Event Intelligence control-plane/runtime settings, including optional Jev semantic-evaluator configuration.
@@ -79,9 +79,10 @@ nested evidence. Owner checks and host policy are still enforced **before**
 the output can be returned. An invalid result fails with
 `EI_OUTPUT_CONTRACT_INVALID` rather than being silently projected.
 
-This is not full #43 parity: embedded host-specific inspection projections
-and mutating-operation output contracts remain separate work. In particular,
-do not advertise a full inspection schema for an arbitrary host-supplied
+This is not full #43 parity: embedded mutating operations have their own
+compact native output contracts, but embedded host-specific inspector
+projections and complete cross-surface input/schema parity remain open.
+Do not advertise a full inspection schema for an arbitrary host-supplied
 inspector without validating that host's own contract.
 
 
@@ -100,8 +101,8 @@ source scope and owner checks remain authoritative in the host/control
 plane. Invalid success outputs fail closed with `EI_OUTPUT_CONTRACT_INVALID`.
 
 The primary embedded facade intentionally returns **compact host-scoped**
-results rather than these stdio-shaped receipts. Never apply the stdio
-schema to the embedded adapter without an explicit canonical embedded
-projection contract. This is a #43 implementation slice, not proof that
-every host's supplied inspector or model-facing tool projections are
-identical.
+results with their own validated `embedded` Zod output contracts for all
+five mutating operations, distinct from stdio's rich canonical envelopes.
+Host-owned approval, identity and receipt control are unchanged. This
+remains partial #43 coverage: the host-supplied embedded inspector output
+and complete cross-surface projection parity are not yet standardized.
