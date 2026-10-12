@@ -252,8 +252,12 @@ test('CLI dispatch inventory rejects new positional commands and flags',()=>{
   );
   assert.notEqual(changedMcp,cli,'MCP flag-route mutation did not apply');
   const alteredAst=ts.createSourceFile('cli.mjs',changedMcp,ts.ScriptTarget.Latest,true,ts.ScriptKind.JS);
-  assert.ok(changedMcp.includes("flags.has('--json')"),
-    'MCP flag mutation must be observable');
+  const alteredDispatcher=alteredAst.statements.find(node=>
+    ts.isIfStatement(node) && node.expression.getText(alteredAst).includes("args[0] === 'doctor'"));
+  assert.ok(alteredDispatcher && ts.isIfStatement(alteredDispatcher.elseStatement));
+  assert.notEqual(alteredDispatcher.elseStatement.expression.getText(alteredAst)
+    .replace(/\s+/g,''),"args[0]==='mcp'||flags.has('--mcp')",
+    'unexpected flag→MCP route must change the validated dispatch contract');
   let finalBranch=dispatcher;
   while(ts.isIfStatement(finalBranch.elseStatement)) finalBranch=finalBranch.elseStatement;
   assert.ok(finalBranch.elseStatement,'missing no-argument default CLI branch');
