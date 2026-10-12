@@ -14,6 +14,10 @@ function isLiteral(node) {
   return node && (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node));
 }
 
+const normalizedRouteAccess=text=>text
+  .replace(/request\\[(?:'method'|"method")\\]/g,'request.method')
+  .replace(/url\\[(?:'pathname'|"pathname")\\]/g,'url.pathname');
+
 function implementedRoutes(source) {
   const ast=ts.createSourceFile('service.mjs',source,ts.ScriptTarget.Latest,true,ts.ScriptKind.JS);
   const names=new Set();
@@ -25,7 +29,8 @@ function implementedRoutes(source) {
       // HTTP route conjunction. Such a condition can expose broad access.
       if(ts.isBinaryExpression(node) &&
         node.operatorToken.kind===ts.SyntaxKind.BarBarToken) {
-        const leftText=node.left.getText(ast), rightText=node.right.getText(ast);
+        const leftText=normalizedRouteAccess(node.left.getText(ast)),
+          rightText=normalizedRouteAccess(node.right.getText(ast));
         const hasMethod=value=>value.includes('request.method');
         const hasPath=value=>value.includes('url.pathname');
         const leftShape=[hasMethod(leftText),hasPath(leftText)];
@@ -48,8 +53,8 @@ function implementedRoutes(source) {
       }
       if(ts.isBinaryExpression(node) &&
         node.operatorToken.kind===ts.SyntaxKind.EqualsEqualsEqualsToken) {
-        const left=node.left.getText(ast);
-        const right=node.right.getText(ast);
+        const left=normalizedRouteAccess(node.left.getText(ast));
+        const right=normalizedRouteAccess(node.right.getText(ast));
         const field=left==='request.method' || left==='url.pathname' ? left :
           right==='request.method' || right==='url.pathname' ? right : null;
         if(field) {
@@ -164,6 +169,9 @@ test('HTTP reference service route method+path inventory is exhaustive, no unrev
     /Disjoined HTTP method\/path guards/);
   const unequal=service+"\nif (request.method !== 'HEAD' && url.pathname === '/healthz') {}";
   assert.throws(()=>implementedRoutes(unequal),/Unsupported HTTP route comparison/);
+  const bracket=service+"\nif (request['method'] === 'PUT' && url['pathname'] === '/v1/export') {}";
+  assert.notDeepEqual(implementedRoutes(bracket),described,
+    'bracket notation method/path evaded route inventory');
   const reversed=service+"\nif ('PUT' === request.method && '/v1/export' === url.pathname) {}";
   assert.notDeepEqual(implementedRoutes(reversed),described,
     'reversed method/path comparison evaded inventory');
