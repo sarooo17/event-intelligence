@@ -66,6 +66,14 @@ function implementedRoutes(source) {
         throw new Error('Unsupported HTTP route comparison requires explicit audit');
       }
       if(ts.isBinaryExpression(node) &&
+        node.operatorToken.kind===ts.SyntaxKind.EqualsEqualsEqualsToken &&
+        [node.left,node.right].some(value=>
+          value.kind===ts.SyntaxKind.TrueKeyword ||
+          value.kind===ts.SyntaxKind.FalseKeyword) &&
+        normalizedRouteAccess(node.getText(ast)).includes('url.pathname')) {
+        throw new Error('Boolean-wrapped HTTP matcher requires explicit route audit');
+      }
+      if(ts.isBinaryExpression(node) &&
         node.operatorToken.kind===ts.SyntaxKind.EqualsEqualsEqualsToken) {
         const unwrap=node=>{
           while(ts.isParenthesizedExpression(node)) node=node.expression;
@@ -226,6 +234,12 @@ test('HTTP reference service route method+path inventory is exhaustive, no unrev
   const negatedSuffixOnly=service+"\nif (request.method === 'PUT' && !url.pathname.endsWith('/export')) {}";
   assert.throws(()=>implementedRoutes(negatedSuffixOnly),/Negated suffix-only HTTP route/,
     'negative suffix without positive prefix/exact anchor must fail closed');
+  const booleanWrapped=service+"\nif (request.method === 'PUT' && url.pathname.endsWith('/export') === false) {}";
+  assert.throws(()=>implementedRoutes(booleanWrapped),/Boolean-wrapped HTTP matcher/,
+    'false-wrapped pathname matcher must fail closed');
+  const reversedBoolean=service+"\nif (request.method === 'PUT' && false === url.pathname.endsWith('/export')) {}";
+  assert.throws(()=>implementedRoutes(reversedBoolean),/Boolean-wrapped HTTP matcher/,
+    'reversed boolean-wrapped pathname matcher must fail closed');
   const reversed=service+"\nif ('PUT' === request.method && '/v1/export' === url.pathname) {}";
   assert.notDeepEqual(implementedRoutes(reversed),described,
     'reversed method/path comparison evaded inventory');
