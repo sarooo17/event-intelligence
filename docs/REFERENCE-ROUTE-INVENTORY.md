@@ -64,11 +64,29 @@ schema contract; #45 and #50 still track that broader security/release work.
 | `mcp-event-intelligence --version` or `-v` | Installed package version | No |
 | `mcp-event-intelligence --help` or `-h` | Command help | No |
 
-The lower-level exported `/host`, `/provider`, `/embedded`,
-`/conformance`, `/diagnostics` and `/storage/postgres` libraries
-also are not a model-facing operation. They are typed public programming
-interfaces used by the host/provider. Their access control and runtime
-effects are not inferred from model-visible tool metadata.
+## Public library entrypoints
+
+The following package exports are **programming interfaces**, not additional
+model-visible operations. They expose types/implementations for embedding,
+providers, administration and extensions. Runtime effects and authorization
+remain the responsibility of the importing host; an export does not itself
+grant an agent a tool or permission.
+
+| Package export | Intended boundary |
+| --- | --- |
+| `mcp-event-intelligence` | Canonical Pattern/runtime primitives |
+| `mcp-event-intelligence/host` | Host-owned MCP registry and lifecycle |
+| `mcp-event-intelligence/provider` | Host/provider-side MCP Events adapter |
+| `mcp-event-intelligence/provider/erpnext` | Optional ERPNext provider adapter; no runtime-name dispatch |
+| `mcp-event-intelligence/embedded` | Runtime-neutral embedded tool and activation adapter |
+| `mcp-event-intelligence/observability` | Optional structured observability hooks |
+| `mcp-event-intelligence/conformance` | Host conformance utilities |
+| `mcp-event-intelligence/storage/postgres` | PostgreSQL-backed authoritative store |
+| `mcp-event-intelligence/diagnostics` | Read-only integration doctor utilities |
+
+This table is checked against **all** `package.json#exports` keys in CI.
+Adding, deleting or renaming a public subpath requires updating this inventory
+and reviewing its host trust boundary.
 
 **Parity check:** `test/reference-route-inventory.test.mjs` reads real
 service JavaScript route conditions and rejects undocumented/missing
