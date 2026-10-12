@@ -31,11 +31,16 @@ function implementedRoutes(source) {
         node.operatorToken.kind===ts.SyntaxKind.BarBarToken) {
         const leftText=normalizedRouteAccess(node.left.getText(ast)),
           rightText=normalizedRouteAccess(node.right.getText(ast));
-        const hasMethod=value=>value.includes('request.method');
-        const hasPath=value=>value.includes('url.pathname');
-        const leftShape=[hasMethod(leftText),hasPath(leftText)];
-        const rightShape=[hasMethod(rightText),hasPath(rightText)];
-        if(leftShape[0]!==rightShape[0] || leftShape[1]!==rightShape[1]) {
+        const shape=value=>[
+          value.includes('request.method'),
+          value.includes('url.pathname') &&
+            !value.includes('url.pathname.startsWith') &&
+            !value.includes('url.pathname.endsWith'),
+          value.includes('url.pathname.startsWith'),
+          value.includes('url.pathname.endsWith'),
+        ];
+        const leftShape=shape(leftText), rightShape=shape(rightText);
+        if(leftShape.some((kind,index)=>kind!==rightShape[index])) {
           throw new Error('Disjoined HTTP method/path guards require explicit route audit');
         }
       }
@@ -53,8 +58,12 @@ function implementedRoutes(source) {
       }
       if(ts.isBinaryExpression(node) &&
         node.operatorToken.kind===ts.SyntaxKind.EqualsEqualsEqualsToken) {
-        const left=normalizedRouteAccess(node.left.getText(ast));
-        const right=normalizedRouteAccess(node.right.getText(ast));
+        const unwrap=node=>{
+          while(ts.isParenthesizedExpression(node)) node=node.expression;
+          return node;
+        };
+        const left=normalizedRouteAccess(unwrap(node.left).getText(ast));
+        const right=normalizedRouteAccess(unwrap(node.right).getText(ast));
         const field=left==='request.method' || left==='url.pathname' ? left :
           right==='request.method' || right==='url.pathname' ? right : null;
         if(field) {
@@ -85,6 +94,9 @@ function implementedRoutes(source) {
       ts.forEachChild(node,child=>visit(child,negated));
     }
     visit(condition);
+    if(parts.suffix.size && !parts.prefix.size && !parts.exact.size) {
+      throw new Error('Suffix-only HTTP route requires explicit route audit');
+    }
     const paths=new Set(parts.exact);
     for(const prefix of parts.prefix) {
       const suffixes=parts.suffix.size ? parts.suffix : new Set(['']);
@@ -185,6 +197,16 @@ test('HTTP reference service route method+path inventory is exhaustive, no unrev
     'unsupported pathname matcher must fail closed');
   const unsupportedBracketMatcher=service+"\nif (request.method === 'PUT' && url['pathname'].includes('/v1/export')) {}";
   assert.throws(()=>implementedRoutes(unsupportedBracketMatcher),/Unsupported HTTP pathname matcher/);
+  const disjoinedMatchers=service+"\nif (request.method === 'POST' && (url.pathname.startsWith('/v1/trigger-matches/') || url.pathname.endsWith('/fire'))) {}";
+  assert.throws(()=>implementedRoutes(disjoinedMatchers),
+    /Disjoined HTTP method\/path guards/,
+    'OR combining unrelated matcher kinds must fail closed');
+  const suffixOnly=service+"\nif (request.method === 'PUT' && url.pathname.endsWith('/export')) {}";
+  assert.throws(()=>implementedRoutes(suffixOnly),/Suffix-only HTTP route/,
+    'suffix-only route must not disappear from inventory');
+  const parenthesized=service+"\nif (request.method === 'PUT' && (url.pathname) === '/v1/export') {}";
+  assert.notDeepEqual(implementedRoutes(parenthesized),described,
+    'parenthesized URL pathname access must be inventoried');
   const reversed=service+"\nif ('PUT' === request.method && '/v1/export' === url.pathname) {}";
   assert.notDeepEqual(implementedRoutes(reversed),described,
     'reversed method/path comparison evaded inventory');
