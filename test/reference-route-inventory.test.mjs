@@ -258,7 +258,7 @@ test('CLI dispatch inventory rejects new positional commands and flags',()=>{
   // NOT through flags.has('--json'). Enforce the admitted option and the
   // fail-closed unknown-option path against the real dispatcher branch.
   const doctorBody=dispatcher.thenStatement.getText(ast);
-  const doctorAllowed='args.slice(1).filter((arg) => arg !== '--json')';
+  const doctorAllowed="args.slice(1).filter((arg) => arg !== '--json')";
   assert.ok(doctorBody.includes(doctorAllowed),
     'doctor accepted-option allowlist drifted from the CLI catalog');
   assert.match(doctorBody,/if\s*\(\s*unrecognized\.length\s*\)/,
@@ -266,7 +266,7 @@ test('CLI dispatch inventory rejects new positional commands and flags',()=>{
   assert.match(doctorBody,/process\.exitCode\s*=\s*2/,
     'doctor unknown-option branch must return nonzero');
   const alteredDoctor=doctorBody.replace(doctorAllowed,
-    'args.slice(1).filter((arg) => arg !== '--format')');
+    "args.slice(1).filter((arg) => arg !== '--format')");
   assert.notEqual(alteredDoctor,doctorBody,'doctor allowlist regression probe did not mutate source');
   assert.equal(alteredDoctor.includes(doctorAllowed),false,
     'doctor allowlist mutation must invalidate the documented --json mode');
