@@ -1,22 +1,52 @@
-# Canonical operation output contracts — incremental coverage
+# Canonical operation output contracts — v1 preparation
 
-Tracking #43. The first slice models the **shared semantic result core** of two read operations: `event_sources_list` and `trigger_list`. The next slice adds a **stdio-only** output contract for the canonical `trigger_plan` result.
+Tracking #43. `OPERATION_OUTPUT_CONTRACT_VERSION='1'` versions the
+operation result schemas, **not** the overall EI protocol or its npm API.
 
-Both the embedded host-facing descriptors and standalone MCP `tools/list` expose validated output schemas for shared operations; stdio alone advertises the `trigger_plan` schema. All modeled outputs are derived from one Zod output contract library. Both execution paths check results before handing them to the model/host response projection. The validator returns original values unchanged: untrusted evidence is **not** normalized into privileges, and host result projection remains host-owned.
+## Two projections, one control plane
 
-| Operation | Shared fields | Intentional difference |
+Both the embedded host-facing tool descriptors and the optional standalone
+MCP stdio `tools/list` advertise Zod-generated JSON output schemas where
+their native result shapes are deterministic. The operation manifest owns
+names/authority metadata; `operation-output-contracts.mjs` validates the
+surface-specific result before handing it to its presentation layer. It returns
+the original object unchanged and never authorizes a mutation or promotes
+external event evidence to trusted instructions.
+
+| Operation | Embedded output | Optional stdio MCP output |
 | --- | --- | --- |
-| event_sources_list | `sources` array | Embedded sources are compact host-neutral summaries, MCP may return richer provider information |
-| trigger_list | `triggers` array | Embedded additionally requires nonnegative `total` and `returned`; MCP continues returning full owner-scoped records |
-| trigger_plan | `planVersion: '2'`, `definition`, `connectionIds`, `resolvedSources`, `warnings`, `explanation.when/then` | Stdio only. Embedded callers use a scoped `planTrigger()` method and have no `trigger_plan` model tool |
-| trigger_language_describe | Version 3 with declared canonical authoring surface and planner | Stdio-only; optional categories are preserved without fabricating fields |
-| derived_contracts_list | `contracts` array | Stdio-only, nested provider-owned schemas remain opaque/untrusted |
-| runtime_status | Connection list, counts, enabled-write flag and restore metadata | Stdio-only, status is operational telemetry, not an authorization claim |
+| `event_sources_list` | Compact `sources` array | Rich `sources` array |
+| `trigger_list` | `triggers`, `total`, `returned` | Rich owner-scoped `triggers` array |
+| `trigger_create` | Receipt ID, trigger ID/version, active state, connection IDs and warnings | Canonical definition, state, action, receipt and optional planning result |
+| `trigger_pause`, `trigger_resume`, `trigger_delete` | Receipt, action, trigger ID/version and corresponding lifecycle state | Canonical definition, action/state and receipt |
+| `trigger_update` | Receipt, action, trigger ID, previous/new versions, active state, connection IDs and warnings | Canonical new and previous definition/state and receipt |
+| `trigger_plan` | Not exposed as a model tool; scoped `planTrigger()` is available | Versioned planner result |
+| `trigger_inspect` | Host-customizable result: no universally advertised schema | Versioned EI inspector envelope |
+| `trigger_simulate`, `wake_hydrate`, `trigger_language_describe`, `derived_contracts_list`, `runtime_status` | Not exposed as model-facing embedded tools | Validated operation-specific envelopes |
 
-`OPERATION_OUTPUT_CONTRACT_VERSION='1'` versions only this minimal output contract, not the overall Event Intelligence protocol. The schemas use permissive nested records deliberately: fully constraining provider payloads, event evidence, match lineage and runtime-specific projectResult references would be misleading and may leak/strip information unexpectedly.
+The **compact embedded mutation projection** is intentionally not the
+stdio output. It does not expose an entire stored trigger definition or host
+principal context. JSON schemas require nonempty durable receipt/identity
+fields, an operation-appropriate lifecycle status, and relevant version,
+connection and warning fields. These checks execute on the native result
+before any host-supplied `projectResult()`; host model projection and
+authorization remain host-owned.
 
-**Not modeled yet:** `trigger_inspect`, `trigger_create`, `trigger_pause`, `trigger_resume`, `trigger_delete`, `trigger_update`, `trigger_simulate`, `wake_hydrate`. These operations retain their existing wire responses, and **no output schema is advertised** for them. Full cross-surface output equivalence is not claimed. No legacy compatibility shims are added; hosts already customize inline/reference output with `projectResult`.
+## Durable commit and presentation failure
 
-Validation does not grant authority: MCP ownership checks and embedded `resolveContext/control` occur separately before response generation. Untrusted MCP producer data must remain untrusted across host activation.
+EI commits the trigger mutation through the host-authorized control plane
+*before* constructing a compact response. A presentation/validation exception
+after that commit cannot turn the operation into an apparent failed mutation:
+the adapter retains its existing `ok:true` canonical inline fallback so
+callers do not retry a committed write. The output contract is separately
+enforceable through `validateOperationOutput()` and tested against shape drift.
+It does **not** claim a malformed custom host control-plane result was rolled
+back or that the fallback was revalidated after failure. Such a host violates
+the documented embedded contract and must be fixed at its boundary.
 
-**Inspector exception:** A host may supply a customized `triggerInspector.inspect()` returning a different valid host-owned shape. CI exposed that assumption when a reference host returned `{triggerId, version, explanation}` instead of EI's built-in rich inspector object. Do not impose an output validator on that path until a canonical host inspector contract is explicitly defined and versioned.
+For the same reason the embedded `trigger_inspect` operation does not
+advertise stdio's rich inspector schema: third-party hosts may intentionally
+supply another shape. A versioned inspector host contract and complete
+cross-surface input/output projection parity remain work under #43.
+No legacy host shims, extra policy layer, scheduler, runtime SDK or model
+dependency are added.

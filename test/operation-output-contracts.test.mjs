@@ -11,7 +11,7 @@ import {
   createEventIntelligenceAgentTools,
 } from '../scripts/embedded-host-kit.mjs';
 
-test('three shared semantic output operations expose intentional transport projections', () => {
+test('shared reads and compact embedded mutations expose intentional transport projections', () => {
   assert.equal(OPERATION_OUTPUT_CONTRACT_VERSION, '1');
   assert.deepEqual(Object.keys(OPERATION_OUTPUT_CONTRACTS), [
     'sources', 'list', 'plan', 'inspect', 'simulate', 'wakeHydrate',
@@ -23,7 +23,7 @@ test('three shared semantic output operations expose intentional transport proje
   assert.notEqual(outputValidator('stdio','list'),
     outputValidator('embedded','list'));
   for (const key of Object.keys(OPERATION_OUTPUT_CONTRACTS)) {
-    const surfaces = ['sources', 'list'].includes(key) ? ['stdio', 'embedded'] : ['stdio'];
+    const surfaces = ['sources', 'list', 'create', 'update', 'pause', 'resume', 'delete'].includes(key) ? ['stdio', 'embedded'] : ['stdio'];
     for (const surface of surfaces) {
       const json = outputJsonSchema(surface, key);
       assert.equal(json.type, 'object');
@@ -32,11 +32,19 @@ test('three shared semantic output operations expose intentional transport proje
   }
   assert.throws(() => outputValidator('embedded', 'plan'),
     /Operation not exposed on EI surface/);
-  for (const operation of ['inspect', 'create', 'update', 'pause', 'resume', 'delete']) {
-    // The host may supply an inspector, but its arbitrary projection has no
-    // portable output contract. Never return undefined as a validator.
-    assert.throws(() => outputValidator('embedded', operation),
-      /Unmodeled EI output projection/);
+  // Arbitrary host-supplied inspection is deliberately not standardized.
+  assert.throws(() => outputValidator('embedded', 'inspect'),
+    /Unmodeled EI output projection/);
+  for (const operation of ['create', 'update', 'pause', 'resume', 'delete']) {
+    assert.notEqual(outputValidator('embedded', operation),
+      outputValidator('stdio', operation));
+    const json = outputJsonSchema('embedded', operation);
+    assert.ok(json.required.includes('receiptId'));
+    assert.ok(json.required.includes('triggerId'));
+    assert.ok(json.required.includes('version'));
+    assert.ok(json.required.includes('state'));
+    assert.equal(Object.hasOwn(json.properties, 'definition'), false,
+      'native embedded output must never falsely advertise stdio definition');
   }
   for (const operation of ['simulate', 'wakeHydrate', 'languageDescribe', 'derivedContracts', 'runtimeStatus']) {
     assert.throws(() => outputValidator('embedded', operation),
@@ -214,8 +222,50 @@ test('stdio mutation outputs require coherent durable receipts and canonical def
         operation,
       );
     }
-    assert.throws(() => outputValidator('embedded', operation),
-      /Unmodeled EI output projection/);
+  }
+});
+
+test('compact embedded mutation output contracts preserve receipt/status/version coherence', () => {
+  const core = {
+    receiptId: 'durable-receipt-1',
+    triggerId: 'owned-trigger',
+    version: '2',
+    state: { status: 'active', owner: { type: 'user', principal_id: 'owner-1' } },
+  };
+  for (const operation of ['create', 'update', 'pause', 'resume', 'delete']) {
+    const expectedStatus = operation === 'pause' ? 'paused' :
+      operation === 'delete' ? 'deleted' : 'active';
+    const candidate = {
+      ...core,
+      state: { ...core.state, status: expectedStatus },
+      ...(operation === 'create' ? { connectionIds: ['mcp-owned'], warnings: [] } : {
+        action: operation,
+      }),
+      ...(operation === 'update' ? {
+        previousVersion: '1',
+        connectionIds: ['mcp-owned'],
+        warnings: [],
+      } : {}),
+    };
+    assert.equal(validateOperationOutput('embedded', operation, candidate), candidate);
+    assert.equal(outputJsonSchema('embedded', operation).properties.state
+      .properties.status.const, expectedStatus);
+    for (const invalid of [
+      { ...candidate, receiptId: '' },
+      { ...candidate, triggerId: undefined },
+      { ...candidate, version: '' },
+      { ...candidate, state: { status: 'unexpected' } },
+      { ...candidate, state: {} },
+      ...(operation === 'create' || operation === 'update'
+        ? [{ ...candidate, connectionIds: 'wrong' }, { ...candidate, warnings: null }]
+        : [{ ...candidate, action: 'wrong' }]),
+      ...(operation === 'update'
+        ? [{ ...candidate, previousVersion: undefined }]
+        : []),
+    ]) {
+      assert.throws(() => validateOperationOutput('embedded', operation, invalid),
+        error => error.code === 'EI_OUTPUT_CONTRACT_INVALID', operation);
+    }
   }
 });
 
@@ -241,10 +291,12 @@ test('real embedded list validates canonical projected response before host proj
   assert.equal(result.ok,true);
   assert.deepEqual(result.data,{triggers:[],total:0,returned:0});
   assert.equal(projected,1);
-  for(const key of ['event_sources_list']){
-    assert.ok(tools.find(item=>item.name===key)?.outputSchema);
+  for(const key of [
+    'event_sources_list', 'trigger_create', 'trigger_update',
+    'trigger_pause', 'trigger_resume', 'trigger_delete',
+  ]) {
+    assert.ok(tools.find(item=>item.name===key)?.outputSchema, key);
   }
-  for(const key of ['trigger_create','trigger_pause','trigger_update','trigger_inspect']){
-    assert.equal(tools.find(item=>item.name===key)?.outputSchema,undefined);
-  }
+  assert.equal(tools.find(item=>item.name==='trigger_inspect')?.outputSchema,
+    undefined, 'host inspector remains unmodeled');
 });

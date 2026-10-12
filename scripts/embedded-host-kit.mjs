@@ -131,7 +131,7 @@ function portableDescriptor(key, name) {
   return {
     name,
     inputSchema: descriptor.inputSchema,
-    ...(key === 'sources' || key === 'list'
+    ...(['sources', 'list', 'create', 'update', 'pause', 'resume', 'delete'].includes(key)
       ? { outputSchema: deepFreezeSchema(outputJsonSchema('embedded', key)) }
       : {}),
     capability: descriptor.capability,
@@ -995,6 +995,7 @@ export function createEventIntelligenceAgentTools({
         // may retry. Fall back to the canonical inline success payload.
         try {
           return await projectPortableResult(projectResult, {
+            operation: 'create',
             capability: createCapability,
             runtimeContext,
             context: resolved,
@@ -1283,6 +1284,7 @@ export function createEventIntelligenceAgentTools({
 
         try {
           return await projectPortableResult(projectResult, {
+            operation: spec.key,
             capability: spec.capability,
             runtimeContext,
             context: resolved,
@@ -1433,6 +1435,7 @@ export function createEventIntelligenceAgentTools({
 
         try {
           return await projectPortableResult(projectResult, {
+            operation: 'update',
             capability: updateCapability,
             runtimeContext,
             context: resolved,
