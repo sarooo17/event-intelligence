@@ -14,6 +14,20 @@ import { CompositeTriggerDefinitionSchema } from '../../dist/src/intelligencePro
  */
 export const OPERATION_OUTPUT_CONTRACT_VERSION = '1';
 
+/**
+ * Exhaustive exception ledger for model-facing operation output schemas.
+ * Embedded inspection delegates to an optional host-supplied inspector:
+ * advertising the stdio canonical envelope would be a false contract.
+ * Any new omission must be explicit, reviewed and documented, not silently
+ * treated as "no schema" by the caller.
+ */
+export const OUTPUT_CONTRACT_EXCEPTIONS = Object.freeze({
+  embedded: Object.freeze({
+    inspect: 'Host supplies its own inspector projection; no common output envelope',
+  }),
+  stdio: Object.freeze({}),
+});
+
 const sourceList = z.object({
   sources: z.array(z.unknown()),
 }).passthrough();
