@@ -21,6 +21,18 @@ function implementedRoutes(source) {
   function extract(condition) {
     const parts={methods:new Set(),exact:new Set(),prefix:new Set(),suffix:new Set()};
     function visit(node,negated=false) {
+      // An OR between a method-only and a path-only predicate is NOT an
+      // HTTP route conjunction. Such a condition can expose broad access.
+      if(ts.isBinaryExpression(node) &&
+        node.operatorToken.kind===ts.SyntaxKind.BarBarToken) {
+        const leftText=node.left.getText(ast), rightText=node.right.getText(ast);
+        const hasMethod=value=>value.includes('request.method');
+        const hasPath=value=>value.includes('url.pathname');
+        if((hasMethod(leftText)&&hasPath(rightText)&&!hasPath(leftText)) ||
+           (hasPath(leftText)&&hasMethod(rightText)&&!hasMethod(leftText))) {
+          throw new Error('Disjoined HTTP method/path guards require explicit route audit');
+        }
+      }
       if(ts.isPrefixUnaryExpression(node) &&
         node.operator===ts.SyntaxKind.ExclamationToken) {
         visit(node.operand,!negated);
@@ -45,6 +57,7 @@ function implementedRoutes(source) {
         const bucket=target==='url.pathname.startsWith' ? parts.prefix :
           target==='url.pathname.endsWith' && !negated ? parts.suffix : null;
         if(bucket) {
+          if(negated) throw new Error('Negated HTTP route prefix requires explicit route audit');
           if(node.arguments.length!==1 || !isLiteral(node.arguments[0])) {
             throw new Error('Dynamic route match requires explicit route audit');
           }
@@ -123,6 +136,18 @@ test('HTTP reference service route method+path inventory is exhaustive, no unrev
   assert.notEqual(negatedMethod,service);
   assert.throws(()=>implementedRoutes(negatedMethod),/Negated HTTP method\/path/,
     'negated method comparison must not be counted as positive');
+  const negatedPrefix=service.replace(
+    "url.pathname.startsWith('/v1/inspector/triggers/')",
+    "!url.pathname.startsWith('/v1/inspector/triggers/')",
+  );
+  assert.notEqual(negatedPrefix,service);
+  assert.throws(()=>implementedRoutes(negatedPrefix),/Negated HTTP route prefix/);
+  const disjoined=service.replace(
+    "request.method === 'GET' && url.pathname === '/healthz'",
+    "request.method === 'GET' || url.pathname === '/healthz'",
+  );
+  assert.notEqual(disjoined,service);
+  assert.throws(()=>implementedRoutes(disjoined),/Disjoined HTTP method\/path guards/);
   const reversed=service+"\nif ('PUT' === request.method && '/v1/export' === url.pathname) {}";
   assert.notDeepEqual(implementedRoutes(reversed),described,
     'reversed method/path comparison evaded inventory');
@@ -134,7 +159,12 @@ test('HTTP reference service route method+path inventory is exhaustive, no unrev
 function recognizedCliDispatch(cli) {
   const ast=ts.createSourceFile('cli.mjs',cli,ts.ScriptTarget.Latest,true,ts.ScriptKind.JS);
   const positional=new Set(), flags=new Set();
-  function walk(node) {
+  function walk(node,negated=false) {
+    if(ts.isPrefixUnaryExpression(node) &&
+      node.operator===ts.SyntaxKind.ExclamationToken) {
+      walk(node.operand,!negated);
+      return;
+    }
     if(ts.isBinaryExpression(node) &&
       node.operatorToken.kind===ts.SyntaxKind.EqualsEqualsEqualsToken &&
       (ts.isElementAccessExpression(node.left) || ts.isElementAccessExpression(node.right))) {
@@ -142,6 +172,7 @@ function recognizedCliDispatch(cli) {
       const literal=command===node.left ? node.right : node.left;
       if(command.expression.getText(ast)==='args' &&
          command.argumentExpression?.getText(ast)==='0') {
+        if(negated) throw new Error('Negated CLI dispatcher predicate requires explicit audit');
         if(!isLiteral(literal)) throw new Error('Dynamic CLI command must be audited');
         positional.add(literal.text);
       }
@@ -152,7 +183,7 @@ function recognizedCliDispatch(cli) {
       }
       flags.add(node.arguments[0].text);
     }
-    ts.forEachChild(node,walk);
+    ts.forEachChild(node,child=>walk(child,negated));
   }
   walk(ast);
   return {positional:[...positional].sort(),flags:[...flags].sort()};
@@ -250,6 +281,9 @@ test('CLI dispatch inventory rejects new positional commands and flags',()=>{
   const bogusAliases=exactTokens(bogusAliasRow).filter(token=>/^--?[a-z]/.test(token));
   assert.notDeepEqual(bogusAliases,['--mcp'],
     'extra unsupported aliases must be rejected by exact row set');
+  const negatedCli=cli+"\nif (!(args[0] === 'export')) {}";
+  assert.throws(()=>recognizedCliDispatch(negatedCli),
+    /Negated CLI dispatcher predicate/);
   const reversedCli=cli+"\nif ('export' === args[0]) {}";
   assert.equal(recognizedCliDispatch(reversedCli).positional.includes('export'),true,
     'reversed CLI comparisons must be detected');
