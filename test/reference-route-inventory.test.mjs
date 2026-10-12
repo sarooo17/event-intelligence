@@ -33,6 +33,7 @@ function implementedRoutes(source) {
         const field=left==='request.method' || left==='url.pathname' ? left :
           right==='request.method' || right==='url.pathname' ? right : null;
         if(field) {
+          if(negated) throw new Error('Negated HTTP method/path condition requires explicit route audit');
           const literal=field===left ? node.right : node.left;
           if(!isLiteral(literal)) throw new Error('Dynamic HTTP method/path requires explicit route audit');
           if(field==='request.method') parts.methods.add(literal.text);
@@ -115,6 +116,13 @@ test('HTTP reference service route method+path inventory is exhaustive, no unrev
   assert.notEqual(compound,service,'compound-method fixture must change service code');
   assert.notDeepEqual(implementedRoutes(compound),described,
     'compound route added a second HTTP method without inventory change');
+  const negatedMethod=service.replace(
+    "request.method === 'GET' && url.pathname === '/healthz'",
+    "!(request.method === 'GET') && url.pathname === '/healthz'",
+  );
+  assert.notEqual(negatedMethod,service);
+  assert.throws(()=>implementedRoutes(negatedMethod),/Negated HTTP method\/path/,
+    'negated method comparison must not be counted as positive');
   const reversed=service+"\nif ('PUT' === request.method && '/v1/export' === url.pathname) {}";
   assert.notDeepEqual(implementedRoutes(reversed),described,
     'reversed method/path comparison evaded inventory');
@@ -223,8 +231,10 @@ test('CLI dispatch inventory rejects new positional commands and flags',()=>{
     ['mcp-event-intelligence --help',['-h']],
   ]) {
     const tokens=exactTokens(rowFor(invocation));
-    for(const alias of aliases) assert.ok(tokens.includes(alias),
-      `CLI alias ${alias} missing from row ${invocation}`);
+    const actualAliases=tokens.filter(token=>
+      /^--?[a-z]/.test(token) && token!==invocation);
+    assert.deepEqual(actualAliases.sort(),[...aliases].sort(),
+      `CLI alias set drifted for ${invocation}`);
   }
   const swappedRows=cliTable
     .replace('`--mcp`','`--placeholder`')
@@ -235,6 +245,11 @@ test('CLI dispatch inventory rejects new positional commands and flags',()=>{
     .find(cell=>cell.includes('`mcp-event-intelligence mcp`'));
   assert.equal(exactTokens(alteredMcpRow).includes('--mcp'),false,
     'swapping per-row aliases must violate CLI docs contract');
+  const bogusAliasRow=cliRows.find(cell=>cell.includes('`mcp-event-intelligence mcp`'))
+    .replace('`--mcp`','`--mcp` or `--export`');
+  const bogusAliases=exactTokens(bogusAliasRow).filter(token=>/^--?[a-z]/.test(token));
+  assert.notDeepEqual(bogusAliases,['--mcp'],
+    'extra unsupported aliases must be rejected by exact row set');
   const reversedCli=cli+"\nif ('export' === args[0]) {}";
   assert.equal(recognizedCliDispatch(reversedCli).positional.includes('export'),true,
     'reversed CLI comparisons must be detected');
