@@ -47,7 +47,7 @@ test('release identity gate rejects missing, stale or renamed documentation decl
     registryDocs.replace(current, `${pkg.name}@0.0.0`),
     registryDocs.replace(current, `other-package@${pkg.version}`),
     registryDocs.replace(`- npm package: \`${current}\`;`, ''),
-    registryDocs + `\\n- npm package: \`${current}\`;\\n`,
+    registryDocs + `\n- npm package: \`${current}\`;\n`,
   ]) {
     const errors = validateReleaseManifest(pkg, lock, server, badDocs);
     assert.ok(errors.some(message =>
