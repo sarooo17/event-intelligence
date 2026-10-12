@@ -14,16 +14,25 @@ function isLiteral(node) {
   return node && (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node));
 }
 
-const normalizedRouteAccess=text=>text
-  .replace(/request\[(?:'method'|"method")\]/g,'request.method')
-  .replace(/url\[(?:'pathname'|"pathname")\]/g,'url.pathname');
+const normalizedRouteAccess=text=>{
+  let previous;
+  do {
+    previous=text;
+    text=text
+      .replace(/request\[(?:'method'|"method")\]/g,'request.method')
+      .replace(/url\[(?:'pathname'|"pathname")\]/g,'url.pathname')
+      .replace(/\(\s*url\.pathname\s*\)/g,'url.pathname')
+      .replace(/\(\s*request\.method\s*\)/g,'request.method');
+  } while(text!==previous);
+  return text;
+};
 
 function implementedRoutes(source) {
   const ast=ts.createSourceFile('service.mjs',source,ts.ScriptTarget.Latest,true,ts.ScriptKind.JS);
   const names=new Set();
 
   function extract(condition) {
-    const parts={methods:new Set(),exact:new Set(),prefix:new Set(),suffix:new Set()};
+    const parts={methods:new Set(),exact:new Set(),prefix:new Set(),suffix:new Set(),negatedSuffix:false};
     function visit(node,negated=false) {
       // An OR between a method-only and a path-only predicate is NOT an
       // HTTP route conjunction. Such a condition can expose broad access.
@@ -81,6 +90,7 @@ function implementedRoutes(source) {
            target!=='url.pathname.endsWith') {
           throw new Error('Unsupported HTTP pathname matcher requires explicit route audit');
         }
+        if(target==='url.pathname.endsWith' && negated) parts.negatedSuffix=true;
         const bucket=target==='url.pathname.startsWith' ? parts.prefix :
           target==='url.pathname.endsWith' && !negated ? parts.suffix : null;
         if(bucket) {
@@ -94,6 +104,9 @@ function implementedRoutes(source) {
       ts.forEachChild(node,child=>visit(child,negated));
     }
     visit(condition);
+    if(parts.negatedSuffix && !parts.prefix.size && !parts.exact.size) {
+      throw new Error('Negated suffix-only HTTP route requires explicit route audit');
+    }
     if(parts.suffix.size && !parts.prefix.size && !parts.exact.size) {
       throw new Error('Suffix-only HTTP route requires explicit route audit');
     }
@@ -207,6 +220,12 @@ test('HTTP reference service route method+path inventory is exhaustive, no unrev
   const parenthesized=service+"\nif (request.method === 'PUT' && (url.pathname) === '/v1/export') {}";
   assert.notDeepEqual(implementedRoutes(parenthesized),described,
     'parenthesized URL pathname access must be inventoried');
+  const parenMatcher=service+"\nif (request.method === 'PUT' && (url.pathname).startsWith('/v1/export/')) {}";
+  assert.notDeepEqual(implementedRoutes(parenMatcher),described,
+    'parenthesized matcher receiver must be inventoried');
+  const negatedSuffixOnly=service+"\nif (request.method === 'PUT' && !url.pathname.endsWith('/export')) {}";
+  assert.throws(()=>implementedRoutes(negatedSuffixOnly),/Negated suffix-only HTTP route/,
+    'negative suffix without positive prefix/exact anchor must fail closed');
   const reversed=service+"\nif ('PUT' === request.method && '/v1/export' === url.pathname) {}";
   assert.notDeepEqual(implementedRoutes(reversed),described,
     'reversed method/path comparison evaded inventory');
