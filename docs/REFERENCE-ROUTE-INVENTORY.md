@@ -97,3 +97,13 @@ HMAC authorization test or a runtime identity penetration test. Security
 behavior and cross-tenant authorization belong to adversarial runtime
 acceptance under #45. This catalog describes current declared route trust
 owners; it does not certify those guards are correctly enforced.
+
+**Conservative source-change gate:** because arbitrary JavaScript expressions
+cannot be exhaustively recognized by a finite static route parser, the parity
+test also pins the Git blob SHA of both `scripts/service.mjs` and
+`bin/mcp-event-intelligence.mjs`. **Any edit** (even one outside route
+conditions) intentionally fails CI until the author reviews the complete
+route/command dispatch for behavioral changes, updates this inventory if
+needed, and explicitly rebases the audited SHA in the test with an independent
+reviewer. This pre-v1 conservative maintenance cost prevents unknown syntax
+from silently evading the parser; the digest is not an authentication proof.
