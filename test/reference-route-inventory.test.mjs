@@ -119,6 +119,53 @@ test('HTTP reference service route method+path inventory is exhaustive, no unrev
     'HTTP reference bearer boundary changed');
   assert.ok(service.includes('verifyGitHubWebhookSignature('),
     'GitHub webhook HMAC verification disappeared');
+  // Text presence alone cannot prove authorization. Assert ordering and
+  // guarding within the real top-level HTTP dispatcher, including the
+  // explicit webhook and MCP exceptions before the common /v1 bearer gate.
+  const ast=ts.createSourceFile('service.mjs',service,ts.ScriptTarget.Latest,true,ts.ScriptKind.JS);
+  let requestBody=null;
+  function seek(node) {
+    if(ts.isCallExpression(node) &&
+       node.expression.getText(ast)==='createServer' &&
+       node.arguments[0] &&
+       (ts.isArrowFunction(node.arguments[0]) ||
+        ts.isFunctionExpression(node.arguments[0]))) {
+      requestBody=node.arguments[0].body;
+    }
+    ts.forEachChild(node,seek);
+  }
+  seek(ast);
+  assert.ok(requestBody && ts.isBlock(requestBody),'HTTP dispatcher unavailable for security audit');
+  const statements=requestBody.statements.filter(ts.isIfStatement);
+  const normalized=node=>node.getText(ast).replace(/\\s+/g,'');
+  const common=statements.find(node=>
+    normalized(node.expression)==="url.pathname.startsWith('/v1/')&&!requireBearer(request,response)");
+  assert.ok(common,'common /v1 authorization gate changed');
+  assert.match(common.thenStatement.getText(ast),/return;/,
+    'unauthorized requests must immediately exit');
+  const guardPosition=common.getStart(ast);
+  for(const node of statements) {
+    if(node.getStart(ast)>=guardPosition) continue;
+    const condition=node.expression.getText(ast);
+    const isHealth=/\/healthz/.test(condition);
+    const isReady=/\/readyz/.test(condition);
+    const isWebhook=/\/v1\/providers\/github\/webhook/.test(condition);
+    const isMcp=/\/mcp/.test(condition);
+    assert.ok(isHealth||isReady||isWebhook||isMcp,
+      'undocumented handler executes before common bearer guard');
+    if(isMcp) assert.match(node.thenStatement.getText(ast),
+      /if\\s*\\(\\s*!requireBearer\\(request,\\s*response\\)\\s*\\)\\s*return;/,
+      'MCP handler must authorize before processing RPC');
+    if(isWebhook) {
+      const body=node.thenStatement.getText(ast);
+      const verifyAt=body.indexOf('!verifyGitHubWebhookSignature(');
+      const parseAt=body.indexOf('JSON.parse(');
+      assert.ok(verifyAt>=0 && parseAt>verifyAt,
+        'webhook signature check must precede event body parse');
+      assert.match(body,/INVALID_GITHUB_SIGNATURE/,
+        'unsigned webhook must be rejected');
+    }
+  }
 
   // Mutation probes: a new HTTP method or new route on a known verb must
   // invalidate the documented closed route set, not be silently ignored.
