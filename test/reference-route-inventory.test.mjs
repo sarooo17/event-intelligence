@@ -222,7 +222,7 @@ test('published package exports are exhaustively classified as non-model library
   const docs=read('docs/REFERENCE-ROUTE-INVENTORY.md');
   const section=docs.split('## Public library entrypoints')[1]?.split('**Parity check:**')[0];
   assert.ok(section,'missing public library inventory');
-  const declared=[...section.matchAll(/^\\| \`(mcp-event-intelligence(?:\\/[^\`]+)?)\` \\|/gm)]
+  const declared=[...section.matchAll(/^\| \`(mcp-event-intelligence(?:\/[^\`]+)?)\` \|/gm)]
     .map(([,entry])=>entry).sort();
   const expected=Object.keys(pkg.exports).map(key=>
     key==='.'?pkg.name:pkg.name+key.slice(1)).sort();
