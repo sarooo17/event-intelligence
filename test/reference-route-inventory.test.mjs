@@ -268,7 +268,7 @@ test('HTTP reference service route method+path inventory is exhaustive, no unrev
     "(request.method === 'GET') === (false || true)",
     "(url.pathname.startsWith('/v1/export/')) === !true",
   ]) {
-    const injected=service+"\\nif ("+wrapped+" && url.pathname === '/healthz') {}";
+    const injected=service+"\nif ("+wrapped+" && url.pathname === '/healthz') {}";
     assert.throws(()=>implementedRoutes(injected),/Boolean-wrapped HTTP matcher/,
       'computed route predicate wrapper was counted as a positive route: '+wrapped);
   }
