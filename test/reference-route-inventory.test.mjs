@@ -136,7 +136,9 @@ test('HTTP reference service route method+path inventory is exhaustive, no unrev
   }
   seek(ast);
   assert.ok(requestBody && ts.isBlock(requestBody),'HTTP dispatcher unavailable for security audit');
-  const statements=requestBody.statements.filter(ts.isIfStatement);
+  const tryBlock=requestBody.statements.find(ts.isTryStatement)?.tryBlock;
+  assert.ok(tryBlock,'reference service route try block missing');
+  const statements=tryBlock.statements.filter(ts.isIfStatement);
   const normalized=node=>node.getText(ast).replace(/\s+/g,'');
   const common=statements.find(node=>
     normalized(node.expression)==="url.pathname.startsWith('/v1/')&&!requireBearer(request,response)");
