@@ -70,7 +70,7 @@ function implementedRoutes(source) {
         [node.left,node.right].some(value=>
           value.kind===ts.SyntaxKind.TrueKeyword ||
           value.kind===ts.SyntaxKind.FalseKeyword) &&
-        normalizedRouteAccess(node.getText(ast)).includes('url.pathname')) {
+        /(?:url\.pathname|request\.method)/.test(normalizedRouteAccess(node.getText(ast)))) {
         throw new Error('Boolean-wrapped HTTP matcher requires explicit route audit');
       }
       if(ts.isBinaryExpression(node) &&
@@ -240,6 +240,10 @@ test('HTTP reference service route method+path inventory is exhaustive, no unrev
   const reversedBoolean=service+"\nif (request.method === 'PUT' && false === url.pathname.endsWith('/export')) {}";
   assert.throws(()=>implementedRoutes(reversedBoolean),/Boolean-wrapped HTTP matcher/,
     'reversed boolean-wrapped pathname matcher must fail closed');
+  const negatedMethodBoolean=service+"\nif ((request.method === 'GET') === false && url.pathname === '/healthz') {}";
+  assert.throws(()=>implementedRoutes(negatedMethodBoolean),
+    /Boolean-wrapped HTTP matcher/,
+    'false-wrapped HTTP method check must fail closed');
   const reversed=service+"\nif ('PUT' === request.method && '/v1/export' === url.pathname) {}";
   assert.notDeepEqual(implementedRoutes(reversed),described,
     'reversed method/path comparison evaded inventory');
