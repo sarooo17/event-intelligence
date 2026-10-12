@@ -16,7 +16,7 @@ function implementedRoutes(source) {
   function visit(node) {
     if (ts.isIfStatement(node)) {
       const expr=node.expression.getText(ast);
-      const method=expr.match(/request\.method\s*===\s*'(GET|POST|PATCH|DELETE)'/)?.[1];
+      const method=expr.match(/request\.method\s*===\s*'([A-Z]+)'/)?.[1];
       if(method) {
         const exact=expr.match(/url\.pathname\s*===\s*'([^']+)'/)?.[1];
         const prefix=expr.match(/url\.pathname\.startsWith\('([^']+)'\)/)?.[1];
@@ -44,7 +44,7 @@ function implementedRoutes(source) {
 test('HTTP reference service route method+path inventory is exhaustive, no unreviewed endpoints',()=>{
   const service=read('scripts/service.mjs');
   const docs=read('docs/REFERENCE-ROUTE-INVENTORY.md');
-  const described=[...docs.matchAll(/^\| \`(GET|POST|PATCH|DELETE) (\/[^\`]+)\` \|/gm)]
+  const described=[...docs.matchAll(/^\| \`([A-Z]+) (\/[^\`]+)\` \|/gm)]
     .map(([,method,path])=>method+' '+path)
     .sort();
   const routes=implementedRoutes(service);
@@ -56,18 +56,47 @@ test('HTTP reference service route method+path inventory is exhaustive, no unrev
     'HTTP reference bearer boundary changed');
   assert.ok(service.includes('verifyGitHubWebhookSignature('),
     'GitHub webhook HMAC verification disappeared');
+
+  // Mutation probes: a new HTTP method or new route on a known verb must
+  // invalidate the documented closed route set, not be silently ignored.
+  for (const addition of [
+    "if (request.method === 'PUT' && url.pathname === '/v1/export') {}",
+    "if (request.method === 'POST' && url.pathname === '/v1/new-operation') {}",
+  ]) {
+    assert.notDeepEqual(implementedRoutes(service+'\\n'+addition),described,
+      'new HTTP route evaded inventory audit: '+addition);
+  }
 });
 
-test('CLI exposes only service, stdio MCP, doctor and local informational commands',()=>{
+function recognizedCliDispatch(cli) {
+  const positional=[...cli.matchAll(/args\\[0\\]\\s*===\\s*'([^']+)'/g)]
+    .map(match=>match[1]);
+  const flags=[...cli.matchAll(/flags\\.has\\('([^']+)'\\)/g)]
+    .map(match=>match[1]);
+  return {positional:[...new Set(positional)].sort(),
+    flags:[...new Set(flags)].sort()};
+}
+
+test('CLI dispatch inventory rejects new positional commands and flags',()=>{
   const cli=read('bin/mcp-event-intelligence.mjs');
   const docs=read('docs/REFERENCE-ROUTE-INVENTORY.md');
-  for(const token of ["args[0] === 'doctor'","args[0] === 'mcp'",
-    "'--mcp'","'--json'","'--version'","'--help'"]) {
-    assert.ok(cli.includes(token),'CLI dispatch changed without contract review: '+token);
-  }
+  const expected={
+    positional:['doctor','mcp'],
+    flags:['--help','--json','--mcp','--version','-h','-v'],
+  };
+  assert.deepEqual(recognizedCliDispatch(cli),expected);
   for(const token of ['mcp-event-intelligence doctor','mcp-event-intelligence mcp',
     'mcp-event-intelligence --version','mcp-event-intelligence --help']) {
     assert.ok(docs.includes(token),'CLI subcommand undocumented: '+token);
   }
   assert.match(docs,/not a model-facing operation/i);
+  for (const [suffix,category,value] of [
+    ["if (args[0] === 'export') {}",'positional','export'],
+    ["if (flags.has('--export')) {}",'flags','--export'],
+  ]) {
+    const found=recognizedCliDispatch(cli+'\\n'+suffix);
+    assert.equal(found[category].includes(value),true,
+      'new CLI dispatcher must be visible to the auditor');
+    assert.notDeepEqual(found,expected,'new CLI mode passed closed inventory');
+  }
 });
