@@ -111,7 +111,7 @@ test('HTTP reference service route method+path inventory is exhaustive, no unrev
   assert.notEqual(compound,service,'compound-method fixture must change service code');
   assert.notDeepEqual(implementedRoutes(compound),described,
     'compound route added a second HTTP method without inventory change');
-  const nested=service+"\\nif (request.method === 'POST') { if (url.pathname === '/v1/nested') {} }";
+  const nested=service+"\nif (request.method === 'POST') { if (url.pathname === '/v1/nested') {} }";
   assert.notDeepEqual(implementedRoutes(nested),described,
     'route built from nested method/path guards escaped the inventory');
 });
@@ -161,7 +161,7 @@ test('CLI dispatch inventory rejects new positional commands and flags',()=>{
   while(ts.isIfStatement(finalBranch.elseStatement)) finalBranch=finalBranch.elseStatement;
   assert.ok(finalBranch.elseStatement,'missing no-argument default CLI branch');
   assert.match(finalBranch.elseStatement.getText(ast),
-    /import\\(['"]\\.\\.\\/scripts\\/service\\.mjs['"]\\)/,
+    /import\(['"]\.\.\/scripts\/service\.mjs['"]\)/,
     'bare CLI invocation no longer starts the documented reference service');
   for(const flag of expected.flags) {
     assert.ok(docs.includes(flag),'recognized CLI flag lacks documentation: '+flag);
