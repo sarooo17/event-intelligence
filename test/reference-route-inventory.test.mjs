@@ -34,6 +34,31 @@ function implementedRoutes(source) {
   function extract(condition) {
     const parts={methods:new Set(),exact:new Set(),prefix:new Set(),suffix:new Set(),negatedSuffix:false};
     function visit(node,negated=false) {
+      // Only conjunction/disjunction and directly modeled literal route
+      // predicates may be recursively inspected. A ternary, arithmetic
+      // transform or opaque call can invert a nested positive predicate.
+      // Fail closed rather than treating descendants as authoritative.
+      const usesRoute=value=>/(?:request\.method|url\.pathname)/
+        .test(normalizedRouteAccess(value.getText(ast)));
+      if(ts.isConditionalExpression(node) && usesRoute(node)) {
+        throw new Error('Unmodeled HTTP route condition requires explicit audit');
+      }
+      if(ts.isBinaryExpression(node) && usesRoute(node) &&
+         ![ts.SyntaxKind.AmpersandAmpersandToken,
+           ts.SyntaxKind.BarBarToken,
+           ts.SyntaxKind.EqualsEqualsEqualsToken,
+           ts.SyntaxKind.ExclamationEqualsEqualsToken,
+           ts.SyntaxKind.ExclamationEqualsToken,
+           ts.SyntaxKind.EqualsEqualsToken].includes(node.operatorToken.kind)) {
+        throw new Error('Unmodeled HTTP route operator requires explicit audit');
+      }
+      if(ts.isCallExpression(node) && usesRoute(node)) {
+        const target=normalizedRouteAccess(node.expression.getText(ast));
+        if(target!=='url.pathname.startsWith' &&
+           target!=='url.pathname.endsWith') {
+          throw new Error('Unmodeled HTTP route call requires explicit audit');
+        }
+      }
       // An OR between a method-only and a path-only predicate is NOT an
       // HTTP route conjunction. Such a condition can expose broad access.
       if(ts.isBinaryExpression(node) &&
@@ -272,6 +297,17 @@ test('HTTP reference service route method+path inventory is exhaustive, no unrev
     assert.throws(()=>implementedRoutes(injected),/Boolean-wrapped HTTP matcher/,
       'computed route predicate wrapper was counted as a positive route: '+wrapped);
   }
+  for(const transform of [
+    "(request.method === 'GET' ? false : true)",
+    "(request.method === 'GET' ^ 1)",
+    "Boolean(request.method === 'GET')",
+  ]) {
+    assert.throws(
+      ()=>implementedRoutes(service+"\nif ("+transform+" && url.pathname === '/healthz') {}"),
+      /Unmodeled HTTP route/,
+      'unmodeled route expression must not be recursively interpreted: '+transform,
+    );
+  }
   const reversed=service+"\nif ('PUT' === request.method && '/v1/export' === url.pathname) {}";
   assert.notDeepEqual(implementedRoutes(reversed),described,
     'reversed method/path comparison evaded inventory');
@@ -284,6 +320,12 @@ function recognizedCliDispatch(cli) {
   const ast=ts.createSourceFile('cli.mjs',cli,ts.ScriptTarget.Latest,true,ts.ScriptKind.JS);
   const positional=new Set(), flags=new Set();
   function walk(node,negated=false) {
+    // args.at(0) is a valid JavaScript positional-command accessor, but not
+    // currently part of the declared dispatcher contract. Reject it rather
+    // than ignoring a newly introduced, undocumented CLI command.
+    if(ts.isCallExpression(node) && node.expression.getText(ast)==='args.at') {
+      throw new Error('Unmodeled CLI positional accessor requires explicit audit');
+    }
     if(ts.isPrefixUnaryExpression(node) &&
       node.operator===ts.SyntaxKind.ExclamationToken) {
       walk(node.operand,!negated);
@@ -476,6 +518,14 @@ test('CLI dispatch inventory rejects new positional commands and flags',()=>{
   const negatedFlag=cli+"\nif (!flags.has('--export')) {}";
   assert.throws(()=>recognizedCliDispatch(negatedFlag),
     /Negated CLI flag predicate/);
+  for(const alternate of [
+    "if (args.at(0) === 'export') {}",
+    "if ('export' === args.at(0)) {}",
+  ]) {
+    assert.throws(()=>recognizedCliDispatch(cli+"\n"+alternate),
+      /Unmodeled CLI positional accessor/,
+      'alternate CLI positional access must not evade the documented inventory');
+  }
   const reversedCli=cli+"\nif ('export' === args[0]) {}";
   assert.equal(recognizedCliDispatch(reversedCli).positional.includes('export'),true,
     'reversed CLI comparisons must be detected');
