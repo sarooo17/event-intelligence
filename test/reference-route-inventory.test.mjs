@@ -63,15 +63,15 @@ test('HTTP reference service route method+path inventory is exhaustive, no unrev
     "if (request.method === 'PUT' && url.pathname === '/v1/export') {}",
     "if (request.method === 'POST' && url.pathname === '/v1/new-operation') {}",
   ]) {
-    assert.notDeepEqual(implementedRoutes(service+'\\n'+addition),described,
+    assert.notDeepEqual(implementedRoutes(service+'\n'+addition),described,
       'new HTTP route evaded inventory audit: '+addition);
   }
 });
 
 function recognizedCliDispatch(cli) {
-  const positional=[...cli.matchAll(/args\\[0\\]\\s*===\\s*'([^']+)'/g)]
+  const positional=[...cli.matchAll(/args\[0\]\s*===\s*'([^']+)'/g)]
     .map(match=>match[1]);
-  const flags=[...cli.matchAll(/flags\\.has\\('([^']+)'\\)/g)]
+  const flags=[...cli.matchAll(/flags\.has\('([^']+)'\)/g)]
     .map(match=>match[1]);
   return {positional:[...new Set(positional)].sort(),
     flags:[...new Set(flags)].sort()};
@@ -94,7 +94,7 @@ test('CLI dispatch inventory rejects new positional commands and flags',()=>{
     ["if (args[0] === 'export') {}",'positional','export'],
     ["if (flags.has('--export')) {}",'flags','--export'],
   ]) {
-    const found=recognizedCliDispatch(cli+'\\n'+suffix);
+    const found=recognizedCliDispatch(cli+'\n'+suffix);
     assert.equal(found[category].includes(value),true,
       'new CLI dispatcher must be visible to the auditor');
     assert.notDeepEqual(found,expected,'new CLI mode passed closed inventory');
