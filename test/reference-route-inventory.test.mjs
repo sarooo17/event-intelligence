@@ -1,9 +1,35 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import ts from 'typescript';
 
 const read = path => readFileSync(new URL('../'+path,import.meta.url),'utf8');
+
+/**
+ * Conservative source-change gate for the reference dispatchers. Unlike a
+ * route AST recognizer, this also catches syntax it cannot model. Any edit
+ * requires an explicit inventory review and a reviewed digest update.
+ * It is not an HTTP authentication or HMAC control-flow proof.
+ */
+const gitBlobSha = source => createHash('sha1')
+  .update('blob '+Buffer.byteLength(source,'utf8')+'\0')
+  .update(source,'utf8')
+  .digest('hex');
+
+test('reference service and CLI dispatcher edits require explicit route/command re-audit',()=>{
+  const locked=new Map([
+    ['scripts/service.mjs','525ca0ea351d6460f3147a6b176abdb1fa3fd9a6'],
+    ['bin/mcp-event-intelligence.mjs','6544fed6e3f8741d7124ea776b637bbf7c1dc960'],
+  ]);
+  for(const [path,expected] of locked) {
+    const source=read(path);
+    assert.equal(gitBlobSha(source),expected,
+      path+' changed: review routing/control flow and update audited source SHA');
+    assert.notEqual(gitBlobSha(source+'\n// unreviewed edit'),expected);
+  }
+});
+
 
 /**
  * Inspect JavaScript condition expressions from the *real* reference HTTP
@@ -19,6 +45,10 @@ const normalizedRouteAccess=text=>{
   do {
     previous=text;
     text=text
+      .replace(/request\?\.method/g,'request.method')
+      .replace(/url\?\.pathname/g,'url.pathname')
+      .replace(/request\?\.\[(?:'method'|"method")\]/g,'request.method')
+      .replace(/url\?\.\[(?:'pathname'|"pathname")\]/g,'url.pathname')
       .replace(/request\[(?:'method'|"method")\]/g,'request.method')
       .replace(/url\[(?:'pathname'|"pathname")\]/g,'url.pathname')
       .replace(/\(\s*url\.pathname\s*\)/g,'url.pathname')
@@ -40,6 +70,13 @@ function implementedRoutes(source) {
       // Fail closed rather than treating descendants as authoritative.
       const usesRoute=value=>/(?:request\.method|url\.pathname)/
         .test(normalizedRouteAccess(value.getText(ast)));
+      if(ts.isPrefixUnaryExpression(node) &&
+         node.operator!==ts.SyntaxKind.ExclamationToken && usesRoute(node)) {
+        throw new Error('Unmodeled HTTP route unary operator requires explicit audit');
+      }
+      if(ts.isPostfixUnaryExpression(node) && usesRoute(node)) {
+        throw new Error('Unmodeled HTTP route unary operator requires explicit audit');
+      }
       if(ts.isConditionalExpression(node) && usesRoute(node)) {
         throw new Error('Unmodeled HTTP route condition requires explicit audit');
       }
@@ -296,6 +333,18 @@ test('HTTP reference service route method+path inventory is exhaustive, no unrev
     const injected=service+"\nif ("+wrapped+" && url.pathname === '/healthz') {}";
     assert.throws(()=>implementedRoutes(injected),/Boolean-wrapped HTTP matcher/,
       'computed route predicate wrapper was counted as a positive route: '+wrapped);
+  }
+  assert.throws(
+    ()=>implementedRoutes(service+"\nif (~(request.method === 'GET') && url.pathname === '/healthz') {}"),
+    /Unmodeled HTTP route unary operator/,
+  );
+  for(const optional of [
+    "request?.method === 'PUT' && url.pathname === '/v1/export'",
+    "request.method === 'PUT' && url?.pathname === '/v1/export'",
+    "request?.['method'] === 'PUT' && url?.['pathname'] === '/v1/export'",
+  ]) {
+    assert.notDeepEqual(implementedRoutes(service+"\nif ("+optional+") {}"),described,
+      'optional-chain HTTP access evaded catalog inventory: '+optional);
   }
   for(const transform of [
     "(request.method === 'GET' ? false : true)",
