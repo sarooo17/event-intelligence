@@ -163,9 +163,21 @@ test('CLI dispatch inventory rejects new positional commands and flags',()=>{
   assert.match(finalBranch.elseStatement.getText(ast),
     /import\(['"]\.\.\/scripts\/service\.mjs['"]\)/,
     'bare CLI invocation no longer starts the documented reference service');
+  // Match complete whitespace-delimited tokens inside backtick code spans.
+  // A mere substring would accept "-h" inside "--help" or "-v" inside
+  // "--version", giving false confidence that short flags are documented.
+  const documentedCommands=[...docs.matchAll(/`([^`]+)`/g)]
+    .map(([,command])=>command.trim().split(/\s+/));
+  const includesFlag=(text,flag)=>[...text.matchAll(/`([^`]+)`/g)]
+    .some(([,command])=>command.trim().split(/\s+/).includes(flag));
   for(const flag of expected.flags) {
-    assert.ok(docs.includes(flag),'recognized CLI flag lacks documentation: '+flag);
+    assert.ok(documentedCommands.some(tokens=>tokens.includes(flag)),
+      'recognized CLI flag lacks complete documented token: '+flag);
   }
+  assert.equal(includesFlag(docs.replace('`-h`',''),'-h'),false,
+    'short help flag must not match --help');
+  assert.equal(includesFlag(docs.replace('`-v`',''),'-v'),false,
+    'short version flag must not match --version');
   for(const token of ['mcp-event-intelligence doctor','mcp-event-intelligence mcp',
     'mcp-event-intelligence --version','mcp-event-intelligence --help']) {
     assert.ok(docs.includes(token),'CLI subcommand undocumented: '+token);
