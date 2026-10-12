@@ -152,6 +152,43 @@ const stdioMutation = Object.freeze({
   delete: mutationBase.extend({ action: z.literal('delete'), state: triggerState('deleted') }),
 });
 
+// Embedded tools intentionally return compact, runtime-neutral mutation
+// receipts. These are NOT the richer standalone stdio envelopes: their
+// definition and owner policy remain in the scoped host/control plane.
+const embeddedMutationBase = z.object({
+  receiptId: z.string().min(1),
+  triggerId: z.string().min(1),
+  version: z.string().min(1),
+  state: z.object({ status: z.string().min(1) }).passthrough(),
+}).passthrough();
+
+const embeddedMutation = Object.freeze({
+  create: embeddedMutationBase.extend({
+    state: triggerState('active'),
+    connectionIds: z.array(z.string().min(1)),
+    warnings: z.array(z.unknown()),
+  }),
+  update: embeddedMutationBase.extend({
+    action: z.literal('update'),
+    previousVersion: z.string().min(1),
+    state: triggerState('active'),
+    connectionIds: z.array(z.string().min(1)),
+    warnings: z.array(z.unknown()),
+  }),
+  pause: embeddedMutationBase.extend({
+    action: z.literal('pause'),
+    state: triggerState('paused'),
+  }),
+  resume: embeddedMutationBase.extend({
+    action: z.literal('resume'),
+    state: triggerState('active'),
+  }),
+  delete: embeddedMutationBase.extend({
+    action: z.literal('delete'),
+    state: triggerState('deleted'),
+  }),
+});
+
 export const OPERATION_OUTPUT_CONTRACTS = Object.freeze({
   sources: Object.freeze({
     stdio: sourceList,
@@ -173,11 +210,11 @@ export const OPERATION_OUTPUT_CONTRACTS = Object.freeze({
   wakeHydrate: Object.freeze({
     stdio: stdioWakeHydration,
   }),
-  create: Object.freeze({ stdio: stdioMutation.create }),
-  update: Object.freeze({ stdio: stdioMutation.update }),
-  pause: Object.freeze({ stdio: stdioMutation.pause }),
-  resume: Object.freeze({ stdio: stdioMutation.resume }),
-  delete: Object.freeze({ stdio: stdioMutation.delete }),
+  create: Object.freeze({ stdio: stdioMutation.create, embedded: embeddedMutation.create }),
+  update: Object.freeze({ stdio: stdioMutation.update, embedded: embeddedMutation.update }),
+  pause: Object.freeze({ stdio: stdioMutation.pause, embedded: embeddedMutation.pause }),
+  resume: Object.freeze({ stdio: stdioMutation.resume, embedded: embeddedMutation.resume }),
+  delete: Object.freeze({ stdio: stdioMutation.delete, embedded: embeddedMutation.delete }),
   languageDescribe: Object.freeze({
     stdio: stdioLanguage,
   }),
