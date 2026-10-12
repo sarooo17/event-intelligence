@@ -67,6 +67,11 @@ function implementedRoutes(source) {
       }
       if(ts.isCallExpression(node)) {
         const target=normalizedRouteAccess(node.expression.getText(ast));
+        if(target.startsWith('url.pathname.') &&
+           target!=='url.pathname.startsWith' &&
+           target!=='url.pathname.endsWith') {
+          throw new Error('Unsupported HTTP pathname matcher requires explicit route audit');
+        }
         const bucket=target==='url.pathname.startsWith' ? parts.prefix :
           target==='url.pathname.endsWith' && !negated ? parts.suffix : null;
         if(bucket) {
@@ -175,6 +180,11 @@ test('HTTP reference service route method+path inventory is exhaustive, no unrev
   const bracketCall=service+"\nif (request['method'] === 'PUT' && url['pathname'].startsWith('/v1/export/')) {}";
   assert.notDeepEqual(implementedRoutes(bracketCall),described,
     'bracket-notation startsWith must be included in the route inventory');
+  const unsupportedMatcher=service+"\nif (request.method === 'PUT' && url.pathname.includes('/v1/export')) {}";
+  assert.throws(()=>implementedRoutes(unsupportedMatcher),/Unsupported HTTP pathname matcher/,
+    'unsupported pathname matcher must fail closed');
+  const unsupportedBracketMatcher=service+"\nif (request.method === 'PUT' && url['pathname'].includes('/v1/export')) {}";
+  assert.throws(()=>implementedRoutes(unsupportedBracketMatcher),/Unsupported HTTP pathname matcher/);
   const reversed=service+"\nif ('PUT' === request.method && '/v1/export' === url.pathname) {}";
   assert.notDeepEqual(implementedRoutes(reversed),described,
     'reversed method/path comparison evaded inventory');
