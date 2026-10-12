@@ -367,7 +367,7 @@ test('CLI dispatch inventory rejects new positional commands and flags',()=>{
   assert.equal(recognizedCliDispatch(reversedCli).positional.includes('export'),true,
     'reversed CLI comparisons must be detected');
 
-  assert.match(docs,/not additional\\s+model-visible operations/i);
+  assert.match(docs,/not additional\s+model-visible operations/i);
   for (const [suffix,category,value] of [
     ["if (args[0] === 'export') {}",'positional','export'],
     ["if (flags.has('--export')) {}",'flags','--export'],
