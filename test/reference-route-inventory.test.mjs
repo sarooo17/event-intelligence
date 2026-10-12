@@ -18,9 +18,7 @@ function implementedRoutes(source) {
   const ast=ts.createSourceFile('service.mjs',source,ts.ScriptTarget.Latest,true,ts.ScriptKind.JS);
   const names=new Set();
 
-  // Inspect every comparison in a condition, not just the first one. This
-  // also catches compound GET || HEAD conditions and double-quoted strings.
-  function routeCondition(condition) {
+  function extract(condition) {
     const parts={methods:new Set(),exact:new Set(),prefix:new Set(),suffix:new Set()};
     function visit(node,negated=false) {
       if(ts.isPrefixUnaryExpression(node) &&
@@ -51,18 +49,30 @@ function implementedRoutes(source) {
       ts.forEachChild(node,child=>visit(child,negated));
     }
     visit(condition);
-    for(const method of parts.methods) {
-      for(const exact of parts.exact) names.add(method+' '+exact);
-      for(const prefix of parts.prefix) {
-        const suffixes=parts.suffix.size ? parts.suffix : new Set(['']);
-        for(const suffix of suffixes) names.add(method+' '+prefix+'{id}'+suffix);
-      }
+    const paths=new Set(parts.exact);
+    for(const prefix of parts.prefix) {
+      const suffixes=parts.suffix.size ? parts.suffix : new Set(['']);
+      for(const suffix of suffixes) paths.add(prefix+'{id}'+suffix);
     }
+    return {methods:parts.methods,paths};
   }
 
-  function walk(node) {
-    if(ts.isIfStatement(node)) routeCondition(node.expression);
-    ts.forEachChild(node,walk);
+  // Carry enclosing guards into nested ifs: an HTTP verb and path may be
+  // checked in separate nested conditions rather than one flat condition.
+  // Do not carry them across sibling/else branches.
+  function walk(node,inherited={methods:new Set(),paths:new Set()}) {
+    if(ts.isIfStatement(node)) {
+      const local=extract(node.expression);
+      const methods=local.methods.size ? local.methods : inherited.methods;
+      const paths=local.paths.size ? local.paths : inherited.paths;
+      for(const method of methods) for(const path of paths) {
+        names.add(method+' '+path);
+      }
+      walk(node.thenStatement,{methods,paths});
+      if(node.elseStatement) walk(node.elseStatement,inherited);
+      return;
+    }
+    ts.forEachChild(node,child=>walk(child,inherited));
   }
   walk(ast);
   return [...names].sort();
@@ -101,6 +111,9 @@ test('HTTP reference service route method+path inventory is exhaustive, no unrev
   assert.notEqual(compound,service,'compound-method fixture must change service code');
   assert.notDeepEqual(implementedRoutes(compound),described,
     'compound route added a second HTTP method without inventory change');
+  const nested=service+"\\nif (request.method === 'POST') { if (url.pathname === '/v1/nested') {} }";
+  assert.notDeepEqual(implementedRoutes(nested),described,
+    'route built from nested method/path guards escaped the inventory');
 });
 
 function recognizedCliDispatch(cli) {
@@ -135,6 +148,24 @@ test('CLI dispatch inventory rejects new positional commands and flags',()=>{
     flags:['--help','--json','--mcp','--version','-h','-v'],
   };
   assert.deepEqual(recognizedCliDispatch(cli),expected);
+
+  // The no-argument default is not expressed by args[0] or flags.has().
+  // Inspect the final else branch of the actual dispatcher, not text in help.
+  const ast=ts.createSourceFile('cli.mjs',cli,ts.ScriptTarget.Latest,true,ts.ScriptKind.JS);
+  const dispatcher=ast.statements.find(statement =>
+    ts.isIfStatement(statement) &&
+    statement.expression.getText(ast).includes("args[0] === 'doctor'")
+  );
+  assert.ok(dispatcher,'CLI dispatcher entrypoint missing');
+  let finalBranch=dispatcher;
+  while(ts.isIfStatement(finalBranch.elseStatement)) finalBranch=finalBranch.elseStatement;
+  assert.ok(finalBranch.elseStatement,'missing no-argument default CLI branch');
+  assert.match(finalBranch.elseStatement.getText(ast),
+    /import\\(['"]\\.\\.\\/scripts\\/service\\.mjs['"]\\)/,
+    'bare CLI invocation no longer starts the documented reference service');
+  for(const flag of expected.flags) {
+    assert.ok(docs.includes(flag),'recognized CLI flag lacks documentation: '+flag);
+  }
   for(const token of ['mcp-event-intelligence doctor','mcp-event-intelligence mcp',
     'mcp-event-intelligence --version','mcp-event-intelligence --help']) {
     assert.ok(docs.includes(token),'CLI subcommand undocumented: '+token);
