@@ -39,7 +39,7 @@ one shared JSON Schema or an externally audited REST contract.
 | `POST /v1/triggers` | canonical definition → registered Pattern trigger | Bearer, reference registration |
 | `GET /v1/triggers` | None → trigger definitions | Bearer, runtime read |
 | `GET /v1/trigger-matches` | triggerId query → match records | Bearer, runtime read |
-| `POST /v1/composite/events/ingest` | correlatable event → match/wake/derived results | Bearer, event ingest and wake |
+| `POST /v1/composite/events/ingest` | correlatable event → match results and wake deliveries | Bearer, event ingest and wake |
 | `POST /v1/trigger-matches/{id}/fire` | matchId / delivery input → dispatch result | Bearer, wake delivery |
 | `GET /v1/protocol` | None → version/profile compatibility | Bearer, protocol read |
 | `GET /v1/audit` | traceId/afterSequence → audit and chain verification | Bearer, audit read |
