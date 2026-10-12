@@ -15,8 +15,8 @@ function isLiteral(node) {
 }
 
 const normalizedRouteAccess=text=>text
-  .replace(/request\\[(?:'method'|"method")\\]/g,'request.method')
-  .replace(/url\\[(?:'pathname'|"pathname")\\]/g,'url.pathname');
+  .replace(/request\[(?:'method'|"method")\]/g,'request.method')
+  .replace(/url\[(?:'pathname'|"pathname")\]/g,'url.pathname');
 
 function implementedRoutes(source) {
   const ast=ts.createSourceFile('service.mjs',source,ts.ScriptTarget.Latest,true,ts.ScriptKind.JS);
