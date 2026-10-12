@@ -217,6 +217,26 @@ function recognizedCliDispatch(cli) {
   return {positional:[...positional].sort(),flags:[...flags].sort()};
 }
 
+test('published package exports are exhaustively classified as non-model library entrypoints',()=>{
+  const pkg=JSON.parse(read('package.json'));
+  const docs=read('docs/REFERENCE-ROUTE-INVENTORY.md');
+  const section=docs.split('## Public library entrypoints')[1]?.split('**Parity check:**')[0];
+  assert.ok(section,'missing public library inventory');
+  const declared=[...section.matchAll(/^\\| \`(mcp-event-intelligence(?:\\/[^\`]+)?)\` \\|/gm)]
+    .map(([,entry])=>entry).sort();
+  const expected=Object.keys(pkg.exports).map(key=>
+    key==='.'?pkg.name:pkg.name+key.slice(1)).sort();
+  assert.equal(new Set(declared).size,declared.length,'duplicate published library entrypoint');
+  assert.deepEqual(declared,expected,'package.json exports differ from documented public libraries');
+  // Mutation probes: either an additional export or an omitted documented
+  // library must break the exact closed inventory.
+  const newlyExported=[...expected,'mcp-event-intelligence/unknown'].sort();
+  assert.notDeepEqual(declared,newlyExported);
+  const missingDocumented=declared.filter(entry=>
+    entry!=='mcp-event-intelligence/observability');
+  assert.notDeepEqual(missingDocumented,expected);
+});
+
 test('CLI dispatch inventory rejects new positional commands and flags',()=>{
   const cli=read('bin/mcp-event-intelligence.mjs');
   const docs=read('docs/REFERENCE-ROUTE-INVENTORY.md');
