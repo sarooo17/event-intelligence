@@ -12,10 +12,15 @@ const read = path => readFileSync(new URL('../'+path,import.meta.url),'utf8');
  * requires an explicit inventory review and a reviewed digest update.
  * It is not an HTTP authentication or HMAC control-flow proof.
  */
-const gitBlobSha = source => createHash('sha1')
-  .update('blob '+Buffer.byteLength(source,'utf8')+'\0')
-  .update(source,'utf8')
-  .digest('hex');
+const gitBlobSha = source => {
+  // Match Git's canonical LF text, independently of core.autocrlf checkout
+  // policy on Windows. Only CRLF normalization is permitted.
+  const canonical=source.replace(/\r\n/g,'\n');
+  return createHash('sha1')
+    .update('blob '+Buffer.byteLength(canonical,'utf8')+'\0')
+    .update(canonical,'utf8')
+    .digest('hex');
+};
 
 test('reference service and CLI dispatcher edits require explicit route/command re-audit',()=>{
   const locked=new Map([
@@ -26,6 +31,8 @@ test('reference service and CLI dispatcher edits require explicit route/command 
     const source=read(path);
     assert.equal(gitBlobSha(source),expected,
       path+' changed: review routing/control flow and update audited source SHA');
+    assert.equal(gitBlobSha(source.replace(/\n/g,'\r\n')),expected,
+      'Windows CRLF checkout must preserve the reviewed canonical blob hash');
     assert.notEqual(gitBlobSha(source+'\n// unreviewed edit'),expected);
   }
 });
