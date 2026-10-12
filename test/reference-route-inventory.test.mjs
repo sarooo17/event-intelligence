@@ -40,6 +40,13 @@ function implementedRoutes(source) {
         return;
       }
       if(ts.isBinaryExpression(node) &&
+        [ts.SyntaxKind.ExclamationEqualsEqualsToken,
+         ts.SyntaxKind.ExclamationEqualsToken,
+         ts.SyntaxKind.EqualsEqualsToken].includes(node.operatorToken.kind) &&
+        /(?:request\.method|url\.pathname)/.test(node.getText(ast))) {
+        throw new Error('Unsupported HTTP route comparison requires explicit audit');
+      }
+      if(ts.isBinaryExpression(node) &&
         node.operatorToken.kind===ts.SyntaxKind.EqualsEqualsEqualsToken) {
         const left=node.left.getText(ast);
         const right=node.right.getText(ast);
@@ -156,6 +163,8 @@ test('HTTP reference service route method+path inventory is exhaustive, no unrev
   assert.notEqual(mixedDisjunction,service);
   assert.throws(()=>implementedRoutes(mixedDisjunction),
     /Disjoined HTTP method\/path guards/);
+  const unequal=service+"\nif (request.method !== 'HEAD' && url.pathname === '/healthz') {}";
+  assert.throws(()=>implementedRoutes(unequal),/Unsupported HTTP route comparison/);
   const reversed=service+"\nif ('PUT' === request.method && '/v1/export' === url.pathname) {}";
   assert.notDeepEqual(implementedRoutes(reversed),described,
     'reversed method/path comparison evaded inventory');
