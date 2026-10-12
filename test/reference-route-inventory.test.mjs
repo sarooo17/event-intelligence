@@ -137,7 +137,7 @@ test('HTTP reference service route method+path inventory is exhaustive, no unrev
   seek(ast);
   assert.ok(requestBody && ts.isBlock(requestBody),'HTTP dispatcher unavailable for security audit');
   const statements=requestBody.statements.filter(ts.isIfStatement);
-  const normalized=node=>node.getText(ast).replace(/\\s+/g,'');
+  const normalized=node=>node.getText(ast).replace(/\s+/g,'');
   const common=statements.find(node=>
     normalized(node.expression)==="url.pathname.startsWith('/v1/')&&!requireBearer(request,response)");
   assert.ok(common,'common /v1 authorization gate changed');
@@ -154,7 +154,7 @@ test('HTTP reference service route method+path inventory is exhaustive, no unrev
     assert.ok(isHealth||isReady||isWebhook||isMcp,
       'undocumented handler executes before common bearer guard');
     if(isMcp) assert.match(node.thenStatement.getText(ast),
-      /if\\s*\\(\\s*!requireBearer\\(request,\\s*response\\)\\s*\\)\\s*return;/,
+      /if\s*\(\s*!requireBearer\(request,\s*response\)\s*\)\s*return;/,
       'MCP handler must authorize before processing RPC');
     if(isWebhook) {
       const body=node.thenStatement.getText(ast);
