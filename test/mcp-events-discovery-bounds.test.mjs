@@ -133,3 +133,181 @@ test('cursor cycle takes priority over parsing duplicated or corrupt descriptors
   assert.equal(f.calls,2);
   assert.equal(f.registered.length,0);
 });
+
+
+test('events/list rejects top-level Proxy and getter properties without executing traps', async () => {
+  let invoked=0;
+  const getterPage={ nextCursor:null };
+  Object.defineProperty(getterPage,'events',{
+    enumerable:true,
+    get(){invoked++;return [descriptor(1)];},
+  });
+  const cursorPage={events:[descriptor(1)]};
+  Object.defineProperty(cursorPage,'nextCursor',{
+    enumerable:true,
+    get(){invoked++;return 'forged';},
+  });
+  const outerProxy=new Proxy({events:[descriptor(1)]},{
+    get(_target,key) {
+      // ECMAScript Promise resolution inspects "then" before async host
+      // callback results reach EI. Count only parser-reachable accesses.
+      if (key === 'then') return undefined;
+      invoked++;return null;
+    },
+    getOwnPropertyDescriptor(){invoked++;return undefined;},
+  });
+  const arrayProxy=new Proxy([descriptor(1)],{
+    get(){invoked++;return [];},
+    getOwnPropertyDescriptor(){invoked++;return undefined;},
+  });
+  for(const page of [getterPage,cursorPage,outerProxy,{events:arrayProxy}]) {
+    const f=fixture(()=>page);
+    await assert.rejects(
+      ()=>f.manager.discoverConnection('untrusted-source'),
+      error=>error.code==='MCP_EVENTS_DISCOVERY_PAGE_INVALID',
+    );
+    assert.equal(f.registered.length,0);
+  }
+  assert.equal(invoked,0);
+});
+
+test('events/list rejects descriptor and schema getters or proxies before source mutation',async()=>{
+  let invoked=0;
+  const getterName=descriptor(1);
+  Object.defineProperty(getterName,'name',{
+    enumerable:true,
+    get(){invoked++;return 'forged';},
+  });
+  const getterSchema=descriptor(1);
+  Object.defineProperty(getterSchema.payloadSchema,'secret',{
+    enumerable:true,
+    get(){invoked++;return 'private';},
+  });
+  const proxy=new Proxy(descriptor(1),{
+    get(){invoked++;return 'forged';},
+    ownKeys(){invoked++;return ['name'];},
+  });
+  for(const unsafe of [getterName,getterSchema,proxy]) {
+    const f=fixture(()=>({events:[unsafe]}));
+    await assert.rejects(
+      ()=>f.manager.discoverConnection('untrusted-source'),
+      error=>error.code==='EVENT_UNTRUSTED_DATA_INVALID',
+    );
+    assert.equal(f.registered.length,0);
+  }
+  assert.equal(invoked,0);
+});
+
+test('events/list uses the bounded own slots instead of producer-defined iterators',async()=>{
+  let iterated=0;
+  const events=[descriptor(1)];
+  Object.defineProperty(events,Symbol.iterator,{
+    configurable:true,enumerable:false,
+    value:function*(){iterated++;yield descriptor(999);},
+  });
+  const f=fixture(()=>({events,nextCursor:null}));
+  const discovered=await f.manager.discoverConnection('untrusted-source');
+  assert.deepEqual(discovered.map(x=>x.name),['security.event.1']);
+  assert.equal(f.registered.length,1);
+  assert.equal(iterated,0);
+});
+
+test('events/list discards unbounded non-index array metadata before snapshot',async()=>{
+  let getterCalls=0;
+  const events=[descriptor(1)];
+  // The array has one valid event but thousands of irrelevant own keys.
+  // Deep snapshotting this original array would enumerate all of them.
+  for(let i=0;i<12000;i++){
+    Object.defineProperty(events,'noise_'+i,{
+      configurable:true,enumerable:true,value:'ignored',
+    });
+  }
+  Object.defineProperty(events,'nonindex_accessor',{
+    enumerable:true,
+    get(){getterCalls++;return 'never-read';},
+  });
+  const f=fixture(()=>({events}));
+  const result=await f.manager.discoverConnection('untrusted-source');
+  assert.deepEqual(result.map(item=>item.name),['security.event.1']);
+  assert.equal(f.registered.length,1);
+  assert.equal(getterCalls,0);
+});
+
+test('events/list ignores huge irrelevant descriptor metadata without reflection',async()=>{
+  let calls=0;
+  const item=descriptor(1);
+  for(let i=0;i<12000;i++){
+    Object.defineProperty(item,'irrelevant_'+i,{
+      enumerable:true,configurable:true,value:'ignored',
+    });
+  }
+  Object.defineProperty(item,'unrelated_getter',{
+    enumerable:true,
+    get(){calls++;return 'malicious';},
+  });
+  const f=fixture(()=>({events:[item]}));
+  const discovered=await f.manager.discoverConnection('untrusted-source');
+  assert.deepEqual(discovered.map(x=>x.name),['security.event.1']);
+  assert.equal(f.registered.length,1);
+  assert.equal(calls,0);
+});
+
+test('events/list ignores non-index delivery array metadata without extra enumeration',async()=>{
+  const item=descriptor(1);
+  let getterReads=0;
+  for(let i=0;i<12000;i++){
+    Object.defineProperty(item.delivery,'noisy_'+i,{
+      enumerable:true,configurable:true,value:'irrelevant',
+    });
+  }
+  Object.defineProperty(item.delivery,'unrelatedGetter',{
+    enumerable:true,
+    get(){getterReads++;return 'malicious';},
+  });
+  const f=fixture(()=>({events:[item]}));
+  const events=await f.manager.discoverConnection('untrusted-source');
+  assert.deepEqual(events[0].delivery,['poll']);
+  assert.deepEqual(f.registered[0].delivery,['poll']);
+  assert.equal(f.registered.length,1);
+  assert.equal(getterReads,0);
+});
+
+test('events/list rejects accessor array indices without reading getters',async()=>{
+  let reads=0;
+  const events=[descriptor(1)];
+  Object.defineProperty(events,'0',{
+    configurable:true,enumerable:true,
+    get(){reads++;return descriptor(2);},
+  });
+  const f=fixture(()=>({events}));
+  await assert.rejects(
+    ()=>f.manager.discoverConnection('untrusted-source'),
+    error=>error.code==='EVENT_UNTRUSTED_DATA_INVALID',
+  );
+  assert.equal(f.registered.length,0);
+  assert.equal(reads,0);
+});
+
+test('events/list snapshots nested descriptor schemas before any asynchronous registration',async()=>{
+  let enter,release;
+  const entered=new Promise(resolve=>{enter=resolve;});
+  const proceed=new Promise(resolve=>{release=resolve;});
+  const raw=descriptor(1);
+  raw.payloadSchema={type:'object',properties:{owner:{const:'initial-owner'}}};
+  const f=fixture(()=>({events:[raw]}));
+  f.manager.registerEventSource=async source=>{
+    enter();
+    await proceed;
+    f.registered.push(source);
+  };
+  const pending=f.manager.discoverConnection('untrusted-source');
+  await entered;
+  raw.name='forged-name';
+  raw.payloadSchema.properties.owner.const='other-owner';
+  release();
+  const discovered=await pending;
+  assert.equal(discovered[0].name,'security.event.1');
+  assert.equal(f.registered.length,1);
+  assert.equal(f.registered[0].eventName,'security.event.1');
+  assert.equal(f.registered[0].payloadSchema.properties.owner.const,'initial-owner');
+});

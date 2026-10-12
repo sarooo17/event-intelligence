@@ -32,6 +32,64 @@ function discoveryLimitError(detail) {
   return error;
 }
 
+// The transport is owned by the host, but decoded events/list objects are
+// producer-controlled input. Never access their fields through ordinary JS
+// property reads: a host adapter could supply Proxies or getter-backed values.
+function ownDiscoveryPage(raw, connectionId) {
+  const invalid = () => {
+    const error = new Error(
+      `MCP server ${connectionId} returned unsafe events/list page`,
+    );
+    error.code = 'MCP_EVENTS_DISCOVERY_PAGE_INVALID';
+    throw error;
+  };
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw) || isProxy(raw)) {
+    invalid();
+  }
+  const events = Object.getOwnPropertyDescriptor(raw, 'events');
+  const cursor = Object.getOwnPropertyDescriptor(raw, 'nextCursor');
+  if (!events || !Object.hasOwn(events, 'value') ||
+      (cursor && !Object.hasOwn(cursor, 'value'))) {
+    invalid();
+  }
+  if (isProxy(events.value) || !Array.isArray(events.value)) {
+    invalid();
+  }
+  return { events: events.value, nextCursor: cursor?.value };
+}
+
+// Only these six top-level descriptor fields are consumed by
+// sourceDescriptor(). Other own properties are ignored, not reflected as
+// untrusted JSON; a producer can otherwise attach millions of irrelevant
+// enumerable keys to a one-event discovery response.
+const DISCOVERY_DESCRIPTOR_FIELDS = Object.freeze([
+  'name', 'description', 'delivery', 'inputSchema', 'payloadSchema', '_meta',
+]);
+
+function stageDiscoveryDescriptor(raw) {
+  const invalid = () => {
+    const error = new Error('MCP Events discovery rejected: unsafe descriptor');
+    error.code = 'EVENT_UNTRUSTED_DATA_INVALID';
+    throw error;
+  };
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw) || isProxy(raw)) {
+    invalid();
+  }
+  const staged = {};
+  for (const field of DISCOVERY_DESCRIPTOR_FIELDS) {
+    const slot = Object.getOwnPropertyDescriptor(raw, field);
+    if (!slot) continue;
+    if (!Object.hasOwn(slot, 'value')) invalid();
+    Object.defineProperty(staged, field, {
+      value: slot.value,
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    });
+  }
+  return staged;
+}
+
 function assertObject(value, message) {
   if (!value || Array.isArray(value) || typeof value !== 'object') {
     throw new Error(message);
@@ -523,17 +581,13 @@ export class McpEventsClientManager {
       if (++pageCount > MAX_MCP_EVENT_DISCOVERY_PAGES) {
         throw discoveryLimitError('too many events/list pages');
       }
-      const listed = await this.rpc(
+      const rawPage = await this.rpc(
         connection,
         profile.listMethod,
         cursor ? { cursor } : {},
       );
       this.assertConnectionAttached(connection);
-      if (!Array.isArray(listed?.events)) {
-        throw new Error(
-          `MCP server ${connectionId} returned invalid events/list`,
-        );
-      }
+      const listed = ownDiscoveryPage(rawPage, connectionId);
       // Validate the *original* cursor shape and cycle before parsing any
       // untrusted descriptor on this page. Never coerce objects/arrays with
       // String(): doing so can allocate huge strings and fabricate cursors.
@@ -560,7 +614,30 @@ export class McpEventsClientManager {
         MAX_MCP_EVENT_DISCOVERY_SOURCES - descriptors.length) {
         throw discoveryLimitError('too many event descriptors');
       }
-      for (const raw of listed.events) {
+      // Copy ONLY the permitted own indexed slots, not arbitrary extra
+      // array metadata. Object.getOwnPropertyDescriptors(listed.events)
+      // could enumerate unbounded non-index keys despite the length cap.
+      // This indexed staging buffer is bounded by the 256-source limit.
+      const indexedDescriptors = [];
+      for (let index = 0; index < listed.events.length; index += 1) {
+        const slot = Object.getOwnPropertyDescriptor(
+          listed.events, String(index),
+        );
+        if (!slot || !Object.hasOwn(slot, 'value')) {
+          const error = new Error(
+            'MCP Events discovery rejected: unsafe descriptor array slot',
+          );
+          error.code = 'EVENT_UNTRUSTED_DATA_INVALID';
+          throw error;
+        }
+        indexedDescriptors.push(stageDiscoveryDescriptor(slot.value));
+      }
+      // A single bounded walk now deeply snapshots only the six consumed
+      // top-level descriptor fields, not arbitrary producer metadata keys.
+      // Nested advertised schema and _meta bodies remain semantically
+      // relevant and need host-owned transport response-byte limits.
+      const safeDescriptors = snapshotUntrustedEventData(indexedDescriptors);
+      for (const raw of safeDescriptors) {
         const descriptor = sourceDescriptor(raw, profile);
         if (names.has(descriptor.name)) {
           throw new Error(

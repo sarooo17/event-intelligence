@@ -35,6 +35,41 @@ operation can still leave earlier descriptors persisted. The host remains
 responsible for registration rollback strategy, network timeouts and maximum
 RPC response bytes.
 
+### Untrusted decoded discovery objects
+
+After the page/count/cursor limits have been checked, EI snapshots every
+bounded `events/list` descriptor array using the same JSON-safe, own-data
+clone as occurrence ingress. Top-level `events` and `nextCursor` values are
+obtained through own property descriptors, **not** JavaScript property getters.
+Proxy wrappers and accessor-backed top-level fields fail with
+`MCP_EVENTS_DISCOVERY_PAGE_INVALID`; hostile nested schema values, sparse
+arrays, accessor descriptors, Proxies, cycles or non-JSON values fail with
+`EVENT_UNTRUSTED_DATA_INVALID` before source registration. The clone
+ignores non-enumerable custom iterators and prevents later provider mutation
+from altering a schema while registration awaits storage. Only the bounded own
+indexed array slots are staged; arbitrary extra enumerable array keys are
+ignored rather than enumerated into the deep snapshot. This prevents a short
+event array with very large unrelated metadata from exhausting descriptor
+reflection budgets. Likewise, only the six top-level descriptor
+fields actually consumed by source normalization are read through own data
+descriptors; irrelevant producer-added keys are never enumerated. Nested
+advertised payload/input schemas and descriptor metadata are semantically
+consumed and can themselves be large, so host-enforced transport response
+byte/time limits remain mandatory. The shared JSON snapshot itself now
+inspects only own indexed array slots (without enumerating arbitrary extra
+array properties), protecting nested `delivery` arrays and other nested JSON
+arrays against metadata amplification.
+
+The previous cursor type, cursor-byte/cycle, page-count and descriptor-count
+checks keep their ordering and error codes. These checks protect **decoded
+JavaScript objects**, not the host's raw MCP transport body size, timeout or
+provider authentication. A host adapter returning a JavaScript Proxy through
+an async function can invoke its `then` getter during ECMAScript Promise
+assimilation **before** EI receives the value; hosts must decode untrusted
+wire responses into plain JSON values at that transport boundary.
+Partial persistence after a later independent storage error remains possible
+as described above.
+
 **Scope:** These are finite `events/list` pagination limits, not a
 full per-tenant ingestion rate/size/regex complexity policy. Existing source
 records are not removed automatically when a subsequent discovery fails;

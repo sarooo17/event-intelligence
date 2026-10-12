@@ -203,6 +203,23 @@ test('terminal array values cannot see inherited indices or element accessors', 
   assert.deepEqual(readOwnEventPath({ roles: ['admin'] }, 'roles'), ['admin']);
 });
 
+test('shared JSON snapshot copies only array indexed slots even with large extra metadata',()=>{
+  let invoked=0;
+  const delivery=['poll'];
+  for(let i=0;i<12000;i++) {
+    Object.defineProperty(delivery,'unused_'+i,{
+      enumerable:true,configurable:true,value:'ignored',
+    });
+  }
+  Object.defineProperty(delivery,'metadataAccessor',{
+    enumerable:true,
+    get(){invoked++;return 'unsafe';},
+  });
+  const safe=snapshotUntrustedEventData({delivery,nested:{modes:delivery}});
+  assert.deepEqual(safe,{delivery:['poll'],nested:{modes:['poll']}});
+  assert.equal(invoked,0);
+});
+
 test('event Proxy traps are rejected before ownKeys, descriptors or accessors run', () => {
   let traps = 0;
   const forged = new Proxy({ tenant: 'victim' }, {
