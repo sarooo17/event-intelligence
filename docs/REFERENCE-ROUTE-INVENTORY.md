@@ -74,4 +74,8 @@ effects are not inferred from model-visible tool metadata.
 service JavaScript route conditions and rejects undocumented/missing
 HTTP method+path entries. CLI entrypoint modes are likewise asserted against
 the implemented dispatcher. This is a static boundary/inventory gate,
-not an HTTP OpenAPI conformance or a runtime identity penetration test.
+not an HTTP OpenAPI conformance, authentication-dominance proof, webhook
+HMAC authorization test or a runtime identity penetration test. Security
+behavior and cross-tenant authorization belong to adversarial runtime
+acceptance under #45. This catalog describes current declared route trust
+owners; it does not certify those guards are correctly enforced.
