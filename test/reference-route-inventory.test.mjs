@@ -65,15 +65,25 @@ function implementedRoutes(source) {
         /(?:request\.method|url\.pathname)/.test(node.getText(ast))) {
         throw new Error('Unsupported HTTP route comparison requires explicit audit');
       }
+      // A strict comparison around an already-formed route predicate is
+      // NOT a direct field-to-string match. Do not recursively count the
+      // nested comparison as a positive route: wrappers may invert or
+      // otherwise transform it (e.g. === !true or === otherExpression).
+      // Only the directly modeled request.method/url.pathname operand
+      // can pass through to the literal-validation path below.
       if(ts.isBinaryExpression(node) &&
         node.operatorToken.kind===ts.SyntaxKind.EqualsEqualsEqualsToken &&
-        [node.left,node.right].some(value=>{
-          while(ts.isParenthesizedExpression(value)) value=value.expression;
-          return value.kind===ts.SyntaxKind.TrueKeyword ||
-            value.kind===ts.SyntaxKind.FalseKeyword;
-        }) &&
         /(?:url\.pathname|request\.method)/.test(normalizedRouteAccess(node.getText(ast)))) {
-        throw new Error('Boolean-wrapped HTTP matcher requires explicit route audit');
+        const unwrap=value=>{
+          while(ts.isParenthesizedExpression(value)) value=value.expression;
+          return value;
+        };
+        const isDirectField=value=>[
+          'request.method','url.pathname',
+        ].includes(normalizedRouteAccess(unwrap(value).getText(ast)));
+        if(!isDirectField(node.left) && !isDirectField(node.right)) {
+          throw new Error('Boolean-wrapped HTTP matcher requires explicit route audit');
+        }
       }
       if(ts.isBinaryExpression(node) &&
         node.operatorToken.kind===ts.SyntaxKind.EqualsEqualsEqualsToken) {
@@ -249,6 +259,19 @@ test('HTTP reference service route method+path inventory is exhaustive, no unrev
   const parenthesizedBoolean=service+"\nif ((request.method === 'GET') === ((false)) && url.pathname === '/healthz') {}";
   assert.throws(()=>implementedRoutes(parenthesizedBoolean),/Boolean-wrapped HTTP matcher/,
     'parenthesized false method comparison must fail closed');
+  // Reject computed boolean wrappers as well as plain true/false:
+  // unwrapping only literal operands would incorrectly count GET here.
+  for(const wrapped of [
+    "(request.method === 'GET') === !true",
+    "(request.method === 'GET') === (!true)",
+    "(!true) === (request.method === 'GET')",
+    "(request.method === 'GET') === (false || true)",
+    "(url.pathname.startsWith('/v1/export/')) === !true",
+  ]) {
+    const injected=service+"\\nif ("+wrapped+" && url.pathname === '/healthz') {}";
+    assert.throws(()=>implementedRoutes(injected),/Boolean-wrapped HTTP matcher/,
+      'computed route predicate wrapper was counted as a positive route: '+wrapped);
+  }
   const reversed=service+"\nif ('PUT' === request.method && '/v1/export' === url.pathname) {}";
   assert.notDeepEqual(implementedRoutes(reversed),described,
     'reversed method/path comparison evaded inventory');
