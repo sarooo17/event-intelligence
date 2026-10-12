@@ -254,6 +254,22 @@ test('CLI dispatch inventory rejects new positional commands and flags',()=>{
     statement.expression.getText(ast).includes("args[0] === 'doctor'")
   );
   assert.ok(dispatcher,'CLI dispatcher entrypoint missing');
+  // The doctor command accepts --json through a separate argument allowlist,
+  // NOT through flags.has('--json'). Enforce the admitted option and the
+  // fail-closed unknown-option path against the real dispatcher branch.
+  const doctorBody=dispatcher.thenStatement.getText(ast);
+  const doctorAllowed='args.slice(1).filter((arg) => arg !== '--json')';
+  assert.ok(doctorBody.includes(doctorAllowed),
+    'doctor accepted-option allowlist drifted from the CLI catalog');
+  assert.match(doctorBody,/if\s*\(\s*unrecognized\.length\s*\)/,
+    'doctor unknown options must be rejected');
+  assert.match(doctorBody,/process\.exitCode\s*=\s*2/,
+    'doctor unknown-option branch must return nonzero');
+  const alteredDoctor=doctorBody.replace(doctorAllowed,
+    'args.slice(1).filter((arg) => arg !== '--format')');
+  assert.notEqual(alteredDoctor,doctorBody,'doctor allowlist regression probe did not mutate source');
+  assert.equal(alteredDoctor.includes(doctorAllowed),false,
+    'doctor allowlist mutation must invalidate the documented --json mode');
   // The flag inventory alone is insufficient: verify each branch's
   // actual dispatch expression, so moving --json into the MCP branch
   // or attaching --mcp to another mode fails before release.
@@ -316,7 +332,7 @@ test('CLI dispatch inventory rejects new positional commands and flags',()=>{
   ].sort(),'CLI documentation must list all complete invocations');
   assert.equal(documentedInvocations.some(value=>value.endsWith('mcpx')),false);
   const changedDocs=docs.replace('`mcp-event-intelligence mcp`','`mcp-event-intelligence mcpx`');
-  const changedTable=changedDocs.split('## CLI entrypoints')[1]?.split('The lower-level exported')[0] ?? '';
+  const changedTable=changedDocs.split('## CLI entrypoints')[1]?.split('## Public library entrypoints')[0] ?? '';
   const changedInvocations=[...changedTable.matchAll(/^\| ([^|]+) \|/gm)]
     .slice(2)
     .flatMap(([,cell])=>[...cell.matchAll(/`(mcp-event-intelligence(?:\s+[^\`]+)?)`/g)]
