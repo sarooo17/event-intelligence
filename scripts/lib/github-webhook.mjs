@@ -1,7 +1,11 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 
 export function verifyGitHubWebhookSignature(rawBody, signature, secret) {
-  if (!secret || !signature?.startsWith('sha256=')) return false;
+  // Buffer.from(hex) accepts malformed input by truncating at the first
+  // non-hex character or dropping a trailing nibble. Require the exact
+  // GitHub sha256 signature wire format before the constant-time MAC check.
+  if (!secret || typeof signature !== 'string' ||
+      !/^sha256=[0-9a-f]{64}$/.test(signature)) return false;
 
   const expected = createHmac('sha256', secret)
     .update(rawBody)
