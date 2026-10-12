@@ -129,11 +129,14 @@ function recognizedCliDispatch(cli) {
   function walk(node) {
     if(ts.isBinaryExpression(node) &&
       node.operatorToken.kind===ts.SyntaxKind.EqualsEqualsEqualsToken &&
-      ts.isElementAccessExpression(node.left) &&
-      node.left.expression.getText(ast)==='args' &&
-      node.left.argumentExpression?.getText(ast)==='0') {
-      if(!isLiteral(node.right)) throw new Error('Dynamic CLI command must be audited');
-      positional.add(node.right.text);
+      (ts.isElementAccessExpression(node.left) || ts.isElementAccessExpression(node.right))) {
+      const command=ts.isElementAccessExpression(node.left) ? node.left : node.right;
+      const literal=command===node.left ? node.right : node.left;
+      if(command.expression.getText(ast)==='args' &&
+         command.argumentExpression?.getText(ast)==='0') {
+        if(!isLiteral(literal)) throw new Error('Dynamic CLI command must be audited');
+        positional.add(literal.text);
+      }
     }
     if(ts.isCallExpression(node) && node.expression.getText(ast)==='flags.has') {
       if(node.arguments.length!==1 || !isLiteral(node.arguments[0])) {
@@ -206,6 +209,36 @@ test('CLI dispatch inventory rejects new positional commands and flags',()=>{
       .map(([,invocation])=>invocation.trim()));
   assert.notDeepEqual(changedInvocations.sort(),documentedInvocations.sort(),
     'CLI suffix mutation must change complete inventory');
+  // Aliases belong to specific command rows, not an arbitrary code span.
+  const cliRows=[...cliTable.matchAll(/^\| ([^|]+) \|/gm)].slice(2)
+    .map(([,cell])=>cell);
+  const rowFor=(invocation)=>cliRows.find(cell=>
+    cell.includes('`'+invocation+'`'));
+  const exactTokens=(cell)=>[...(cell??'').matchAll(/`([^`]+)`/g)]
+    .map(([,token])=>token.trim());
+  for(const [invocation,aliases] of [
+    ['mcp-event-intelligence mcp',['--mcp']],
+    ['mcp-event-intelligence doctor',['--json']],
+    ['mcp-event-intelligence --version',['-v']],
+    ['mcp-event-intelligence --help',['-h']],
+  ]) {
+    const tokens=exactTokens(rowFor(invocation));
+    for(const alias of aliases) assert.ok(tokens.includes(alias),
+      `CLI alias ${alias} missing from row ${invocation}`);
+  }
+  const swappedRows=cliTable
+    .replace('`--mcp`','`--placeholder`')
+    .replace('`--json`','`--mcp`')
+    .replace('`--placeholder`','`--json`');
+  const alteredMcpRow=[...swappedRows.matchAll(/^\| ([^|]+) \|/gm)]
+    .map(([,cell])=>cell)
+    .find(cell=>cell.includes('`mcp-event-intelligence mcp`'));
+  assert.equal(exactTokens(alteredMcpRow).includes('--mcp'),false,
+    'swapping per-row aliases must violate CLI docs contract');
+  const reversedCli=cli+"\nif ('export' === args[0]) {}";
+  assert.equal(recognizedCliDispatch(reversedCli).positional.includes('export'),true,
+    'reversed CLI comparisons must be detected');
+
   assert.match(docs,/not a model-facing operation/i);
   for (const [suffix,category,value] of [
     ["if (args[0] === 'export') {}",'positional','export'],
