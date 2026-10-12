@@ -6,7 +6,7 @@ import path from 'node:path';
  * Pure release identity validation; checks candidate repo metadata only.
  * Never contacts npm, modifies consumers, or triggers a package publication.
  */
-export function validateReleaseManifest(pkg, lock, server) {
+export function validateReleaseManifest(pkg, lock, server, registryDocumentation = undefined) {
   const errors = [];
   const root = lock?.packages?.[''];
   if (!pkg || typeof pkg !== 'object' ||
@@ -49,6 +49,18 @@ export function validateReleaseManifest(pkg, lock, server) {
       }
     }
   }
+  // The Registry documentation names a concrete package/version. Require a
+  // single accurate declaration when docs are supplied, so an npm publish
+  // cannot silently leave stale install advice in the primary docs.
+  if (registryDocumentation !== undefined) {
+    const declarations = typeof registryDocumentation === 'string'
+      ? [...registryDocumentation.matchAll(/^- npm package:\s*`([^`\r\n]+)`;\s*$/gm)]
+      : [];
+    if (declarations.length !== 1 ||
+        declarations[0][1] !== `${pkg.name}@${expected}`) {
+      errors.push('docs/MCP-REGISTRY.md: npm package/version declaration mismatch or missing');
+    }
+  }
   return errors;
 }
 
@@ -58,6 +70,7 @@ export function checkReleaseManifest(cwd = process.cwd()) {
   );
   return validateReleaseManifest(
     read('package.json'), read('package-lock.json'), read('server.json'),
+    readFileSync(path.join(cwd, 'docs/MCP-REGISTRY.md'), 'utf8'),
   );
 }
 
@@ -70,6 +83,6 @@ if (process.argv[1] &&
     }
     process.exitCode = 1;
   } else {
-    console.log('EI release identity is consistent across package, lockfile and MCP registry');
+    console.log('EI release identity is consistent across package, lockfile, MCP registry and Registry docs');
   }
 }
