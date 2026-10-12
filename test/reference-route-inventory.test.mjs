@@ -67,9 +67,11 @@ function implementedRoutes(source) {
       }
       if(ts.isBinaryExpression(node) &&
         node.operatorToken.kind===ts.SyntaxKind.EqualsEqualsEqualsToken &&
-        [node.left,node.right].some(value=>
-          value.kind===ts.SyntaxKind.TrueKeyword ||
-          value.kind===ts.SyntaxKind.FalseKeyword) &&
+        [node.left,node.right].some(value=>{
+          while(ts.isParenthesizedExpression(value)) value=value.expression;
+          return value.kind===ts.SyntaxKind.TrueKeyword ||
+            value.kind===ts.SyntaxKind.FalseKeyword;
+        }) &&
         /(?:url\.pathname|request\.method)/.test(normalizedRouteAccess(node.getText(ast)))) {
         throw new Error('Boolean-wrapped HTTP matcher requires explicit route audit');
       }
@@ -244,6 +246,9 @@ test('HTTP reference service route method+path inventory is exhaustive, no unrev
   assert.throws(()=>implementedRoutes(negatedMethodBoolean),
     /Boolean-wrapped HTTP matcher/,
     'false-wrapped HTTP method check must fail closed');
+  const parenthesizedBoolean=service+"\nif ((request.method === 'GET') === ((false)) && url.pathname === '/healthz') {}";
+  assert.throws(()=>implementedRoutes(parenthesizedBoolean),/Boolean-wrapped HTTP matcher/,
+    'parenthesized false method comparison must fail closed');
   const reversed=service+"\nif ('PUT' === request.method && '/v1/export' === url.pathname) {}";
   assert.notDeepEqual(implementedRoutes(reversed),described,
     'reversed method/path comparison evaded inventory');
