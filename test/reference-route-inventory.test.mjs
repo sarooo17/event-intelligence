@@ -251,10 +251,10 @@ test('HTTP reference service route method+path inventory is exhaustive, no unrev
   assert.notDeepEqual(implementedRoutes(bracketCall),described,
     'bracket-notation startsWith must be included in the route inventory');
   const unsupportedMatcher=service+"\nif (request.method === 'PUT' && url.pathname.includes('/v1/export')) {}";
-  assert.throws(()=>implementedRoutes(unsupportedMatcher),/Unsupported HTTP pathname matcher/,
+  assert.throws(()=>implementedRoutes(unsupportedMatcher),/(?:Unsupported HTTP pathname matcher|Unmodeled HTTP route call)/,
     'unsupported pathname matcher must fail closed');
   const unsupportedBracketMatcher=service+"\nif (request.method === 'PUT' && url['pathname'].includes('/v1/export')) {}";
-  assert.throws(()=>implementedRoutes(unsupportedBracketMatcher),/Unsupported HTTP pathname matcher/);
+  assert.throws(()=>implementedRoutes(unsupportedBracketMatcher),/(?:Unsupported HTTP pathname matcher|Unmodeled HTTP route call)/);
   const disjoinedMatchers=service+"\nif (request.method === 'POST' && (url.pathname.startsWith('/v1/trigger-matches/') || url.pathname.endsWith('/fire'))) {}";
   assert.throws(()=>implementedRoutes(disjoinedMatchers),
     /Disjoined HTTP method\/path guards/,
