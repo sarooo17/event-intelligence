@@ -121,8 +121,8 @@ async function run(seed, stopAt) {
         assert.equal(match.sourceEvents.length, 2,
           'seed=' + seed + ' match must bind two events');
         const [order, payment] = match.sourceEvents;
-        assert.equal(order.name, 'order.created');
-        assert.equal(payment.name, 'payment.completed');
+        assert.equal(order.eventName, 'order.created');
+        assert.equal(payment.eventName, 'payment.completed');
         const customer = order.data.customer;
         assert.equal(payment.data.customer, customer,
           'never correlate across partition customer keys');
