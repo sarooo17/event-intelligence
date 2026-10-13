@@ -118,9 +118,10 @@ const handlers = {
     return host.runtime.mcpEventsClient.pollAll();
   },
   async snapshot({ wakeIds = [] } = {}) {
-    const [status, sources, triggers, receipts] = await Promise.all([
+    const [status, sources, storedSources, triggers, receipts] = await Promise.all([
       host.mcpStatus(),
       host.eventSources,
+      host.store.listEventSources(),
       host.triggerControl.listTriggers({ owner }),
       Promise.all(wakeIds.map(id => host.store.getWakeDelivery(id))),
     ]);
@@ -131,6 +132,10 @@ const handlers = {
         scopeId: entry.scopeId,
       })),
       sources: sources.map(src => ({
+        eventName: src.eventName, enabled: src.enabled,
+        connectionId: src.connectionId,
+      })),
+      storedSources: storedSources.map(src => ({
         eventName: src.eventName, enabled: src.enabled,
         connectionId: src.connectionId,
       })),
