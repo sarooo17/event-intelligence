@@ -169,7 +169,7 @@ test('hard process restarts preserve registry revocation, replay dedup and host 
     assert.equal(first.wakes.length, 1);
     const firstWakeId = first.wakes[0].wakeId;
     const firstCursor = first.storedCursor;
-    assert.match(firstCursor ?? '', /^first-session:\\d+$/,
+    assert.match(firstCursor ?? '', /^first-session:\d+$/,
       'first host must persist a real provider cursor');
     const deliveredA = await worker.call('snapshot', { wakeIds: [firstWakeId] });
     assertDelivered(deliveredA, firstWakeId);
