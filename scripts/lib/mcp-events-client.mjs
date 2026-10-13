@@ -139,14 +139,28 @@ async function projectDeliveryHandle(handle) {
       Array.isArray(handle) || isProxy(handle)) invalid();
 
   let close = typeof handle === 'function' ? handle : async () => {};
+  let invalidLifecycleSlot = false;
   if (typeof handle !== 'function') {
     for (const method of ['close', 'cancel', 'unsubscribe']) {
-      const slot = deliveryHandleSlot(handle, method, true);
+      let slot;
+      try {
+        slot = deliveryHandleSlot(handle, method, true);
+      } catch {
+        // A malicious accessor-backed close() must not prevent us from
+        // finding an independent safe cancel()/unsubscribe() teardown.
+        invalidLifecycleSlot = true;
+        continue;
+      }
       if (typeof slot.value === 'function') {
         close = () => slot.value.call(handle);
         break;
       }
     }
+  }
+
+  if (invalidLifecycleSlot) {
+    try { await close(); } catch {}
+    invalid();
   }
 
   try {
