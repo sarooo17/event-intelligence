@@ -168,6 +168,9 @@ test('hard process restarts preserve registry revocation, replay dedup and host 
     assert.equal(source(first)?.enabled, true);
     assert.equal(first.wakes.length, 1);
     const firstWakeId = first.wakes[0].wakeId;
+    const firstCursor = first.storedCursor;
+    assert.match(firstCursor ?? '', /^first-session:\\d+$/,
+      'first host must persist a real provider cursor');
     const deliveredA = await worker.call('snapshot', { wakeIds: [firstWakeId] });
     assertDelivered(deliveredA, firstWakeId);
 
@@ -193,6 +196,8 @@ test('hard process restarts preserve registry revocation, replay dedup and host 
     assert.equal(getTrigger(afterKill)?.fireCount, 1);
     assert.deepEqual(afterKill.wakes, []);
     assertDelivered(afterKill, firstWakeId);
+    assert.equal(afterKill.storedCursor, firstCursor,
+      'hard restart must recover the exact authoritative MCP cursor');
 
     const reconnected = await worker.call('registry', {
       connected: true, session: 'replacement-session',
@@ -204,8 +209,20 @@ test('hard process restarts preserve registry revocation, replay dedup and host 
     // New MCP client replays an old event after reconnect: storage-side
     // occurrence identity must prevent a second fire/host wake.
     await worker.call('enqueue', { id: 'registry-event-1', value: 1 });
-    await worker.call('poll');
+    const replayPoll = await worker.call('poll');
+    assert.deepEqual(replayPoll.map(item => item.connectionId),
+      ['registry-connection']);
+    assert.ok(replayPoll[0].results.some(item =>
+      item.status === 'ok' &&
+      item.delivery === 'poll' &&
+      item.accepted === 0 &&
+      item.consumerCount === 1),
+    'replayed occurrence must be processed successfully and deduplicated');
     let replayed = await worker.call('snapshot', { wakeIds: [firstWakeId] });
+    assert.ok(replayed.cursorInputs.some(item =>
+      item.session === 'replacement-session' &&
+      item.cursor === firstCursor),
+    'reconnected provider must receive the exact persisted cursor');
     assert.equal(getTrigger(replayed)?.fireCount, 1);
     assert.equal(replayed.wakes.length, 0);
     assertDelivered(replayed, firstWakeId);
@@ -246,11 +263,23 @@ test('hard process restarts preserve registry revocation, replay dedup and host 
       row.connectionId === 'registry-connection' &&
       row.code === 'EI_HOST_REGISTRY_ID_CONFLICT'));
     assert.equal((await worker.call('snapshot')).connections.length, 1);
+    const explicitPoll = await worker.call('poll');
+    assert.ok(explicitPoll[0]?.results?.some(item =>
+      item.delivery === 'poll' && item.status === 'ok'),
+    'manually attached host provider must still be able to poll');
+    let manual = await worker.call('snapshot');
+    assert.ok(manual.cursorInputs.some(item => item.session === 'explicit-host'),
+      'surviving provider is the host-owned client, not registry client');
+    assert.equal(manual.cursorInputs.some(item =>
+      item.session === 'registry-attempted-takeover'), false,
+    'conflicting registry client must not execute a poll');
     const noRegistry = await worker.call('registry', { connected: false });
     assert.equal(noRegistry.some(row =>
       row.connectionId === 'registry-connection' &&
       row.status === 'detached'), false);
-    assert.equal((await worker.call('snapshot')).connections.length, 1);
+    manual = await worker.call('snapshot');
+    assert.equal(manual.connections.length, 1);
+    assert.ok(manual.cursorInputs.some(item => item.session === 'explicit-host'));
     assert.equal(new Set(pids).size, 3, 'must use three distinct OS PIDs');
   } finally {
     try { await worker?.kill(); } finally {
