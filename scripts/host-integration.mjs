@@ -197,10 +197,38 @@ export async function createEventIntelligenceHost({
 
         await runtime.mcpEventsClient.detachConnection(connectionId);
         registryManaged.delete(connectionId);
+        // Detach performs asynchronous durable cleanup. A host may manually
+        // attach a connection with the same ID while it is suspended. Never
+        // replace that new host-owned connection when reconciliation resumes.
+        if (runtime.mcpEventsClient.connections.has(connectionId)) {
+          outcomes.push({
+            connectionId,
+            status: 'error',
+            code: 'EI_HOST_REGISTRY_ID_CONFLICT',
+            error: 'Registry connection ID conflicts with a host-owned MCP connection',
+          });
+          continue;
+        }
       }
 
+      let attemptedConnection = null;
       try {
-        const result = await runtime.mcpEventsClient.attachConnection(connection);
+        // attachConnection adds the normalized connection before its first
+        // asynchronous discovery await. Remember the actual object identity:
+        // later host replacement must not be detached by catch cleanup.
+        const attachment = runtime.mcpEventsClient.attachConnection(connection);
+        attemptedConnection = runtime.mcpEventsClient.connections.get(connectionId);
+        const result = await attachment;
+        if (runtime.mcpEventsClient.connections.get(connectionId) !== attemptedConnection ||
+            !attemptedConnection) {
+          outcomes.push({
+            connectionId,
+            status: 'error',
+            code: 'EI_HOST_REGISTRY_ID_CONFLICT',
+            error: 'Registry connection was replaced during event discovery',
+          });
+          continue;
+        }
         registryManaged.add(connectionId);
         outcomes.push({
           connectionId,
@@ -208,7 +236,12 @@ export async function createEventIntelligenceHost({
           events: result.events.map((event) => event.name),
         });
       } catch (error) {
-        await runtime.mcpEventsClient.detachConnection(connectionId);
+        // Cleanup only a connection that this attach attempt actually
+        // installed; never revoke a replacement installed by the host.
+        if (attemptedConnection &&
+            runtime.mcpEventsClient.connections.get(connectionId) === attemptedConnection) {
+          await runtime.mcpEventsClient.detachConnection(connectionId);
+        }
         if (
           error &&
           typeof error === 'object' &&
