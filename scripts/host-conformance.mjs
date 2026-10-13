@@ -424,7 +424,21 @@ export async function runHostConformance(
       );
     }));
   } finally {
-    await harness.close();
+    // A host cleanup error must not erase the conformance results already
+    // observed. For a normal close the v3 report/case count stays unchanged.
+    // Do not echo arbitrary host exception text: it may contain credentials
+    // or untrusted payload fragments, and reports can be shared publicly.
+    const startedAt = Date.now();
+    try {
+      await harness.close();
+    } catch {
+      results.push(Object.freeze({
+        id: 'lifecycle.close',
+        status: 'fail',
+        durationMs: Date.now() - startedAt,
+        error: 'Host conformance harness close() failed',
+      }));
+    }
   }
 
   const failed = results.filter((result) => result.status === 'fail');
