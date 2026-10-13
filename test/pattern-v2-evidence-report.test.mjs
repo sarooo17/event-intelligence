@@ -1,8 +1,29 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
+import path from 'node:path';
 import test from 'node:test';
+
+function independentlyHashBuild(dir, prefix = '') {
+  const files = [];
+  for (const item of readdirSync(dir, { withFileTypes: true })
+    .sort((a, b) => a.name.localeCompare(b.name))) {
+    if (item.isDirectory()) {
+      files.push(...independentlyHashBuild(
+        path.join(dir, item.name), prefix + item.name + '/',
+      ));
+    } else if (item.isFile() && item.name.endsWith('.js')) {
+      files.push({
+        path: prefix + item.name,
+        sha256: createHash('sha256')
+          .update(readFileSync(path.join(dir, item.name)))
+          .digest('hex'),
+      });
+    }
+  }
+  return files;
+}
 
 function report() {
   return JSON.parse(execFileSync(
@@ -25,6 +46,17 @@ test('v3 conformance report commits to replayable versioned input/environment ev
   assert.equal(first.environment.platform, process.platform);
   assert.equal(first.reproducibility.replay, 'npm run conformance:pattern-v2');
   assert.match(first.reproducibility.sourceSha256, /^[0-9a-f]{64}$/);
+  const files = independentlyHashBuild('dist/src');
+  const build = first.reproducibility.completeRuntimeBuild;
+  assert.equal(build.root, 'dist/src');
+  assert.equal(build.fileCount, files.length);
+  assert.ok(files.length > 3);
+  assert.equal(build.sha256,
+    createHash('sha256').update(JSON.stringify(files)).digest('hex'),
+    'manifest must include all transitive compiled runtime dependencies');
+  assert.equal(first.reproducibility.dependencyLockSha256,
+    createHash('sha256').update(readFileSync('package-lock.json')).digest('hex'),
+    'manifest must bind external dependency versions via the lockfile');
   assert.deepEqual(first.reproducibility.evaluatedModules.map(x => x.path), [
     'dist/src/patternV2/evaluator.js',
     'dist/src/intelligenceProtocol/patternV2Schemas.js',
