@@ -539,3 +539,30 @@ test('invalid close getter still triggers safe alternate stream cancellation', a
     assert.equal(f.manager.deliverySessions.size, 0);
   }
 });
+
+
+test('multiple safe stream teardown candidates fall back after an async rejection', async () => {
+  const calls = [];
+  let getterCalls = 0;
+  const handle = {
+    async cancel() { calls.push('cancel'); throw new Error(unsafe); },
+    async unsubscribe() { calls.push('unsubscribe'); },
+  };
+  Object.defineProperty(handle, 'close', {
+    get() { getterCalls++; throw new Error(unsafe); },
+  });
+  const f = fixture({
+    delivery: 'push',
+    openEventStream: async () => handle,
+  });
+  const context = await f.manager.scopeContext(f.connection);
+  await assert.rejects(
+    f.manager.ensureDeliverySession(f.connection, context, f.subscription, 'push'),
+    error => error.code === 'MCP_EVENTS_PROVIDER_REQUEST_FAILED' &&
+      error.message === SAFE,
+  );
+  assert.equal(getterCalls, 0);
+  assert.deepEqual(calls, ['cancel', 'unsubscribe'],
+    'failed cancel cannot prevent the safe unsubscribe fallback');
+  assert.equal(f.manager.deliverySessions.size, 0);
+});
