@@ -411,3 +411,98 @@ test('nextPollMs object coercion cannot run provider valueOf or leak secrets', a
   );
   assert.equal(calls, 0, 'numeric delay parsing must not invoke provider methods');
 });
+
+
+test('fulfilled push handles reject accessors and close an opened stream safely', async () => {
+  for (const field of ['cursor', 'truncated']) {
+    let reads = 0;
+    let closes = 0;
+    const handle = {
+      close() { closes++; },
+    };
+    Object.defineProperty(handle, field, {
+      enumerable: true,
+      get() { reads++; throw new Error(unsafe); },
+    });
+    const f = fixture({
+      delivery: 'push',
+      openEventStream: async () => handle,
+    });
+    const context = await f.manager.scopeContext(f.connection);
+    await assert.rejects(
+      f.manager.ensureDeliverySession(f.connection, context, f.subscription, 'push'),
+      error => {
+        assert.equal(error.message, SAFE);
+        assert.equal(error.code, 'MCP_EVENTS_PROVIDER_REQUEST_FAILED');
+        return true;
+      },
+    );
+    assert.equal(reads, 0);
+    assert.equal(closes, 1,
+      'opened stream must be closed on invalid ' + field + ' descriptor');
+    assert.equal(f.manager.deliverySessions.size, 0);
+  }
+});
+
+test('fulfilled handle lifecycle method getter/proxy is never called', async () => {
+  for (const field of ['close', 'cancel', 'unsubscribe']) {
+    let reads = 0;
+    const handle = {};
+    Object.defineProperty(handle, field, {
+      enumerable: true,
+      get() { reads++; throw new Error(unsafe); },
+    });
+    const f = fixture({
+      delivery: 'push',
+      openEventStream: async () => handle,
+    });
+    const context = await f.manager.scopeContext(f.connection);
+    await assert.rejects(
+      f.manager.ensureDeliverySession(f.connection, context, f.subscription, 'push'),
+      error => error.message === SAFE,
+    );
+    assert.equal(reads, 0);
+  }
+  let traps = 0;
+  const handle = new Proxy({}, {
+    get(_target, field) {
+      if (field !== 'then') traps++;
+      return undefined;
+    },
+    getOwnPropertyDescriptor() {
+      traps++;
+      throw new Error(unsafe);
+    },
+  });
+  const f = fixture({
+    delivery: 'push',
+    openEventStream: async () => handle,
+  });
+  const context = await f.manager.scopeContext(f.connection);
+  await assert.rejects(
+    f.manager.ensureDeliverySession(f.connection, context, f.subscription, 'push'),
+    error => error.message === SAFE,
+  );
+  assert.equal(traps, 0,
+    'only unavoidable Promise thenable assimilation is outside EI descriptor checks');
+});
+
+test('prototype data-method delivery handle retains close lifecycle', async () => {
+  let closes = 0;
+  class HostStream {
+    close() { closes++; }
+  }
+  const f = fixture({
+    delivery: 'push',
+    openEventStream: async () => new HostStream(),
+  });
+  const context = await f.manager.scopeContext(f.connection);
+  assert.equal(
+    (await f.manager.ensureDeliverySession(
+      f.connection, context, f.subscription, 'push',
+    )).status, 'active',
+  );
+  await f.manager.detachConnection(f.connection.connectionId);
+  assert.equal(closes, 1,
+    'valid host adapter class instances retain prototype-defined close methods');
+});
