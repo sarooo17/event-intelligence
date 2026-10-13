@@ -27,7 +27,7 @@ const UnknownResultSchema = z.unknown();
 const PROVIDER_ERROR_MESSAGE = 'MCP Events provider operation failed';
 const CAPABILITY_ERROR_MESSAGE = 'MCP Events capability unavailable';
 
-function isUnavailableCapability(error) {
+export function isUnavailableCapability(error) {
   if (!error || typeof error !== 'object' || isProxy(error)) return false;
   const descriptor = Object.getOwnPropertyDescriptor(error, 'code');
   return descriptor && Object.hasOwn(descriptor, 'value') &&
@@ -556,14 +556,21 @@ export class McpEventsClientManager {
     return removed;
   }
 
-  async rpc(connection, method, params) {
+  // Provider-owned hooks may reject with arbitrary private payloads or
+  // credential-bearing exceptions. Never expose raw thrown objects beyond
+  // this boundary, including capability lookup and stream setup.
+  async invokeProvider(operation) {
     try {
-      return await connection.request(method, params);
+      return await operation();
     } catch {
       const failure = new Error(PROVIDER_ERROR_MESSAGE);
       failure.code = 'MCP_EVENTS_PROVIDER_REQUEST_FAILED';
       throw failure;
     }
+  }
+
+  async rpc(connection, method, params) {
+    return this.invokeProvider(() => connection.request(method, params));
   }
 
   async discoverConnection(connectionId) {
@@ -575,7 +582,9 @@ export class McpEventsClientManager {
     }
 
     const context = await this.scopeContext(connection);
-    const capabilities = (await connection.getCapabilities()) ?? {};
+    const capabilities = (await this.invokeProvider(
+      () => connection.getCapabilities(),
+    )) ?? {};
     this.assertConnectionAttached(connection);
     const profile = resolveMcpEventsCompatibilityProfile({
       capabilities,
@@ -1186,7 +1195,7 @@ export class McpEventsClientManager {
       delivery === 'push'
         ? connection.openEventStream
         : connection.createWebhookSubscription;
-    const handle = await open({
+    const handle = await this.invokeProvider(() => open({
       subscriptionId: subscription.subscriptionId,
       name: subscription.eventName,
       arguments: subscription.arguments,
@@ -1196,7 +1205,7 @@ export class McpEventsClientManager {
       onGap,
       onError,
       onTerminated,
-    });
+    }));
 
     const close =
       typeof handle === 'function'
