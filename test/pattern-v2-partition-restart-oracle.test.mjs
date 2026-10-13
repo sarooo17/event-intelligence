@@ -65,7 +65,9 @@ function interleaved(seed) {
       occurredAt: new Date(Date.UTC(2026, 9, 14, 12, 0, index)).toISOString(),
       serverId: 'synthetic-mcp-server-' + queue.tenant,
       provider: 'partition-oracle',
-      subscriptionArguments: { customer: queue.tenant },
+      // The trigger clauses subscribe with {}, so this must remain {}.
+      // Physical uniqueness is provided by serverId despite colliding IDs.
+      subscriptionArguments: {},
       data: { customer: queue.tenant },
     });
   }
@@ -136,8 +138,8 @@ async function run(seed, stopAt) {
         const customer = order.data.customer;
         assert.equal(payment.data.customer, customer,
           'never correlate across partition customer keys');
-        assert.equal(order.subscriptionArguments.customer, customer);
-        assert.equal(payment.subscriptionArguments.customer, customer);
+        assert.deepEqual(order.subscriptionArguments, {});
+        assert.deepEqual(payment.subscriptionArguments, {});
         assert.equal(order.serverId, 'synthetic-mcp-server-' + customer);
         assert.equal(payment.serverId, 'synthetic-mcp-server-' + customer);
         return JSON.stringify([customer, physical(order), physical(payment)]);
@@ -193,7 +195,7 @@ test('32 deterministic interleavings preserve partition isolation and restart eq
   for (let seed = 1; seed <= 32; seed++) {
     const events = interleaved(seed);
     assert.equal(new Set(events.map(e => e.sourceEventId)).size, 2,
-      'same sourceEventId must occur on distinct physical server/subscription identities');
+      'same sourceEventId must occur on distinct physical MCP server identities');
     assert.equal(new Set(events.map(physical)).size, events.length,
       'physical identity must retain scoped source metadata');
     witnessOrders.add(events.map(item =>
