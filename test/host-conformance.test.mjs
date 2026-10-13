@@ -240,7 +240,7 @@ test('conformance preserves successful scenarios and reports failed host cleanup
   assert.deepEqual(report.summary, { total: 8, passed: 7, failed: 1 });
   assert.equal(report.results.at(-1)?.id, 'lifecycle.close');
   assert.equal(report.results.at(-1)?.status, 'fail');
-  assert.match(report.results.at(-1)?.error ?? '', /close\\(\\) failed/);
+  assert.match(report.results.at(-1)?.error ?? '', /close\(\) failed/);
   assert.equal(JSON.stringify(report).includes('private-token-do-not-disclose'), false);
 });
 
@@ -268,8 +268,8 @@ test('conformance throwOnFailure retains both scenario and cleanup failures', as
       throwOnFailure: true,
     }),
     error => {
-      assert.match(error.message, /core\\.once-threshold/);
-      assert.match(error.message, /lifecycle\\.close/);
+      assert.match(error.message, /core\.once-threshold/);
+      assert.match(error.message, /lifecycle\.close/);
       assert.equal(error.report?.passed, false);
       const failures = error.report.results
         .filter(result => result.status === 'fail')
