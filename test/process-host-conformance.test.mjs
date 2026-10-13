@@ -58,6 +58,22 @@ test('process-host conformance catches sensitive evidence in child observations'
     false, 'IPC must forward a leak verdict, not raw secret-bearing metadata');
 });
 
+test('unnamed child observations cannot conceal an untrusted payload leak', {
+  timeout: 60000,
+}, async () => {
+  const report = await runHostConformance(
+    createProcessHostAdapter({ injectNamelessObservationLeak: true }),
+    { profile: 'core' },
+  );
+  assert.equal(report.passed, false);
+  const failure = report.results.find(item =>
+    item.id === 'observability.required-events');
+  assert.equal(failure?.status, 'fail');
+  assert.match(failure.error ?? '', /observability leaked event payload/);
+  assert.equal(JSON.stringify(report).includes('ei-conformance-secret-probe'),
+    false);
+});
+
 test('timed-out process RPC kills worker and prevents later mutations', {
   timeout: 15000,
 }, async () => {
