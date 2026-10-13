@@ -168,6 +168,33 @@ Previously queued and matched events may still require host-owned
 cancellation policy before waking an agent. Stronger atomic cursor/append
 fencing and explicit queued-work revocation belong to #45.
 
+### Untrusted MCP provider failures are not diagnostics authority
+
+An authenticated host-owned MCP producer can fail with arbitrary exception
+messages, push/webhook callback errors or stream termination details. These
+values may contain private event payloads and **unlabelled** secrets that no
+regex-based redaction could identify. They are not trusted just because the
+embedding host supplied the transport.
+
+EI's manager now returns a fixed safe failure description instead of echoing
+an untrusted provider exception in discovery results, `pollAll()`, connection
+`status().error`, push/webhook callback status or operational telemetry.
+An MCP provider request failure throws a neutral EI error code
+`MCP_EVENTS_PROVIDER_REQUEST_FAILED`; the registry attach path reports
+`EI_HOST_REGISTRY_ATTACH_FAILED` without copying the provider's error.
+Capability-unavailable remains an explicit non-Events discovery status.
+Untrusted termination objects are not serialized, and failures do not change
+trigger matching or wake retry policy. This is a **pre-v1 diagnostics
+behavior change**: hosts that need private transport-level debug messages
+must log them in their own separately permissioned sink, never forward raw
+messages into EI status, model-visible tools or shared telemetry.
+
+This does **not** sanitize arbitrary provider-controlled event names or
+host-selected connection IDs used elsewhere, protect network transport logs
+before EI receives a response, establish quotas or revoke already queued
+wake work. The host still owns transport credential management, network
+timeouts, private debug retention and notification authorization.
+
 ## Telemetry redaction at the observability boundary
 
 The `ei.*` best-effort observability emitter uses an allowlisted record
