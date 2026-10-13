@@ -40,6 +40,7 @@ function fixture({
     },
     async getTriggerState() { return { status: 'active' }; },
     async getMcpClientState() { return null; },
+    async listEventSources() { return []; },
     async listMcpClientStates() { return []; },
     async putMcpClientState(value) { return value; },
   };
