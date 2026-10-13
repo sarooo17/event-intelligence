@@ -100,6 +100,72 @@ function ownPollPage(raw) {
   return page;
 }
 
+// A fulfilled push/webhook subscription can be an untrusted JavaScript
+// handle, including accessor-backed cursor or lifecycle methods. Read slots
+// from data descriptors only; never invoke a getter or Proxy trap.
+function deliveryHandleSlot(raw, field, inherited = false) {
+  let owner = raw;
+  for (let depth = 0; owner != null && depth < 5; depth++) {
+    if (isProxy(owner)) {
+      const error = new Error('MCP Events delivery handle is unsafe');
+      error.code = 'MCP_EVENTS_DELIVERY_HANDLE_INVALID';
+      throw error;
+    }
+    const slot = Object.getOwnPropertyDescriptor(owner, field);
+    if (slot) {
+      if (!Object.hasOwn(slot, 'value')) {
+        const error = new Error('MCP Events delivery handle is unsafe');
+        error.code = 'MCP_EVENTS_DELIVERY_HANDLE_INVALID';
+        throw error;
+      }
+      return { present: true, value: slot.value };
+    }
+    if (!inherited) break;
+    owner = Object.getPrototypeOf(owner);
+  }
+  return { present: false };
+}
+
+async function projectDeliveryHandle(handle) {
+  const invalid = () => {
+    const error = new Error('MCP Events delivery handle is unsafe');
+    error.code = 'MCP_EVENTS_DELIVERY_HANDLE_INVALID';
+    throw error;
+  };
+  if (handle == null) {
+    return { close: async () => {}, hasCursor: false, cursor: null, truncated: false };
+  }
+  if ((typeof handle !== 'function' && typeof handle !== 'object') ||
+      Array.isArray(handle) || isProxy(handle)) invalid();
+
+  let close = typeof handle === 'function' ? handle : async () => {};
+  if (typeof handle !== 'function') {
+    for (const method of ['close', 'cancel', 'unsubscribe']) {
+      const slot = deliveryHandleSlot(handle, method, true);
+      if (typeof slot.value === 'function') {
+        close = () => slot.value.call(handle);
+        break;
+      }
+    }
+  }
+
+  try {
+    const cursor = deliveryHandleSlot(handle, 'cursor');
+    const truncated = deliveryHandleSlot(handle, 'truncated');
+    return {
+      close,
+      hasCursor: cursor.present,
+      cursor: cursor.value,
+      truncated: truncated.value === true,
+    };
+  } catch (error) {
+    // On an invalid metadata field, retire an already-opened stream using
+    // the safe method descriptor found above before propagating failure.
+    try { await close(); } catch {}
+    throw error;
+  }
+}
+
 function discoveryLimitError(detail) {
   const error = new Error('MCP Events discovery rejected: ' + detail);
   error.code = 'MCP_EVENTS_DISCOVERY_LIMIT_EXCEEDED';
@@ -1252,28 +1318,20 @@ export class McpEventsClientManager {
       delivery === 'push'
         ? connection.openEventStream
         : connection.createWebhookSubscription;
-    const handle = await this.invokeProvider(() => open({
-      subscriptionId: subscription.subscriptionId,
-      name: subscription.eventName,
-      arguments: subscription.arguments,
-      cursor: current?.cursor ?? null,
-      onEvent,
-      onActive,
-      onGap,
-      onError,
-      onTerminated,
-    }));
-
-    const close =
-      typeof handle === 'function'
-        ? handle
-        : typeof handle?.close === 'function'
-          ? () => handle.close()
-          : typeof handle?.cancel === 'function'
-            ? () => handle.cancel()
-            : typeof handle?.unsubscribe === 'function'
-              ? () => handle.unsubscribe()
-              : async () => {};
+    const projectedHandle = await this.invokeProvider(async () =>
+      projectDeliveryHandle(await open({
+        subscriptionId: subscription.subscriptionId,
+        name: subscription.eventName,
+        arguments: subscription.arguments,
+        cursor: current?.cursor ?? null,
+        onEvent,
+        onActive,
+        onGap,
+        onError,
+        onTerminated,
+      })),
+    );
+    const close = projectedHandle.close;
 
     const detachedOutcome = () => ({
       subscriptionId: subscription.subscriptionId,
@@ -1294,10 +1352,10 @@ export class McpEventsClientManager {
         await cleanupOrphan();
         return detachedOutcome();
       }
-      if (handle && Object.prototype.hasOwnProperty.call(handle, 'cursor')) {
+      if (projectedHandle.hasCursor) {
         await onActive({
-          cursor: handle.cursor,
-          truncated: handle.truncated === true,
+          cursor: projectedHandle.cursor,
+          truncated: projectedHandle.truncated,
         });
       } else {
         await this.saveSubscriptionState(
