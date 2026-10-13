@@ -84,9 +84,14 @@ engine and wake coordinator. During `restart()` the child is killed with
 state directory. Parent-side delivery observations outlive the child, but
 `readWakeReceipt` always queries the new child's authoritative EI store.
 
-A separate mutation test suppresses restored receipt lookup and requires the
-`core.restart-after-delivery-replay` scenario to fail. Each subprocess
-and temp directory is explicitly cleaned up after the suite, with finite
+A separate mutation test suppresses restored receipt lookup **inside
+the restarted worker process**, and requires the
+`core.restart-after-delivery-replay` scenario to fail. The worker evaluates
+the observability leak canary on full local events before sending only an
+event name and leak verdict over IPC; another negative control confirms
+this leak fails conformance. A timed-out RPC kills and invalidates its worker
+to prevent late writes racing later scenarios. Each subprocess and temp
+directory is explicitly cleaned up after the suite, with finite
 startup/RPC/exit timeouts.
 
 **Scope:** this is a *locally authored reference host*, not independently
