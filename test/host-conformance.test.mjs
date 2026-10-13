@@ -213,3 +213,71 @@ test('v3 conformance catches duplicate completed delivery exposed on restart', a
   assert.equal(regression?.status, 'fail');
   assert.match(regression.error, /restart observer has duplicated or changed/);
 });
+
+
+test('conformance preserves successful scenarios and reports failed host cleanup', async () => {
+  const failingClose = {
+    name: 'cleanup-failure-after-valid-conformance',
+    async createHarness(options) {
+      const harness = await referenceHostAdapter.createHarness(options);
+      return {
+        ...harness,
+        async close() {
+          await harness.close();
+          // Deliberate secret probe: arbitrary host error messages should
+          // not be copied into the externally shareable conformance report.
+          throw new Error('private-token-do-not-disclose');
+        },
+      };
+    },
+  };
+
+  const report = await runHostConformance(failingClose, {
+    profile: 'management',
+  });
+  assert.equal(report.schema, 'event-intelligence.host-conformance.v3');
+  assert.equal(report.passed, false);
+  assert.deepEqual(report.summary, { total: 8, passed: 7, failed: 1 });
+  assert.equal(report.results.at(-1)?.id, 'lifecycle.close');
+  assert.equal(report.results.at(-1)?.status, 'fail');
+  assert.match(report.results.at(-1)?.error ?? '', /close\\(\\) failed/);
+  assert.equal(JSON.stringify(report).includes('private-token-do-not-disclose'), false);
+});
+
+test('conformance throwOnFailure retains both scenario and cleanup failures', async () => {
+  const faulty = {
+    name: 'faulty-delivery-and-cleanup-host',
+    async createHarness(options) {
+      const harness = await referenceHostAdapter.createHarness(options);
+      return {
+        ...harness,
+        deliveries() {
+          return harness.deliveries().filter(row =>
+            row.triggerId !== 'conformance-once');
+        },
+        async close() {
+          await harness.close();
+          throw new Error('cleanup failed');
+        },
+      };
+    },
+  };
+  await assert.rejects(
+    () => runHostConformance(faulty, {
+      profile: 'core',
+      throwOnFailure: true,
+    }),
+    error => {
+      assert.match(error.message, /core\\.once-threshold/);
+      assert.match(error.message, /lifecycle\\.close/);
+      assert.equal(error.report?.passed, false);
+      const failures = error.report.results
+        .filter(result => result.status === 'fail')
+        .map(result => result.id);
+      assert.ok(failures.includes('core.once-threshold'));
+      assert.ok(failures.includes('lifecycle.close'));
+      assert.equal(error.report.summary.failed, failures.length);
+      return true;
+    },
+  );
+});
