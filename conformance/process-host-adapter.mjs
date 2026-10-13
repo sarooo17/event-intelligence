@@ -17,9 +17,11 @@ async function startWorker(dataDir, observability, onSpawn, {
   injectNamelessObservationLeak = false,
   rpcTimeoutMs = RPC_TIMEOUT_MS,
   hangMethod,
+  workerExecPath,
 } = {}) {
   const child = fork(workerFile, [], {
     execArgv: [],
+    ...(workerExecPath ? { execPath: workerExecPath } : {}),
     env: {
       ...process.env,
       EI_CONFORMANCE_DATA_DIR: dataDir,
@@ -47,21 +49,44 @@ async function startWorker(dataDir, observability, onSpawn, {
   });
   let finished = false;
   let invalidated = false;
-  const exited = new Promise(resolve => {
-    child.once('exit', (code, signal) => {
-      finished = true;
-      const error = new Error('EI conformance child exited: ' +
-        String(code ?? signal) + ' ' + stderr.slice(-400));
-      readyReject(error);
-      for (const entry of pending.values()) {
-        clearTimeout(entry.timer);
-        entry.reject(error);
-      }
-      pending.clear();
-      resolve({ code, signal });
-    });
+  let settleExited;
+  const exited = new Promise(resolve => { settleExited = resolve; });
+  const completeExit = (error, outcome) => {
+    if (finished) return;
+    finished = true;
+    readyReject(error);
+    for (const entry of pending.values()) {
+      clearTimeout(entry.timer);
+      entry.reject(error);
+    }
+    pending.clear();
+    settleExited(outcome);
+  };
+  child.once('exit', (code, signal) => {
+    completeExit(new Error('EI conformance child exited: ' +
+      String(code ?? signal) + ' ' + stderr.slice(-400)), { code, signal });
   });
-  child.on('error', error => readyReject(error));
+  // A failed spawn can emit 'error' with NO subsequent 'exit'. Treat it
+  // as terminal so startup failure cannot hang on an unsettled promise.
+  child.once('error', error => {
+    completeExit(error, { code: null, signal: null, spawnError: true });
+  });
+  const awaitExitBounded = async () => {
+    let timeout;
+    try {
+      return await Promise.race([
+        exited,
+        new Promise((_, reject) => {
+          timeout = setTimeout(
+            () => reject(new Error('Host conformance worker did not exit')),
+            EXIT_TIMEOUT_MS,
+          );
+        }),
+      ]);
+    } finally {
+      clearTimeout(timeout);
+    }
+  };
   child.on('message', message => {
     if (message?.type === 'observation') {
       // Malformed unnamed observations must not bypass leak detection.
@@ -101,7 +126,11 @@ async function startWorker(dataDir, observability, onSpawn, {
     onSpawn?.(child.pid);
   } catch (error) {
     if (!finished) child.kill('SIGKILL');
-    await exited;
+    try {
+      await awaitExitBounded();
+    } catch {
+      // Preserve the original startup error after the bounded exit attempt.
+    }
     throw error;
   } finally {
     clearTimeout(startupTimer);
@@ -139,22 +168,7 @@ async function startWorker(dataDir, observability, onSpawn, {
     async terminate(signal = 'SIGKILL') {
       if (finished) return;
       child.kill(signal);
-      let timeout;
-      try {
-        await Promise.race([
-          exited,
-          new Promise((_, reject) => {
-            timeout = setTimeout(
-              () => reject(new Error('Host conformance worker did not exit')),
-              EXIT_TIMEOUT_MS,
-            );
-          }),
-        ]);
-      } finally {
-        // A successful process exit must not keep a stale 5-second timer
-        // alive, slowing the entire conformance suite after each restart.
-        clearTimeout(timeout);
-      }
+      await awaitExitBounded();
     },
   };
 }
@@ -166,6 +180,7 @@ export function createProcessHostAdapter({
   injectNamelessObservationLeak = false,
   rpcTimeoutMs = RPC_TIMEOUT_MS,
   hangMethod,
+  workerExecPath,
 } = {}) {
   return {
     name: 'separate-os-process-reference-host',
@@ -178,6 +193,7 @@ export function createProcessHostAdapter({
           injectNamelessObservationLeak,
           rpcTimeoutMs,
           hangMethod,
+          workerExecPath,
         });
       } catch (error) {
         await rm(dataDir, { recursive: true, force: true });
