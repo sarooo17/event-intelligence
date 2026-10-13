@@ -98,6 +98,8 @@ test('budget evidence is reproducible and contains source + definition digests a
     assert.match(entry.definitionHash, /^[a-f0-9]{64}$/);
     assert.match(entry.sourceHash, /^[a-f0-9]{64}$/);
     assert.equal(entry.definitionHash, hash(entry.definition));
+    assert.equal(entry.sourceHash, hash(entry.sources),
+      'the archived synthetic source events must exactly verify their digest');
     assert.ok(entry.sources.length);
     assert.equal(entry.sources.length, new Set(
       entry.sources.map(item => item.sourceEventId),
