@@ -385,3 +385,29 @@ test('fulfilled capability/poll proxies are rejected without invoking provider f
   assert.equal(eventPropertyReads, 0,
     'proxy gets only unavoidable Promise thenable assimilation, no page field reads');
 });
+
+
+test('nextPollMs object coercion cannot run provider valueOf or leak secrets', async () => {
+  let calls = 0;
+  const fakeNumber = {
+    valueOf() { calls++; throw new Error(unsafe); },
+    toString() { calls++; throw new Error(unsafe); },
+  };
+  const f = fixture({
+    request: async () => ({
+      events: [],
+      cursor: null,
+      hasMore: false,
+      nextPollMs: fakeNumber,
+    }),
+  });
+  await assert.rejects(
+    f.manager.pollConnection(f.connection.connectionId),
+    error => {
+      assert.equal(error.message, 'events/poll returned invalid nextPollMs');
+      f.assertNoSecret({ code: error.code ?? null, message: error.message });
+      return true;
+    },
+  );
+  assert.equal(calls, 0, 'numeric delay parsing must not invoke provider methods');
+});
