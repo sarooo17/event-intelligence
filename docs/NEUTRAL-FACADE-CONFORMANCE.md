@@ -53,3 +53,17 @@ exercise the full create/pause/resume/update/delete sequence through an
 external host. Other unit and real-host tests cover complementary surfaces.
 The third-party independent host and v3 cross-host certification required by
 #42 are still pending.
+
+
+## Host cleanup failure evidence
+
+The v3 runner preserves completed case results if an adapter's `close()`
+throws. A failed teardown adds a single `lifecycle.close` failure to the
+report (and to the attached `error.report` when `throwOnFailure` is enabled).
+Successful teardown does not add a new case or change the existing seven-case
+management profile. Cleanup errors use a fixed, non-sensitive diagnostic
+instead of echoing arbitrary host exception text into a shareable report.
+
+This verifies **report integrity**, not that an external host actually released
+threads, connections or OS resources. It does not replace process-restart,
+independent-host or registry-lifecycle acceptance under #42.
