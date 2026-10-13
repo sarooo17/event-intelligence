@@ -46,6 +46,60 @@ export const MAX_MCP_EVENT_DISCOVERY_PAGES = 32;
 export const MAX_MCP_EVENT_DISCOVERY_SOURCES = 256;
 export const MAX_MCP_EVENT_CURSOR_BYTES = 4096;
 
+// MCP SDK capabilities are host-owned but may be backed by untrusted adapter
+// objects. Only the one advertised extension *identity* is used here.
+// Project it by own data descriptor; never evaluate provider getters/Proxies.
+function safeMcpCapabilities(raw) {
+  const invalid = () => {
+    const error = new Error('MCP Events capabilities are unsafe');
+    error.code = 'MCP_EVENTS_CAPABILITY_INVALID';
+    throw error;
+  };
+  if (raw == null) return {};
+  if (typeof raw !== 'object' || Array.isArray(raw) || isProxy(raw)) invalid();
+  const extensionsSlot = Object.getOwnPropertyDescriptor(raw, 'extensions');
+  if (!extensionsSlot) return {};
+  if (!Object.hasOwn(extensionsSlot, 'value')) invalid();
+  const extensions = extensionsSlot.value;
+  if (extensions == null) return {};
+  if (typeof extensions !== 'object' ||
+      Array.isArray(extensions) || isProxy(extensions)) return {};
+  const extension = Object.getOwnPropertyDescriptor(
+    extensions, MCP_EVENTS_EXTENSION_ID,
+  );
+  if (!extension) return {};
+  if (!Object.hasOwn(extension, 'value')) invalid();
+  return { extensions: { [MCP_EVENTS_EXTENSION_ID]: true } };
+}
+
+// A valid-looking fulfilled poll response can hide private data inside
+// accessors, even though the request promise itself never rejected.
+// Snapshot ONLY fields used by polling; retain the existing per-page event
+// count limit before deep-copying the bounded event array.
+function ownPollPage(raw) {
+  const invalid = () => {
+    const error = new Error('MCP Events poll page is unsafe');
+    error.code = 'MCP_EVENTS_POLL_PAGE_INVALID';
+    throw error;
+  };
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw) ||
+      isProxy(raw)) invalid();
+  const page = {};
+  for (const field of ['events', 'cursor', 'hasMore', 'truncated', 'nextPollMs']) {
+    const slot = Object.getOwnPropertyDescriptor(raw, field);
+    if (!slot) {
+      if (field === 'events') invalid();
+      continue;
+    }
+    if (!Object.hasOwn(slot, 'value')) invalid();
+    Object.defineProperty(page, field, {
+      value: slot.value, enumerable: true,
+      configurable: true, writable: true,
+    });
+  }
+  return page;
+}
+
 function discoveryLimitError(detail) {
   const error = new Error('MCP Events discovery rejected: ' + detail);
   error.code = 'MCP_EVENTS_DISCOVERY_LIMIT_EXCEEDED';
@@ -582,9 +636,9 @@ export class McpEventsClientManager {
     }
 
     const context = await this.scopeContext(connection);
-    const capabilities = (await this.invokeProvider(
-      () => connection.getCapabilities(),
-    )) ?? {};
+    const capabilities = await this.invokeProvider(async () =>
+      safeMcpCapabilities(await connection.getCapabilities()),
+    );
     this.assertConnectionAttached(connection);
     const profile = resolveMcpEventsCompatibilityProfile({
       capabilities,
@@ -940,7 +994,7 @@ export class McpEventsClientManager {
       const profile =
         this.profiles.get(connection.connectionId) ??
         getMcpEventsCompatibilityProfile(connection.compatibilityProfile);
-      const result = await this.rpc(connection, profile.pollMethod, {
+      const rawResult = await this.rpc(connection, profile.pollMethod, {
         name: subscription.eventName,
         arguments: subscription.arguments,
         cursor,
@@ -949,8 +1003,8 @@ export class McpEventsClientManager {
       // Do not process an RPC response which completed after detach or after
       // another session replaced this connectionId.
       this.assertConnectionAttached(connection);
-
-      const remoteEvents = result?.events;
+      const result = ownPollPage(rawResult);
+      const remoteEvents = result.events;
       // A producer adapter can return a Proxy, accessor-backed array or a
       // custom iterator, not just wire-decoded JSON. Snapshot the bounded
       // OWN entries before the first async append; the remote array cannot
