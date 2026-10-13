@@ -4,7 +4,10 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { createEventIntelligenceHost } from '../scripts/host-integration.mjs';
-import { McpEventsClientManager } from '../scripts/lib/mcp-events-client.mjs';
+import {
+  McpEventsClientManager,
+  isUnavailableCapability,
+} from '../scripts/lib/mcp-events-client.mjs';
 import { createObservabilityEmitter } from '../scripts/lib/observability.mjs';
 
 const PROBE = 'arbitrary-unlabelled-private-data-canary';
@@ -12,7 +15,9 @@ const BEARER = 'Bearer eyJhbGciOiJiZW90aWNfYXBpX2tleSJ9.secret';
 const unsafe = 'provider-failure: ' + PROBE + ' authorization=' + BEARER;
 const SAFE = 'MCP Events provider operation failed';
 
-function fixture({ request, openEventStream, delivery = 'poll' } = {}) {
+function fixture({
+  request, getCapabilities, openEventStream, delivery = 'poll',
+} = {}) {
   const observations = [];
   const descriptor = {
     name: 'private.event',
@@ -50,9 +55,9 @@ function fixture({ request, openEventStream, delivery = 'poll' } = {}) {
     connectionId: 'source-connection',
     serverId: 'source-server',
     request: request ?? (async () => ({ events: [] })),
-    getCapabilities: async () => ({
+    getCapabilities: getCapabilities ?? (async () => ({
       extensions: { 'io.modelcontextprotocol/events': { listChanged: false } },
-    }),
+    })),
     ...(openEventStream ? { openEventStream } : {}),
   });
   manager.descriptors.set(connection.connectionId, [descriptor]);
@@ -171,6 +176,110 @@ test('registry attach error does not expose producer-controlled exception or tel
     });
     assert.doesNotMatch(serialized, /arbitrary-unlabelled-private-data-canary/);
     assert.doesNotMatch(serialized, /eyJhbGciOiJiZW90aWNfYXBpX2tleSJ9/);
+  } finally {
+    await host?.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+
+test('capability lookup errors are neutralized before public attach and discover', async () => {
+  const f = fixture({
+    getCapabilities: async () => { throw new Error(unsafe); },
+  });
+  await assert.rejects(
+    f.manager.discoverConnection(f.connection.connectionId),
+    error => {
+      assert.equal(error.message, SAFE);
+      assert.equal(error.code, 'MCP_EVENTS_PROVIDER_REQUEST_FAILED');
+      f.assertNoSecret({ error: error.message });
+      return true;
+    },
+  );
+  const discovered = await f.manager.discoverAll();
+  assert.equal(discovered[0].status, 'error');
+  assert.equal(discovered[0].error, SAFE);
+  f.assertNoSecret(discovered);
+});
+
+test('push provider opening failure never escapes as raw provider exception', async () => {
+  for (const openError of [new Error(unsafe), unsafe]) {
+    const f = fixture({
+      delivery: 'push',
+      openEventStream: async () => { throw openError; },
+    });
+    const context = await f.manager.scopeContext(f.connection);
+    await assert.rejects(
+      f.manager.ensureDeliverySession(f.connection, context, f.subscription, 'push'),
+      error => {
+        assert.equal(error.message, SAFE);
+        assert.equal(error.code, 'MCP_EVENTS_PROVIDER_REQUEST_FAILED');
+        f.assertNoSecret({ error: error.message });
+        return true;
+      },
+    );
+  }
+});
+
+test('capability-unavailable classification never invokes an accessor or Proxy trap', () => {
+  let reads = 0;
+  const hostile = {};
+  Object.defineProperty(hostile, 'code', {
+    enumerable: true,
+    get() {
+      reads++;
+      throw new Error(unsafe);
+    },
+  });
+  assert.equal(isUnavailableCapability(hostile), false);
+  const proxy = new Proxy({}, {
+    get() { reads++; throw new Error(unsafe); },
+    getOwnPropertyDescriptor() { reads++; throw new Error(unsafe); },
+  });
+  assert.equal(isUnavailableCapability(proxy), false);
+  assert.equal(reads, 0);
+  const safe = Object.assign(new Error('capability unavailable'), {
+    code: 'MCP_EVENTS_CAPABILITY_UNAVAILABLE',
+  });
+  assert.equal(isUnavailableCapability(safe), true);
+});
+
+test('host registry attaches classify getter-bearing provider errors safely', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'ei-registry-accessor-error-'));
+  let host;
+  let getterReads = 0;
+  try {
+    let entries = [];
+    host = await createEventIntelligenceHost({
+      dataDir: directory,
+      env: {
+        TYPESAFE_API_KEY: '',
+        RUNTIME_WAKE_TARGETS_JSON: '{}',
+        TEMPORAL_TICK_MS: '100000',
+        WAKE_RETRY_TICK_MS: '100000',
+      },
+      mcpRegistry: { listConnections: () => entries },
+    });
+    entries = [{
+      id: 'provider-error-code',
+      serverId: 'source-server',
+      client: {
+        getServerCapabilities() {
+          const error = new Error(unsafe);
+          Object.defineProperty(error, 'code', {
+            get() { getterReads++; throw new Error(unsafe); },
+          });
+          throw error;
+        },
+        async request() { return { events: [] }; },
+      },
+    }];
+    const results = await host.refreshMcpRegistry();
+    assert.equal(results[0]?.status, 'error');
+    assert.equal(results[0]?.code, 'EI_HOST_REGISTRY_ATTACH_FAILED');
+    assert.equal(results[0]?.error, 'MCP registry connection attach failed');
+    assert.equal(getterReads, 0);
+    assert.doesNotMatch(JSON.stringify(results), /arbitrary-unlabelled-private-data-canary/);
   } finally {
     await host?.close();
     await rm(directory, { recursive: true, force: true });
