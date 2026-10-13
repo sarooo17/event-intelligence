@@ -213,6 +213,37 @@ before EI receives a response, establish quotas or revoke already queued
 wake work. The host still owns transport credential management, network
 timeouts, private debug retention and notification authorization.
 
+### Durable wake work after MCP session or host-policy revocation
+
+**Session detach does not cancel an already matched and persisted wake.**
+MCP connection identity and source-event evidence cannot grant authorization
+to run a future host effect. The host must check its **current** tenant,
+principal, session and target authorization on **every** wake delivery attempt,
+including retries resumed after process/store restart and same-ID MCP
+connection replacement. Host policy and approval stay outside Event
+Intelligence; EI must not cache a previously allowed decision as proof of
+authority for the next attempt.
+
+`test/queued-wake-host-revocation.test.mjs` is an executable reference
+contract. It begins with a durable failed wake, closes and reopens the store,
+then changes an explicit host-side authorization decision to deny the due
+retry. No privileged host effect runs, the wake retains `retry_pending`
+status and **no** delivery receipt is fabricated. If the host later
+reauthorizes before exhausting retries, an authorized retry records one
+receipt and replay cannot re-execute the effect. A separately bounded denial
+test reaches durable `dead_letter` without falsely reporting delivery.
+
+This verifies host-owned policy checking in an **in-process reference
+dispatcher**, not automatic connection-based wake cancellation or
+distributed transactional claim/revocation fencing. A consistently denied
+host callback currently consumes the normal retry budget and eventually
+reaches DLQ: the host must own retry/error classification, any explicit
+cancellation decision, and operator remediation. Persistent accepted
+occurrences created before revocation and the known append/replay gap still
+require a shared connection-epoch transaction (#45/#21). External host
+effects additionally need idempotency/permission checks at the action
+boundary, not only before invoking a callback.
+
 ## Telemetry redaction at the observability boundary
 
 The `ei.*` best-effort observability emitter uses an allowlisted record
