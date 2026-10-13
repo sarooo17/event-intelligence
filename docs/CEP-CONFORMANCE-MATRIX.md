@@ -115,7 +115,10 @@ machine-readable `cep-budget-evidence` artifact. The report records:
   `GITHUB_SHA` commit identity available in CI;
 - deterministic seed **20261014**, fixed UTC clock, each synthetic source
   occurrence's ID/ref/timestamp, and stable SHA-256 hashes of the complete
-  synthetic source fixture and canonical Pattern definition;
+  synthetic source fixture and canonical Pattern definition (the report
+  includes the complete synthetic source objects so both hashes can be
+  independently recomputed; never use this fixture dumper for live private
+  event payloads);
 - configured candidate/semantic/buffer budgets, lateness, and raw
   `truncated`, matches, pending, and semantic evaluation counts.
 
