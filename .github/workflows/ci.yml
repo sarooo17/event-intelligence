@@ -22,6 +22,13 @@ jobs:
       - run: node scripts/check-release-manifest.mjs
       - run: npm run check
       - run: npm run conformance:pattern-v2
+      - name: Produce bounded CEP budget evidence
+        run: node scripts/evidence/pattern-v2-budget-evidence.mjs --out cep-budget-evidence.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cep-budget-evidence
+          path: cep-budget-evidence.json
+          if-no-files-found: error
 
   postgres-ha:
     runs-on: ubuntu-latest
