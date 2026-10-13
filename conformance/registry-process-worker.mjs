@@ -13,6 +13,7 @@ const eventName = 'registry.changed';
 let entries = [];
 let queued = [];
 let pollIndex = 0;
+const cursorInputs = [];
 const wakes = [];
 
 function provider(session) {
@@ -38,6 +39,10 @@ function provider(session) {
         };
       }
       if (message.method === 'events/poll') {
+        cursorInputs.push({
+          session,
+          cursor: message.params?.cursor ?? null,
+        });
         const events = queued.splice(0);
         return { events, cursor: session + ':' + ++pollIndex, hasMore: false };
       }
@@ -118,13 +123,15 @@ const handlers = {
     return host.runtime.mcpEventsClient.pollAll();
   },
   async snapshot({ wakeIds = [] } = {}) {
-    const [status, sources, storedSources, triggers, receipts] = await Promise.all([
-      host.mcpStatus(),
-      host.eventSources,
-      host.store.listEventSources(),
-      host.triggerControl.listTriggers({ owner }),
-      Promise.all(wakeIds.map(id => host.store.getWakeDelivery(id))),
-    ]);
+    const [status, sources, storedSources, storedClient, triggers, receipts] =
+      await Promise.all([
+        host.mcpStatus(),
+        host.eventSources,
+        host.store.listEventSources(),
+        host.store.getMcpClientState(connectionId, eventName, {}),
+        host.triggerControl.listTriggers({ owner }),
+        Promise.all(wakeIds.map(id => host.store.getWakeDelivery(id))),
+      ]);
     return {
       pid: process.pid,
       connections: status.map(entry => ({
@@ -150,6 +157,8 @@ const handlers = {
         status: entry?.status ?? null,
         runtimeReceiptId: entry?.runtimeReceiptId ?? null,
       })),
+      storedCursor: storedClient?.cursor ?? null,
+      cursorInputs: [...cursorInputs],
       wakes: [...wakes],
     };
   },
