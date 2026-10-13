@@ -15,6 +15,7 @@ async function startWorker(dataDir, observability, onSpawn, {
   suppressRestoredReceipt = false,
   injectLeakedObservation = false,
   rpcTimeoutMs = RPC_TIMEOUT_MS,
+  hangMethod,
 } = {}) {
   const child = fork(workerFile, [], {
     execArgv: [],
@@ -25,6 +26,7 @@ async function startWorker(dataDir, observability, onSpawn, {
         suppressRestoredReceipt ? '1' : '0',
       EI_CONFORMANCE_INJECT_OBSERVATION_LEAK:
         injectLeakedObservation ? '1' : '0',
+      EI_CONFORMANCE_HANG_METHOD: hangMethod ?? '',
     },
     stdio: ['ignore', 'ignore', 'pipe', 'ipc'],
   });
@@ -144,6 +146,7 @@ export function createProcessHostAdapter({
   suppressRestoredReceipt = false,
   injectLeakedObservation = false,
   rpcTimeoutMs = RPC_TIMEOUT_MS,
+  hangMethod,
 } = {}) {
   return {
     name: 'separate-os-process-reference-host',
@@ -154,6 +157,7 @@ export function createProcessHostAdapter({
         worker = await startWorker(dataDir, observability, onSpawn, {
           injectLeakedObservation,
           rpcTimeoutMs,
+          hangMethod,
         });
       } catch (error) {
         await rm(dataDir, { recursive: true, force: true });
