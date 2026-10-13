@@ -285,3 +285,103 @@ test('host registry attaches classify getter-bearing provider errors safely', as
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+
+test('fulfilled getter-backed capability objects cannot execute accessors or disclose exceptions', async () => {
+  for (const field of ['extensions', 'declaredExtension']) {
+    let getterInvocations = 0;
+    const extensions = {};
+    Object.defineProperty(extensions, 'io.modelcontextprotocol/events', {
+      enumerable: true,
+      get() { getterInvocations++; throw new Error(unsafe); },
+    });
+    const capabilities = field === 'extensions'
+      ? Object.defineProperty({}, 'extensions', {
+          enumerable: true,
+          get() { getterInvocations++; throw new Error(unsafe); },
+        })
+      : { extensions };
+    const f = fixture({
+      getCapabilities: async () => capabilities,
+    });
+    await assert.rejects(
+      f.manager.discoverConnection(f.connection.connectionId),
+      error => {
+        assert.equal(error.message, SAFE);
+        assert.equal(error.code, 'MCP_EVENTS_PROVIDER_REQUEST_FAILED');
+        return true;
+      },
+    );
+    assert.equal(getterInvocations, 0,
+      field + ' accessor must never be evaluated');
+  }
+});
+
+test('fulfilled poll-page top-level accessors fail before cursor or payload processing', async () => {
+  for (const field of ['events', 'cursor', 'hasMore', 'truncated', 'nextPollMs']) {
+    let getterInvocations = 0;
+    const raw = {
+      events: [],
+      cursor: 'safe-cursor',
+      hasMore: false,
+      truncated: false,
+      nextPollMs: 1000,
+    };
+    Object.defineProperty(raw, field, {
+      enumerable: true,
+      get() { getterInvocations++; throw new Error(unsafe); },
+    });
+    const f = fixture({ request: async () => raw });
+    await assert.rejects(
+      f.manager.pollConnection(f.connection.connectionId),
+      error => {
+        assert.equal(error.code, 'MCP_EVENTS_POLL_PAGE_INVALID');
+        assert.equal(error.message, 'MCP Events poll page is unsafe');
+        f.assertNoSecret({ message: error.message, code: error.code });
+        return true;
+      },
+    );
+    assert.equal(getterInvocations, 0,
+      field + ' getter must not run during poll page validation');
+    assert.equal(f.observations.length, 0);
+  }
+});
+
+test('fulfilled capability/poll proxies are rejected without invoking provider fields', async () => {
+  let capabilityTrap = 0;
+  const badCapabilities = new Proxy({}, {
+    get(_target, key) {
+      if (key !== 'then') capabilityTrap++;
+      return undefined;
+    },
+    getOwnPropertyDescriptor() {
+      capabilityTrap++;
+      throw new Error(unsafe);
+    },
+  });
+  const cap = fixture({ getCapabilities: async () => badCapabilities });
+  await assert.rejects(
+    cap.manager.discoverConnection(cap.connection.connectionId),
+    error => error.message === SAFE,
+  );
+  assert.equal(capabilityTrap, 0);
+
+  let eventPropertyReads = 0;
+  const badPage = new Proxy({}, {
+    get(_target, key) {
+      if (key === 'events') eventPropertyReads++;
+      return undefined;
+    },
+    getOwnPropertyDescriptor() {
+      eventPropertyReads++;
+      throw new Error(unsafe);
+    },
+  });
+  const poll = fixture({ request: async () => badPage });
+  await assert.rejects(
+    poll.manager.pollConnection(poll.connection.connectionId),
+    error => error.code === 'MCP_EVENTS_POLL_PAGE_INVALID',
+  );
+  assert.equal(eventPropertyReads, 0,
+    'proxy gets only unavoidable Promise thenable assimilation, no page field reads');
+});
