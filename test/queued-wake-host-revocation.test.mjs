@@ -65,12 +65,12 @@ test('durable queued wake rechecks host-owned revocation before effect on retry 
   // A host-specific target grant, not a global boolean or authorization
   // derived from a source event. This fixture does not model tenant/session
   // identity or actual MCP detach: those remain explicit host responsibilities.
-  const permission = 'host-owned-policy-trigger@1:host-managed-runtime/permissioned-effect';
+  const permission = 'host-owned-policy-trigger@1:host-managed-runtime/task/permissioned-effect';
   const policy = { grants: new Set([permission]), checked: [], effects: [] };
   const hostDispatcher = async packet => {
     const target = packet.target;
     const key = packet.trigger_id + '@' + packet.trigger_version +
-      ':' + target?.runtime + '/' + target?.id;
+      ':' + target?.runtime + '/' + target?.kind + '/' + target?.id;
     policy.checked.push({ key, wakeId: packet.wake_id });
     if (!policy.grants.has(key)) throw new Error('host target policy denied');
     policy.effects.push(packet.wake_id);
