@@ -1,0 +1,158 @@
+import assert from 'node:assert/strict';
+import { mkdtemp, rm } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import test from 'node:test';
+import { createEventIntelligenceHost } from '../scripts/host-integration.mjs';
+
+function eventsClient(eventName) {
+  return {
+    getServerCapabilities() {
+      return {
+        extensions: {
+          'io.modelcontextprotocol/events': { listChanged: false },
+        },
+      };
+    },
+    async request(message) {
+      if (message.method === 'events/list') {
+        return {
+          events: [{
+            name: eventName,
+            delivery: ['poll'],
+            payloadSchema: { type: 'object' },
+          }],
+        };
+      }
+      if (message.method === 'events/poll') {
+        return { events: [], cursor: 'ready', hasMore: false };
+      }
+      throw new Error('Unexpected Events request: ' + message.method);
+    },
+  };
+}
+
+const env = {
+  TYPESAFE_API_KEY: '',
+  RUNTIME_WAKE_TARGETS_JSON: '{}',
+  TEMPORAL_TICK_MS: '100000',
+  WAKE_RETRY_TICK_MS: '100000',
+};
+
+const names = async host =>
+  (await host.eventSources).map(source => source.eventName).sort();
+
+test('registry cannot adopt, replace or detach an explicitly declared MCP client', async () => {
+  const dataDir = await mkdtemp(path.join(os.tmpdir(), 'ei-registry-owned-'));
+  const hostClient = eventsClient('explicit.changed');
+  let registryEntries = [{
+    id: 'owned',
+    serverId: 'host-server',
+    client: hostClient,
+    pollIntervalMs: 300000,
+  }];
+  const registry = { listConnections: () => registryEntries };
+  let host;
+  try {
+    host = await createEventIntelligenceHost({
+      dataDir,
+      env,
+      mcpClients: [{
+        id: 'owned',
+        serverId: 'host-server',
+        client: hostClient,
+        pollIntervalMs: 300000,
+      }],
+      mcpRegistry: registry,
+    });
+
+    // Even the same client / server identity may not be adopted by the
+    // registry. The initial startup refresh must leave ownership with host.
+    const repeated = await host.refreshMcpRegistry();
+    assert.deepEqual(repeated.map(result => ({
+      id: result.connectionId, status: result.status, code: result.code,
+    })), [{
+      id: 'owned',
+      status: 'error',
+      code: 'EI_HOST_REGISTRY_ID_CONFLICT',
+    }]);
+    assert.deepEqual(await names(host), ['explicit.changed']);
+    assert.deepEqual((await host.mcpStatus()).map(row => row.connectionId), ['owned']);
+
+    // A different identity must never replace the explicit provider, while
+    // an unrelated registry entry must still attach normally.
+    registryEntries = [
+      {
+        id: 'owned',
+        serverId: 'attempted-replacement',
+        client: eventsClient('unauthorized.changed'),
+        pollIntervalMs: 300000,
+      },
+      {
+        id: 'registry-only',
+        serverId: 'registry-server',
+        client: eventsClient('registry.changed'),
+        pollIntervalMs: 300000,
+      },
+    ];
+    const changed = await host.refreshMcpRegistry();
+    assert.ok(changed.some(row =>
+      row.connectionId === 'owned' &&
+      row.status === 'error' &&
+      row.code === 'EI_HOST_REGISTRY_ID_CONFLICT'));
+    assert.ok(changed.some(row =>
+      row.connectionId === 'registry-only' && row.status === 'attached'));
+    assert.deepEqual(await names(host), ['explicit.changed', 'registry.changed']);
+
+    registryEntries = [];
+    const removed = await host.refreshMcpRegistry();
+    assert.ok(removed.some(row =>
+      row.connectionId === 'registry-only' && row.status === 'detached'));
+    assert.equal(removed.some(row => row.connectionId === 'owned'), false,
+      'registry removal must not detach host-owned connections');
+    assert.deepEqual((await host.mcpStatus()).map(row => row.connectionId), ['owned']);
+    assert.deepEqual(await names(host), ['explicit.changed']);
+  } finally {
+    await host?.close();
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test('manual host client attachment remains protected from later registry collisions', async () => {
+  const dataDir = await mkdtemp(path.join(os.tmpdir(), 'ei-registry-manual-'));
+  let registryEntries = [];
+  let host;
+  try {
+    host = await createEventIntelligenceHost({
+      dataDir,
+      env,
+      mcpRegistry: { listConnections: () => registryEntries },
+    });
+    await host.attachMcpClient({
+      id: 'manually-owned',
+      serverId: 'manual-server',
+      client: eventsClient('manual.changed'),
+      pollIntervalMs: 300000,
+    });
+    registryEntries = [{
+      id: 'manually-owned',
+      serverId: 'conflicting-server',
+      client: eventsClient('replaced.changed'),
+      pollIntervalMs: 300000,
+    }];
+    const results = await host.refreshMcpRegistry();
+    assert.equal(results.length, 1);
+    assert.equal(results[0].code, 'EI_HOST_REGISTRY_ID_CONFLICT');
+    assert.equal(results[0].status, 'error');
+    assert.deepEqual(await names(host), ['manual.changed']);
+
+    registryEntries = [];
+    await host.refreshMcpRegistry();
+    assert.deepEqual(await names(host), ['manual.changed']);
+    assert.deepEqual((await host.mcpStatus()).map(row => row.connectionId),
+      ['manually-owned']);
+  } finally {
+    await host?.close();
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
