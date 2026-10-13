@@ -8,8 +8,16 @@ import { runHostConformance } from '../scripts/host-conformance.mjs';
 export const referenceHostAdapter = {
   name: 'event-intelligence-reference-host',
 
-  async createHarness({ observability, useNeutralFacade = false }) {
-    const dataDir = await mkdtemp(path.join(os.tmpdir(), 'ei-host-conformance-'));
+  async createHarness({
+    observability,
+    useNeutralFacade = false,
+    dataDir: suppliedDataDir,
+    preserveData = false,
+  }) {
+    // Supplying the directory makes true cross-process restart tests possible.
+    // Existing isolated reference tests still own and delete a temp directory.
+    const dataDir = suppliedDataDir ??
+      await mkdtemp(path.join(os.tmpdir(), 'ei-host-conformance-'));
     const externalDeliveries = [];
     const owner = { type: 'user', principal_id: 'host-conformance-user' };
     let host = null;
@@ -281,7 +289,7 @@ export const referenceHostAdapter = {
 
       async close() {
         await host?.close();
-        await rm(dataDir, { recursive: true, force: true });
+        if (!preserveData) await rm(dataDir, { recursive: true, force: true });
       },
     };
   },

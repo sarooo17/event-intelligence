@@ -72,3 +72,32 @@ identity once is indistinguishable without independent host effect accounting:
 the host must independently enforce receipt idempotency. This test verifies EI
 receipt persistence, not external runtime checkpoint persistence, distributed
 exactly-once effects or true OS process-kill recovery.
+
+## True OS-process restart evidence (reference fixture)
+
+`node --test test/process-host-conformance.test.mjs` runs the complete
+seven-case management v3 suite against an **EI reference host in a child
+process**. The parent does not import EI's runtime engine: calls cross IPC,
+while the child's host uses the existing real EI store, planner, matching
+engine and wake coordinator. During `restart()` the child is killed with
+`SIGKILL` without running host `close()`; a new PID opens the same durable
+state directory. Parent-side delivery observations outlive the child, but
+`readWakeReceipt` always queries the new child's authoritative EI store.
+
+A separate mutation test suppresses restored receipt lookup **inside
+the restarted worker process**, and requires the
+`core.restart-after-delivery-replay` scenario to fail. The worker evaluates
+the observability leak canary on full local events before sending only an
+event name and leak verdict over IPC; another negative control confirms
+this leak fails conformance. A timed-out RPC kills and invalidates its worker
+to prevent late writes racing later scenarios. Each subprocess and temp
+directory is explicitly cleaned up after the suite, with finite
+startup/RPC/exit timeouts.
+
+**Scope:** this is a *locally authored reference host*, not independently
+authored third-party host adoption. It proves process-boundary receipt
+durability and v3 management functionality on the selected fixture, not
+multi-worker PostgreSQL HA, production crash consistency for all storage
+engines, notification exactly-once side effects, registry reconnect across
+processes or the required three distinct host implementations. These
+remaining acceptance criteria are tracked by #42.
