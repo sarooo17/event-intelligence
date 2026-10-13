@@ -14,6 +14,7 @@ const EXIT_TIMEOUT_MS = 5000;
 async function startWorker(dataDir, observability, onSpawn, {
   suppressRestoredReceipt = false,
   injectLeakedObservation = false,
+  injectNamelessObservationLeak = false,
   rpcTimeoutMs = RPC_TIMEOUT_MS,
   hangMethod,
 } = {}) {
@@ -26,6 +27,8 @@ async function startWorker(dataDir, observability, onSpawn, {
         suppressRestoredReceipt ? '1' : '0',
       EI_CONFORMANCE_INJECT_OBSERVATION_LEAK:
         injectLeakedObservation ? '1' : '0',
+      EI_CONFORMANCE_INJECT_UNNAMED_LEAK:
+        injectNamelessObservationLeak ? '1' : '0',
       EI_CONFORMANCE_HANG_METHOD: hangMethod ?? '',
     },
     stdio: ['ignore', 'ignore', 'pipe', 'ipc'],
@@ -60,11 +63,17 @@ async function startWorker(dataDir, observability, onSpawn, {
   });
   child.on('error', error => readyReject(error));
   child.on('message', message => {
-    if (message?.type === 'observation' && typeof message.event === 'string') {
-      observability({
-        event: message.event,
-        sensitiveEvidenceLeak: message.sensitiveEvidenceLeak === true,
-      });
+    if (message?.type === 'observation') {
+      // Malformed unnamed observations must not bypass leak detection.
+      if (typeof message.event === 'string' ||
+          message.sensitiveEvidenceLeak === true) {
+        observability({
+          ...(typeof message.event === 'string'
+            ? { event: message.event }
+            : {}),
+          sensitiveEvidenceLeak: message.sensitiveEvidenceLeak === true,
+        });
+      }
       return;
     }
     if (message?.type === 'ready') {
@@ -165,6 +174,7 @@ export function createProcessHostAdapter({
       try {
         worker = await startWorker(dataDir, observability, onSpawn, {
           injectLeakedObservation,
+          injectNamelessObservationLeak,
           rpcTimeoutMs,
           hangMethod,
         });
