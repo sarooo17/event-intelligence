@@ -127,6 +127,12 @@ test('compiled runtime attestation fails closed on symlinked JS or directory', a
       attestCompiledRuntime(dir),
       /attestation rejects symlinks: alias-directory/,
     );
+    // The walker must also reject a symlink passed AS ITS ROOT, rather
+    // than only detecting symlinks while enumerating child Dirents.
+    await assert.rejects(
+      attestCompiledRuntime(path.join(dir, 'alias-directory')),
+      /attestation rejects symlinks: <root>/,
+    );
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
