@@ -189,7 +189,14 @@ fields), and fulfilled `events/poll` pages are projected through own-data
 descriptors for only the five consumed page fields before reading them.
 Getter-backed or Proxy page objects fail with the stable
 `MCP_EVENTS_POLL_PAGE_INVALID` error **before any event append or cursor
-advance**. The optional `nextPollMs` page field is accepted only as an
+advance**. Fulfilled push/webhook delivery handles are likewise inspected by
+own-data property descriptors (with bounded prototype lookup for class
+methods); malicious `close`/`cancel`/`unsubscribe`, `cursor` or
+`truncated` accessors and Proxy wrappers never run as part of EI metadata
+parsing. If a safe close method exists when later metadata is invalid, EI
+attempts to close that just-opened stream before returning an error; wholly
+uninspectable malicious Proxy handles remain the host transport's cleanup
+responsibility. The optional `nextPollMs` page field is accepted only as an
 integer numeric JSON value: objects and numeric strings are no longer
 coerced through JavaScript `Number()`, which could execute provider
 `valueOf()` or `toString()` (a deliberate pre-v1 tightening). Bounded event arrays retain the existing per-page maxEvents
