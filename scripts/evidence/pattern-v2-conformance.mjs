@@ -60,6 +60,19 @@ const packageData = JSON.parse(
   await readFile(new URL('../../package.json', import.meta.url), 'utf8'),
 );
 const fileContent = await readFile(new URL(import.meta.url));
+// These are the actual compiled modules loaded by evaluatePatternV2().
+// Hashing only this harness or the package version would allow a different
+// evaluator to masquerade as the same conformance execution.
+const evaluatedModules = await Promise.all([
+  'dist/src/patternV2/evaluator.js',
+  'dist/src/intelligenceProtocol/patternV2Schemas.js',
+  'dist/src/semantic/conditionEngine.js',
+].map(async modulePath => ({
+  path: modulePath,
+  sha256: createHash('sha256')
+    .update(await readFile(new URL('../../' + modulePath, import.meta.url)))
+    .digest('hex'),
+})));
 const sha256 = value => createHash('sha256')
   .update(typeof value === 'string' || Buffer.isBuffer(value)
     ? value : JSON.stringify(value))
@@ -299,6 +312,7 @@ console.log(JSON.stringify({
     replay: 'npm run conformance:pattern-v2',
     source: 'scripts/evidence/pattern-v2-conformance.mjs',
     sourceSha256: sha256(fileContent),
+    evaluatedModules,
     inputEncoding: 'SHA-256(JSON.stringify({definition,events,clocks}))',
     seedAlgorithm: 'LCG(1664525,1013904223); Fisher-Yates shuffle',
     note: 'Synthetic, bounded fixtures only; hashed input commitments, not raw event data.',
