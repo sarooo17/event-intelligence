@@ -507,3 +507,35 @@ test('prototype data-method delivery handle retains close lifecycle', async () =
   assert.equal(closes, 1,
     'valid host adapter class instances retain prototype-defined close methods');
 });
+
+
+test('invalid close getter still triggers safe alternate stream cancellation', async () => {
+  for (const alternate of ['cancel', 'unsubscribe']) {
+    let getterInvocations = 0;
+    let cancellations = 0;
+    const handle = {
+      [alternate]() { cancellations++; },
+    };
+    Object.defineProperty(handle, 'close', {
+      enumerable: true,
+      get() { getterInvocations++; throw new Error(unsafe); },
+    });
+    const f = fixture({
+      delivery: 'push',
+      openEventStream: async () => handle,
+    });
+    const context = await f.manager.scopeContext(f.connection);
+    await assert.rejects(
+      f.manager.ensureDeliverySession(f.connection, context, f.subscription, 'push'),
+      error => {
+        assert.equal(error.message, SAFE);
+        assert.equal(error.code, 'MCP_EVENTS_PROVIDER_REQUEST_FAILED');
+        return true;
+      },
+    );
+    assert.equal(getterInvocations, 0);
+    assert.equal(cancellations, 1,
+      'opened stream must be retired with safe ' + alternate);
+    assert.equal(f.manager.deliverySessions.size, 0);
+  }
+});
