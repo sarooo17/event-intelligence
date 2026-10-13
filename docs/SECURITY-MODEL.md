@@ -189,7 +189,10 @@ fields), and fulfilled `events/poll` pages are projected through own-data
 descriptors for only the five consumed page fields before reading them.
 Getter-backed or Proxy page objects fail with the stable
 `MCP_EVENTS_POLL_PAGE_INVALID` error **before any event append or cursor
-advance**. Bounded event arrays retain the existing per-page maxEvents
+advance**. The optional `nextPollMs` page field is accepted only as an
+integer numeric JSON value: objects and numeric strings are no longer
+coerced through JavaScript `Number()`, which could execute provider
+`valueOf()` or `toString()` (a deliberate pre-v1 tightening). Bounded event arrays retain the existing per-page maxEvents
 check before per-event JSON snapshots; unbounded provider metadata never
 needs to be enumerated. Untrusted termination objects are not serialized,
 and failures do not change trigger matching or wake retry policy. This is a **pre-v1 diagnostics
