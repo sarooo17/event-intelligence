@@ -23,13 +23,18 @@ The source evaluator never gains runtime credentials or a second agent loop.
 Run `npm run conformance:pattern-v2` for a JSON report tagged
 `event-intelligence.pattern-conformance.v3`. The report includes package
 version, canonical AST version, Node/OS/platform/architecture, optional CI
-Git commit, source-file SHA-256 and **SHA-256 hashes of the actual compiled
-Pattern evaluator, AST schema and semantic engine loaded during evaluation**,
-seed range, source fixture SHA-256 for each case, execution budgets, run
-counts and *explicit* complete versus inconclusive totals. On local
-worktrees where GitHub SHA is absent the compiled module hashes still bind
-the report to concrete executed code, regardless of unchanged npm version;
-the hashes are not proof of a clean/committed Git worktree. The source input commitment hashes
+Git commit, harness-file SHA-256, entrypoint module hashes, a
+**deterministic SHA-256 over every compiled `dist/src/**/*.js` runtime
+module** (including transitively imported modules), and a SHA-256 of
+`package-lock.json` for dependency version commitments; seed range,
+source fixture SHA-256 for each case, execution budgets, run counts and
+*explicit* complete versus inconclusive totals. The runtime build tree is
+sorted by relative path before hashing `[{path,sha256}]`; the report tests
+independently recompute that digest. On local worktrees where GitHub SHA is
+absent this still binds the report to the **actual compiled** code and
+dependency lockfile, regardless of unchanged npm version, but it is not
+proof that `dist` matches checked-in sources or that an installed
+`node_modules` tree is untampered. The source input commitment hashes
 `JSON.stringify({definition,events,clocks})`. The script itself defines
 those synthetic inputs and the replay command, without writing raw payloads
 or credentials to the report. It does not claim a passing release-gate result
