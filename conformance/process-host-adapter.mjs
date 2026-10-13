@@ -11,10 +11,21 @@ const READY_TIMEOUT_MS = 15000;
 const RPC_TIMEOUT_MS = 15000;
 const EXIT_TIMEOUT_MS = 5000;
 
-async function startWorker(dataDir, observability, onSpawn) {
+async function startWorker(dataDir, observability, onSpawn, {
+  suppressRestoredReceipt = false,
+  injectLeakedObservation = false,
+  rpcTimeoutMs = RPC_TIMEOUT_MS,
+} = {}) {
   const child = fork(workerFile, [], {
     execArgv: [],
-    env: { ...process.env, EI_CONFORMANCE_DATA_DIR: dataDir },
+    env: {
+      ...process.env,
+      EI_CONFORMANCE_DATA_DIR: dataDir,
+      EI_CONFORMANCE_SUPPRESS_RESTORED_RECEIPT:
+        suppressRestoredReceipt ? '1' : '0',
+      EI_CONFORMANCE_INJECT_OBSERVATION_LEAK:
+        injectLeakedObservation ? '1' : '0',
+    },
     stdio: ['ignore', 'ignore', 'pipe', 'ipc'],
   });
   let stderr = '';
@@ -30,6 +41,7 @@ async function startWorker(dataDir, observability, onSpawn) {
     readyReject = reject;
   });
   let finished = false;
+  let invalidated = false;
   const exited = new Promise(resolve => {
     child.once('exit', (code, signal) => {
       finished = true;
@@ -47,7 +59,10 @@ async function startWorker(dataDir, observability, onSpawn) {
   child.on('error', error => readyReject(error));
   child.on('message', message => {
     if (message?.type === 'observation' && typeof message.event === 'string') {
-      observability({ event: message.event });
+      observability({
+        event: message.event,
+        sensitiveEvidenceLeak: message.sensitiveEvidenceLeak === true,
+      });
       return;
     }
     if (message?.type === 'ready') {
@@ -84,15 +99,20 @@ async function startWorker(dataDir, observability, onSpawn) {
   return {
     pid: child.pid,
     call(method, ...args) {
-      if (finished || !child.connected) {
+      if (finished || invalidated || !child.connected) {
         return Promise.reject(new Error('Conformance worker unavailable'));
       }
       return new Promise((resolve, reject) => {
         const id = ++sequence;
         const timer = setTimeout(() => {
+          // A timed-out operation may still be mutating durable state.
+          // Revoke the entire process and reject all further RPCs rather
+          // than letting a stale write contaminate subsequent test cases.
+          invalidated = true;
           pending.delete(id);
           reject(new Error('Conformance worker RPC timed out: ' + method));
-        }, RPC_TIMEOUT_MS);
+          child.kill('SIGKILL');
+        }, rpcTimeoutMs);
         pending.set(id, { resolve, reject, timer });
         child.send({ id, method, args }, error => {
           if (!error) return;
@@ -122,6 +142,8 @@ async function startWorker(dataDir, observability, onSpawn) {
 export function createProcessHostAdapter({
   onSpawn,
   suppressRestoredReceipt = false,
+  injectLeakedObservation = false,
+  rpcTimeoutMs = RPC_TIMEOUT_MS,
 } = {}) {
   return {
     name: 'separate-os-process-reference-host',
@@ -129,14 +151,16 @@ export function createProcessHostAdapter({
       const dataDir = await mkdtemp(path.join(os.tmpdir(), 'ei-process-conformance-'));
       let worker;
       try {
-        worker = await startWorker(dataDir, observability, onSpawn);
+        worker = await startWorker(dataDir, observability, onSpawn, {
+          injectLeakedObservation,
+          rpcTimeoutMs,
+        });
       } catch (error) {
         await rm(dataDir, { recursive: true, force: true });
         throw error;
       }
       let deliveredOffset = 0;
       const externallyObservedDeliveries = [];
-      let restartCount = 0;
       const call = (name, ...args) => worker.call(name, ...args);
       return {
         createTrigger: input => call('createTrigger', input),
@@ -159,16 +183,17 @@ export function createProcessHostAdapter({
           return [...externallyObservedDeliveries];
         },
         async readWakeReceipt(id) {
-          if (suppressRestoredReceipt && restartCount > 0) return null;
           return call('readWakeReceipt', id);
         },
         async restart() {
           // Kill the entire process, without calling EI close(). Durable
           // state is reopened by a fresh instance with a *different PID*.
           await worker.terminate('SIGKILL');
-          worker = await startWorker(dataDir, observability, onSpawn);
+          worker = await startWorker(dataDir, observability, onSpawn, {
+            suppressRestoredReceipt,
+            rpcTimeoutMs,
+          });
           deliveredOffset = 0;
-          restartCount += 1;
         },
         async close() {
           try {
