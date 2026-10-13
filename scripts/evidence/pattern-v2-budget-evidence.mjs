@@ -187,11 +187,7 @@ export async function runBudgetEvidence() {
       definitionHash: digest(entry.config),
       definition: entry.config,
       sourceHash: digest(entry.source),
-      sources: entry.source.map(item => ({
-        clauseId: item.clauseId,
-        sourceEventId: item.sourceEventId,
-        occurredAt: item.occurredAt,
-      })),
+      sources: entry.source,
       fixedNow: FIXED_NOW,
       allowedLatenessMs: entry.name.startsWith('temporal-') ? 30000 : 0,
       output: outcome,
