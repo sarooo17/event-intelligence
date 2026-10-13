@@ -193,6 +193,24 @@ test('durable queued wake rechecks host-owned revocation before effect on retry 
     }).runDue(), [], 'durable receipt must suppress retry after restart');
     assert.equal(policy.checked.length, 2);
     assert.deepEqual(policy.effects, [wakeId]);
+    await assert.rejects(
+      hostDispatcher({
+        wake_id: 'wrong-kind-probe',
+        trigger_id: 'host-owned-policy-trigger',
+        trigger_version: '1',
+        target: {
+          runtime: 'host-managed-runtime',
+          kind: 'notification',
+          id: 'permissioned-effect',
+        },
+      }),
+      /host target policy denied/,
+      'a different target kind must not inherit the task grant',
+    );
+    assert.deepEqual(policy.effects, [wakeId],
+      'forged target kind must have no side effect');
+    assert.equal(policy.checked.at(-1).key,
+      'host-owned-policy-trigger@1:host-managed-runtime/notification/permissioned-effect');
     assert.equal(await store.verifyAudit(), true);
   } finally {
     try { await store?.close(); } finally {
