@@ -130,13 +130,22 @@ async function startWorker(dataDir, observability, onSpawn, {
     async terminate(signal = 'SIGKILL') {
       if (finished) return;
       child.kill(signal);
-      await Promise.race([
-        exited,
-        new Promise((_, reject) => setTimeout(
-          () => reject(new Error('Host conformance worker did not exit')),
-          EXIT_TIMEOUT_MS,
-        )),
-      ]);
+      let timeout;
+      try {
+        await Promise.race([
+          exited,
+          new Promise((_, reject) => {
+            timeout = setTimeout(
+              () => reject(new Error('Host conformance worker did not exit')),
+              EXIT_TIMEOUT_MS,
+            );
+          }),
+        ]);
+      } finally {
+        // A successful process exit must not keep a stale 5-second timer
+        // alive, slowing the entire conformance suite after each restart.
+        clearTimeout(timeout);
+      }
     },
   };
 }
