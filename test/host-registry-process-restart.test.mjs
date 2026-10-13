@@ -136,6 +136,8 @@ const getTrigger = snapshot => snapshot.triggers
   .find(row => row.id === 'registry-durable-trigger');
 const source = snapshot => snapshot.sources
   .find(row => row.eventName === 'registry.changed');
+const persistedSource = snapshot => snapshot.storedSources
+  .find(row => row.eventName === 'registry.changed');
 const assertDelivered = (snapshot, wakeId) => {
   const found = snapshot.receipts.find(row => row.wakeId === wakeId);
   assert.equal(found?.status, 'delivered');
@@ -174,7 +176,9 @@ test('hard process restarts preserve registry revocation, replay dedup and host 
       row.connectionId === 'registry-connection' && row.status === 'detached'));
     const revoked = await worker.call('snapshot', { wakeIds: [firstWakeId] });
     assert.deepEqual(revoked.connections, []);
-    assert.equal(source(revoked)?.enabled, false);
+    assert.equal(source(revoked), undefined,
+      'revoked source must not remain available to host discovery');
+    assert.equal(persistedSource(revoked)?.enabled, false);
     assert.equal(getTrigger(revoked)?.fireCount, 1);
     assertDelivered(revoked, firstWakeId);
 
@@ -184,7 +188,8 @@ test('hard process restarts preserve registry revocation, replay dedup and host 
     pids.push(worker.pid);
     const afterKill = await worker.call('snapshot', { wakeIds: [firstWakeId] });
     assert.deepEqual(afterKill.connections, []);
-    assert.equal(source(afterKill)?.enabled, false);
+    assert.equal(source(afterKill), undefined);
+    assert.equal(persistedSource(afterKill)?.enabled, false);
     assert.equal(getTrigger(afterKill)?.fireCount, 1);
     assert.deepEqual(afterKill.wakes, []);
     assertDelivered(afterKill, firstWakeId);
@@ -224,7 +229,8 @@ test('hard process restarts preserve registry revocation, replay dedup and host 
       wakeIds: [firstWakeId, secondWakeId],
     });
     assert.deepEqual(third.connections, []);
-    assert.equal(source(third)?.enabled, false);
+    assert.equal(source(third), undefined);
+    assert.equal(persistedSource(third)?.enabled, false);
     assert.equal(getTrigger(third)?.fireCount, 2);
     assertDelivered(third, firstWakeId);
     assertDelivered(third, secondWakeId);
