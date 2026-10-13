@@ -234,8 +234,12 @@ receipt and replay cannot re-execute the effect. A separately bounded denial
 test reaches durable `dead_letter` without falsely reporting delivery.
 
 This verifies host-owned policy checking in an **in-process reference
-dispatcher**, not automatic connection-based wake cancellation or
-distributed transactional claim/revocation fencing. A consistently denied
+dispatcher** across an actual *store close/reopen*, not automatic
+connection-based wake cancellation, an actual `McpEventsClientManager`
+detach/reattach, or distributed transactional claim/revocation fencing.
+This fixture does **not** use the MCP client manager: verifying queued wake
+behavior after a real provider session disconnect and same-ID rebind remains
+an explicitly separate acceptance test under #45. A consistently denied
 host callback currently consumes the normal retry budget and eventually
 reaches DLQ: the host must own retry/error classification, any explicit
 cancellation decision, and operator remediation. Persistent accepted
