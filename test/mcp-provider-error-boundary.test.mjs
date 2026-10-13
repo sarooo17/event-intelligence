@@ -1,5 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { mkdtemp, rm } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { createEventIntelligenceHost } from '../scripts/host-integration.mjs';
 import { McpEventsClientManager } from '../scripts/lib/mcp-events-client.mjs';
 import { createObservabilityEmitter } from '../scripts/lib/observability.mjs';
 
@@ -124,4 +128,51 @@ test('push error and termination callbacks cannot publish arbitrary provider dia
   assert.equal((await f.manager.status())[0].error, SAFE);
   f.assertNoSecret({ telemetry: f.observations,
     status: await f.manager.status() });
+});
+
+test('registry attach error does not expose producer-controlled exception or telemetry', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'ei-safe-registry-error-'));
+  const observations = [];
+  let entries = [];
+  let host;
+  try {
+    host = await createEventIntelligenceHost({
+      dataDir: directory,
+      env: {
+        TYPESAFE_API_KEY: '',
+        RUNTIME_WAKE_TARGETS_JSON: '{}',
+        TEMPORAL_TICK_MS: '100000',
+        WAKE_RETRY_TICK_MS: '100000',
+      },
+      mcpRegistry: { listConnections: () => entries },
+      observability: record => observations.push(record),
+    });
+    entries = [{
+      id: 'source-connection',
+      serverId: 'source-server',
+      pollIntervalMs: 300000,
+      client: {
+        getServerCapabilities: () => ({
+          extensions: {
+            'io.modelcontextprotocol/events': { listChanged: false },
+          },
+        }),
+        async request() { throw new Error(unsafe); },
+      },
+    }];
+    const result = await host.refreshMcpRegistry();
+    assert.equal(result.length, 1);
+    assert.equal(result[0].status, 'error');
+    assert.equal(result[0].code, 'EI_HOST_REGISTRY_ATTACH_FAILED');
+    assert.equal(result[0].error, 'MCP registry connection attach failed');
+    const serialized = JSON.stringify({
+      outcome: result,
+      telemetry: observations,
+    });
+    assert.doesNotMatch(serialized, /arbitrary-unlabelled-private-data-canary/);
+    assert.doesNotMatch(serialized, /eyJhbGciOiJiZW90aWNfYXBpX2tleSJ9/);
+  } finally {
+    await host?.close();
+    await rm(directory, { recursive: true, force: true });
+  }
 });
