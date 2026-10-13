@@ -6,6 +6,7 @@ import {
 } from './lib/local-event-intelligence-runtime.mjs';
 import {
   createHostMcpEventsConnection,
+  isUnavailableCapability,
 } from './lib/mcp-events-client.mjs';
 import {
   DEFAULT_EVENT_SCOPE_ID,
@@ -268,11 +269,7 @@ export async function createEventIntelligenceHost({
             runtime.mcpEventsClient.connections.get(connectionId) === attemptedConnection) {
           await runtime.mcpEventsClient.detachConnection(connectionId);
         }
-        if (
-          error &&
-          typeof error === 'object' &&
-          error.code === 'MCP_EVENTS_CAPABILITY_UNAVAILABLE'
-        ) {
+        if (isUnavailableCapability(error)) {
           outcomes.push({
             connectionId,
             status: 'ignored_no_events',
