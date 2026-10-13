@@ -163,6 +163,7 @@ export function createProcessHostAdapter({
   onSpawn,
   suppressRestoredReceipt = false,
   injectLeakedObservation = false,
+  injectNamelessObservationLeak = false,
   rpcTimeoutMs = RPC_TIMEOUT_MS,
   hangMethod,
 } = {}) {
