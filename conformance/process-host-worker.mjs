@@ -16,7 +16,8 @@ if (!dataDir) throw new Error('EI_CONFORMANCE_DATA_DIR is required');
 // Preserve the leak detection result BEFORE projecting to safe IPC metadata:
 // without it a bad host could leak the canary while still passing conformance.
 function forwardObservation(event) {
-  if (typeof event?.event !== 'string') return;
+  // Even malformed/unnamed observations may contain secret-bearing fields.
+  // Evaluate the complete input before considering its event-name shape.
   let sensitiveEvidenceLeak = false;
   try {
     sensitiveEvidenceLeak = JSON.stringify(event)
@@ -25,9 +26,10 @@ function forwardObservation(event) {
     // Unserializable observability is not proof of payload redaction.
     sensitiveEvidenceLeak = true;
   }
+  if (typeof event?.event !== 'string' && !sensitiveEvidenceLeak) return;
   process.send?.({
     type: 'observation',
-    event: event.event,
+    ...(typeof event?.event === 'string' ? { event: event.event } : {}),
     sensitiveEvidenceLeak,
   });
 }
@@ -43,6 +45,13 @@ if (process.env.EI_CONFORMANCE_INJECT_OBSERVATION_LEAK === '1') {
   // that handles real host observations; never forward raw probe payloads.
   forwardObservation({
     event: 'ei.fixture.canary',
+    metadata: { untrustedPayload: 'ei-conformance-secret-probe' },
+  });
+}
+if (process.env.EI_CONFORMANCE_INJECT_UNNAMED_LEAK === '1') {
+  // Unlike a named event, this malformed observation has no event string.
+  // The full-content safety check must still fail closed.
+  forwardObservation({
     metadata: { untrustedPayload: 'ei-conformance-secret-probe' },
   });
 }
