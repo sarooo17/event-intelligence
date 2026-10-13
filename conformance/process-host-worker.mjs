@@ -12,22 +12,50 @@ const allowed = new Set([
 const dataDir = process.env.EI_CONFORMANCE_DATA_DIR;
 if (!dataDir) throw new Error('EI_CONFORMANCE_DATA_DIR is required');
 
+// The parent cannot inspect the child's full structured observability event.
+// Preserve the leak detection result BEFORE projecting to safe IPC metadata:
+// without it a bad host could leak the canary while still passing conformance.
+function forwardObservation(event) {
+  if (typeof event?.event !== 'string') return;
+  let sensitiveEvidenceLeak = false;
+  try {
+    sensitiveEvidenceLeak = JSON.stringify(event)
+      .includes('ei-conformance-secret-probe');
+  } catch {
+    // Unserializable observability is not proof of payload redaction.
+    sensitiveEvidenceLeak = true;
+  }
+  process.send?.({
+    type: 'observation',
+    event: event.event,
+    sensitiveEvidenceLeak,
+  });
+}
+
 const harness = await referenceHostAdapter.createHarness({
   dataDir,
   preserveData: true,
-  observability(event) {
-    // Event names are enough for the conformance report. Never forward
-    // untrusted event payloads, source credentials or raw exceptions.
-    if (typeof event?.event === 'string') {
-      process.send?.({ type: 'observation', event: event.event });
-    }
-  },
+  observability: forwardObservation,
 });
+
+if (process.env.EI_CONFORMANCE_INJECT_OBSERVATION_LEAK === '1') {
+  // Explicit negative control: run through the same in-worker sanitization
+  // that handles real host observations; never forward raw probe payloads.
+  forwardObservation({
+    event: 'ei.fixture.canary',
+    metadata: { untrustedPayload: 'ei-conformance-secret-probe' },
+  });
+}
 
 process.on('message', async (message) => {
   if (!Number.isSafeInteger(message?.id) || !allowed.has(message?.method)) return;
   try {
-    const result = await harness[message.method](...(message.args ?? []));
+    const result = (
+      process.env.EI_CONFORMANCE_SUPPRESS_RESTORED_RECEIPT === '1' &&
+      message.method === 'readWakeReceipt'
+    )
+      ? null // Inject missing durable receipt *inside* the restarted worker.
+      : await harness[message.method](...(message.args ?? []));
     process.send?.({ type: 'reply', id: message.id, result: result ?? null });
   } catch {
     process.send?.({
