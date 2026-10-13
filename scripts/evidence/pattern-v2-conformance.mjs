@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { readFile, readdir } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
+import { attestCompiledRuntime } from './compiled-runtime-attestation.mjs';
 import os from 'node:os';
 import {
   PatternAstV2DefinitionSchema,
@@ -61,33 +63,11 @@ const packageData = JSON.parse(
 );
 const fileContent = await readFile(new URL(import.meta.url));
 
-// Commit to the complete compiled runtime tree, not merely an evaluator
-// entrypoint. A change in a transitive evaluator/schema/semantic dependency
-// must change the evidence identity even on an uncommitted local checkout.
-async function compiledRuntimeModules(dir, prefix = '') {
-  const entries = (await readdir(dir, { withFileTypes: true }))
-    .sort((a, b) => a.name.localeCompare(b.name));
-  const files = [];
-  for (const entry of entries) {
-    if (entry.isDirectory()) {
-      files.push(...await compiledRuntimeModules(
-        new URL(entry.name + '/', dir),
-        prefix + entry.name + '/',
-      ));
-    } else if (entry.isFile() && entry.name.endsWith('.js')) {
-      files.push({
-        path: prefix + entry.name,
-        sha256: createHash('sha256')
-          .update(await readFile(new URL(entry.name, dir)))
-          .digest('hex'),
-      });
-    }
-  }
-  return files;
-}
-const compiledModules = await compiledRuntimeModules(
+// The complete executable tree is fingerprinted, and any symlinked
+// module or directory makes attestation fail closed.
+const compiledRuntime = await attestCompiledRuntime(fileURLToPath(
   new URL('../../dist/src/', import.meta.url),
-);
+));
 // These are the actual compiled modules loaded by evaluatePatternV2().
 // Hashing only this harness or the package version would allow a different
 // evaluator to masquerade as the same conformance execution.
@@ -105,8 +85,7 @@ const sha256 = value => createHash('sha256')
   .update(typeof value === 'string' || Buffer.isBuffer(value)
     ? value : JSON.stringify(value))
   .digest('hex');
-assert.ok(compiledModules.length > 0, 'compiled runtime attestation cannot be empty');
-const buildSha256 = sha256(compiledModules);
+const buildSha256 = compiledRuntime.sha256;
 const lockfileSha256 = sha256(
   await readFile(new URL('../../package-lock.json', import.meta.url)),
 );
@@ -349,7 +328,7 @@ console.log(JSON.stringify({
     completeRuntimeBuild: {
       root: 'dist/src',
       sha256: buildSha256,
-      fileCount: compiledModules.length,
+      fileCount: compiledRuntime.fileCount,
       fileEncoding: 'SHA-256(JSON.stringify(sorted [{path,sha256}]))',
     },
     dependencyLockSha256: lockfileSha256,
