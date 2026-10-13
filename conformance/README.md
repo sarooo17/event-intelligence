@@ -101,3 +101,26 @@ multi-worker PostgreSQL HA, production crash consistency for all storage
 engines, notification exactly-once side effects, registry reconnect across
 processes or the required three distinct host implementations. These
 remaining acceptance criteria are tracked by #42.
+
+
+## MCP registry detach/reattach across a hard restart
+
+The dedicated `node --test test/host-registry-process-restart.test.mjs`
+fixture uses the actual `createEventIntelligenceHost()` and a host-owned
+MCP Events mock provider in a **separate OS process**. Its parent controls
+registry availability over bounded IPC and retains no EI store or client.
+The test attaches an Events connection, registers a durable trigger, ingests
+and delivers an occurrence, detaches the registry entry (disabling its
+persisted source), and SIGKILLs the process. A new PID reopens the same
+persistent store while disconnected, then a fresh MCP session reattaches
+under the original connection ID. Replaying the same occurrence must
+not deliver a second wake; a new event must progress the original trigger.
+A second SIGKILL confirms both receipts remain authoritative, and a
+manual host connection under the same ID cannot be adopted by a
+subsequent registry refresh.
+
+This is locally authored integration conformance against a mock MCP Events
+producer. It does **not** prove third-party adoption, real network
+reconnect, multi-worker PostgreSQL failover, or exactly-once external
+continuation effects. The host still owns MCP transport/auth/session,
+notifications and mutation policy. Remaining #42 criteria are unchanged.
