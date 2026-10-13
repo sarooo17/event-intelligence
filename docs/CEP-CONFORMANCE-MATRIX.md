@@ -30,10 +30,11 @@ module** (including transitively imported modules), and a SHA-256 of
 source fixture SHA-256 for each case, execution budgets, run counts and
 *explicit* complete versus inconclusive totals. The runtime build tree is
 sorted by relative path before hashing `[{path,sha256}]`; the report tests
-independently recompute that digest. Any symlink anywhere in the compiled
-tree (file or directory) **rejects attestation** rather than silently skipping
-Node-followed runtime code. An isolated regression constructs symlinked
-runtime fixtures and verifies this fails closed. On local worktrees where GitHub SHA is
+independently recompute that digest. Any symlink inside the compiled
+tree (file or directory), or passed as its **root directory**, **rejects
+attestation** rather than silently skipping Node-followed runtime code.
+An isolated regression constructs symlinked runtime fixtures and verifies
+these cases fail closed. On local worktrees where GitHub SHA is
 absent this still binds the report to the **actual compiled** code and
 dependency lockfile, regardless of unchanged npm version, but it is not
 proof that `dist` matches checked-in sources or that an installed
