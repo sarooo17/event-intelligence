@@ -171,6 +171,19 @@ export async function createEventIntelligenceHost({
 
     for (const [connectionId, connection] of desired) {
       const existing = runtime.mcpEventsClient.connections.get(connectionId);
+      // The host owns explicit and manually attached MCP connections.
+      // Only connections *previously attached by this registry* may be
+      // refreshed or removed by registry reconciliation. Identity equality
+      // alone does not transfer lifecycle ownership to the registry.
+      if (existing && !registryManaged.has(connectionId)) {
+        outcomes.push({
+          connectionId,
+          status: 'error',
+          code: 'EI_HOST_REGISTRY_ID_CONFLICT',
+          error: 'Registry connection ID conflicts with a host-owned MCP connection',
+        });
+        continue;
+      }
       if (existing) {
         if (
           existing.identity === connection.identity &&
