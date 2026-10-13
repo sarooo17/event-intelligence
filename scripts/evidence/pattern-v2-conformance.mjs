@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
+import os from 'node:os';
 import {
   PatternAstV2DefinitionSchema,
   evaluatePatternV2,
@@ -53,11 +56,44 @@ function shuffle(values, random) {
   return output;
 }
 
+const packageData = JSON.parse(
+  await readFile(new URL('../../package.json', import.meta.url), 'utf8'),
+);
+const fileContent = await readFile(new URL(import.meta.url));
+const sha256 = value => createHash('sha256')
+  .update(typeof value === 'string' || Buffer.isBuffer(value)
+    ? value : JSON.stringify(value))
+  .digest('hex');
+
 const checks = [];
 async function check(name, fn) {
   const started = performance.now();
-  await fn();
-  checks.push({ name, ok: true, durationMs: performance.now() - started });
+  // The case runner MUST provide replay evidence. Missing provenance is
+  // a report failure, not a successful test with an empty attestation.
+  const evidence = await fn();
+  assert.ok(evidence && evidence.definition && Array.isArray(evidence.events),
+    'CEP conformance check must supply source inputs and definition');
+  assert.ok(evidence.outcomes &&
+    Number.isSafeInteger(evidence.outcomes.complete) &&
+    Number.isSafeInteger(evidence.outcomes.inconclusive) &&
+    Number.isSafeInteger(evidence.runs) &&
+    evidence.runs === evidence.outcomes.complete + evidence.outcomes.inconclusive,
+    'CEP conformance outcome totals must account for all evaluations');
+  checks.push({
+    name,
+    ok: true,
+    durationMs: performance.now() - started,
+    runs: evidence.runs,
+    seedRange: evidence.seedRange ?? null,
+    inputSha256: sha256({
+      definition: evidence.definition,
+      events: evidence.events,
+      clocks: evidence.clocks ?? [],
+    }),
+    inputEventCount: evidence.events.length,
+    budgets: evidence.definition.execution,
+    outcomes: evidence.outcomes,
+  });
 }
 
 await check('event-time order is delivery-order invariant for followedBy', async () => {
@@ -84,12 +120,18 @@ await check('event-time order is delivery-order invariant for followedBy', async
       definition,
       events: shuffle(source, seeded(seed)),
     });
+    assert.equal(result.truncated, false, 'seed=' + seed);
     assert.deepEqual(
       result.matches.map((candidate) =>
         candidate.events.map((item) => item.sourceEventId).join(',')),
       expectedIds,
     );
   }
+  assert.equal(expected.truncated, false);
+  return {
+    definition, events: source, seedRange: [1, 50], runs: 51,
+    outcomes: { complete: 51, inconclusive: 0 },
+  };
 });
 
 await check('candidate budget bounds combinations', async () => {
@@ -112,6 +154,10 @@ await check('candidate budget bounds combinations', async () => {
   const result = await evaluatePatternV2({ definition, events });
   assert.equal(result.truncated, true);
   assert.ok(result.matches.length <= 64);
+  return {
+    definition, events, runs: 1,
+    outcomes: { complete: 0, inconclusive: 1 },
+  };
 });
 
 await check('negative pattern waits through allowed lateness', async () => {
@@ -145,6 +191,15 @@ await check('negative pattern waits through allowed lateness', async () => {
   });
   assert.equal(forbidden.matches.length, 0);
   assert.equal(forbidden.pending.length, 0);
+  assert.equal(pending.truncated, false);
+  assert.equal(forbidden.truncated, false);
+  return {
+    definition,
+    events: [...events, event('error', 'error-1', '2026-09-30T10:00:30.000Z')],
+    clocks: ['2026-09-30T10:01:10.000Z'],
+    runs: 2,
+    outcomes: { complete: 2, inconclusive: 0 },
+  };
 });
 
 await check('semantic node is explicit and budgeted', async () => {
@@ -205,12 +260,51 @@ await check('semantic node is explicit and budgeted', async () => {
   assert.equal(result.matches.length, 1);
   assert.equal(calls, 1);
   assert.equal(result.semanticEvaluations, 1);
+  assert.equal(result.truncated, false);
+  return {
+    definition,
+    events: [
+      event('issue', 'issue-1', '2026-09-30T10:00:00.000Z', {
+        title: 'Payment failed',
+      }),
+      event('mail', 'mail-1', '2026-09-30T10:01:00.000Z', {
+        subject: 'Payment failed again',
+      }),
+    ],
+    runs: 1,
+    outcomes: { complete: 1, inconclusive: 0 },
+  };
 });
 
 
+const summary = checks.reduce((totals, entry) => ({
+  complete: totals.complete + entry.outcomes.complete,
+  inconclusive: totals.inconclusive + entry.outcomes.inconclusive,
+}), { complete: 0, inconclusive: 0 });
+
 console.log(JSON.stringify({
-  schema: 'event-intelligence.pattern-conformance.v2',
+  schema: 'event-intelligence.pattern-conformance.v3',
   generatedAt: new Date().toISOString(),
+  package: { name: packageData.name, version: packageData.version },
+  patternAstVersion: '2',
+  environment: {
+    node: process.version,
+    platform: process.platform,
+    arch: process.arch,
+    osRelease: os.release(),
+    commit: /^[0-9a-f]{40}$/.test(process.env.GITHUB_SHA ?? '')
+      ? process.env.GITHUB_SHA : null,
+  },
+  reproducibility: {
+    replay: 'npm run conformance:pattern-v2',
+    source: 'scripts/evidence/pattern-v2-conformance.mjs',
+    sourceSha256: sha256(fileContent),
+    inputEncoding: 'SHA-256(JSON.stringify({definition,events,clocks}))',
+    seedAlgorithm: 'LCG(1664525,1013904223); Fisher-Yates shuffle',
+    note: 'Synthetic, bounded fixtures only; hashed input commitments, not raw event data.',
+  },
   checks,
   passed: checks.length,
+  failed: 0,
+  evaluations: summary,
 }, null, 2));
