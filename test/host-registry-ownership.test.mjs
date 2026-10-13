@@ -227,3 +227,76 @@ test('registry refresh cannot detach a host replacement inserted during awaited 
     await rm(dataDir, { recursive: true, force: true });
   }
 });
+
+
+test('failed asynchronous registry cleanup cannot retain ownership of a new host client', async () => {
+  const dataDir = await mkdtemp(path.join(os.tmpdir(), 'ei-registry-cleanup-fail-'));
+  let entries = [{
+    id: 'shared',
+    serverId: 'old-registry',
+    client: eventsClient('registry.old'),
+    pollIntervalMs: 300000,
+  }];
+  let host;
+  let detachReached;
+  const detached = new Promise(resolve => { detachReached = resolve; });
+  let unblock;
+  const gate = new Promise(resolve => { unblock = resolve; });
+  try {
+    host = await createEventIntelligenceHost({
+      dataDir,
+      env,
+      mcpRegistry: { listConnections: () => entries },
+    });
+    const manager = host.runtime.mcpEventsClient;
+    const originalDetach = manager.detachConnection.bind(manager);
+    let intercepted = false;
+    manager.detachConnection = async id => {
+      await originalDetach(id);
+      if (id === 'shared' && !intercepted) {
+        intercepted = true;
+        detachReached();
+        await gate;
+        // Simulate an asynchronous cleanup failure AFTER the original
+        // connection has been removed. Reconciliation must not leave an
+        // ownership marker that could revoke a newer host connection.
+        throw new Error('injected detached-store cleanup failure');
+      }
+      return true;
+    };
+
+    entries = [{
+      id: 'shared',
+      serverId: 'new-registry',
+      client: eventsClient('registry.new'),
+      pollIntervalMs: 300000,
+    }];
+    const refreshing = host.refreshMcpRegistry();
+    await detached;
+    await host.attachMcpClient({
+      id: 'shared',
+      serverId: 'new-host',
+      client: eventsClient('host.new'),
+      pollIntervalMs: 300000,
+    });
+    unblock();
+    const outcomes = await refreshing;
+    assert.ok(outcomes.some(result =>
+      result.connectionId === 'shared' &&
+      result.status === 'error' &&
+      result.code === 'EI_HOST_REGISTRY_DETACH_FAILED'));
+    assert.deepEqual(await names(host), ['host.new']);
+
+    // If stale registryManaged ownership survived the failed await, this
+    // removal refresh would mistakenly detach the host's replacement.
+    entries = [];
+    const next = await host.refreshMcpRegistry();
+    assert.equal(next.some(result => result.connectionId === 'shared'), false);
+    assert.deepEqual(await names(host), ['host.new']);
+    assert.deepEqual((await host.mcpStatus()).map(row => row.serverId), ['new-host']);
+  } finally {
+    unblock?.();
+    await host?.close();
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
