@@ -390,8 +390,11 @@ function normalizeCursor(cursor, label) {
 }
 
 function normalizeNextPollMs(value, fallback) {
-  const result = Number(value ?? fallback);
-  if (!Number.isInteger(result) || result < 0 || result > 300000) {
+  // Untrusted nextPollMs must be a number: Number(object) executes
+  // provider-controlled valueOf/toString, potentially throwing secrets.
+  const result = value ?? fallback;
+  if (typeof result !== 'number' ||
+      !Number.isInteger(result) || result < 0 || result > 300000) {
     throw new Error('events/poll returned invalid nextPollMs');
   }
   return result;
