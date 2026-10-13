@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { readFile, readdir } from 'node:fs/promises';
+import { lstat, readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 
 // A successful attestation must include every executable compiled JS file,
@@ -7,6 +7,15 @@ import path from 'node:path';
 // Node follows symlinks during import, and ignoring one would falsely attest
 // unchanged code even if its target changed after the build.
 export async function attestCompiledRuntime(root) {
+  // readdir() follows directory symlinks when the symlink is passed as the
+  // root argument; check the root itself before inspecting its children.
+  const rootStatus = await lstat(root);
+  if (rootStatus.isSymbolicLink()) {
+    throw new Error('Compiled runtime attestation rejects symlinks: <root>');
+  }
+  if (!rootStatus.isDirectory()) {
+    throw new Error('Compiled runtime attestation requires a directory root');
+  }
   const files = [];
   async function visit(dir, relative = '') {
     const entries = (await readdir(dir, { withFileTypes: true }))
