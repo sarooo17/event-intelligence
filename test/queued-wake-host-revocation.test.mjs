@@ -8,6 +8,16 @@ import { CompositeWakeCoordinator } from '../scripts/lib/composite-wake-coordina
 import { PersistentEventStore } from '../scripts/lib/persistent-event-store.mjs';
 import { WakeRetryScheduler } from '../scripts/lib/wake-retry-scheduler.mjs';
 
+// The same serializer is exercised by host dispatch and the collision test.
+// Never concatenate attacker-controlled or host-opaque target identifiers.
+function hostPermissionKey(packet) {
+  const target = packet.target;
+  return JSON.stringify([
+    packet.trigger_id, packet.trigger_version,
+    target?.runtime, target?.kind, target?.id,
+  ]);
+}
+
 async function matchOnce(store, engine) {
   await engine.register({
     triggerId: 'host-owned-policy-trigger',
@@ -71,13 +81,7 @@ test('durable queued wake rechecks host-owned revocation before effect on retry 
   ]);
   const policy = { grants: new Set([permission]), checked: [], effects: [] };
   const hostDispatcher = async packet => {
-    const target = packet.target;
-    // Tuple serialization is injective even when legitimate names contain
-    // '/', ':', '@' or other separators.
-    const key = JSON.stringify([
-      packet.trigger_id, packet.trigger_version,
-      target?.runtime, target?.kind, target?.id,
-    ]);
+    const key = hostPermissionKey(packet);
     policy.checked.push({ key, wakeId: packet.wake_id });
     if (!policy.grants.has(key)) throw new Error('host target policy denied');
     policy.effects.push(packet.wake_id);
@@ -289,15 +293,31 @@ test('permanent host revocation reaches durable dead-letter, never a fabricated 
 });
 
 
-test('host permission tuple cannot alias slash-delimited target components', () => {
-  const granted = JSON.stringify([
-    'trigger', '1', 'a/b', 'c', 'd',
-  ]);
-  const forbidden = JSON.stringify([
-    'trigger', '1', 'a', 'b/c', 'd',
-  ]);
-  assert.notEqual(granted, forbidden,
-    'each complete target tuple must retain its own authority');
-  const permissions = new Set([granted]);
-  assert.equal(permissions.has(forbidden), false);
+test('host permission key used by dispatcher prevents slash-aliased grants', () => {
+  const granted = {
+    trigger_id: 'trigger',
+    trigger_version: '1',
+    target: { runtime: 'a/b', kind: 'c', id: 'd' },
+  };
+  const forged = {
+    trigger_id: 'trigger',
+    trigger_version: '1',
+    target: { runtime: 'a', kind: 'b/c', id: 'd' },
+  };
+  const permissions = new Set([hostPermissionKey(granted)]);
+  let effects = 0;
+  const dispatch = async packet => {
+    if (!permissions.has(hostPermissionKey(packet))) {
+      throw new Error('host target policy denied');
+    }
+    effects += 1;
+  };
+  assert.notEqual(hostPermissionKey(granted), hostPermissionKey(forged));
+  return assert.rejects(
+    dispatch(forged),
+    /host target policy denied/,
+  ).then(() => {
+    assert.equal(effects, 0,
+      'same delimiter-joined name must not grant a different runtime/kind');
+  });
 });
