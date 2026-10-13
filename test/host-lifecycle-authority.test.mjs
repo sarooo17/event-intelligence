@@ -6,14 +6,19 @@ const owner = { type: 'user', principal_id: 'owner', tenant_id: 'tenant-1' };
 const actor = { type: 'agent', principal_id: 'agent', tenant_id: 'tenant-1' };
 const target = { runtime: 'neutral-host', kind: 'task', id: 'checkpoint-1' };
 const cases = [
-  ['trigger_pause', 'active', { trigger_id: 'watch-1' }, 'trigger.pause'],
-  ['trigger_resume', 'paused', { trigger_id: 'watch-1' }, 'trigger.resume'],
-  ['trigger_delete', 'active', { trigger_id: 'watch-1' }, 'trigger.delete'],
+  ['trigger_pause', 'active', { trigger_id: 'watch-1', version: '1' }, 'trigger.pause'],
+  ['trigger_resume', 'paused', { trigger_id: 'watch-1', version: '1' }, 'trigger.resume'],
+  ['trigger_delete', 'active', { trigger_id: 'watch-1', version: '1' }, 'trigger.delete'],
   ['trigger_update', 'active', {
     trigger_id: 'watch-1',
+    expected_version: '1',
+    version: '2',
+    description: 'Host-managed update',
     events: [{ event: 'demo.changed', serverId: 'demo' }],
     instruction: 'Continue after a new event',
     one_shot: false,
+    max_firings: 4,
+    cooldown_ms: 100,
   }, 'trigger.update'],
 ];
 
@@ -80,6 +85,8 @@ test('host-owned denial prevents all four lifecycle mutations and preserves nati
     assert.deepEqual(entry, before, name + ' modified state without approval');
     assert.equal(calls.length, 1, name + ' did not invoke host control exactly once');
     assert.equal(calls[0].action, expectedAction);
+    assert.deepEqual(calls[0].input, args,
+      name + ' altered the original validated lifecycle control input');
     assert.equal(typeof calls[0].capability?.id, 'string');
     assert.equal(calls[0].context.owner.tenant_id, 'tenant-1');
   }
@@ -98,6 +105,8 @@ test('native host interrupts propagate unchanged across lifecycle operations', a
       throw interrupt;
     });
     const before = structuredClone(entry);
+    const interruptDescriptors = Object.getOwnPropertyDescriptors(interrupt);
+    const interruptKeys = Reflect.ownKeys(interrupt);
     await assert.rejects(
       tools.get(name).execute(args, { sessionId: 'host-turn' }),
       error => error === interrupt,
@@ -105,6 +114,11 @@ test('native host interrupts propagate unchanged across lifecycle operations', a
     );
     assert.equal(calls.length, 1);
     assert.equal(calls[0].action, expectedAction);
+    assert.deepEqual(calls[0].input, args,
+      name + ' altered the lifecycle input on the native interrupt path');
+    assert.deepEqual(Object.getOwnPropertyDescriptors(interrupt), interruptDescriptors,
+      name + ' mutated native interrupt properties/descriptors');
+    assert.deepEqual(Reflect.ownKeys(interrupt), interruptKeys);
     assert.deepEqual(writes, [], name + ' mutated after native host interrupt');
     assert.deepEqual(entry, before);
   }
