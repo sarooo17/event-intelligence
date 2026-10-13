@@ -29,7 +29,12 @@ function forwardObservation(event) {
   if (typeof event?.event !== 'string' && !sensitiveEvidenceLeak) return;
   process.send?.({
     type: 'observation',
-    ...(typeof event?.event === 'string' ? { event: event.event } : {}),
+    // An observation's NAME can itself contain evidence. When any part of
+    // the original event leaks, forward only the verdict and never a string
+    // that could expose the canary in IPC or conformance eventNames.
+    ...(!sensitiveEvidenceLeak && typeof event?.event === 'string'
+      ? { event: event.event }
+      : {}),
     sensitiveEvidenceLeak,
   });
 }
@@ -44,7 +49,7 @@ if (process.env.EI_CONFORMANCE_INJECT_OBSERVATION_LEAK === '1') {
   // Explicit negative control: run through the same in-worker sanitization
   // that handles real host observations; never forward raw probe payloads.
   forwardObservation({
-    event: 'ei.fixture.canary',
+    event: 'ei-conformance-secret-probe',
     metadata: { untrustedPayload: 'ei-conformance-secret-probe' },
   });
 }
