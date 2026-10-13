@@ -50,6 +50,11 @@ if (process.env.EI_CONFORMANCE_INJECT_OBSERVATION_LEAK === '1') {
 process.on('message', async (message) => {
   if (!Number.isSafeInteger(message?.id) || !allowed.has(message?.method)) return;
   try {
+    if (process.env.EI_CONFORMANCE_HANG_METHOD === message.method) {
+      // Deliberately never respond: the parent must retire a worker when its
+      // finite RPC deadline expires, rather than continuing after timeout.
+      await new Promise(() => {});
+    }
     const result = (
       process.env.EI_CONFORMANCE_SUPPRESS_RESTORED_RECEIPT === '1' &&
       message.method === 'readWakeReceipt'
