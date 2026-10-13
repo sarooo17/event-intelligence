@@ -419,7 +419,8 @@ export async function runHostConformance(
 
       const serialized = JSON.stringify(observed);
       requireCondition(
-        !serialized.includes('ei-conformance-secret-probe'),
+        !serialized.includes('ei-conformance-secret-probe') &&
+          !observed.some((event) => event?.sensitiveEvidenceLeak === true),
         'observability leaked event payload content',
       );
     }));
