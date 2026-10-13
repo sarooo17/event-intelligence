@@ -183,8 +183,16 @@ An MCP provider request failure throws a neutral EI error code
 `MCP_EVENTS_PROVIDER_REQUEST_FAILED`; the registry attach path reports
 `EI_HOST_REGISTRY_ATTACH_FAILED` without copying the provider's error.
 Capability-unavailable remains an explicit non-Events discovery status.
-Untrusted termination objects are not serialized, and failures do not change
-trigger matching or wake retry policy. This is a **pre-v1 diagnostics
+The host capability object is reduced to a descriptor-only check for the
+single advertised MCP Events extension ID (ignoring unrelated capability
+fields), and fulfilled `events/poll` pages are projected through own-data
+descriptors for only the five consumed page fields before reading them.
+Getter-backed or Proxy page objects fail with the stable
+`MCP_EVENTS_POLL_PAGE_INVALID` error **before any event append or cursor
+advance**. Bounded event arrays retain the existing per-page maxEvents
+check before per-event JSON snapshots; unbounded provider metadata never
+needs to be enumerated. Untrusted termination objects are not serialized,
+and failures do not change trigger matching or wake retry policy. This is a **pre-v1 diagnostics
 behavior change**: hosts that need private transport-level debug messages
 must log them in their own separately permissioned sink, never forward raw
 messages into EI status, model-visible tools or shared telemetry.
