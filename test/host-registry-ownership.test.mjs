@@ -156,3 +156,74 @@ test('manual host client attachment remains protected from later registry collis
     await rm(dataDir, { recursive: true, force: true });
   }
 });
+
+
+test('registry refresh cannot detach a host replacement inserted during awaited cleanup', async () => {
+  const dataDir = await mkdtemp(path.join(os.tmpdir(), 'ei-registry-aba-'));
+  let registryEntries = [{
+    id: 'shared',
+    serverId: 'registry-v1',
+    client: eventsClient('registry.v1'),
+    pollIntervalMs: 300000,
+  }];
+  let host;
+  let releaseDetach;
+  let detachedResolve;
+  const detached = new Promise(resolve => { detachedResolve = resolve; });
+  const detachGate = new Promise(resolve => { releaseDetach = resolve; });
+  try {
+    host = await createEventIntelligenceHost({
+      dataDir,
+      env,
+      mcpRegistry: { listConnections: () => registryEntries },
+    });
+    assert.deepEqual(await names(host), ['registry.v1']);
+    const client = host.runtime.mcpEventsClient;
+    const actualDetach = client.detachConnection.bind(client);
+    let intercepted = false;
+    client.detachConnection = async connectionId => {
+      const result = await actualDetach(connectionId);
+      if (connectionId === 'shared' && !intercepted) {
+        intercepted = true;
+        detachedResolve();
+        await detachGate;
+      }
+      return result;
+    };
+
+    registryEntries = [{
+      id: 'shared',
+      serverId: 'registry-v2',
+      client: eventsClient('registry.v2'),
+      pollIntervalMs: 300000,
+    }];
+    const refreshing = host.refreshMcpRegistry();
+    await detached;
+    // The old registry connection is physically gone and cleanup completed,
+    // but its refresh still awaits. The host takes the now-vacant ID.
+    await host.attachMcpClient({
+      id: 'shared',
+      serverId: 'host-replacement',
+      client: eventsClient('host.replacement'),
+      pollIntervalMs: 300000,
+    });
+    releaseDetach();
+    const results = await refreshing;
+    assert.ok(results.some(result =>
+      result.connectionId === 'shared' &&
+      result.status === 'error' &&
+      result.code === 'EI_HOST_REGISTRY_ID_CONFLICT'));
+    assert.deepEqual(await names(host), ['host.replacement']);
+    assert.deepEqual((await host.mcpStatus()).map(entry => entry.serverId),
+      ['host-replacement']);
+
+    registryEntries = [];
+    await host.refreshMcpRegistry();
+    assert.deepEqual(await names(host), ['host.replacement'],
+      'subsequent registry removal must not revoke the new host owner');
+  } finally {
+    releaseDetach?.();
+    await host?.close();
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
