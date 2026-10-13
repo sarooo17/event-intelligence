@@ -20,6 +20,26 @@ export { assertJsonSchemaValue } from './json-schema.mjs';
 export { MCP_EVENTS_EXTENSION_ID } from './mcp-events-compatibility.mjs';
 const UnknownResultSchema = z.unknown();
 
+// A producer is not an authority for operator/model-facing diagnostics.
+// Exception messages, non-Error throws, and stream termination details may
+// contain bearer credentials or arbitrary private event data that no regex
+// can identify. Never stringify or propagate them across this boundary.
+const PROVIDER_ERROR_MESSAGE = 'MCP Events provider operation failed';
+const CAPABILITY_ERROR_MESSAGE = 'MCP Events capability unavailable';
+
+function isUnavailableCapability(error) {
+  if (!error || typeof error !== 'object' || isProxy(error)) return false;
+  const descriptor = Object.getOwnPropertyDescriptor(error, 'code');
+  return descriptor && Object.hasOwn(descriptor, 'value') &&
+    descriptor.value === 'MCP_EVENTS_CAPABILITY_UNAVAILABLE';
+}
+
+function safeMcpFailure(error) {
+  return isUnavailableCapability(error)
+    ? CAPABILITY_ERROR_MESSAGE : PROVIDER_ERROR_MESSAGE;
+}
+
+
 // Bound untrusted paginated MCP Events source catalogues before parsing or
 // persisting descriptors. These limits apply per host-managed MCP connection.
 export const MAX_MCP_EVENT_DISCOVERY_PAGES = 32;
@@ -539,10 +559,10 @@ export class McpEventsClientManager {
   async rpc(connection, method, params) {
     try {
       return await connection.request(method, params);
-    } catch (error) {
-      throw new Error(
-        `Host MCP ${connection.connectionId} ${method} failed: ${error instanceof Error ? error.message : String(error)}`,
-      );
+    } catch {
+      const failure = new Error(PROVIDER_ERROR_MESSAGE);
+      failure.code = 'MCP_EVENTS_PROVIDER_REQUEST_FAILED';
+      throw failure;
     }
   }
 
@@ -727,19 +747,15 @@ export class McpEventsClientManager {
           events: events.map((event) => event.name),
         });
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
+        const unavailable = isUnavailableCapability(error);
+        const message = safeMcpFailure(error);
         if (this.isConnectionAttached(connection)) {
           this.lastErrors.set(connection.connectionId, message);
         }
         results.push({
           connectionId: connection.connectionId,
-          status:
-            error?.code === 'MCP_EVENTS_CAPABILITY_UNAVAILABLE'
-              ? 'ignored_no_events'
-              : 'error',
-          ...(error?.code === 'MCP_EVENTS_CAPABILITY_UNAVAILABLE'
-            ? {}
-            : { error: message }),
+          status: unavailable ? 'ignored_no_events' : 'error',
+          ...(unavailable ? {} : { error: message }),
         });
       }
     }
@@ -1134,10 +1150,7 @@ export class McpEventsClientManager {
 
     const onError = (error) => {
       if (!this.isConnectionAttached(connection)) return;
-      this.lastErrors.set(
-        connection.connectionId,
-        error instanceof Error ? error.message : String(error),
-      );
+      this.lastErrors.set(connection.connectionId, PROVIDER_ERROR_MESSAGE);
       void this.observability?.emit({
         event: 'ei.source.delivery_failed',
         level: 'warn',
@@ -1145,7 +1158,7 @@ export class McpEventsClientManager {
         connectionId: connection.connectionId,
         serverId: connection.serverId,
         eventName: subscription.eventName,
-        error,
+        error: new Error(PROVIDER_ERROR_MESSAGE),
       });
     };
 
@@ -1156,10 +1169,7 @@ export class McpEventsClientManager {
           this.deliverySessions.get(subscription.subscriptionId) !== activeSession) return;
       this.deliverySessions.delete(subscription.subscriptionId);
       if (detail) {
-        this.lastErrors.set(
-          connection.connectionId,
-          typeof detail === 'string' ? detail : JSON.stringify(detail),
-        );
+        this.lastErrors.set(connection.connectionId, PROVIDER_ERROR_MESSAGE);
       }
       void this.observability?.emit({
         event: 'ei.source.delivery_terminated',
@@ -1371,7 +1381,7 @@ export class McpEventsClientManager {
           ),
         });
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
+        const message = safeMcpFailure(error);
         this.lastErrors.set(connection.connectionId, message);
         await this.observability?.emit({
           event: 'ei.source.poll_failed',
@@ -1379,7 +1389,7 @@ export class McpEventsClientManager {
           scopeId: connection.scopeId,
           connectionId: connection.connectionId,
           serverId: connection.serverId,
-          error,
+          error: new Error(message),
         });
         results.push({
           connectionId: connection.connectionId,
@@ -1420,17 +1430,14 @@ export class McpEventsClientManager {
           { respectSchedule: true },
         );
       } catch (error) {
-        this.lastErrors.set(
-          connection.connectionId,
-          error instanceof Error ? error.message : String(error),
-        );
+        this.lastErrors.set(connection.connectionId, safeMcpFailure(error));
         await this.observability?.emit({
           event: 'ei.source.poll_failed',
           level: 'warn',
           scopeId: connection.scopeId,
           connectionId: connection.connectionId,
           serverId: connection.serverId,
-          error,
+          error: new Error(safeMcpFailure(error)),
         });
       } finally {
         if (
