@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import os from 'node:os';
 import {
   PatternAstV2DefinitionSchema,
@@ -60,6 +60,34 @@ const packageData = JSON.parse(
   await readFile(new URL('../../package.json', import.meta.url), 'utf8'),
 );
 const fileContent = await readFile(new URL(import.meta.url));
+
+// Commit to the complete compiled runtime tree, not merely an evaluator
+// entrypoint. A change in a transitive evaluator/schema/semantic dependency
+// must change the evidence identity even on an uncommitted local checkout.
+async function compiledRuntimeModules(dir, prefix = '') {
+  const entries = (await readdir(dir, { withFileTypes: true }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  const files = [];
+  for (const entry of entries) {
+    if (entry.isDirectory()) {
+      files.push(...await compiledRuntimeModules(
+        new URL(entry.name + '/', dir),
+        prefix + entry.name + '/',
+      ));
+    } else if (entry.isFile() && entry.name.endsWith('.js')) {
+      files.push({
+        path: prefix + entry.name,
+        sha256: createHash('sha256')
+          .update(await readFile(new URL(entry.name, dir)))
+          .digest('hex'),
+      });
+    }
+  }
+  return files;
+}
+const compiledModules = await compiledRuntimeModules(
+  new URL('../../dist/src/', import.meta.url),
+);
 // These are the actual compiled modules loaded by evaluatePatternV2().
 // Hashing only this harness or the package version would allow a different
 // evaluator to masquerade as the same conformance execution.
@@ -77,6 +105,11 @@ const sha256 = value => createHash('sha256')
   .update(typeof value === 'string' || Buffer.isBuffer(value)
     ? value : JSON.stringify(value))
   .digest('hex');
+assert.ok(compiledModules.length > 0, 'compiled runtime attestation cannot be empty');
+const buildSha256 = sha256(compiledModules);
+const lockfileSha256 = sha256(
+  await readFile(new URL('../../package-lock.json', import.meta.url)),
+);
 
 const checks = [];
 async function check(name, fn) {
@@ -313,6 +346,13 @@ console.log(JSON.stringify({
     source: 'scripts/evidence/pattern-v2-conformance.mjs',
     sourceSha256: sha256(fileContent),
     evaluatedModules,
+    completeRuntimeBuild: {
+      root: 'dist/src',
+      sha256: buildSha256,
+      fileCount: compiledModules.length,
+      fileEncoding: 'SHA-256(JSON.stringify(sorted [{path,sha256}]))',
+    },
+    dependencyLockSha256: lockfileSha256,
     inputEncoding: 'SHA-256(JSON.stringify({definition,events,clocks}))',
     seedAlgorithm: 'LCG(1664525,1013904223); Fisher-Yates shuffle',
     note: 'Synthetic, bounded fixtures only; hashed input commitments, not raw event data.',
