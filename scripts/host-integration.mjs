@@ -150,6 +150,30 @@ export async function createEventIntelligenceHost({
   let registryRefreshPromise = null;
   let registryRefreshRequested = false;
 
+  // detachConnection revokes the old connection synchronously, but its
+  // durable cleanup may reject after a host has attached a replacement.
+  // Release registry ownership whenever the original object is no longer
+  // attached, even on cleanup failure. Never label a replacement as ours.
+  const detachRegistryConnection = async (connectionId) => {
+    const original = runtime.mcpEventsClient.connections.get(connectionId);
+    try {
+      await runtime.mcpEventsClient.detachConnection(connectionId);
+      return null;
+    } catch {
+      return {
+        connectionId,
+        status: 'error',
+        code: 'EI_HOST_REGISTRY_DETACH_FAILED',
+        error: 'Registry connection detach cleanup failed',
+      };
+    } finally {
+      if (!original ||
+          runtime.mcpEventsClient.connections.get(connectionId) !== original) {
+        registryManaged.delete(connectionId);
+      }
+    }
+  };
+
   const refreshMcpRegistryOnce = async () => {
     const entries = await listRegistryConnections(mcpRegistry);
     const desired = new Map();
@@ -163,9 +187,8 @@ export async function createEventIntelligenceHost({
 
     for (const connectionId of [...registryManaged]) {
       if (!desired.has(connectionId)) {
-        await runtime.mcpEventsClient.detachConnection(connectionId);
-        registryManaged.delete(connectionId);
-        outcomes.push({ connectionId, status: 'detached' });
+        const failure = await detachRegistryConnection(connectionId);
+        outcomes.push(failure ?? { connectionId, status: 'detached' });
       }
     }
 
@@ -195,8 +218,11 @@ export async function createEventIntelligenceHost({
           continue;
         }
 
-        await runtime.mcpEventsClient.detachConnection(connectionId);
-        registryManaged.delete(connectionId);
+        const failure = await detachRegistryConnection(connectionId);
+        if (failure) {
+          outcomes.push(failure);
+          continue;
+        }
         // Detach performs asynchronous durable cleanup. A host may manually
         // attach a connection with the same ID while it is suspended. Never
         // replace that new host-owned connection when reconciliation resumes.
