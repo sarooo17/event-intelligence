@@ -62,12 +62,17 @@ function scheduler({ store, engine, at, workerId, deliverer, maxAttempts }) {
 test('durable queued wake rechecks host-owned revocation before effect on retry and after restart', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'ei-queued-host-revoke-'));
   let store;
-  const policy = { authorized: true, checked: 0, effects: [] };
+  // A host-specific target grant, not a global boolean or authorization
+  // derived from a source event. This fixture does not model tenant/session
+  // identity or actual MCP detach: those remain explicit host responsibilities.
+  const permission = 'host-owned-policy-trigger@1:host-managed-runtime/permissioned-effect';
+  const policy = { grants: new Set([permission]), checked: [], effects: [] };
   const hostDispatcher = async packet => {
-    // The host, not EI, checks current session/tenant/owner authority on
-    // EVERY dispatch. This fixture does not simulate MCP detach/reattach.
-    policy.checked++;
-    if (!policy.authorized) throw new Error('host policy denied');
+    const target = packet.target;
+    const key = packet.trigger_id + '@' + packet.trigger_version +
+      ':' + target?.runtime + '/' + target?.id;
+    policy.checked.push({ key, wakeId: packet.wake_id });
+    if (!policy.grants.has(key)) throw new Error('host target policy denied');
     policy.effects.push(packet.wake_id);
     return { runtimeReceiptId: 'host-receipt:' + packet.wake_id };
   };
@@ -92,16 +97,28 @@ test('durable queued wake rechecks host-owned revocation before effect on retry 
     const wakeId = initial.wake.wakeId;
     assert.equal(store.getWakeDelivery(wakeId).attemptCount, 1);
     assert.equal(store.getWakeDelivery(wakeId).status, 'retry_pending');
+    assert.equal(store.getWakeDelivery(wakeId).nextAttemptAt,
+      '2026-10-13T10:00:02.000Z');
     assert.equal(store.getWakeDelivery(wakeId).runtimeReceiptId, null);
     assert.equal(policy.effects.length, 0);
 
     // The host changes its authorization decision AFTER EI has durably
     // matched and queued this wake. This does NOT call MCP detach.
-    policy.authorized = false;
+    policy.grants.delete(permission);
     await store.close();
     store = new PersistentEventStore(dir);
     await store.init();
     const restartedEngine = new CompositeTriggerEngine(store);
+    assert.equal(store.getWakeDelivery(wakeId).nextAttemptAt,
+      '2026-10-13T10:00:02.000Z');
+    const premature = scheduler({
+      store, engine: restartedEngine,
+      at: '2026-10-13T10:00:01.999Z',
+      workerId: 'before-retry-due',
+      deliverer: hostDispatcher,
+    });
+    assert.deepEqual(await premature.runDue(), []);
+    assert.equal(policy.checked.length, 0);
     const denied = scheduler({
       store,
       engine: restartedEngine,
@@ -112,18 +129,27 @@ test('durable queued wake rechecks host-owned revocation before effect on retry 
     });
     const deniedResults = await denied.runDue();
     assert.deepEqual(deniedResults.map(row => row.status), ['retry_scheduled']);
-    assert.equal(policy.checked, 1,
-      'host gate must run again for an already-queued durable wake');
+    assert.deepEqual(policy.checked, [{ key: permission, wakeId }],
+      'host gate must inspect the exact queued wake target');
     assert.equal(policy.effects.length, 0,
       'a revoked session cannot cause host side effects');
     assert.equal(store.getWakeDelivery(wakeId).attemptCount, 2);
     assert.equal(store.getWakeDelivery(wakeId).status, 'retry_pending');
+    assert.equal(store.getWakeDelivery(wakeId).nextAttemptAt,
+      '2026-10-13T10:00:03.100Z');
     assert.equal(store.getWakeDelivery(wakeId).runtimeReceiptId, null);
     assert.equal(store.latestWake(wakeId).status, 'queued');
+    assert.deepEqual(await scheduler({
+      store, engine: restartedEngine,
+      at: '2026-10-13T10:00:03.099Z',
+      workerId: 'before-second-retry-due',
+      deliverer: hostDispatcher,
+    }).runDue(), []);
+    assert.equal(policy.checked.length, 1);
 
     // A later host reauthorization permits the same target. Authorization
     // comes from fresh host state, not match evidence.
-    policy.authorized = true;
+    policy.grants.add(permission);
     const approved = scheduler({
       store,
       engine: restartedEngine,
@@ -134,7 +160,10 @@ test('durable queued wake rechecks host-owned revocation before effect on retry 
     });
     assert.deepEqual((await approved.runDue()).map(row => row.status),
       ['wake_delivered']);
-    assert.equal(policy.checked, 2);
+    assert.deepEqual(policy.checked, [
+      { key: permission, wakeId },
+      { key: permission, wakeId },
+    ]);
     assert.deepEqual(policy.effects, [wakeId]);
     const delivery = store.getWakeDelivery(wakeId);
     assert.equal(delivery.status, 'delivered');
@@ -144,9 +173,25 @@ test('durable queued wake rechecks host-owned revocation before effect on retry 
       .find(row => row.matchId === match.matchId);
     assert.equal(finalMatch.status, 'fired');
     assert.equal(finalMatch.firedWakeId, wakeId);
-    assert.deepEqual(await approved.runDue(), [],
-      'replay must not invoke host again after durable receipt');
-    assert.equal(policy.checked, 2);
+    // Physical store reopen proves terminal receipt and match were
+    // durably committed, not just cached in the previous coordinator.
+    await store.close();
+    store = new PersistentEventStore(dir);
+    await store.init();
+    const recovered = store.getWakeDelivery(wakeId);
+    assert.equal(recovered.status, 'delivered');
+    assert.equal(recovered.runtimeReceiptId, 'host-receipt:' + wakeId);
+    const recoveredMatch = store.listTriggerMatches('host-owned-policy-trigger')
+      .find(row => row.matchId === match.matchId);
+    assert.equal(recoveredMatch.status, 'fired');
+    assert.equal(recoveredMatch.firedWakeId, wakeId);
+    assert.deepEqual(await scheduler({
+      store, engine: new CompositeTriggerEngine(store),
+      at: '2026-10-13T10:00:04.500Z',
+      workerId: 'after-delivery-restart',
+      deliverer: hostDispatcher,
+    }).runDue(), [], 'durable receipt must suppress retry after restart');
+    assert.equal(policy.checked.length, 2);
     assert.deepEqual(policy.effects, [wakeId]);
     assert.equal(await store.verifyAudit(), true);
   } finally {
@@ -195,9 +240,19 @@ test('permanent host revocation reaches durable dead-letter, never a fabricated 
     assert.equal(status.status, 'dead_letter');
     assert.equal(status.runtimeReceiptId, null);
     assert.equal(store.latestWake(wakeId).status, 'dead_letter');
-    assert.deepEqual(await afterRestart.runDue(), []);
-    assert.equal(checks, 2);
+    await store.close();
+    store = new PersistentEventStore(dir);
+    await store.init();
+    assert.equal(store.getWakeDelivery(wakeId).status, 'dead_letter');
+    assert.equal(store.getWakeDelivery(wakeId).attemptCount, 2);
     assert.equal(store.getWakeDelivery(wakeId).runtimeReceiptId, null);
+    assert.equal(store.latestWake(wakeId).status, 'dead_letter');
+    assert.deepEqual(await scheduler({
+      store, engine: new CompositeTriggerEngine(store),
+      at: '2026-10-13T10:00:04.500Z',
+      workerId: 'after-dlq-restart', deliverer: hostVeto, maxAttempts: 2,
+    }).runDue(), []);
+    assert.equal(checks, 2);
     assert.equal(await store.verifyAudit(), true);
   } finally {
     try { await store?.close(); } finally {
