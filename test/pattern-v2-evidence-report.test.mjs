@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 function report() {
@@ -23,6 +25,19 @@ test('v3 conformance report commits to replayable versioned input/environment ev
   assert.equal(first.environment.platform, process.platform);
   assert.equal(first.reproducibility.replay, 'npm run conformance:pattern-v2');
   assert.match(first.reproducibility.sourceSha256, /^[0-9a-f]{64}$/);
+  assert.deepEqual(first.reproducibility.evaluatedModules.map(x => x.path), [
+    'dist/src/patternV2/evaluator.js',
+    'dist/src/intelligenceProtocol/patternV2Schemas.js',
+    'dist/src/semantic/conditionEngine.js',
+  ]);
+  for (const { path: modulePath, sha256 } of first.reproducibility.evaluatedModules) {
+    assert.match(sha256, /^[0-9a-f]{64}$/);
+    const actual = createHash('sha256')
+      .update(readFileSync(modulePath))
+      .digest('hex');
+    assert.equal(sha256, actual,
+      'manifest must fingerprint the actual compiled evaluator dependency: ' + modulePath);
+  }
   assert.equal(first.failed, 0);
   assert.equal(first.passed, 4);
   assert.ok(first.checks.length === first.passed);
