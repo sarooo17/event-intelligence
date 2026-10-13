@@ -8,8 +8,12 @@ one deliberately unmatched partition C. Their per-customer source order is
 fixed (order before payment), but 32 deterministic seeds create different
 cross-customer interleavings using LCG state
 `(Math.imul(seed, 2654435761) ^ 0xa21fb329) >>> 0`, followed by
-`Math.imul(1664525, state) + 1013904223` for each event. The source event
-IDs and timestamps are derived from the seed and interleaving position.
+`Math.imul(1664525, state) + 1013904223` for each event. The source event IDs deliberately **collide** between customers for
+the same clause (`order`/`payment`), while the real physical event
+identities remain distinct through `serverId` and
+`subscriptionArguments.customer`. Timestamps and trace IDs derive from
+the seed and interleaving position. Full physical identity is compared,
+not just sourceEventId.
 
 For each seed, an independent finite reference model groups events by
 customer and expects exactly the A and B order/payment pairs. The actual
@@ -23,7 +27,8 @@ canonical Pattern AST v2 `sequence(followedBy)` is run through the real
 In both histories, matched evidence must contain only same-partition
 order/payment pairs, identical source-event identities, and no extra
 match involving unmatched partition C. Replaying the first source
-occurrence must not append a second durable logical match. After full
+occurrence must not append any new audit row or match-history revision,
+including hidden partials that a materialized match map could collapse. After full
 delivery, a **second** physical store close/reopen must preserve the
 identical match identities. The persisted audit is verified before the
 second reopen. The test also requires several distinct interleavings
