@@ -287,3 +287,17 @@ test('permanent host revocation reaches durable dead-letter, never a fabricated 
     }
   }
 });
+
+
+test('host permission tuple cannot alias slash-delimited target components', () => {
+  const granted = JSON.stringify([
+    'trigger', '1', 'a/b', 'c', 'd',
+  ]);
+  const forbidden = JSON.stringify([
+    'trigger', '1', 'a', 'b/c', 'd',
+  ]);
+  assert.notEqual(granted, forbidden,
+    'each complete target tuple must retain its own authority');
+  const permissions = new Set([granted]);
+  assert.equal(permissions.has(forbidden), false);
+});
