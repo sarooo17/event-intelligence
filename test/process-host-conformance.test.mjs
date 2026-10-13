@@ -95,3 +95,19 @@ test('timed-out process RPC kills worker and prevents later mutations', {
   // close() still awaits child death and deletes the owned temporary state.
   await assert.rejects(harness.close(), /Conformance worker unavailable/);
 });
+
+
+test('failed child spawn rejects promptly without waiting forever for exit', {
+  timeout: 10000,
+}, async () => {
+  const adapter = createProcessHostAdapter({
+    workerExecPath: '/nonexistent/ei-conformance-test-node-executable',
+  });
+  const started = Date.now();
+  await assert.rejects(
+    adapter.createHarness({ observability() {} }),
+    error => error?.code === 'ENOENT' || /ENOENT/.test(error?.message ?? ''),
+  );
+  assert.ok(Date.now() - started < 5000,
+    'a failed fork must settle without waiting for a nonexistent exit event');
+});
