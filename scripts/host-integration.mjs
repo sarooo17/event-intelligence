@@ -6,6 +6,7 @@ import {
 } from './lib/local-event-intelligence-runtime.mjs';
 import {
   createHostMcpEventsConnection,
+  isUnavailableCapability,
 } from './lib/mcp-events-client.mjs';
 import {
   DEFAULT_EVENT_SCOPE_ID,
@@ -268,21 +269,20 @@ export async function createEventIntelligenceHost({
             runtime.mcpEventsClient.connections.get(connectionId) === attemptedConnection) {
           await runtime.mcpEventsClient.detachConnection(connectionId);
         }
-        if (
-          error &&
-          typeof error === 'object' &&
-          error.code === 'MCP_EVENTS_CAPABILITY_UNAVAILABLE'
-        ) {
+        if (isUnavailableCapability(error)) {
           outcomes.push({
             connectionId,
             status: 'ignored_no_events',
           });
           continue;
         }
+        // Provider-side errors can contain credentials or untrusted event
+        // payloads. Registry outcomes also reach host diagnostics/telemetry.
         outcomes.push({
           connectionId,
           status: 'error',
-          error: error instanceof Error ? error.message : String(error),
+          code: 'EI_HOST_REGISTRY_ATTACH_FAILED',
+          error: 'MCP registry connection attach failed',
         });
       }
     }
@@ -330,11 +330,11 @@ export async function createEventIntelligenceHost({
 
     if (typeof mcpRegistry.subscribe === 'function') {
       const maybeUnsubscribe = mcpRegistry.subscribe(() => {
-        refreshMcpRegistry().catch((error) => {
+        refreshMcpRegistry().catch(() => {
           void observer.emit({
             event: 'ei.source.refresh_failed',
             level: 'error',
-            error,
+            error: new Error('MCP registry refresh failed'),
           });
         });
       });

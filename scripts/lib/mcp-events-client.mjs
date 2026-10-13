@@ -20,11 +20,177 @@ export { assertJsonSchemaValue } from './json-schema.mjs';
 export { MCP_EVENTS_EXTENSION_ID } from './mcp-events-compatibility.mjs';
 const UnknownResultSchema = z.unknown();
 
+// A producer is not an authority for operator/model-facing diagnostics.
+// Exception messages, non-Error throws, and stream termination details may
+// contain bearer credentials or arbitrary private event data that no regex
+// can identify. Never stringify or propagate them across this boundary.
+const PROVIDER_ERROR_MESSAGE = 'MCP Events provider operation failed';
+const CAPABILITY_ERROR_MESSAGE = 'MCP Events capability unavailable';
+
+export function isUnavailableCapability(error) {
+  if (!error || typeof error !== 'object' || isProxy(error)) return false;
+  const descriptor = Object.getOwnPropertyDescriptor(error, 'code');
+  return descriptor && Object.hasOwn(descriptor, 'value') &&
+    descriptor.value === 'MCP_EVENTS_CAPABILITY_UNAVAILABLE';
+}
+
+function safeMcpFailure(error) {
+  return isUnavailableCapability(error)
+    ? CAPABILITY_ERROR_MESSAGE : PROVIDER_ERROR_MESSAGE;
+}
+
+
 // Bound untrusted paginated MCP Events source catalogues before parsing or
 // persisting descriptors. These limits apply per host-managed MCP connection.
 export const MAX_MCP_EVENT_DISCOVERY_PAGES = 32;
 export const MAX_MCP_EVENT_DISCOVERY_SOURCES = 256;
 export const MAX_MCP_EVENT_CURSOR_BYTES = 4096;
+
+// MCP SDK capabilities are host-owned but may be backed by untrusted adapter
+// objects. Only the one advertised extension *identity* is used here.
+// Project it by own data descriptor; never evaluate provider getters/Proxies.
+function safeMcpCapabilities(raw) {
+  const invalid = () => {
+    const error = new Error('MCP Events capabilities are unsafe');
+    error.code = 'MCP_EVENTS_CAPABILITY_INVALID';
+    throw error;
+  };
+  if (raw == null) return {};
+  if (typeof raw !== 'object' || Array.isArray(raw) || isProxy(raw)) invalid();
+  const extensionsSlot = Object.getOwnPropertyDescriptor(raw, 'extensions');
+  if (!extensionsSlot) return {};
+  if (!Object.hasOwn(extensionsSlot, 'value')) invalid();
+  const extensions = extensionsSlot.value;
+  if (extensions == null) return {};
+  if (typeof extensions !== 'object' ||
+      Array.isArray(extensions) || isProxy(extensions)) return {};
+  const extension = Object.getOwnPropertyDescriptor(
+    extensions, MCP_EVENTS_EXTENSION_ID,
+  );
+  if (!extension) return {};
+  if (!Object.hasOwn(extension, 'value')) invalid();
+  return { extensions: { [MCP_EVENTS_EXTENSION_ID]: true } };
+}
+
+// A valid-looking fulfilled poll response can hide private data inside
+// accessors, even though the request promise itself never rejected.
+// Snapshot ONLY fields used by polling; retain the existing per-page event
+// count limit before deep-copying the bounded event array.
+function ownPollPage(raw) {
+  const invalid = () => {
+    const error = new Error('MCP Events poll page is unsafe');
+    error.code = 'MCP_EVENTS_POLL_PAGE_INVALID';
+    throw error;
+  };
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw) ||
+      isProxy(raw)) invalid();
+  const page = {};
+  for (const field of ['events', 'cursor', 'hasMore', 'truncated', 'nextPollMs']) {
+    const slot = Object.getOwnPropertyDescriptor(raw, field);
+    if (!slot) {
+      if (field === 'events') invalid();
+      continue;
+    }
+    if (!Object.hasOwn(slot, 'value')) invalid();
+    Object.defineProperty(page, field, {
+      value: slot.value, enumerable: true,
+      configurable: true, writable: true,
+    });
+  }
+  return page;
+}
+
+// A fulfilled push/webhook subscription can be an untrusted JavaScript
+// handle, including accessor-backed cursor or lifecycle methods. Read slots
+// from data descriptors only; never invoke a getter or Proxy trap.
+function deliveryHandleSlot(raw, field, inherited = false) {
+  let owner = raw;
+  for (let depth = 0; owner != null && depth < 5; depth++) {
+    if (isProxy(owner)) {
+      const error = new Error('MCP Events delivery handle is unsafe');
+      error.code = 'MCP_EVENTS_DELIVERY_HANDLE_INVALID';
+      throw error;
+    }
+    const slot = Object.getOwnPropertyDescriptor(owner, field);
+    if (slot) {
+      if (!Object.hasOwn(slot, 'value')) {
+        const error = new Error('MCP Events delivery handle is unsafe');
+        error.code = 'MCP_EVENTS_DELIVERY_HANDLE_INVALID';
+        throw error;
+      }
+      return { present: true, value: slot.value };
+    }
+    if (!inherited) break;
+    owner = Object.getPrototypeOf(owner);
+  }
+  return { present: false };
+}
+
+async function projectDeliveryHandle(handle) {
+  const invalid = () => {
+    const error = new Error('MCP Events delivery handle is unsafe');
+    error.code = 'MCP_EVENTS_DELIVERY_HANDLE_INVALID';
+    throw error;
+  };
+  if (handle == null) {
+    return { close: async () => {}, hasCursor: false, cursor: null, truncated: false };
+  }
+  if ((typeof handle !== 'function' && typeof handle !== 'object') ||
+      Array.isArray(handle) || isProxy(handle)) invalid();
+
+  const teardownCandidates = typeof handle === 'function'
+    ? [handle]
+    : [];
+  let invalidLifecycleSlot = false;
+  if (typeof handle !== 'function') {
+    for (const method of ['close', 'cancel', 'unsubscribe']) {
+      let slot;
+      try {
+        slot = deliveryHandleSlot(handle, method, true);
+      } catch {
+        // Do not invoke hostile accessors, but keep scanning for safe
+        // independent teardown methods on an already opened stream.
+        invalidLifecycleSlot = true;
+        continue;
+      }
+      if (typeof slot.value === 'function') {
+        teardownCandidates.push(() => slot.value.call(handle));
+      }
+    }
+  }
+  const close = async () => {
+    for (const teardown of teardownCandidates) {
+      try {
+        await teardown();
+        return;
+      } catch {
+        // A safe descriptor may still be a failed transport operation.
+        // Try the next method so an active stream is not orphaned.
+      }
+    }
+  };
+
+  if (invalidLifecycleSlot) {
+    try { await close(); } catch {}
+    invalid();
+  }
+
+  try {
+    const cursor = deliveryHandleSlot(handle, 'cursor');
+    const truncated = deliveryHandleSlot(handle, 'truncated');
+    return {
+      close,
+      hasCursor: cursor.present,
+      cursor: cursor.value,
+      truncated: truncated.value === true,
+    };
+  } catch (error) {
+    // On an invalid metadata field, retire an already-opened stream using
+    // the safe method descriptor found above before propagating failure.
+    try { await close(); } catch {}
+    throw error;
+  }
+}
 
 function discoveryLimitError(detail) {
   const error = new Error('MCP Events discovery rejected: ' + detail);
@@ -316,8 +482,11 @@ function normalizeCursor(cursor, label) {
 }
 
 function normalizeNextPollMs(value, fallback) {
-  const result = Number(value ?? fallback);
-  if (!Number.isInteger(result) || result < 0 || result > 300000) {
+  // Untrusted nextPollMs must be a number: Number(object) executes
+  // provider-controlled valueOf/toString, potentially throwing secrets.
+  const result = value ?? fallback;
+  if (typeof result !== 'number' ||
+      !Number.isInteger(result) || result < 0 || result > 300000) {
     throw new Error('events/poll returned invalid nextPollMs');
   }
   return result;
@@ -536,14 +705,21 @@ export class McpEventsClientManager {
     return removed;
   }
 
-  async rpc(connection, method, params) {
+  // Provider-owned hooks may reject with arbitrary private payloads or
+  // credential-bearing exceptions. Never expose raw thrown objects beyond
+  // this boundary, including capability lookup and stream setup.
+  async invokeProvider(operation) {
     try {
-      return await connection.request(method, params);
-    } catch (error) {
-      throw new Error(
-        `Host MCP ${connection.connectionId} ${method} failed: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      return await operation();
+    } catch {
+      const failure = new Error(PROVIDER_ERROR_MESSAGE);
+      failure.code = 'MCP_EVENTS_PROVIDER_REQUEST_FAILED';
+      throw failure;
     }
+  }
+
+  async rpc(connection, method, params) {
+    return this.invokeProvider(() => connection.request(method, params));
   }
 
   async discoverConnection(connectionId) {
@@ -555,7 +731,9 @@ export class McpEventsClientManager {
     }
 
     const context = await this.scopeContext(connection);
-    const capabilities = (await connection.getCapabilities()) ?? {};
+    const capabilities = await this.invokeProvider(async () =>
+      safeMcpCapabilities(await connection.getCapabilities()),
+    );
     this.assertConnectionAttached(connection);
     const profile = resolveMcpEventsCompatibilityProfile({
       capabilities,
@@ -727,19 +905,15 @@ export class McpEventsClientManager {
           events: events.map((event) => event.name),
         });
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
+        const unavailable = isUnavailableCapability(error);
+        const message = safeMcpFailure(error);
         if (this.isConnectionAttached(connection)) {
           this.lastErrors.set(connection.connectionId, message);
         }
         results.push({
           connectionId: connection.connectionId,
-          status:
-            error?.code === 'MCP_EVENTS_CAPABILITY_UNAVAILABLE'
-              ? 'ignored_no_events'
-              : 'error',
-          ...(error?.code === 'MCP_EVENTS_CAPABILITY_UNAVAILABLE'
-            ? {}
-            : { error: message }),
+          status: unavailable ? 'ignored_no_events' : 'error',
+          ...(unavailable ? {} : { error: message }),
         });
       }
     }
@@ -915,7 +1089,7 @@ export class McpEventsClientManager {
       const profile =
         this.profiles.get(connection.connectionId) ??
         getMcpEventsCompatibilityProfile(connection.compatibilityProfile);
-      const result = await this.rpc(connection, profile.pollMethod, {
+      const rawResult = await this.rpc(connection, profile.pollMethod, {
         name: subscription.eventName,
         arguments: subscription.arguments,
         cursor,
@@ -924,8 +1098,8 @@ export class McpEventsClientManager {
       // Do not process an RPC response which completed after detach or after
       // another session replaced this connectionId.
       this.assertConnectionAttached(connection);
-
-      const remoteEvents = result?.events;
+      const result = ownPollPage(rawResult);
+      const remoteEvents = result.events;
       // A producer adapter can return a Proxy, accessor-backed array or a
       // custom iterator, not just wire-decoded JSON. Snapshot the bounded
       // OWN entries before the first async append; the remote array cannot
@@ -1134,10 +1308,7 @@ export class McpEventsClientManager {
 
     const onError = (error) => {
       if (!this.isConnectionAttached(connection)) return;
-      this.lastErrors.set(
-        connection.connectionId,
-        error instanceof Error ? error.message : String(error),
-      );
+      this.lastErrors.set(connection.connectionId, PROVIDER_ERROR_MESSAGE);
       void this.observability?.emit({
         event: 'ei.source.delivery_failed',
         level: 'warn',
@@ -1145,7 +1316,7 @@ export class McpEventsClientManager {
         connectionId: connection.connectionId,
         serverId: connection.serverId,
         eventName: subscription.eventName,
-        error,
+        error: new Error(PROVIDER_ERROR_MESSAGE),
       });
     };
 
@@ -1156,10 +1327,7 @@ export class McpEventsClientManager {
           this.deliverySessions.get(subscription.subscriptionId) !== activeSession) return;
       this.deliverySessions.delete(subscription.subscriptionId);
       if (detail) {
-        this.lastErrors.set(
-          connection.connectionId,
-          typeof detail === 'string' ? detail : JSON.stringify(detail),
-        );
+        this.lastErrors.set(connection.connectionId, PROVIDER_ERROR_MESSAGE);
       }
       void this.observability?.emit({
         event: 'ei.source.delivery_terminated',
@@ -1176,28 +1344,20 @@ export class McpEventsClientManager {
       delivery === 'push'
         ? connection.openEventStream
         : connection.createWebhookSubscription;
-    const handle = await open({
-      subscriptionId: subscription.subscriptionId,
-      name: subscription.eventName,
-      arguments: subscription.arguments,
-      cursor: current?.cursor ?? null,
-      onEvent,
-      onActive,
-      onGap,
-      onError,
-      onTerminated,
-    });
-
-    const close =
-      typeof handle === 'function'
-        ? handle
-        : typeof handle?.close === 'function'
-          ? () => handle.close()
-          : typeof handle?.cancel === 'function'
-            ? () => handle.cancel()
-            : typeof handle?.unsubscribe === 'function'
-              ? () => handle.unsubscribe()
-              : async () => {};
+    const projectedHandle = await this.invokeProvider(async () =>
+      projectDeliveryHandle(await open({
+        subscriptionId: subscription.subscriptionId,
+        name: subscription.eventName,
+        arguments: subscription.arguments,
+        cursor: current?.cursor ?? null,
+        onEvent,
+        onActive,
+        onGap,
+        onError,
+        onTerminated,
+      })),
+    );
+    const close = projectedHandle.close;
 
     const detachedOutcome = () => ({
       subscriptionId: subscription.subscriptionId,
@@ -1218,10 +1378,10 @@ export class McpEventsClientManager {
         await cleanupOrphan();
         return detachedOutcome();
       }
-      if (handle && Object.prototype.hasOwnProperty.call(handle, 'cursor')) {
+      if (projectedHandle.hasCursor) {
         await onActive({
-          cursor: handle.cursor,
-          truncated: handle.truncated === true,
+          cursor: projectedHandle.cursor,
+          truncated: projectedHandle.truncated,
         });
       } else {
         await this.saveSubscriptionState(
@@ -1371,7 +1531,7 @@ export class McpEventsClientManager {
           ),
         });
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
+        const message = safeMcpFailure(error);
         this.lastErrors.set(connection.connectionId, message);
         await this.observability?.emit({
           event: 'ei.source.poll_failed',
@@ -1379,7 +1539,7 @@ export class McpEventsClientManager {
           scopeId: connection.scopeId,
           connectionId: connection.connectionId,
           serverId: connection.serverId,
-          error,
+          error: new Error(message),
         });
         results.push({
           connectionId: connection.connectionId,
@@ -1420,17 +1580,14 @@ export class McpEventsClientManager {
           { respectSchedule: true },
         );
       } catch (error) {
-        this.lastErrors.set(
-          connection.connectionId,
-          error instanceof Error ? error.message : String(error),
-        );
+        this.lastErrors.set(connection.connectionId, safeMcpFailure(error));
         await this.observability?.emit({
           event: 'ei.source.poll_failed',
           level: 'warn',
           scopeId: connection.scopeId,
           connectionId: connection.connectionId,
           serverId: connection.serverId,
-          error,
+          error: new Error(safeMcpFailure(error)),
         });
       } finally {
         if (

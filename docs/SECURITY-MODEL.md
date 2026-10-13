@@ -168,6 +168,51 @@ Previously queued and matched events may still require host-owned
 cancellation policy before waking an agent. Stronger atomic cursor/append
 fencing and explicit queued-work revocation belong to #45.
 
+### Untrusted MCP provider failures are not diagnostics authority
+
+An authenticated host-owned MCP producer can fail with arbitrary exception
+messages, push/webhook callback errors or stream termination details. These
+values may contain private event payloads and **unlabelled** secrets that no
+regex-based redaction could identify. They are not trusted just because the
+embedding host supplied the transport.
+
+EI's manager now returns a fixed safe failure description instead of echoing
+an untrusted provider exception in discovery results, `pollAll()`, connection
+`status().error`, push/webhook callback status or operational telemetry.
+An MCP provider request failure throws a neutral EI error code
+`MCP_EVENTS_PROVIDER_REQUEST_FAILED`; the registry attach path reports
+`EI_HOST_REGISTRY_ATTACH_FAILED` without copying the provider's error.
+Capability-unavailable remains an explicit non-Events discovery status.
+The host capability object is reduced to a descriptor-only check for the
+single advertised MCP Events extension ID (ignoring unrelated capability
+fields), and fulfilled `events/poll` pages are projected through own-data
+descriptors for only the five consumed page fields before reading them.
+Getter-backed or Proxy page objects fail with the stable
+`MCP_EVENTS_POLL_PAGE_INVALID` error **before any event append or cursor
+advance**. Fulfilled push/webhook delivery handles are likewise inspected by
+own-data property descriptors (with bounded prototype lookup for class
+methods); malicious `close`/`cancel`/`unsubscribe`, `cursor` or
+`truncated` accessors and Proxy wrappers never run as part of EI metadata
+parsing. If a safe close method exists when later metadata is invalid, EI
+attempts to close that just-opened stream before returning an error; wholly
+uninspectable malicious Proxy handles remain the host transport's cleanup
+responsibility. The optional `nextPollMs` page field is accepted only as an
+integer numeric JSON value: objects and numeric strings are no longer
+coerced through JavaScript `Number()`, which could execute provider
+`valueOf()` or `toString()` (a deliberate pre-v1 tightening). Bounded event arrays retain the existing per-page maxEvents
+check before per-event JSON snapshots; unbounded provider metadata never
+needs to be enumerated. Untrusted termination objects are not serialized,
+and failures do not change trigger matching or wake retry policy. This is a **pre-v1 diagnostics
+behavior change**: hosts that need private transport-level debug messages
+must log them in their own separately permissioned sink, never forward raw
+messages into EI status, model-visible tools or shared telemetry.
+
+This does **not** sanitize arbitrary provider-controlled event names or
+host-selected connection IDs used elsewhere, protect network transport logs
+before EI receives a response, establish quotas or revoke already queued
+wake work. The host still owns transport credential management, network
+timeouts, private debug retention and notification authorization.
+
 ## Telemetry redaction at the observability boundary
 
 The `ei.*` best-effort observability emitter uses an allowlisted record
