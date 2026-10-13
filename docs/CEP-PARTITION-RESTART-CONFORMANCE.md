@@ -9,9 +9,13 @@ fixed (order before payment), but 32 deterministic seeds create different
 cross-customer interleavings using LCG state
 `(Math.imul(seed, 2654435761) ^ 0xa21fb329) >>> 0`, followed by
 `Math.imul(1664525, state) + 1013904223` for each event. The source event IDs deliberately **collide** between customers for
-the same clause (`order`/`payment`), while the real physical event
-identities remain distinct through `serverId` and
-`subscriptionArguments.customer`. Timestamps and trace IDs derive from
+the same clause (`order`/`payment`), while physical event
+identities remain distinct through tenant-specific `serverId`. The
+`subscriptionArguments` are correctly fixed at `{}` to match the trigger's
+MCP clause declarations; changing them would cause legitimate match
+rejection, not a partition-restart failure. This fixture validates complete
+identity projection including arguments, **not** distinct nonempty
+subscription-argument variants. Timestamps and trace IDs derive from
 the seed and interleaving position. Full physical identity is compared,
 not just sourceEventId.
 
