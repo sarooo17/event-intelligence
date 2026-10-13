@@ -150,6 +150,30 @@ export async function createEventIntelligenceHost({
   let registryRefreshPromise = null;
   let registryRefreshRequested = false;
 
+  // detachConnection revokes the old connection synchronously, but its
+  // durable cleanup may reject after a host has attached a replacement.
+  // Release registry ownership whenever the original object is no longer
+  // attached, even on cleanup failure. Never label a replacement as ours.
+  const detachRegistryConnection = async (connectionId) => {
+    const original = runtime.mcpEventsClient.connections.get(connectionId);
+    try {
+      await runtime.mcpEventsClient.detachConnection(connectionId);
+      return null;
+    } catch {
+      return {
+        connectionId,
+        status: 'error',
+        code: 'EI_HOST_REGISTRY_DETACH_FAILED',
+        error: 'Registry connection detach cleanup failed',
+      };
+    } finally {
+      if (!original ||
+          runtime.mcpEventsClient.connections.get(connectionId) !== original) {
+        registryManaged.delete(connectionId);
+      }
+    }
+  };
+
   const refreshMcpRegistryOnce = async () => {
     const entries = await listRegistryConnections(mcpRegistry);
     const desired = new Map();
@@ -163,14 +187,26 @@ export async function createEventIntelligenceHost({
 
     for (const connectionId of [...registryManaged]) {
       if (!desired.has(connectionId)) {
-        await runtime.mcpEventsClient.detachConnection(connectionId);
-        registryManaged.delete(connectionId);
-        outcomes.push({ connectionId, status: 'detached' });
+        const failure = await detachRegistryConnection(connectionId);
+        outcomes.push(failure ?? { connectionId, status: 'detached' });
       }
     }
 
     for (const [connectionId, connection] of desired) {
       const existing = runtime.mcpEventsClient.connections.get(connectionId);
+      // The host owns explicit and manually attached MCP connections.
+      // Only connections *previously attached by this registry* may be
+      // refreshed or removed by registry reconciliation. Identity equality
+      // alone does not transfer lifecycle ownership to the registry.
+      if (existing && !registryManaged.has(connectionId)) {
+        outcomes.push({
+          connectionId,
+          status: 'error',
+          code: 'EI_HOST_REGISTRY_ID_CONFLICT',
+          error: 'Registry connection ID conflicts with a host-owned MCP connection',
+        });
+        continue;
+      }
       if (existing) {
         if (
           existing.identity === connection.identity &&
@@ -182,12 +218,43 @@ export async function createEventIntelligenceHost({
           continue;
         }
 
-        await runtime.mcpEventsClient.detachConnection(connectionId);
-        registryManaged.delete(connectionId);
+        const failure = await detachRegistryConnection(connectionId);
+        if (failure) {
+          outcomes.push(failure);
+          continue;
+        }
+        // Detach performs asynchronous durable cleanup. A host may manually
+        // attach a connection with the same ID while it is suspended. Never
+        // replace that new host-owned connection when reconciliation resumes.
+        if (runtime.mcpEventsClient.connections.has(connectionId)) {
+          outcomes.push({
+            connectionId,
+            status: 'error',
+            code: 'EI_HOST_REGISTRY_ID_CONFLICT',
+            error: 'Registry connection ID conflicts with a host-owned MCP connection',
+          });
+          continue;
+        }
       }
 
+      let attemptedConnection = null;
       try {
-        const result = await runtime.mcpEventsClient.attachConnection(connection);
+        // attachConnection adds the normalized connection before its first
+        // asynchronous discovery await. Remember the actual object identity:
+        // later host replacement must not be detached by catch cleanup.
+        const attachment = runtime.mcpEventsClient.attachConnection(connection);
+        attemptedConnection = runtime.mcpEventsClient.connections.get(connectionId);
+        const result = await attachment;
+        if (runtime.mcpEventsClient.connections.get(connectionId) !== attemptedConnection ||
+            !attemptedConnection) {
+          outcomes.push({
+            connectionId,
+            status: 'error',
+            code: 'EI_HOST_REGISTRY_ID_CONFLICT',
+            error: 'Registry connection was replaced during event discovery',
+          });
+          continue;
+        }
         registryManaged.add(connectionId);
         outcomes.push({
           connectionId,
@@ -195,7 +262,12 @@ export async function createEventIntelligenceHost({
           events: result.events.map((event) => event.name),
         });
       } catch (error) {
-        await runtime.mcpEventsClient.detachConnection(connectionId);
+        // Cleanup only a connection that this attach attempt actually
+        // installed; never revoke a replacement installed by the host.
+        if (attemptedConnection &&
+            runtime.mcpEventsClient.connections.get(connectionId) === attemptedConnection) {
+          await runtime.mcpEventsClient.detachConnection(connectionId);
+        }
         if (
           error &&
           typeof error === 'object' &&
