@@ -138,7 +138,9 @@ async function projectDeliveryHandle(handle) {
   if ((typeof handle !== 'function' && typeof handle !== 'object') ||
       Array.isArray(handle) || isProxy(handle)) invalid();
 
-  let close = typeof handle === 'function' ? handle : async () => {};
+  const teardownCandidates = typeof handle === 'function'
+    ? [handle]
+    : [];
   let invalidLifecycleSlot = false;
   if (typeof handle !== 'function') {
     for (const method of ['close', 'cancel', 'unsubscribe']) {
@@ -146,17 +148,27 @@ async function projectDeliveryHandle(handle) {
       try {
         slot = deliveryHandleSlot(handle, method, true);
       } catch {
-        // A malicious accessor-backed close() must not prevent us from
-        // finding an independent safe cancel()/unsubscribe() teardown.
+        // Do not invoke hostile accessors, but keep scanning for safe
+        // independent teardown methods on an already opened stream.
         invalidLifecycleSlot = true;
         continue;
       }
       if (typeof slot.value === 'function') {
-        close = () => slot.value.call(handle);
-        break;
+        teardownCandidates.push(() => slot.value.call(handle));
       }
     }
   }
+  const close = async () => {
+    for (const teardown of teardownCandidates) {
+      try {
+        await teardown();
+        return;
+      } catch {
+        // A safe descriptor may still be a failed transport operation.
+        // Try the next method so an active stream is not orphaned.
+      }
+    }
+  };
 
   if (invalidLifecycleSlot) {
     try { await close(); } catch {}
