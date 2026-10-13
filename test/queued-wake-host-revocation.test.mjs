@@ -26,7 +26,7 @@ async function matchOnce(store, engine) {
     sourceEventId: 'source-before-revoke-1',
     name: 'source.revocable',
     occurredAt: '2026-10-13T10:00:00.000Z',
-    serverId: 'same-mcp-connection-id',
+    serverId: 'revocable-provider-server',
     provider: 'host-authorized-mcp',
     data: {},
   });
@@ -65,7 +65,7 @@ test('durable queued wake rechecks host-owned revocation before effect on retry 
   const policy = { authorized: true, checked: 0, effects: [] };
   const hostDispatcher = async packet => {
     // The host, not EI, checks current session/tenant/owner authority on
-    // EVERY dispatch. Same MCP connection ID does not prove old authority.
+    // EVERY dispatch. This fixture does not simulate MCP detach/reattach.
     policy.checked++;
     if (!policy.authorized) throw new Error('host policy denied');
     policy.effects.push(packet.wake_id);
@@ -95,8 +95,8 @@ test('durable queued wake rechecks host-owned revocation before effect on retry 
     assert.equal(store.getWakeDelivery(wakeId).runtimeReceiptId, null);
     assert.equal(policy.effects.length, 0);
 
-    // The host revokes the session AFTER EI has durably matched and
-    // queued this wake. No naive source disconnect can revoke its target.
+    // The host changes its authorization decision AFTER EI has durably
+    // matched and queued this wake. This does NOT call MCP detach.
     policy.authorized = false;
     await store.close();
     store = new PersistentEventStore(dir);
@@ -121,9 +121,8 @@ test('durable queued wake rechecks host-owned revocation before effect on retry 
     assert.equal(store.getWakeDelivery(wakeId).runtimeReceiptId, null);
     assert.equal(store.latestWake(wakeId).status, 'queued');
 
-    // A replacement authorized host session may later permit this same
-    // target. Authorization must come from fresh host state, not the old
-    // source connection ID or match evidence.
+    // A later host reauthorization permits the same target. Authorization
+    // comes from fresh host state, not match evidence.
     policy.authorized = true;
     const approved = scheduler({
       store,
@@ -161,7 +160,6 @@ test('permanent host revocation reaches durable dead-letter, never a fabricated 
   const dir = await mkdtemp(path.join(os.tmpdir(), 'ei-queued-host-dlq-'));
   let store;
   let checks = 0;
-  let effects = 0;
   const hostVeto = async () => {
     checks++;
     throw new Error('host session revoked');
@@ -199,7 +197,7 @@ test('permanent host revocation reaches durable dead-letter, never a fabricated 
     assert.equal(store.latestWake(wakeId).status, 'dead_letter');
     assert.deepEqual(await afterRestart.runDue(), []);
     assert.equal(checks, 2);
-    assert.equal(effects, 0);
+    assert.equal(store.getWakeDelivery(wakeId).runtimeReceiptId, null);
     assert.equal(await store.verifyAudit(), true);
   } finally {
     try { await store?.close(); } finally {
