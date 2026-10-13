@@ -15,8 +15,39 @@ The source evaluator never gains runtime credentials or a second agent loop.
 | `notNext(event(a),event(b))` | On one finite unpartitioned snapshot, an a survives unless the immediately following event-time occurrence (including noise) is b; a at the tail survives **only as a snapshot result**, not a finalized negative claim | `test/pattern-v2-notnext-oracle.test.mjs`; 250 seeds × 3 arrival permutations + boundary and mutation probes |
 | `notFollowedBy` | Forbidden b strictly after anchor and up to inclusive deadline prevents match; fire only when deadline + lateness is reached | `test/pattern-v2-negation-oracle.test.mjs`; 250 seeds × arrivals × clock boundaries |
 | `repeat(event(x))` | For `min:1..3`, `max: min..3`, enumerate valid source subsets; `combinations` allows gaps, `relaxed` skips only unrelated noise, `consecutive` requires adjacent source positions; both `greedy` and `lazy` produce the same untruncated match **set** | `test/pattern-v2-repeat-oracle.test.mjs`; 250 seeds × 3 shuffles × 2 modes × 18 exhaustive min/max/contiguity configurations |
-| Execution budgets | Report explicit truncation rather than silent complete/no-match claim | `scripts/evidence/pattern-v2-conformance.mjs` |
+| Candidate and semantic budgets | Budget exhaustion sets `truncated:true` even when `matches:[]`; only an untruncated empty result is a conclusive no-match within the modeled bounded snapshot | `test/pattern-v2-budget-outcomes.test.mjs`, `scripts/evidence/pattern-v2-conformance.mjs` |
 | Semantic evaluation | Runs only when explicitly configured and respects bounded call count | `test/pattern-v2-semantic-cache.test.mjs`, `test/semantic-scope-budget-conformance.test.mjs` |
+
+## Conformance report v3 and evidence integrity
+
+Run `npm run conformance:pattern-v2` for a JSON report tagged
+`event-intelligence.pattern-conformance.v3`. The report includes package
+version, canonical AST version, Node/OS/platform/architecture, optional CI
+Git commit, source-file SHA-256, seed range, source fixture SHA-256 for each
+case, execution budgets, run counts and *explicit* complete versus
+inconclusive totals. The source input commitment hashes
+`JSON.stringify({definition,events,clocks})`. The script itself defines
+those synthetic inputs and the replay command, without writing raw payloads
+or credentials to the report. It does not claim a passing release-gate result
+on a failure: assertion errors terminate the command nonzero.
+
+The `candidate budget` witness constructs a true next-adjacent match after
+two earlier candidates. A two-candidate first-stage limit yields
+`matches:[]` **and** `truncated:true`; a larger limit finds the source
+pair, and a complete unmatched snapshot has `truncated:false`. Tests repeat
+this with 100 deterministic arrival seeds and an independent chronological
+adjacency model. The semantic evaluator's zero-call budget also yields an
+inconclusive zero-match result, while an allowed call resolves a match;
+malformed budget definitions fail at schema validation. This tests outcome
+distinctions, not all possible candidate explosions, irreversible negative
+finality, runtime scheduling decisions, or high-cardinality persistence.
+
+Report hashes identify *synthetic fixtures*, not every intermediate
+permutation or an immutable archived artifact. The full independent oracle
+suite is executed separately with the commands below and remains bounded.
+CI run logs and the Git commit identify the specific report execution;
+the report does not attest real hardware performance or certify #44's
+unproven combinations. No user-provided event payload belongs in the report.
 
 ## Oracle boundaries and replay recipe
 
@@ -35,6 +66,8 @@ npm run build
 node --test test/pattern-v2-oracle.test.mjs \
   test/pattern-v2-allof-oracle.test.mjs \
   test/pattern-v2-anyof-oracle.test.mjs \
+  test/pattern-v2-budget-outcomes.test.mjs \
+  test/pattern-v2-evidence-report.test.mjs \
   test/pattern-v2-notnext-oracle.test.mjs \
   test/pattern-v2-nested-notpresent-oracle.test.mjs \
   test/pattern-v2-negation-oracle.test.mjs \
