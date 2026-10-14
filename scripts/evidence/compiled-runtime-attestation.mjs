@@ -7,13 +7,27 @@ import path from 'node:path';
 // Node follows symlinks during import, and ignoring one would falsely attest
 // unchanged code even if its target changed after the build.
 export async function attestCompiledRuntime(root) {
-  // readdir() follows directory symlinks when the symlink is passed as the
-  // root argument; check the root itself before inspecting its children.
-  const rootStatus = await lstat(root);
-  if (rootStatus.isSymbolicLink()) {
-    throw new Error('Compiled runtime attestation rejects symlinks: <root>');
+  // lstat(root) alone follows a symlink in an ancestor (e.g. dist -> other).
+  // Check every path component, including the final root, before traversal.
+  const absoluteRoot = path.resolve(root);
+  const pathRoot = path.parse(absoluteRoot).root;
+  let inspected = pathRoot;
+  const components = absoluteRoot.slice(pathRoot.length)
+    .split(path.sep).filter(Boolean);
+  for (const [index, component] of components.entries()) {
+    inspected = path.join(inspected, component);
+    const status = await lstat(inspected);
+    if (status.isSymbolicLink()) {
+      throw new Error('Compiled runtime attestation rejects symlinks: ' +
+        (index === components.length - 1 ? '<root>' : '<ancestor>'));
+    }
+    if (!status.isDirectory()) {
+      throw new Error('Compiled runtime attestation requires a directory root');
+    }
   }
-  if (!rootStatus.isDirectory()) {
+  // Even the filesystem root itself must be a directory.
+  const rootStatus = await lstat(absoluteRoot);
+  if (!rootStatus.isDirectory() || rootStatus.isSymbolicLink()) {
     throw new Error('Compiled runtime attestation requires a directory root');
   }
   const files = [];
@@ -39,7 +53,7 @@ export async function attestCompiledRuntime(root) {
       }
     }
   }
-  await visit(root);
+  await visit(absoluteRoot);
   if (!files.length) {
     throw new Error('Compiled runtime attestation has no JavaScript files');
   }
