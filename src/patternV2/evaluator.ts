@@ -1235,8 +1235,11 @@ async function evaluateNode(
       // This budget caps *new evaluator calls*, not already-proven cached
       // decisions. A zero-call run can still resolve a durable cache hit.
       if (context.semanticEvaluations >= context.maxSemanticEvaluations) {
+        // A later candidate may already have a valid cached decision.
+        // Continue scanning rather than discarding known outcomes; this
+        // evaluation remains incomplete because the miss was unresolved.
         context.truncated = true;
-        break;
+        continue;
       }
       context.semanticCacheMisses += 1;
       context.semanticEvaluations += 1;
