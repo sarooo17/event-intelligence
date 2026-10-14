@@ -141,25 +141,25 @@ test('compiled runtime attestation fails closed on symlinked JS or directory', a
     await writeFile(path.join(dir, 'safe.js'), 'export const ok = true;');
     await mkdir(path.join(dir, 'real'));
     await writeFile(path.join(dir, 'real', 'nested.js'), 'export const n = 1;');
-    const before = await attestCompiledRuntime(dir);
+    const before = await attestCompiledRuntime(dir, dir);
     assert.equal(before.fileCount, 2);
     assert.match(before.sha256, /^[0-9a-f]{64}$/);
 
     await symlink('safe.js', path.join(dir, 'alias.js'));
     await assert.rejects(
-      attestCompiledRuntime(dir),
+      attestCompiledRuntime(dir, dir),
       /attestation rejects symlinks: alias.js/,
     );
     await rm(path.join(dir, 'alias.js'));
     await symlink('real', path.join(dir, 'alias-directory'), 'dir');
     await assert.rejects(
-      attestCompiledRuntime(dir),
+      attestCompiledRuntime(dir, dir),
       /attestation rejects symlinks: alias-directory/,
     );
     // The walker must also reject a symlink passed AS ITS ROOT, rather
     // than only detecting symlinks while enumerating child Dirents.
     await assert.rejects(
-      attestCompiledRuntime(path.join(dir, 'alias-directory')),
+      attestCompiledRuntime(path.join(dir, 'alias-directory'), dir),
       /attestation rejects symlinks: <root>/,
     );
     // An intermediate path component such as dist -> another-build must
@@ -169,8 +169,23 @@ test('compiled runtime attestation fails closed on symlinked JS or directory', a
       'export const alternate = true;');
     await symlink('alternate-build', path.join(dir, 'dist'), 'dir');
     await assert.rejects(
-      attestCompiledRuntime(path.join(dir, 'dist', 'src')),
+      attestCompiledRuntime(path.join(dir, 'dist', 'src'), dir),
       /attestation rejects symlinks: <ancestor>/,
+    );
+    // The trusted workspace root itself can be a benign alias (macOS /var),
+    // without allowing symlinks *beneath* the trusted root.
+    await mkdir(path.join(dir, 'trusted-workspace', 'src'), { recursive: true });
+    await writeFile(path.join(dir, 'trusted-workspace', 'src', 'safe.js'),
+      'export const safe = true;');
+    await symlink('trusted-workspace', path.join(dir, 'workspace-link'), 'dir');
+    const aliased = await attestCompiledRuntime(
+      path.join(dir, 'workspace-link', 'src'),
+      path.join(dir, 'workspace-link'),
+    );
+    assert.equal(aliased.fileCount, 1);
+    await assert.rejects(
+      attestCompiledRuntime(path.join(dir, '..'), dir),
+      /root must be within trusted root/,
     );
   } finally {
     await rm(dir, { recursive: true, force: true });
