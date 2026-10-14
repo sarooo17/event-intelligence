@@ -38,7 +38,9 @@ Git commit, harness-file SHA-256, the imported attestation-helper SHA-256, entry
 module** (including transitively imported modules), and a SHA-256 of
 `package-lock.json` for dependency version commitments; seed range,
 source fixture SHA-256 for each case, execution budgets, run counts and
-*explicit* complete versus inconclusive totals. The runtime build tree is
+*explicit* complete, pending-temporal-finality and budget-inconclusive
+totals. A candidate with an unexpired negative window is `pending`, never
+`complete`; `inconclusive` specifically denotes budget truncation. The runtime build tree is
 sorted by relative path before hashing `[{path,sha256}]`; the report tests
 independently recompute that digest. Any symlink beneath the explicitly trusted repository/build root, including
 `dist` and nested compiled modules, **rejects attestation** instead of being
