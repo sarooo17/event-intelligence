@@ -99,6 +99,14 @@ test('v3 conformance report commits to replayable versioned input/environment ev
     const entry = first.checks[index];
     assert.equal(entry.ok, true);
     assert.match(entry.inputSha256, /^[0-9a-f]{64}$/);
+    assert.equal(entry.runInputSha256.length, entry.runs,
+      'report must fingerprint each individual evaluation input');
+    for (const digest of entry.runInputSha256) {
+      assert.match(digest, /^[a-f0-9]{64}$/);
+    }
+    assert.equal(entry.inputSha256,
+      createHash('sha256').update(JSON.stringify(entry.runInputSha256)).digest('hex'));
+    assert.deepEqual(entry.runInputSha256, second.checks[index].runInputSha256);
     assert.deepEqual(entry.inputSha256, second.checks[index].inputSha256);
     assert.deepEqual(entry.budgets, second.checks[index].budgets);
     assert.deepEqual(entry.seedRange, second.checks[index].seedRange);
@@ -112,6 +120,12 @@ test('v3 conformance report commits to replayable versioned input/environment ev
   assert.deepEqual(first.checks[0].seedRange, [1, 50]);
   assert.deepEqual(first.checks[1].outcomes, { complete: 0, inconclusive: 1, pending: 0 });
   assert.deepEqual(first.checks[2].outcomes, { complete: 1, inconclusive: 0, pending: 1 });
+  assert.equal(first.checks[2].runInputSha256.length, 2);
+  assert.notEqual(first.checks[2].runInputSha256[0],
+    first.checks[2].runInputSha256[1],
+    'different negative-window event sets must never share a run digest');
+  assert.equal(first.checks[3].runInputSha256.length, 1,
+    'semantic evaluator fixture must be represented in the input commitment');
   assert.equal(inconclusive, 1);
   assert.equal(pending, 1);
   assert.deepEqual(first.evaluations, {
