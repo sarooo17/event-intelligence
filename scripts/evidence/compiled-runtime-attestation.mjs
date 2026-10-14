@@ -1,19 +1,31 @@
 import { createHash } from 'node:crypto';
-import { lstat, readFile, readdir } from 'node:fs/promises';
+import { lstat, readFile, readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 
 // A successful attestation must include every executable compiled JS file,
 // including transitive modules. A symlink is rejected instead of skipped:
 // Node follows symlinks during import, and ignoring one would falsely attest
 // unchanged code even if its target changed after the build.
-export async function attestCompiledRuntime(root) {
-  // lstat(root) alone follows a symlink in an ancestor (e.g. dist -> other).
-  // Check every path component, including the final root, before traversal.
+export async function attestCompiledRuntime(root, trustedRoot) {
+  if (typeof trustedRoot !== 'string' || !trustedRoot) {
+    throw new Error('Compiled runtime attestation requires a trusted root');
+  }
+  // Only descendants of the explicitly host-trusted repository/build root
+  // belong to our trust boundary. OS ancestors such as macOS /var -> /private/var
+  // must not cause a false failure, but dist/ and its descendants must be checked.
   const absoluteRoot = path.resolve(root);
-  const pathRoot = path.parse(absoluteRoot).root;
-  let inspected = pathRoot;
-  const components = absoluteRoot.slice(pathRoot.length)
-    .split(path.sep).filter(Boolean);
+  const absoluteTrusted = path.resolve(trustedRoot);
+  const relativeRoot = path.relative(absoluteTrusted, absoluteRoot);
+  if (relativeRoot === '..' || relativeRoot.startsWith('..' + path.sep) ||
+      path.isAbsolute(relativeRoot)) {
+    throw new Error('Compiled runtime attestation root must be within trusted root');
+  }
+  const trustedStatus = await stat(absoluteTrusted);
+  if (!trustedStatus.isDirectory()) {
+    throw new Error('Compiled runtime attestation requires a directory trusted root');
+  }
+  let inspected = absoluteTrusted;
+  const components = relativeRoot.split(path.sep).filter(Boolean);
   for (const [index, component] of components.entries()) {
     inspected = path.join(inspected, component);
     const status = await lstat(inspected);
@@ -24,11 +36,6 @@ export async function attestCompiledRuntime(root) {
     if (!status.isDirectory()) {
       throw new Error('Compiled runtime attestation requires a directory root');
     }
-  }
-  // Even the filesystem root itself must be a directory.
-  const rootStatus = await lstat(absoluteRoot);
-  if (!rootStatus.isDirectory() || rootStatus.isSymbolicLink()) {
-    throw new Error('Compiled runtime attestation requires a directory root');
   }
   const files = [];
   async function visit(dir, relative = '') {
