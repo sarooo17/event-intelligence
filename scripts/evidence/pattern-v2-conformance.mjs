@@ -5,6 +5,16 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { join } from 'node:path';
 import os from 'node:os';
 
+// This report attests executable bytes. Node preload and loader hooks can
+// replace source during import without changing the files we fingerprint.
+// Fail closed before importing any untrusted evaluator or helper.
+if (process.execArgv.length !== 0 ||
+    (process.env.NODE_OPTIONS ?? '').trim() !== '') {
+  throw new Error(
+    'CEP conformance attestation requires Node without execArgv or NODE_OPTIONS hooks',
+  );
+}
+
 let PatternAstV2DefinitionSchema;
 let evaluatePatternV2;
 
