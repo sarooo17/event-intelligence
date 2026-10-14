@@ -131,18 +131,22 @@ test('missing evaluator is fail-closed by default; explicit reject policy is an 
   assert.deepEqual(explicitReject.semanticTrace, []);
 });
 
-test('provider throws or returns invalid probability: error propagates, not no-match', async () => {
-  await assert.rejects(
-    run({ evaluator: {
-      async evaluate() { throw new Error('fixture-provider-outage'); },
-    } }),
-    /fixture-provider-outage/,
-  );
-  for (const probability of [NaN, Infinity, -0.01, 1.01]) {
+test('provider throws or returns invalid probability: error propagates under both policies', async () => {
+  for (const onUnavailable of ['error', 'reject']) {
     await assert.rejects(
-      run({ evaluator: model(probability) }),
-      /Semantic evaluator probability must be between 0 and 1/,
+      run({ onUnavailable, evaluator: {
+        async evaluate() { throw new Error('fixture-provider-outage'); },
+      } }),
+      /fixture-provider-outage/,
+      'onUnavailable=' + onUnavailable + ' cannot mask provider exceptions',
     );
+    for (const probability of [NaN, Infinity, -0.01, 1.01]) {
+      await assert.rejects(
+        run({ onUnavailable, evaluator: model(probability) }),
+        /Semantic evaluator probability must be between 0 and 1/,
+        'onUnavailable=' + onUnavailable + ' cannot mask invalid response scores',
+      );
+    }
   }
 });
 
@@ -182,6 +186,24 @@ test('timeout rejects and cannot persist or reuse a failed semantic decision', {
   assert.equal(warm.semanticEvaluations, 0);
   assert.equal(warm.semanticCacheHits, 1);
   assert.equal(writes, 1);
+});
+
+test('reject-on-unavailable cannot convert a configured provider timeout to no-match', {
+  timeout: 5000,
+}, async () => {
+  for (const onUnavailable of ['error', 'reject']) {
+    await assert.rejects(
+      run({
+        onUnavailable,
+        timeoutMs: 20,
+        evaluator: {
+          async evaluate() { return new Promise(() => {}); },
+        },
+      }),
+      /Semantic node same-incident timed out after 20ms/,
+      'configured provider timeout must reject under policy=' + onUnavailable,
+    );
+  }
 });
 
 test('structurally impossible pair never invokes semantic evaluator', async () => {
