@@ -115,7 +115,7 @@ test('v3 conformance report commits to replayable versioned input/environment ev
 test('conformance command removes stale compiled modules before fresh build', async () => {
   const packageData = JSON.parse(readFileSync('package.json', 'utf8'));
   const script = packageData.scripts['conformance:pattern-v2'];
-  const match = /^node -e "([^"]+)" && npm run build && node scripts\\/evidence\\/pattern-v2-conformance\\.mjs$/.exec(script);
+  const match = /^node -e "([^"]+)" && npm run build && node scripts\/evidence\/pattern-v2-conformance\.mjs$/.exec(script);
   assert.ok(match, 'conformance CLI must clean dist before rebuilding and attest afterward');
   const dir = await mkdtemp(path.join(os.tmpdir(), 'ei-conformance-clean-'));
   try {
