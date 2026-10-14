@@ -34,7 +34,7 @@ execution: its reported digest cannot silently describe a different
 working-tree revision. A concurrent modification of the working `dist` tree
 therefore cannot silently change the evaluated bytes after import; tampering
 with the private snapshot causes a failed report if its final digest differs.
-Invoking the evidence script directly does not clean or rebuild the workspace. The report includes package
+Invoking the evidence script directly does not clean or rebuild the workspace. Attested conformance runs fail closed when Node is launched with any `process.execArgv` flags or a non-empty `NODE_OPTIONS` (including custom loaders and preload hooks). This avoids reporting file hashes for code replaced by Node loader hooks; it does not attest a maliciously modified Node binary, local operating system, or otherwise privileged process. The report includes package
 version, canonical AST version, Node/OS/platform/architecture, optional CI
 Git commit, harness-file SHA-256 (rechecked before emission), the imported attestation-helper SHA-256, entrypoint module hashes, a
 **deterministic SHA-256 over every compiled `dist/src/**/*.js` runtime
