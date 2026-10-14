@@ -22,7 +22,7 @@ The source evaluator never gains runtime credentials or a second agent loop.
 ## Conformance report v3 and evidence integrity
 
 Run `npm run conformance:pattern-v2` for a JSON report tagged
-`event-intelligence.pattern-conformance.v3`. The report includes package
+`event-intelligence.pattern-conformance.v3`. This npm command first deletes stale `dist` output and performs a fresh TypeScript build before attestation; invoking the underlying evidence script directly does not rebuild or clean the workspace. The report includes package
 version, canonical AST version, Node/OS/platform/architecture, optional CI
 Git commit, harness-file SHA-256, the imported attestation-helper SHA-256, entrypoint module hashes, a
 **deterministic SHA-256 over every compiled `dist/src/**/*.js` runtime
