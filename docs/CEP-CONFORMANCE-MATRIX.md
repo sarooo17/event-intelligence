@@ -35,7 +35,7 @@ execution: its reported digest cannot silently describe a different
 working-tree revision. A concurrent modification of the working `dist` tree
 therefore cannot silently change the evaluated bytes after import; tampering
 with the private snapshot causes a failed report if its final digest differs.
-Invoking the evidence script directly does not clean or rebuild the workspace. Attested conformance runs fail closed when Node is launched with any `process.execArgv` flags or a non-empty `NODE_OPTIONS` (including custom loaders and preload hooks). This avoids reporting file hashes for code replaced by Node loader hooks; it does not attest a maliciously modified Node binary, local operating system, or otherwise privileged process. The report includes package
+Invoking the evidence script directly does not clean or rebuild the workspace. The POSIX npm launcher now runs the report as `env -u NODE_OPTIONS node ...`, clearing inherited preload/loader flags **outside the attested child process**, before any Node module evaluation. The runner also rejects non-empty `process.execArgv` and any remaining `NODE_OPTIONS`. This evidence command requires the POSIX `env -u` utility (Linux/macOS/CI); a Windows shell needs an equivalent external environment-clearing launcher. It does not attest a malicious local npm process, modified Node binary, privileged host or operating system. The report includes package
 version, canonical AST version, Node/OS/platform/architecture, optional CI
 Git commit, harness-file SHA-256 (rechecked before emission), the imported attestation-helper SHA-256, entrypoint module hashes, a
 **deterministic SHA-256 over every compiled `dist/src/**/*.js` runtime
