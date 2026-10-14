@@ -81,6 +81,7 @@
     "registry:validate": "mcp-publisher validate server.json",
     "pack:mcp-smoke": "node scripts/package-mcp-smoke.mjs",
     "conformance:pattern-v2": "npm run build && node scripts/evidence/pattern-v2-conformance.mjs",
+    "conformance:pattern-v2-budget": "npm run build && node scripts/evidence/pattern-v2-budget-evidence.mjs",
     "bench:pattern-v2": "npm run build && node scripts/evidence/pattern-v2-benchmark.mjs --profile quick",
     "evidence:pattern-v2": "npm run build && node scripts/evidence/pattern-v2-conformance.mjs && node scripts/evidence/pattern-v2-benchmark.mjs --profile quick",
     "prepare": "npm run build",
