@@ -60,9 +60,9 @@ test('v3 conformance report commits to replayable versioned input/environment ev
   const evidenceSource = readFileSync(
     'scripts/evidence/pattern-v2-conformance.mjs', 'utf8');
   assert.doesNotMatch(evidenceSource,
-    /import\\s*\\{\\s*attestCompiledRuntime\\s*\\}\\s*from/,
+    /import\s*\{\s*attestCompiledRuntime\s*\}\s*from/,
     'attestation helper must not load statically from mutable repository source');
-  assert.match(evidenceSource, /import\\(pathToFileURL\\(snapshotHelper\\)\\.href\\)/,
+  assert.match(evidenceSource, /import\(pathToFileURL\(snapshotHelper\)\.href\)/,
     'conformance must load the helper from its isolated snapshot');
   const files = independentlyHashBuild('dist/src');
   const build = first.reproducibility.completeRuntimeBuild;
