@@ -133,6 +133,16 @@ test('compiled runtime attestation fails closed on symlinked JS or directory', a
       attestCompiledRuntime(path.join(dir, 'alias-directory')),
       /attestation rejects symlinks: <root>/,
     );
+    // An intermediate path component such as dist -> another-build must
+    // not be followed even when the final dist/src is a real directory.
+    await mkdir(path.join(dir, 'alternate-build', 'src'), { recursive: true });
+    await writeFile(path.join(dir, 'alternate-build', 'src', 'module.js'),
+      'export const alternate = true;');
+    await symlink('alternate-build', path.join(dir, 'dist'), 'dir');
+    await assert.rejects(
+      attestCompiledRuntime(path.join(dir, 'dist', 'src')),
+      /attestation rejects symlinks: <ancestor>/,
+    );
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
