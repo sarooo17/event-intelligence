@@ -8,6 +8,7 @@ The source evaluator never gains runtime credentials or a second agent loop.
 | --- | --- | --- |
 | `event` | An owned occurrence binds its declared reference only | `test/pattern-v2.test.mjs` |
 | `allOf(a,b)` | Every eligible a/b pair (Cartesian within bounded corpus) | `test/pattern-v2-allof-oracle.test.mjs`; 250 seeds × 3 shuffles |
+| `window(allOf(a,b))` | All Cartesian a/b candidates that satisfy an independent bounded window test: within, sliding, tumbling, hopping, session or count; chronological position is independent of lexical source IDs | `test/pattern-v2-window-allof-oracle.test.mjs`; 100 seeds × 3 delivery permutations × 6 window variants, inclusive-boundary/mutation probes |
 | `anyOf(a,b)` | Each eligible a or b occurrence matches, unrelated noise does not | `test/pattern-v2-anyof-oracle.test.mjs`; 250 seeds × 3 shuffles |
 | `sequence(next)` | Only an immediately adjacent a→b ordered pair | `test/pattern-v2-oracle.test.mjs`; 250 seeds × 3 shuffles |
 | `sequence(followedBy)` | First later b per qualifying a under this bounded oracle subset | `test/pattern-v2-oracle.test.mjs`; 250 seeds × 3 shuffles |
@@ -173,6 +174,18 @@ the finite oracle domain and rejected. This is a **bounded synthetic UTC
 offset test**, not validation of the full IANA timezone database, future
 timezone rule changes, arbitrary nested Patterns, persistence or scheduling.
 #44 remains open.
+
+## Nested allOf window differential witness (2026-10-14)
+
+`node --test test/pattern-v2-window-allof-oracle.test.mjs` checks a
+separately written finite Cartesian model across six supported window
+types, 100 seeded source corpora, three delivery permutations, explicit
+accepted/rejected candidate pair provenance and a mutation-sensitive
+inclusive time boundary. Sources deliberately use IDs ordered differently
+from their event timestamps. This tests only **one-level nested**
+`window(allOf(event(a),event(b)))`: it does not prove arbitrary nested
+window/repeat/optional combinations, late arrivals, session grouping with
+more than two bound events, persisted state or high-cardinality workloads.
 
 ## Unproven combinations
 
