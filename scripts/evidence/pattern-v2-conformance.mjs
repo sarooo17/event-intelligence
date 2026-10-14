@@ -116,8 +116,12 @@ async function check(name, fn) {
   assert.ok(evidence.outcomes &&
     Number.isSafeInteger(evidence.outcomes.complete) &&
     Number.isSafeInteger(evidence.outcomes.inconclusive) &&
+    Number.isSafeInteger(evidence.outcomes.pending) &&
+    evidence.outcomes.complete >= 0 && evidence.outcomes.inconclusive >= 0 &&
+    evidence.outcomes.pending >= 0 &&
     Number.isSafeInteger(evidence.runs) &&
-    evidence.runs === evidence.outcomes.complete + evidence.outcomes.inconclusive,
+    evidence.runs === evidence.outcomes.complete + evidence.outcomes.inconclusive +
+      evidence.outcomes.pending,
     'CEP conformance outcome totals must account for all evaluations');
   checks.push({
     name,
@@ -170,7 +174,7 @@ await check('event-time order is delivery-order invariant for followedBy', async
   assert.equal(expected.truncated, false);
   return {
     definition, events: source, seedRange: [1, 50], runs: 51,
-    outcomes: { complete: 51, inconclusive: 0 },
+    outcomes: { complete: 51, inconclusive: 0, pending: 0 },
   };
 });
 
@@ -196,7 +200,7 @@ await check('candidate budget bounds combinations', async () => {
   assert.ok(result.matches.length <= 64);
   return {
     definition, events, runs: 1,
-    outcomes: { complete: 0, inconclusive: 1 },
+    outcomes: { complete: 0, inconclusive: 1, pending: 0 },
   };
 });
 
@@ -238,7 +242,7 @@ await check('negative pattern waits through allowed lateness', async () => {
     events: [...events, event('error', 'error-1', '2026-09-30T10:00:30.000Z')],
     clocks: ['2026-09-30T10:01:10.000Z'],
     runs: 2,
-    outcomes: { complete: 2, inconclusive: 0 },
+    outcomes: { complete: 1, inconclusive: 0, pending: 1 },
   };
 });
 
@@ -312,7 +316,7 @@ await check('semantic node is explicit and budgeted', async () => {
       }),
     ],
     runs: 1,
-    outcomes: { complete: 1, inconclusive: 0 },
+    outcomes: { complete: 1, inconclusive: 0, pending: 0 },
   };
 });
 
@@ -324,7 +328,8 @@ assert.deepEqual(verifiedSnapshot, compiledRuntime,
 const summary = checks.reduce((totals, entry) => ({
   complete: totals.complete + entry.outcomes.complete,
   inconclusive: totals.inconclusive + entry.outcomes.inconclusive,
-}), { complete: 0, inconclusive: 0 });
+  pending: totals.pending + entry.outcomes.pending,
+}), { complete: 0, inconclusive: 0, pending: 0 });
 
 console.log(JSON.stringify({
   schema: 'event-intelligence.pattern-conformance.v3',
