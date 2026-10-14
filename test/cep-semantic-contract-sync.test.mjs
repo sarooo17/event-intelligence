@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import test from 'node:test';
 import ts from 'typescript';
 
@@ -11,61 +11,96 @@ const contract = readFileSync(
 // Read AST nodes instead of searching TypeScript source text: valid schemas
 // may use double quotes, template strings or named string constants.
 function schemaKinds(source) {
-  const parsed = ts.createSourceFile(
-    'patternV2Schemas.ts', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const parsed = ts.createSourceFile('patternV2Schemas.ts', source,
+    ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  assert.equal(parsed.parseDiagnostics.length, 0, 'schema must parse');
   const declarations = new Map();
-  let astDefinition = null;
+  let root = null;
   function index(node) {
     if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
       declarations.set(node.name.text, node.initializer);
-      if (node.name.text === 'PatternNodeV2Schema') astDefinition = node.initializer;
+      if (node.name.text === 'PatternNodeV2Schema') root = node.initializer;
     }
     ts.forEachChild(node, index);
   }
   index(parsed);
-  assert.ok(astDefinition, 'must locate PatternNodeV2Schema in parsed TypeScript AST');
-  function stringLiteral(expr, seen = new Set()) {
-    if (ts.isStringLiteral(expr) || ts.isNoSubstitutionTemplateLiteral(expr)) {
-      return expr.text;
+  assert.ok(root, 'canonical schema declaration missing');
+  function resolve(node, visiting = new Set()) {
+    if (ts.isParenthesizedExpression(node)) return resolve(node.expression, visiting);
+    if (ts.isIdentifier(node)) {
+      assert.ok(!visiting.has(node.text), 'cyclic schema alias');
+      const expr = declarations.get(node.text);
+      assert.ok(expr, 'unresolvable schema alias: ' + node.text);
+      return resolve(expr, new Set([...visiting,node.text]));
     }
-    if (ts.isIdentifier(expr)) {
-      assert.ok(!seen.has(expr.text), 'recursive AST kind constant');
-      const initializer = declarations.get(expr.text);
-      assert.ok(initializer, 'unresolved AST kind constant: ' + expr.text);
-      return stringLiteral(initializer, new Set([...seen, expr.text]));
-    }
-    assert.fail('AST kind must be a supported string literal/constant');
+    return node;
   }
-  const values = [];
-  function read(node) {
-    if (ts.isPropertyAssignment(node) &&
-        (ts.isIdentifier(node.name) || ts.isStringLiteral(node.name)) &&
-        node.name.text === 'kind') {
-      const call = node.initializer;
-      assert.ok(ts.isCallExpression(call) &&
-        ts.isPropertyAccessExpression(call.expression) &&
-        ts.isIdentifier(call.expression.expression) &&
-        call.expression.expression.text === 'z',
-      'AST node kind must be a statically readable Zod discriminator');
-      const method = call.expression.name.text;
-      if (method === 'literal') {
-        assert.equal(call.arguments.length, 1);
-        values.push(stringLiteral(call.arguments[0]));
-      } else if (method === 'enum') {
-        const choices = call.arguments[0];
-        assert.ok(ts.isArrayLiteralExpression(choices),
-          'AST kind union must have static z.enum members');
-        values.push(...choices.elements.map(item => stringLiteral(item)));
-      } else {
-        assert.fail('unsupported AST kind discriminator: z.' + method);
-      }
-    }
-    ts.forEachChild(node, read);
+  function method(node,name) {
+    return ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      ts.isIdentifier(node.expression.expression) &&
+      node.expression.expression.text === 'z' &&
+      node.expression.name.text === name;
   }
-  read(astDefinition);
-  assert.equal(values.length, new Set(values).size,
-    'duplicate canonical AST discriminants are forbidden');
-  return values.sort();
+  function literal(node) {
+    const value = resolve(node);
+    assert.ok(ts.isStringLiteral(value) ||
+      ts.isNoSubstitutionTemplateLiteral(value), 'nonliteral discriminator');
+    return value.text;
+  }
+  let union = null;
+  function find(node) {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) &&
+      node.name.text === 'node' && node.initializer &&
+      method(node.initializer,'union')) {
+      assert.equal(union,null,'ambiguous canonical union');
+      union = node.initializer;
+    }
+    ts.forEachChild(node,find);
+  }
+  find(root);
+  assert.ok(union, 'canonical union missing');
+  const array = resolve(union.arguments[0]);
+  assert.ok(ts.isArrayLiteralExpression(array), 'canonical union is not a static array');
+  const kinds = [];
+  function member(expr) {
+    const value = resolve(expr);
+    if (method(value,'union')) {
+      const inner = resolve(value.arguments[0]);
+      assert.ok(ts.isArrayLiteralExpression(inner),'nested union must be static');
+      inner.elements.forEach(member);
+      return;
+    }
+    if (method(value,'object')) {
+      const shape = resolve(value.arguments[0]);
+      assert.ok(ts.isObjectLiteralExpression(shape),'static object shape required');
+      const properties = shape.properties.filter(p =>
+        ts.isPropertyAssignment(p) &&
+        (ts.isIdentifier(p.name) || ts.isStringLiteral(p.name)) &&
+        p.name.text === 'kind');
+      assert.equal(properties.length,1,'each union member needs one kind');
+      const kind = resolve(properties[0].initializer);
+      if(method(kind,'literal')) {
+        kinds.push(literal(kind.arguments[0]));
+      } else if(method(kind,'enum')) {
+        const values=resolve(kind.arguments[0]);
+        assert.ok(ts.isArrayLiteralExpression(values),'static z.enum required');
+        kinds.push(...values.elements.map(literal));
+      } else assert.fail('unsupported discriminator in canonical union');
+      return;
+    }
+    if(ts.isCallExpression(value) &&
+      ts.isPropertyAccessExpression(value.expression) &&
+      ['strict','superRefine','refine','describe','readonly'].includes(
+        value.expression.name.text)) {
+      member(value.expression.expression);
+      return;
+    }
+    assert.fail('uninspectable canonical member: '+value.getText(parsed));
+  }
+  array.elements.forEach(member);
+  assert.equal(new Set(kinds).size,kinds.length,'duplicate node discriminator');
+  return kinds.sort();
 }
 
 test('semantic contract covers every canonical Pattern AST v2 kind exactly once', () => {
@@ -83,27 +118,26 @@ test('semantic contract covers every canonical Pattern AST v2 kind exactly once'
     'a new/removed AST node must update its public semantic and test category row');
 });
 
-test('schema drift detector observes quoted variants and introduced constants', () => {
+test('schema drift detects quotes, constants and externally declared union members', () => {
   const original = schemaKinds(schema);
-  const doubleQuoted = schema.replace(
-    "kind: z.literal('event')", 'kind: z.literal("event")');
-  assert.deepEqual(schemaKinds(doubleQuoted), original,
-    'double quoted literals must be interpreted as the same discriminator');
-
-  const constant = schema.replace(
-    'export const PatternNodeV2Schema',
+  const needle = "kind: z.literal('event')";
+  assert.deepEqual(schemaKinds(schema.replace(needle,
+    'kind: z.literal("event")')),original);
+  const constant = schema.replace('export const PatternNodeV2Schema',
     "const NAMED_EVENT_KIND = 'event';\nexport const PatternNodeV2Schema")
-    .replace("kind: z.literal('event')", 'kind: z.literal(NAMED_EVENT_KIND)');
-  assert.deepEqual(schemaKinds(constant), original,
-    'named string literal constants must be followed, not silently ignored');
-
-  const withNewMember = schema.replace(
-    'const node = z.union([',
-    'const node = z.union([\n    z.object({ kind: z.literal("new-synthetic-kind") }),');
-  const augmented = schemaKinds(withNewMember);
-  assert.equal(augmented.length, original.length + 1);
-  assert.ok(augmented.includes('new-synthetic-kind'),
-    'new AST member must fail the published mapping until documented');
+    .replace(needle, 'kind: z.literal(NAMED_EVENT_KIND)');
+  assert.deepEqual(schemaKinds(constant),original);
+  const direct = schema.replace('const node = z.union([',
+    'const node = z.union([\n    z.object({ kind: z.literal("new-kind") }),');
+  assert.ok(schemaKinds(direct).includes('new-kind'));
+  assert.equal(schemaKinds(direct).length,original.length + 1);
+  const indirect = schema.replace('const node = z.union([',
+    'const ExtraNode = z.object({ kind: z.literal("alias-kind") });\n' +
+    '  const node = z.union([\n    ExtraNode,');
+  assert.ok(schemaKinds(indirect).includes('alias-kind'));
+  assert.equal(schemaKinds(indirect).length,original.length + 1);
+  const decorated = indirect.replace('ExtraNode,','ExtraNode.strict(),');
+  assert.deepEqual(schemaKinds(decorated),schemaKinds(indirect));
 });
 
 test('every operator row declares evidence level and remaining gap', () => {
@@ -117,8 +151,12 @@ test('every operator row declares evidence level and remaining gap', () => {
       'each operator needs an honest proof category: ' + row);
     assert.match(row, /\| [^|]+\|$/,
       'each operator must disclose a specific outstanding gap: ' + row);
-    assert.match(row, /test\//,
-      'each operator must point to at least one concrete test: ' + row);
+    const files = [...row.matchAll(/test\\/[a-zA-Z0-9-]+\\.test\\.mjs/g)]
+      .map(match => match[0]);
+    assert.ok(files.length > 0,'operator must cite a concrete test: '+row);
+    for(const file of files) {
+      assert.ok(existsSync(file),'nonexistent test evidence: '+file);
+    }
   }
 });
 
