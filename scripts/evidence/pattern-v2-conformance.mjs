@@ -110,7 +110,29 @@ const lockfileSha256 = sha256(
 );
 
 const checks = [];
+const fixedEvaluationNow = new Date('2026-10-14T12:00:00.000Z');
+let observedRunInputs = [];
+async function runEvaluation(options) {
+  const { evaluatorFixture = null, ...evaluatorOptions } = options;
+  if (evaluatorOptions.evaluator && !evaluatorFixture) {
+    throw new Error('Semantic conformance requires a replayable synthetic evaluator fixture');
+  }
+  const args = {
+    now: fixedEvaluationNow,
+    allowedLatenessMs: 0,
+    ...evaluatorOptions,
+  };
+  observedRunInputs.push({
+    definition: args.definition,
+    events: args.events,
+    now: args.now.toISOString(),
+    allowedLatenessMs: args.allowedLatenessMs,
+    evaluatorFixture,
+  });
+  return evaluatePatternV2(args);
+}
 async function check(name, fn) {
+  observedRunInputs = [];
   const started = performance.now();
   // The case runner MUST provide replay evidence. Missing provenance is
   // a report failure, not a successful test with an empty attestation.
@@ -127,17 +149,17 @@ async function check(name, fn) {
     evidence.runs === evidence.outcomes.complete + evidence.outcomes.inconclusive +
       evidence.outcomes.pending,
     'CEP conformance outcome totals must account for all evaluations');
+  assert.equal(observedRunInputs.length, evidence.runs,
+    'every counted evaluation must have a canonical captured input');
+  const perRunDigests = observedRunInputs.map(sha256);
   checks.push({
     name,
     ok: true,
     durationMs: performance.now() - started,
     runs: evidence.runs,
     seedRange: evidence.seedRange ?? null,
-    inputSha256: sha256({
-      definition: evidence.definition,
-      events: evidence.events,
-      clocks: evidence.clocks ?? [],
-    }),
+    inputSha256: sha256(perRunDigests),
+    runInputSha256: perRunDigests,
     inputEventCount: evidence.events.length,
     budgets: evidence.definition.execution,
     outcomes: evidence.outcomes,
@@ -159,12 +181,12 @@ await check('event-time order is delivery-order invariant for followedBy', async
     event('a', 'a2', '2026-09-30T10:02:00.000Z'),
     event('b', 'b2', '2026-09-30T10:03:00.000Z'),
   ];
-  const expected = await evaluatePatternV2({ definition, events: source });
+  const expected = await runEvaluation({ definition, events: source });
   const expectedIds = expected.matches.map((candidate) =>
     candidate.events.map((item) => item.sourceEventId).join(','));
 
   for (let seed = 1; seed <= 50; seed += 1) {
-    const result = await evaluatePatternV2({
+    const result = await runEvaluation({
       definition,
       events: shuffle(source, seeded(seed)),
     });
@@ -199,7 +221,7 @@ await check('candidate budget bounds combinations', async () => {
   });
   const events = Array.from({ length: 20 }, (_, i) =>
     event('x', `x-${i}`, new Date(Date.UTC(2026, 8, 30, 10, 0, i)).toISOString()));
-  const result = await evaluatePatternV2({ definition, events });
+  const result = await runEvaluation({ definition, events });
   assert.equal(result.truncated, true);
   assert.ok(result.matches.length <= 64);
   return {
@@ -219,7 +241,7 @@ await check('negative pattern waits through allowed lateness', async () => {
   const events = [
     event('deploy', 'deploy-1', '2026-09-30T10:00:00.000Z'),
   ];
-  const pending = await evaluatePatternV2({
+  const pending = await runEvaluation({
     definition,
     events,
     allowedLatenessMs: 30_000,
@@ -228,7 +250,7 @@ await check('negative pattern waits through allowed lateness', async () => {
   assert.equal(pending.matches.length, 0);
   assert.equal(pending.pending.length, 1);
 
-  const forbidden = await evaluatePatternV2({
+  const forbidden = await runEvaluation({
     definition,
     events: [
       ...events,
@@ -252,17 +274,18 @@ await check('negative pattern waits through allowed lateness', async () => {
 
 await check('semantic node is explicit and budgeted', async () => {
   let calls = 0;
+  const response = {
+    evaluator: 'conformance/fake',
+    probability: 0.95,
+    matched: true,
+    rejected: false,
+    uncertain: false,
+    metadata: {},
+  };
   const evaluator = {
     async evaluate() {
       calls += 1;
-      return {
-        evaluator: 'conformance/fake',
-        probability: 0.95,
-        matched: true,
-        rejected: false,
-        uncertain: false,
-        metadata: {},
-      };
+      return { ...response, metadata: { ...response.metadata } };
     },
   };
   const definition = pattern({
@@ -293,9 +316,10 @@ await check('semantic node is explicit and budgeted', async () => {
       maxBufferedEvents: 1000,
     },
   });
-  const result = await evaluatePatternV2({
+  const result = await runEvaluation({
     definition,
     evaluator,
+    evaluatorFixture: { identity: 'conformance/fake', response },
     events: [
       event('issue', 'issue-1', '2026-09-30T10:00:00.000Z', {
         title: 'Payment failed',
@@ -333,6 +357,12 @@ const verifiedHelperSha256 = createHash('sha256')
 assert.equal(verifiedHelperSha256, helperSha256,
   'loaded attestation helper bytes changed after import; aborting evidence report');
 
+// Detect the working harness changing after the initial source fingerprint
+// and before report emission (e.g. a concurrent checkout update).
+assert.equal(sha256(await readFile(new URL(import.meta.url))),
+  sha256(fileContent),
+  'conformance harness changed during execution; aborting evidence report');
+
 const summary = checks.reduce((totals, entry) => ({
   complete: totals.complete + entry.outcomes.complete,
   inconclusive: totals.inconclusive + entry.outcomes.inconclusive,
@@ -368,7 +398,7 @@ console.log(JSON.stringify({
       fileEncoding: 'SHA-256(JSON.stringify(sorted [{path,sha256}]))',
     },
     dependencyLockSha256: lockfileSha256,
-    inputEncoding: 'SHA-256(JSON.stringify({definition,events,clocks}))',
+    inputEncoding: 'SHA-256(JSON.stringify(ordered per-run SHA-256 of {definition,events,now,allowedLatenessMs,evaluatorFixture}))',
     seedAlgorithm: 'LCG(1664525,1013904223); Fisher-Yates shuffle',
     note: 'Synthetic, bounded fixtures only; hashed input commitments, not raw event data.',
   },
