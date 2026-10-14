@@ -15,6 +15,7 @@ The source evaluator never gains runtime credentials or a second agent loop.
 | `notPresent(ref=b, child=allOf(a,c))` | For each Cartesian (a,c) pair, reject only when a b lies inside that pair's inclusive chronological span; outside b and unrelated noise do not veto | `test/pattern-v2-nested-notpresent-oracle.test.mjs`; 250 seeds × 3 arrival permutations, boundary/mutation probes |
 | `notNext(event(a),event(b))` | On one finite unpartitioned snapshot, an a survives unless the immediately following event-time occurrence (including noise) is b; a at the tail survives **only as a snapshot result**, not a finalized negative claim | `test/pattern-v2-notnext-oracle.test.mjs`; 250 seeds × 3 arrival permutations + boundary and mutation probes |
 | `notFollowedBy` | Forbidden b strictly after anchor and up to inclusive deadline prevents match; fire only when deadline + lateness is reached | `test/pattern-v2-negation-oracle.test.mjs`; 250 seeds × arrivals × clock boundaries |
+| Evolving late ingress to `notFollowedBy` | An event delivered later but timestamped inside the forbidden interval cancels pending absence; recomputation with a changed corpus after previous finality may retract a match, so durable finality requires a host watermark/late-evidence policy | `test/pattern-v2-evolving-negative-ingress-oracle.test.mjs`; 80 deterministic seeds × 3 permutations × pre/post-finality clocks, inclusive deadline +1ms controls |
 | DST offset transitions for `notFollowedBy` | Explicit offset timestamps on Europe/Rome 2026 spring/fall transitions order by absolute instant (including repeated autumn 02:00 hour); pending until deadline + lateness, forbidden on inclusive deadline | `test/pattern-v2-dst-negative-oracle.test.mjs`; 2 transitions × 4 source scenarios × 2 exact clock boundaries × 3 delivery permutations, plus local-time mutation controls |
 | `repeat(event(x))` | For `min:1..3`, `max: min..3`, enumerate valid source subsets; `combinations` allows gaps, `relaxed` skips only unrelated noise, `consecutive` requires adjacent source positions; both `greedy` and `lazy` produce the same untruncated match **set** | `test/pattern-v2-repeat-oracle.test.mjs`; 250 seeds × 3 shuffles × 2 modes × 18 exhaustive min/max/contiguity configurations |
 | Execution budgets and interpretation | A bounded intermediate candidate branch can lose a real match yet return zero matches; `truncated:true` means **inconclusive**, not no-match. Temporal pending and capped semantic calls have distinct evidence | `test/pattern-v2-budget-evidence.test.mjs`; `scripts/evidence/pattern-v2-budget-evidence.mjs` |
@@ -232,6 +233,27 @@ from their event timestamps. This tests only **one-level nested**
 `window(allOf(event(a),event(b)))`: it does not prove arbitrary nested
 window/repeat/optional combinations, late arrivals, session grouping with
 more than two bound events, persisted state or high-cardinality workloads.
+
+## Late ingress vs frozen-corpus finality (2026-10-14)
+
+`node --test test/pattern-v2-evolving-negative-ingress-oracle.test.mjs`
+compares the actual evaluator with the independent bounded negative-window
+oracle while progressively adding event-time evidence. It proves that a
+forbidden event which is **delivered late** but occurred within the
+negative window cancels a pending absence before finality, and that an
+event with `occurredAt` just **after** the inclusive deadline does not.
+It also deliberately demonstrates an important limitation: recomputing
+the pure evaluator with a *different corpus* after it previously returned
+a finalized absence may retract that match. This is **not** a promise of
+monotonic terminal results across arbitrary future late arrivals. Durable
+watermarks and deduplication/late-event disposition must be enforced and
+tested at the host/store boundary before treating a negative match as
+irreversible external authorization. The independent monotonicity witness
+`test/pattern-v2-finality-monotonic-oracle.test.mjs` addresses only a
+**frozen input corpus**.
+
+The seeded corpus is finite, synthetic, unpartitioned, with no multi-worker
+scheduler, PostgreSQL or live external producer. Parent #44 remains open.
 
 ## Nested candidate-completeness safety witness (2026-10-14)
 
