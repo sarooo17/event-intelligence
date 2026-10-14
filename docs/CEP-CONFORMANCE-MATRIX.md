@@ -15,10 +15,12 @@ The source evaluator never gains runtime credentials or a second agent loop.
 | `notPresent(ref=b, child=allOf(a,c))` | For each Cartesian (a,c) pair, reject only when a b lies inside that pair's inclusive chronological span; outside b and unrelated noise do not veto | `test/pattern-v2-nested-notpresent-oracle.test.mjs`; 250 seeds × 3 arrival permutations, boundary/mutation probes |
 | `notNext(event(a),event(b))` | On one finite unpartitioned snapshot, an a survives unless the immediately following event-time occurrence (including noise) is b; a at the tail survives **only as a snapshot result**, not a finalized negative claim | `test/pattern-v2-notnext-oracle.test.mjs`; 250 seeds × 3 arrival permutations + boundary and mutation probes |
 | `notFollowedBy` | Forbidden b strictly after anchor and up to inclusive deadline prevents match; fire only when deadline + lateness is reached | `test/pattern-v2-negation-oracle.test.mjs`; 250 seeds × arrivals × clock boundaries |
+| Evolving late ingress to `notFollowedBy` | An event delivered later but timestamped inside the forbidden interval cancels pending absence; recomputation with a changed corpus after previous finality may retract a match, so durable finality requires a host watermark/late-evidence policy | `test/pattern-v2-evolving-negative-ingress-oracle.test.mjs`; 80 deterministic seeds × 3 permutations × pre/post-finality clocks, inclusive deadline +1ms controls |
 | DST offset transitions for `notFollowedBy` | Explicit offset timestamps on Europe/Rome 2026 spring/fall transitions order by absolute instant (including repeated autumn 02:00 hour); pending until deadline + lateness, forbidden on inclusive deadline | `test/pattern-v2-dst-negative-oracle.test.mjs`; 2 transitions × 4 source scenarios × 2 exact clock boundaries × 3 delivery permutations, plus local-time mutation controls |
 | `repeat(event(x))` | For `min:1..3`, `max: min..3`, enumerate valid source subsets; `combinations` allows gaps, `relaxed` skips only unrelated noise, `consecutive` requires adjacent source positions; both `greedy` and `lazy` produce the same untruncated match **set** | `test/pattern-v2-repeat-oracle.test.mjs`; 250 seeds × 3 shuffles × 2 modes × 18 exhaustive min/max/contiguity configurations |
 | Execution budgets and interpretation | A bounded intermediate candidate branch can lose a real match yet return zero matches; `truncated:true` means **inconclusive**, not no-match. Temporal pending and capped semantic calls have distinct evidence | `test/pattern-v2-budget-evidence.test.mjs`; `scripts/evidence/pattern-v2-budget-evidence.mjs` |
 | Candidate and semantic budgets | Budget exhaustion sets `truncated:true` even when `matches:[]`; only an untruncated empty result is a conclusive no-match within the modeled bounded snapshot | `test/pattern-v2-budget-outcomes.test.mjs`, `scripts/evidence/pattern-v2-conformance.mjs` |
+| Nested budget completeness | `window(allOf(a,b))` and `window(repeat(x,2..3))` can hide a real match behind intermediate candidate truncation; exhausted runs retain `truncated:true`, while independently enumerated high-cap runs recover the exact match | `test/pattern-v2-nested-budget-completeness.test.mjs`; Cartesian pairs, finite subsets, opposite delivery orders, low-vs-high cap |
 | Semantic evaluation | Runs only when explicitly configured and respects bounded call count | `test/pattern-v2-semantic-cache.test.mjs`, `test/semantic-scope-budget-conformance.test.mjs` |
 | Cached semantic decisions vs call cap | The cap bounds **new evaluator calls**, not valid exact-cache hits; a zero-call budget can resolve cached candidates without truncation, whereas any uncached candidate makes the result explicitly incomplete | `test/pattern-v2-semantic-cache-budget-order.test.mjs`; complete cache, missing cache, partial cache and tenant-key isolation |
 | Nested semantic failure-state behavior | For `semantic(window(allOf(issue,mail)))`, exact thresholds and uncertain policy are explicit; missing evaluator defaults to a thrown error, configured `onUnavailable:reject` opts into a no-match, provider errors/invalid probabilities/timeouts reject evaluation instead of returning a complete negative; timed-out decisions never enter durable cache | `test/pattern-v2-semantic-failure-matrix.test.mjs`; two arrival permutations, policy cases, boundary scores, timeout, failure/retry, cache and structurally impossible pair controls |
@@ -231,6 +233,44 @@ from their event timestamps. This tests only **one-level nested**
 `window(allOf(event(a),event(b)))`: it does not prove arbitrary nested
 window/repeat/optional combinations, late arrivals, session grouping with
 more than two bound events, persisted state or high-cardinality workloads.
+
+## Late ingress vs frozen-corpus finality (2026-10-14)
+
+`node --test test/pattern-v2-evolving-negative-ingress-oracle.test.mjs`
+compares the actual evaluator with the independent bounded negative-window
+oracle while progressively adding event-time evidence. It proves that a
+forbidden event which is **delivered late** but occurred within the
+negative window cancels a pending absence before finality, and that an
+event with `occurredAt` just **after** the inclusive deadline does not.
+It also deliberately demonstrates an important limitation: recomputing
+the pure evaluator with a *different corpus* after it previously returned
+a finalized absence may retract that match. This is **not** a promise of
+monotonic terminal results across arbitrary future late arrivals. Durable
+watermarks and deduplication/late-event disposition must be enforced and
+tested at the host/store boundary before treating a negative match as
+irreversible external authorization. The independent monotonicity witness
+`test/pattern-v2-finality-monotonic-oracle.test.mjs` addresses only a
+**frozen input corpus**.
+
+The seeded corpus is finite, synthetic, unpartitioned, with no multi-worker
+scheduler, PostgreSQL or live external producer. Parent #44 remains open.
+
+## Nested candidate-completeness safety witness (2026-10-14)
+
+`node --test test/pattern-v2-nested-budget-completeness.test.mjs`
+constructs finite nested `window(allOf(a,b))` and
+`window(repeat(event(x)))` programs whose only valid match lies after
+many invalid intermediate candidates. Independent pair/subset enumeration
+checks a single matching source pair. The low-cap evaluation deliberately
+loses the match but **must report `truncated:true`**; a higher cap must
+recover the exact match with `truncated:false`. Two arrival orders guard
+against processing-order-dependent completeness assertions.
+
+This proves a bounded synthetic subset only; it is not a performance
+benchmark or a universal proof for all AST compositions, streaming
+selection/late events, high-cardinality PostgreSQL or multi-worker runtime.
+Host interpretation of `truncated` remains mandatory and the parent #44
+still requires expanded adversarial/mutation and operational evidence.
 
 ## Unproven combinations
 
