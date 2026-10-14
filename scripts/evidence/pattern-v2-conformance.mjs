@@ -93,7 +93,7 @@ const evaluatedModules = await Promise.all([
 ].map(async modulePath => ({
   path: modulePath,
   sha256: createHash('sha256')
-    .update(await readFile(join(snapshotRoot, modulePath.replace(/^dist\\/src\\//, ''))))
+    .update(await readFile(join(snapshotRoot, modulePath.replace('dist/src/', ''))))
     .digest('hex'),
 })));
 const sha256 = value => createHash('sha256')
