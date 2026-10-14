@@ -161,9 +161,12 @@ test('timeout rejects and cannot persist or reuse a failed semantic decision', {
     set: (key, decision) => { writes++; entries.set(key, decision); },
   };
   const namespace = 'tenant-fixture:trigger@1';
+  let resolveLate;
   const pendingModel = {
     cacheIdentity: 'conformance/semantic-failure:v1',
-    async evaluate() { return new Promise(() => {}); },
+    async evaluate() {
+      return new Promise(resolve => { resolveLate = resolve; });
+    },
   };
   await assert.rejects(
     run({ evaluator: pendingModel, cache, namespace, timeoutMs: 20 }),
@@ -180,11 +183,26 @@ test('timeout rejects and cannot persist or reuse a failed semantic decision', {
     'failed evaluation must be retried, not treated as a cached negative');
   assert.equal(writes, 1);
   assert.ok(reads >= 2);
+  assert.equal(typeof resolveLate, 'function');
+
+  // The original provider resolves AFTER the rejected deadline and successful
+  // retry. Its conflicting rejection must never overwrite the durable match.
+  resolveLate({
+    evaluator: 'conformance/semantic-failure:v1',
+    probability: 0.01,
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(writes, 1,
+    'a late settlement must not write the cache after timed-out evaluation');
+  assert.equal(entries.size, 1);
+
   const warm = await run({
     evaluator: model(0.95), cache, namespace, timeoutMs: 20,
   });
   assert.equal(warm.semanticEvaluations, 0);
   assert.equal(warm.semanticCacheHits, 1);
+  assert.equal(warm.matches.length, 1,
+    'late rejected response must not poison the cached successful retry');
   assert.equal(writes, 1);
 });
 
