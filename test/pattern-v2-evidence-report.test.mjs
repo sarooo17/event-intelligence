@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -111,6 +111,29 @@ test('v3 conformance report commits to replayable versioned input/environment ev
   assert.doesNotMatch(JSON.stringify(first), /Payment failed again|sourceEventId|traceId|subscriptionArguments/);
 });
 
+
+test('conformance command removes stale compiled modules before fresh build', async () => {
+  const packageData = JSON.parse(readFileSync('package.json', 'utf8'));
+  const script = packageData.scripts['conformance:pattern-v2'];
+  const match = /^node -e "([^"]+)" && npm run build && node scripts\\/evidence\\/pattern-v2-conformance\\.mjs$/.exec(script);
+  assert.ok(match, 'conformance CLI must clean dist before rebuilding and attest afterward');
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'ei-conformance-clean-'));
+  try {
+    await mkdir(path.join(dir, 'dist', 'src'), { recursive: true });
+    await writeFile(path.join(dir, 'dist', 'src', 'stale.js'),
+      'export const stale = true;');
+    await writeFile(path.join(dir, 'keep.txt'), 'keep');
+    execFileSync(process.execPath, ['-e', match[1]], {
+      cwd: dir, timeout: 10000,
+    });
+    assert.equal(existsSync(path.join(dir, 'dist')), false,
+      'obsolete dist output must be removed before TypeScript compilation');
+    assert.equal(readFileSync(path.join(dir, 'keep.txt'), 'utf8'), 'keep',
+      'clean operation must not erase unrelated artifacts');
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
 
 test('compiled runtime attestation fails closed on symlinked JS or directory', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'ei-runtime-attestation-'));
