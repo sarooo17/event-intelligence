@@ -127,6 +127,24 @@ test('cached prefix plus uncached suffix yields partial result with truncation',
   assert.equal(state.calls, 1);
 });
 
+test('an earlier cache miss cannot hide a later valid cached decision', async () => {
+  const state = fixture();
+  await evaluate(state, [event(1)], 1);
+  // Chronological sorting means the uncached issue-0 is visited first.
+  const result = await evaluate(state, [event(1), event(0)], 0);
+  assert.deepEqual(
+    result.matches.map(x => x.events[0].sourceEventId),
+    ['issue-1'],
+    'scan must continue after the earlier over-budget miss',
+  );
+  assert.equal(result.truncated, true,
+    'earlier unresolved candidate still makes the entire result incomplete');
+  assert.equal(result.semanticEvaluations, 0);
+  assert.equal(result.semanticCacheHits, 1);
+  assert.equal(state.calls, 1);
+  assert.equal(state.writes, 1);
+});
+
 test('cache namespace boundaries remain effective despite a zero call budget', async () => {
   const state = fixture();
   await evaluate(state, [event(0)], 1, 'tenant-a:trigger@1');
