@@ -20,7 +20,29 @@ The source evaluator never gains runtime credentials or a second agent loop.
 | Execution budgets and interpretation | A bounded intermediate candidate branch can lose a real match yet return zero matches; `truncated:true` means **inconclusive**, not no-match. Temporal pending and capped semantic calls have distinct evidence | `test/pattern-v2-budget-evidence.test.mjs`; `scripts/evidence/pattern-v2-budget-evidence.mjs` |
 | Candidate and semantic budgets | Budget exhaustion sets `truncated:true` even when `matches:[]`; only an untruncated empty result is a conclusive no-match within the modeled bounded snapshot | `test/pattern-v2-budget-outcomes.test.mjs`, `scripts/evidence/pattern-v2-conformance.mjs` |
 | Semantic evaluation | Runs only when explicitly configured and respects bounded call count | `test/pattern-v2-semantic-cache.test.mjs`, `test/semantic-scope-budget-conformance.test.mjs` |
+| Cached semantic decisions vs call cap | The cap bounds **new evaluator calls**, not valid exact-cache hits; a zero-call budget can resolve cached candidates without truncation, whereas any uncached candidate makes the result explicitly incomplete | `test/pattern-v2-semantic-cache-budget-order.test.mjs`; complete cache, missing cache, partial cache and tenant-key isolation |
 | Nested semantic failure-state behavior | For `semantic(window(allOf(issue,mail)))`, exact thresholds and uncertain policy are explicit; missing evaluator defaults to a thrown error, configured `onUnavailable:reject` opts into a no-match, provider errors/invalid probabilities/timeouts reject evaluation instead of returning a complete negative; timed-out decisions never enter durable cache | `test/pattern-v2-semantic-failure-matrix.test.mjs`; two arrival permutations, policy cases, boundary scores, timeout, failure/retry, cache and structurally impossible pair controls |
+
+## Semantic budget compatibility decision (2026-10-14)
+
+Behavioral **correction** in Pattern AST v2, no schema or package export change:
+`maxSemanticEvaluations` is the maximum number of **fresh evaluator calls**
+per evaluation. A validated durable decision is reusable even when the
+remaining call budget is zero. Previously, the budget check ran before the
+cache lookup and returned `truncated: true` for fully cached candidates.
+This is deliberately changed to `truncated: false` when **all** results
+are resolved by cache. Any uncached candidate with exhausted budget still
+sets `truncated: true` to prevent silent false negatives, but the scan
+continues to preserve subsequent valid cache hits regardless of arrival
+order. Cache
+namespaces/evaluator identities continue isolating tenants and revisions.
+
+**Migration decision:** no persisted-state rewrite is needed; the cache
+key and serialized decision format are unchanged. Consumers must already
+honor the `truncated` field and must not equate an incomplete zero-match
+result with a complete negative finding. Behavioral release notes should
+identify the changed completeness result under a warm cache. This is not
+proof of arbitrary semantic failure modes or high-cardinality execution.
 
 ## Bounded semantic failure-state acceptance (2026-10-14)
 
