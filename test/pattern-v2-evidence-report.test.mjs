@@ -87,6 +87,7 @@ test('v3 conformance report commits to replayable versioned input/environment ev
 
   let total = 0;
   let inconclusive = 0;
+  let pending = 0;
   for (let index = 0; index < first.checks.length; index++) {
     const entry = first.checks[index];
     assert.equal(entry.ok, true);
@@ -94,18 +95,22 @@ test('v3 conformance report commits to replayable versioned input/environment ev
     assert.deepEqual(entry.inputSha256, second.checks[index].inputSha256);
     assert.deepEqual(entry.budgets, second.checks[index].budgets);
     assert.deepEqual(entry.seedRange, second.checks[index].seedRange);
-    assert.equal(entry.runs, entry.outcomes.complete + entry.outcomes.inconclusive);
+    assert.equal(entry.runs, entry.outcomes.complete + entry.outcomes.inconclusive + entry.outcomes.pending);
     assert.ok(Number.isFinite(entry.durationMs));
     total += entry.runs;
     inconclusive += entry.outcomes.inconclusive;
+    pending += entry.outcomes.pending;
   }
 
   assert.deepEqual(first.checks[0].seedRange, [1, 50]);
-  assert.deepEqual(first.checks[1].outcomes, { complete: 0, inconclusive: 1 });
+  assert.deepEqual(first.checks[1].outcomes, { complete: 0, inconclusive: 1, pending: 0 });
+  assert.deepEqual(first.checks[2].outcomes, { complete: 1, inconclusive: 0, pending: 1 });
   assert.equal(inconclusive, 1);
+  assert.equal(pending, 1);
   assert.deepEqual(first.evaluations, {
-    complete: total - inconclusive,
+    complete: total - inconclusive - pending,
     inconclusive,
+    pending,
   });
   assert.deepEqual(first.reproducibility, second.reproducibility);
   assert.doesNotMatch(JSON.stringify(first), /Payment failed again|sourceEventId|traceId|subscriptionArguments/);
