@@ -21,6 +21,7 @@ The source evaluator never gains runtime credentials or a second agent loop.
 | Candidate and semantic budgets | Budget exhaustion sets `truncated:true` even when `matches:[]`; only an untruncated empty result is a conclusive no-match within the modeled bounded snapshot | `test/pattern-v2-budget-outcomes.test.mjs`, `scripts/evidence/pattern-v2-conformance.mjs` |
 | Semantic evaluation | Runs only when explicitly configured and respects bounded call count | `test/pattern-v2-semantic-cache.test.mjs`, `test/semantic-scope-budget-conformance.test.mjs` |
 | Cached semantic decisions vs call cap | The cap bounds **new evaluator calls**, not valid exact-cache hits; a zero-call budget can resolve cached candidates without truncation, whereas any uncached candidate makes the result explicitly incomplete | `test/pattern-v2-semantic-cache-budget-order.test.mjs`; complete cache, missing cache, partial cache and tenant-key isolation |
+| Nested semantic failure-state behavior | For `semantic(window(allOf(issue,mail)))`, exact thresholds and uncertain policy are explicit; missing evaluator defaults to a thrown error, configured `onUnavailable:reject` opts into a no-match, provider errors/invalid probabilities/timeouts reject evaluation instead of returning a complete negative; timed-out decisions never enter durable cache | `test/pattern-v2-semantic-failure-matrix.test.mjs`; two arrival permutations, policy cases, boundary scores, timeout, failure/retry, cache and structurally impossible pair controls |
 
 ## Semantic budget compatibility decision (2026-10-14)
 
@@ -42,6 +43,28 @@ honor the `truncated` field and must not equate an incomplete zero-match
 result with a complete negative finding. Behavioral release notes should
 identify the changed completeness result under a warm cache. This is not
 proof of arbitrary semantic failure modes or high-cardinality execution.
+
+## Bounded semantic failure-state acceptance (2026-10-14)
+
+`node --test test/pattern-v2-semantic-failure-matrix.test.mjs` exercises
+a finite `semantic(window(allOf(issue,mail)))` fixture. Thresholds
+`matchThreshold=0.8` and `rejectThreshold=0.2` classify scores at
+the exact boundaries, with `uncertain` explicitly controlled by
+`escalate`, `match`, or `reject`. When semantic evaluation is required:
+missing evaluator under `onUnavailable:'error'`, provider exceptions,
+non-finite/out-of-range probabilities, and deadline expiry **reject the
+evaluation** (promise rejects) rather than emitting `matches:[]` with
+`truncated:false`. Hosts must surface these failures rather than
+converting them into definitive no-match. The documented
+`onUnavailable:'reject'` is an **explicit opt-in** to rejecting matches
+when *no evaluator is configured*, not an implicit fallback for provider
+failures/timeouts. Timeout does not write a durable semantic decision;
+retry can obtain a real decision. The synthetic model performs no
+external network calls.
+
+Scope: these tests do not establish scheduler delivery retries, externally
+cancellable evaluator work, live provider latency guarantees, arbitrary
+nested AST behavior, or all possible hostile cache implementations.
 
 ## Conformance report v3 and evidence integrity
 
