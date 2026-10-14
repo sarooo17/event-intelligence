@@ -31,7 +31,9 @@ remaining call budget is zero. Previously, the budget check ran before the
 cache lookup and returned `truncated: true` for fully cached candidates.
 This is deliberately changed to `truncated: false` when **all** results
 are resolved by cache. Any uncached candidate with exhausted budget still
-sets `truncated: true` to prevent silent false negatives. Cache
+sets `truncated: true` to prevent silent false negatives, but the scan
+continues to preserve subsequent valid cache hits regardless of arrival
+order. Cache
 namespaces/evaluator identities continue isolating tenants and revisions.
 
 **Migration decision:** no persisted-state rewrite is needed; the cache
