@@ -157,17 +157,26 @@ export async function runBudgetEvidence() {
   const records = [];
   let semanticCalls = 0;
   for (const entry of cases) {
-    const evaluator = entry.name.startsWith('semantic-') ? {
+    // Keep the complete deterministic host evaluator fixture in the
+    // archived case: source events alone cannot reproduce semantic output.
+    const evaluatorFixture = entry.name.startsWith('semantic-') ? {
       cacheIdentity: 'conformance/no-network:v1',
+      response: {
+        evaluator: 'conformance/no-network:v1',
+        probability: 0.95,
+        matched: true,
+        rejected: false,
+        uncertain: false,
+        metadata: {},
+      },
+    } : null;
+    const evaluator = evaluatorFixture ? {
+      cacheIdentity: evaluatorFixture.cacheIdentity,
       async evaluate() {
         semanticCalls++;
         return {
-          evaluator: 'conformance/no-network:v1',
-          probability: 0.95,
-          matched: true,
-          rejected: false,
-          uncertain: false,
-          metadata: {},
+          ...evaluatorFixture.response,
+          metadata: { ...evaluatorFixture.response.metadata },
         };
       },
     } : null;
@@ -188,6 +197,7 @@ export async function runBudgetEvidence() {
       definition: entry.config,
       sourceHash: digest(entry.source),
       sources: entry.source,
+      ...(evaluatorFixture ? { evaluatorFixture } : {}),
       fixedNow: FIXED_NOW,
       allowedLatenessMs: entry.name.startsWith('temporal-') ? 30000 : 0,
       output: outcome,
