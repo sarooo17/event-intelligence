@@ -151,7 +151,7 @@ test('every operator row declares evidence level and remaining gap', () => {
       'each operator needs an honest proof category: ' + row);
     assert.match(row, /\| [^|]+\|$/,
       'each operator must disclose a specific outstanding gap: ' + row);
-    const files = [...row.matchAll(/test\\/[a-zA-Z0-9-]+\\.test\\.mjs/g)]
+    const files = [...row.matchAll(/test\/[a-zA-Z0-9-]+\.test\.mjs/g)]
       .map(match => match[0]);
     assert.ok(files.length > 0,'operator must cite a concrete test: '+row);
     for(const file of files) {
