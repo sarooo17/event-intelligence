@@ -14,6 +14,7 @@ The source evaluator never gains runtime credentials or a second agent loop.
 | `notPresent(ref=b, child=allOf(a,c))` | For each Cartesian (a,c) pair, reject only when a b lies inside that pair's inclusive chronological span; outside b and unrelated noise do not veto | `test/pattern-v2-nested-notpresent-oracle.test.mjs`; 250 seeds × 3 arrival permutations, boundary/mutation probes |
 | `notNext(event(a),event(b))` | On one finite unpartitioned snapshot, an a survives unless the immediately following event-time occurrence (including noise) is b; a at the tail survives **only as a snapshot result**, not a finalized negative claim | `test/pattern-v2-notnext-oracle.test.mjs`; 250 seeds × 3 arrival permutations + boundary and mutation probes |
 | `notFollowedBy` | Forbidden b strictly after anchor and up to inclusive deadline prevents match; fire only when deadline + lateness is reached | `test/pattern-v2-negation-oracle.test.mjs`; 250 seeds × arrivals × clock boundaries |
+| DST offset transitions for `notFollowedBy` | Explicit offset timestamps on Europe/Rome 2026 spring/fall transitions order by absolute instant (including repeated autumn 02:00 hour); pending until deadline + lateness, forbidden on inclusive deadline | `test/pattern-v2-dst-negative-oracle.test.mjs`; 2 transitions × 4 source scenarios × 2 exact clock boundaries × 3 delivery permutations, plus local-time mutation controls |
 | `repeat(event(x))` | For `min:1..3`, `max: min..3`, enumerate valid source subsets; `combinations` allows gaps, `relaxed` skips only unrelated noise, `consecutive` requires adjacent source positions; both `greedy` and `lazy` produce the same untruncated match **set** | `test/pattern-v2-repeat-oracle.test.mjs`; 250 seeds × 3 shuffles × 2 modes × 18 exhaustive min/max/contiguity configurations |
 | Execution budgets and interpretation | A bounded intermediate candidate branch can lose a real match yet return zero matches; `truncated:true` means **inconclusive**, not no-match. Temporal pending and capped semantic calls have distinct evidence | `test/pattern-v2-budget-evidence.test.mjs`; `scripts/evidence/pattern-v2-budget-evidence.mjs` |
 | Candidate and semantic budgets | Budget exhaustion sets `truncated:true` even when `matches:[]`; only an untruncated empty result is a conclusive no-match within the modeled bounded snapshot | `test/pattern-v2-budget-outcomes.test.mjs`, `scripts/evidence/pattern-v2-conformance.mjs` |
@@ -156,6 +157,22 @@ Reproduction inputs:
   incorrect expected outcomes (drop b, admit noise, collapse duplicates)
   and assert that the independent oracle detects all of them. This is
   **not** mutation-testing the production evaluator executable itself.
+
+## DST differential witness (2026-10-14)
+
+`node --test test/pattern-v2-dst-negative-oracle.test.mjs` exercises
+explicit-offset 2026 Europe/Rome spring-forward and fall-back fixtures.
+Two physically adjacent occurrences are 500 ms apart despite a one-hour
+wall-clock discontinuity. A tiny existing independent `notFollowedBy`
+reference oracle checks exact source IDs at deadline + allowed lateness
+minus one millisecond and at finality, across absence, crossing, inclusive
+forbidden deadline, and deadline+1ms scenarios. Three delivery permutations
+and a deliberately incorrect local-hour calculation establish sensitivity
+to absolute event-time ordering; offset-free timestamp inputs are outside
+the finite oracle domain and rejected. This is a **bounded synthetic UTC
+offset test**, not validation of the full IANA timezone database, future
+timezone rule changes, arbitrary nested Patterns, persistence or scheduling.
+#44 remains open.
 
 ## Unproven combinations
 
