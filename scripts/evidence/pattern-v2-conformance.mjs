@@ -62,6 +62,9 @@ const packageData = JSON.parse(
   await readFile(new URL('../../package.json', import.meta.url), 'utf8'),
 );
 const fileContent = await readFile(new URL(import.meta.url));
+const attestationHelperContent = await readFile(
+  new URL('./compiled-runtime-attestation.mjs', import.meta.url),
+);
 
 // The complete executable tree is fingerprinted, and any symlinked
 // module or directory makes attestation fail closed.
@@ -324,6 +327,10 @@ console.log(JSON.stringify({
     replay: 'npm run conformance:pattern-v2',
     source: 'scripts/evidence/pattern-v2-conformance.mjs',
     sourceSha256: sha256(fileContent),
+    attestationHelper: {
+      path: 'scripts/evidence/compiled-runtime-attestation.mjs',
+      sha256: sha256(attestationHelperContent),
+    },
     evaluatedModules,
     completeRuntimeBuild: {
       root: 'dist/src',
