@@ -57,6 +57,13 @@ test('v3 conformance report commits to replayable versioned input/environment ev
       .update(readFileSync('scripts/evidence/compiled-runtime-attestation.mjs'))
       .digest('hex'),
   }, 'report must bind the precise implementation of the imported attestation helper');
+  const evidenceSource = readFileSync(
+    'scripts/evidence/pattern-v2-conformance.mjs', 'utf8');
+  assert.doesNotMatch(evidenceSource,
+    /import\\s*\\{\\s*attestCompiledRuntime\\s*\\}\\s*from/,
+    'attestation helper must not load statically from mutable repository source');
+  assert.match(evidenceSource, /import\\(pathToFileURL\\(snapshotHelper\\)\\.href\\)/,
+    'conformance must load the helper from its isolated snapshot');
   const files = independentlyHashBuild('dist/src');
   const build = first.reproducibility.completeRuntimeBuild;
   assert.equal(build.root, 'dist/src');
@@ -120,6 +127,9 @@ test('v3 conformance report commits to replayable versioned input/environment ev
 test('conformance command removes stale compiled modules before fresh build', async () => {
   const packageData = JSON.parse(readFileSync('package.json', 'utf8'));
   const script = packageData.scripts['conformance:pattern-v2'];
+  assert.equal(packageData.scripts['evidence:pattern-v2'],
+    'npm run conformance:pattern-v2 && node scripts/evidence/pattern-v2-benchmark.mjs --profile quick',
+    'aggregate evidence must never skip the canonical clean-build command');
   const match = /^node -e "([^"]+)" && npm run build && node scripts\/evidence\/pattern-v2-conformance\.mjs$/.exec(script);
   assert.ok(match, 'conformance CLI must clean dist before rebuilding and attest afterward');
   const dir = await mkdtemp(path.join(os.tmpdir(), 'ei-conformance-clean-'));
