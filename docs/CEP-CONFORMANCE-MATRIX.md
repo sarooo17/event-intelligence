@@ -23,7 +23,7 @@ The source evaluator never gains runtime credentials or a second agent loop.
 Run `npm run conformance:pattern-v2` for a JSON report tagged
 `event-intelligence.pattern-conformance.v3`. The report includes package
 version, canonical AST version, Node/OS/platform/architecture, optional CI
-Git commit, harness-file SHA-256, entrypoint module hashes, a
+Git commit, harness-file SHA-256, the imported attestation-helper SHA-256, entrypoint module hashes, a
 **deterministic SHA-256 over every compiled `dist/src/**/*.js` runtime
 module** (including transitively imported modules), and a SHA-256 of
 `package-lock.json` for dependency version commitments; seed range,
