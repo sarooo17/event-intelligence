@@ -36,7 +36,7 @@ therefore cannot silently change the evaluated bytes after import; tampering
 with the private snapshot causes a failed report if its final digest differs.
 Invoking the evidence script directly does not clean or rebuild the workspace. The report includes package
 version, canonical AST version, Node/OS/platform/architecture, optional CI
-Git commit, harness-file SHA-256, the imported attestation-helper SHA-256, entrypoint module hashes, a
+Git commit, harness-file SHA-256 (rechecked before emission), the imported attestation-helper SHA-256, entrypoint module hashes, a
 **deterministic SHA-256 over every compiled `dist/src/**/*.js` runtime
 module** (including transitively imported modules), and a SHA-256 of
 `package-lock.json` for dependency version commitments; seed range,
@@ -55,10 +55,15 @@ these cases fail closed. On local worktrees where GitHub SHA is
 absent this still binds the report to the **actual compiled** code and
 dependency lockfile, regardless of unchanged npm version, but it is not
 proof that `dist` matches checked-in sources or that an installed
-`node_modules` tree is untampered. The source input commitment hashes
-`JSON.stringify({definition,events,clocks})`. The script itself defines
-those synthetic inputs and the replay command, without writing raw payloads
-or credentials to the report. It does not claim a passing release-gate result
+`node_modules` tree is untampered. The source input commitment now hashes an ordered list of **per-evaluation**
+SHA-256 values, each over the exact synthetic `{definition,events,now,
+allowedLatenessMs,evaluatorFixture}` passed to the canonical evaluator
+(`now` defaults to a fixed replay clock for deterministic cases). The
+report archives only the per-run hashes and their aggregate digest, not
+private event payloads. In particular, the pending negative-window run and
+the forbidden-event run retain distinct source/clock/lateness commitments.
+The script itself defines these synthetic inputs and the replay command,
+without writing raw payloads or credentials to the report. It does not claim a passing release-gate result
 on a failure: assertion errors terminate the command nonzero.
 
 The `candidate budget` witness constructs a true next-adjacent match after
