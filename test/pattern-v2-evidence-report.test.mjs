@@ -51,6 +51,12 @@ test('v3 conformance report commits to replayable versioned input/environment ev
   assert.equal(first.environment.platform, process.platform);
   assert.equal(first.reproducibility.replay, 'npm run conformance:pattern-v2');
   assert.match(first.reproducibility.sourceSha256, /^[0-9a-f]{64}$/);
+  assert.deepEqual(first.reproducibility.attestationHelper, {
+    path: 'scripts/evidence/compiled-runtime-attestation.mjs',
+    sha256: createHash('sha256')
+      .update(readFileSync('scripts/evidence/compiled-runtime-attestation.mjs'))
+      .digest('hex'),
+  }, 'report must bind the precise implementation of the imported attestation helper');
   const files = independentlyHashBuild('dist/src');
   const build = first.reproducibility.completeRuntimeBuild;
   assert.equal(build.root, 'dist/src');
