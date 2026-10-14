@@ -17,7 +17,73 @@ The source evaluator never gains runtime credentials or a second agent loop.
 | DST offset transitions for `notFollowedBy` | Explicit offset timestamps on Europe/Rome 2026 spring/fall transitions order by absolute instant (including repeated autumn 02:00 hour); pending until deadline + lateness, forbidden on inclusive deadline | `test/pattern-v2-dst-negative-oracle.test.mjs`; 2 transitions × 4 source scenarios × 2 exact clock boundaries × 3 delivery permutations, plus local-time mutation controls |
 | `repeat(event(x))` | For `min:1..3`, `max: min..3`, enumerate valid source subsets; `combinations` allows gaps, `relaxed` skips only unrelated noise, `consecutive` requires adjacent source positions; both `greedy` and `lazy` produce the same untruncated match **set** | `test/pattern-v2-repeat-oracle.test.mjs`; 250 seeds × 3 shuffles × 2 modes × 18 exhaustive min/max/contiguity configurations |
 | Execution budgets and interpretation | A bounded intermediate candidate branch can lose a real match yet return zero matches; `truncated:true` means **inconclusive**, not no-match. Temporal pending and capped semantic calls have distinct evidence | `test/pattern-v2-budget-evidence.test.mjs`; `scripts/evidence/pattern-v2-budget-evidence.mjs` |
+| Candidate and semantic budgets | Budget exhaustion sets `truncated:true` even when `matches:[]`; only an untruncated empty result is a conclusive no-match within the modeled bounded snapshot | `test/pattern-v2-budget-outcomes.test.mjs`, `scripts/evidence/pattern-v2-conformance.mjs` |
 | Semantic evaluation | Runs only when explicitly configured and respects bounded call count | `test/pattern-v2-semantic-cache.test.mjs`, `test/semantic-scope-budget-conformance.test.mjs` |
+
+## Conformance report v3 and evidence integrity
+
+Run `npm run conformance:pattern-v2` for a JSON report tagged
+`event-intelligence.pattern-conformance.v3`. This npm command first deletes
+stale `dist` output and performs a fresh TypeScript build. The evidence
+script then checks the original compiled tree, copies it into a private
+per-run snapshot beneath the repository, attests the snapshot, dynamically
+imports the evaluator **from the snapshot** and checks that the snapshot's
+compiled hash did not change after evaluation. The private copy is removed
+in `finally`. The attestation helper is also copied into this private
+snapshot, dynamically imported from those exact bytes, and rehashed after
+execution: its reported digest cannot silently describe a different
+working-tree revision. A concurrent modification of the working `dist` tree
+therefore cannot silently change the evaluated bytes after import; tampering
+with the private snapshot causes a failed report if its final digest differs.
+Invoking the evidence script directly does not clean or rebuild the workspace. The POSIX npm launcher now runs the report as `env -u NODE_OPTIONS node ...`, clearing inherited preload/loader flags **outside the attested child process**, before any Node module evaluation. The runner also rejects non-empty `process.execArgv` and any remaining `NODE_OPTIONS`. This evidence command requires the POSIX `env -u` utility (Linux/macOS/CI); a Windows shell needs an equivalent external environment-clearing launcher. It does not attest a malicious local npm process, modified Node binary, privileged host or operating system. The report includes package
+version, canonical AST version, Node/OS/platform/architecture, optional CI
+Git commit, harness-file SHA-256 (rechecked before emission), the imported attestation-helper SHA-256, entrypoint module hashes, a
+**deterministic SHA-256 over every compiled `dist/src/**/*.js` runtime
+module** (including transitively imported modules), and a SHA-256 of
+`package-lock.json` for dependency version commitments; seed range,
+source fixture SHA-256 for each case, execution budgets, run counts and
+*explicit* complete, pending-temporal-finality and budget-inconclusive
+totals. A candidate with an unexpired negative window is `pending`, never
+`complete`; `inconclusive` specifically denotes budget truncation. The runtime build tree is
+sorted by relative path before hashing `[{path,sha256}]`; the report tests
+independently recompute that digest. Any symlink beneath the explicitly trusted repository/build root, including
+`dist` and nested compiled modules, **rejects attestation** instead of being
+skipped. Known benign OS/workspace symlinks **above** that trusted boundary
+(such as macOS `/var`) are outside the check. The private snapshot is
+attested under its own temporary trusted root.
+An isolated regression constructs symlinked runtime fixtures and verifies
+these cases fail closed. On local worktrees where GitHub SHA is
+absent this still binds the report to the **actual compiled** code and
+dependency lockfile, regardless of unchanged npm version, but it is not
+proof that `dist` matches checked-in sources or that an installed
+`node_modules` tree is untampered. The source input commitment now hashes an ordered list of **per-evaluation**
+SHA-256 values, each over the exact synthetic `{definition,events,now,
+allowedLatenessMs,evaluatorFixture}` passed to the canonical evaluator
+(`now` defaults to a fixed replay clock for deterministic cases). The
+report archives only the per-run hashes and their aggregate digest, not
+private event payloads. In particular, the pending negative-window run and
+the forbidden-event run retain distinct source/clock/lateness commitments.
+The script itself defines these synthetic inputs and the replay command,
+without writing raw payloads or credentials to the report. It does not claim a passing release-gate result
+on a failure: assertion errors terminate the command nonzero.
+
+The `candidate budget` witness constructs a true next-adjacent match after
+two earlier candidates. A two-candidate first-stage limit yields
+`matches:[]` **and** `truncated:true`; a larger limit finds the source
+pair, and a complete unmatched snapshot has `truncated:false`. Tests repeat
+this with 100 deterministic arrival seeds and an independent chronological
+adjacency model. The semantic evaluator's zero-call budget also yields an
+inconclusive zero-match result, while an allowed call resolves a match;
+malformed budget definitions fail at schema validation. This tests outcome
+distinctions, not all possible candidate explosions, irreversible negative
+finality, runtime scheduling decisions, or high-cardinality persistence.
+
+Report hashes identify *synthetic fixtures*, not every intermediate
+permutation or an immutable archived artifact. The full independent oracle
+suite is executed separately with the commands below and remains bounded.
+CI run logs and the Git commit identify the specific report execution;
+the report does not attest real hardware performance or certify #44's
+unproven combinations. No user-provided event payload belongs in the report.
 
 ## Oracle boundaries and replay recipe
 
@@ -36,11 +102,14 @@ npm run build
 node --test test/pattern-v2-oracle.test.mjs \
   test/pattern-v2-allof-oracle.test.mjs \
   test/pattern-v2-anyof-oracle.test.mjs \
+  test/pattern-v2-budget-outcomes.test.mjs \
+  test/pattern-v2-evidence-report.test.mjs \
   test/pattern-v2-notnext-oracle.test.mjs \
   test/pattern-v2-nested-notpresent-oracle.test.mjs \
   test/pattern-v2-negation-oracle.test.mjs \
   test/pattern-v2-repeat-oracle.test.mjs
 npm run conformance:pattern-v2
+npm run evidence:pattern-v2  # uses the same clean-build conformance gate before benchmarking
 npm run conformance:pattern-v2-budget
 ```
 
