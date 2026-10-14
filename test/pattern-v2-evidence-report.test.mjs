@@ -138,6 +138,17 @@ test('v3 conformance report commits to replayable versioned input/environment ev
 });
 
 
+test('attestation refuses Node loader/preload execution flags', () => {
+  const script = 'scripts/evidence/pattern-v2-conformance.mjs';
+  assert.throws(() => execFileSync(process.execPath, ['--no-warnings', script], {
+    encoding: 'utf8', timeout: 20000,
+  }), /CEP conformance attestation requires Node without execArgv or NODE_OPTIONS hooks/);
+  assert.throws(() => execFileSync(process.execPath, [script], {
+    encoding: 'utf8', timeout: 20000,
+    env: { ...process.env, NODE_OPTIONS: '--no-warnings' },
+  }), /CEP conformance attestation requires Node without execArgv or NODE_OPTIONS hooks/);
+});
+
 test('conformance command removes stale compiled modules before fresh build', async () => {
   const packageData = JSON.parse(readFileSync('package.json', 'utf8'));
   const script = packageData.scripts['conformance:pattern-v2'];
