@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import test from 'node:test';
+import { evaluatePatternV2 } from '../dist/src/intelligenceProtocol/index.js';
 import {
   interpretEvaluation,
   runBudgetEvidence,
@@ -61,6 +62,49 @@ test('semantic evaluation budget is bounded and cannot masquerade as complete', 
   assert.equal(semantic.output.truncated, true);
   assert.equal(semantic.output.interpretation, 'incomplete_budget');
   assert.ok(semantic.output.matches.length <= 1);
+});
+
+test('archived semantic fixture reproduces actual bounded evaluation without hidden inputs', async () => {
+  const report = await runBudgetEvidence();
+  const semantic = report.cases.find(item =>
+    item.name === 'semantic-budget-reports-incomplete-results');
+  const fixture = semantic.evaluatorFixture;
+  assert.ok(fixture, 'semantic host fixture must be part of exported evidence');
+  assert.equal(fixture.cacheIdentity, 'conformance/no-network:v1');
+  assert.deepEqual(fixture.response, {
+    evaluator: 'conformance/no-network:v1',
+    probability: 0.95,
+    matched: true,
+    rejected: false,
+    uncertain: false,
+    metadata: {},
+  });
+  for (const entry of report.cases.filter(item => item !== semantic)) {
+    assert.equal(entry.evaluatorFixture, undefined);
+  }
+  const replay = await evaluatePatternV2({
+    definition: semantic.definition,
+    events: semantic.sources,
+    now: new Date(semantic.fixedNow),
+    allowedLatenessMs: semantic.allowedLatenessMs,
+    evaluator: {
+      cacheIdentity: fixture.cacheIdentity,
+      async evaluate() { return { ...fixture.response }; },
+    },
+  });
+  assert.deepEqual({
+    truncated: replay.truncated,
+    matches: replay.matches.map(match =>
+      match.events.map(event => event.sourceEventId)),
+    pending: replay.pending.map(match =>
+      match.events.map(event => event.sourceEventId)),
+    semanticEvaluations: replay.semanticEvaluations,
+  }, {
+    truncated: semantic.output.truncated,
+    matches: semantic.output.matches,
+    pending: semantic.output.pending,
+    semanticEvaluations: semantic.output.semanticEvaluations,
+  });
 });
 
 test('diagnostic interpretation gives incomplete state precedence over empty/matched/pending', () => {
