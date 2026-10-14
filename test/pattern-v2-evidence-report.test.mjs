@@ -155,7 +155,7 @@ test('conformance command removes stale compiled modules before fresh build', as
   assert.equal(packageData.scripts['evidence:pattern-v2'],
     'npm run conformance:pattern-v2 && node scripts/evidence/pattern-v2-benchmark.mjs --profile quick',
     'aggregate evidence must never skip the canonical clean-build command');
-  const match = /^node -e "([^"]+)" && npm run build && node scripts\/evidence\/pattern-v2-conformance\.mjs$/.exec(script);
+  const match = /^node -e "([^"]+)" && npm run build && env -u NODE_OPTIONS node scripts\/evidence\/pattern-v2-conformance\.mjs$/.exec(script);
   assert.ok(match, 'conformance CLI must clean dist before rebuilding and attest afterward');
   const dir = await mkdtemp(path.join(os.tmpdir(), 'ei-conformance-clean-'));
   try {
@@ -173,6 +173,23 @@ test('conformance command removes stale compiled modules before fresh build', as
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+test('POSIX conformance launcher strips ambient Node preload options before spawning', () => {
+  if (process.platform === 'win32') return;
+  const packageData = JSON.parse(readFileSync('package.json', 'utf8'));
+  assert.match(packageData.scripts['conformance:pattern-v2'],
+    /&& env -u NODE_OPTIONS node scripts\\/evidence\\/pattern-v2-conformance\\.mjs$/,
+    'attested evaluator must run in a new Node process with NODE_OPTIONS unset by the shell');
+  const clean = execFileSync('env', [
+    '-u', 'NODE_OPTIONS', process.execPath,
+    '-e', "process.stdout.write(String(process.env.NODE_OPTIONS ?? '<unset>'))",
+  ], {
+    encoding: 'utf8', timeout: 10000,
+    env: { ...process.env, NODE_OPTIONS: '--no-warnings' },
+  });
+  assert.equal(clean, '<unset>',
+    'child process must not inherit a loader/preload environment setting');
 });
 
 test('compiled runtime attestation fails closed on symlinked JS or directory', async () => {
