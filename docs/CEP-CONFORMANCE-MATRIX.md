@@ -15,6 +15,7 @@ The source evaluator never gains runtime credentials or a second agent loop.
 | `notNext(event(a),event(b))` | On one finite unpartitioned snapshot, an a survives unless the immediately following event-time occurrence (including noise) is b; a at the tail survives **only as a snapshot result**, not a finalized negative claim | `test/pattern-v2-notnext-oracle.test.mjs`; 250 seeds × 3 arrival permutations + boundary and mutation probes |
 | `notFollowedBy` | Forbidden b strictly after anchor and up to inclusive deadline prevents match; fire only when deadline + lateness is reached | `test/pattern-v2-negation-oracle.test.mjs`; 250 seeds × arrivals × clock boundaries |
 | `repeat(event(x))` | For `min:1..3`, `max: min..3`, enumerate valid source subsets; `combinations` allows gaps, `relaxed` skips only unrelated noise, `consecutive` requires adjacent source positions; both `greedy` and `lazy` produce the same untruncated match **set** | `test/pattern-v2-repeat-oracle.test.mjs`; 250 seeds × 3 shuffles × 2 modes × 18 exhaustive min/max/contiguity configurations |
+| Execution budgets and interpretation | A bounded intermediate candidate branch can lose a real match yet return zero matches; `truncated:true` means **inconclusive**, not no-match. Temporal pending and capped semantic calls have distinct evidence | `test/pattern-v2-budget-evidence.test.mjs`; `scripts/evidence/pattern-v2-budget-evidence.mjs` |
 | Candidate and semantic budgets | Budget exhaustion sets `truncated:true` even when `matches:[]`; only an untruncated empty result is a conclusive no-match within the modeled bounded snapshot | `test/pattern-v2-budget-outcomes.test.mjs`, `scripts/evidence/pattern-v2-conformance.mjs` |
 | Semantic evaluation | Runs only when explicitly configured and respects bounded call count | `test/pattern-v2-semantic-cache.test.mjs`, `test/semantic-scope-budget-conformance.test.mjs` |
 
@@ -86,6 +87,7 @@ node --test test/pattern-v2-oracle.test.mjs \
   test/pattern-v2-negation-oracle.test.mjs \
   test/pattern-v2-repeat-oracle.test.mjs
 npm run conformance:pattern-v2
+npm run conformance:pattern-v2-budget
 ```
 
 Reproduction inputs:
@@ -147,3 +149,46 @@ A pattern budget truncation is **inconclusive**, never evidence of absence.
 
 Breaking Pattern AST semantics require an explicit documented version/migration
 decision, not a silent reinterpretation of persisted triggers.
+
+## Reproducible budget/no-match evidence (2026-10-14)
+
+`npm run conformance:pattern-v2-budget` emits
+`event-intelligence.cep-budget-evidence.v1` JSON on stdout. To retain
+a copy, use `node scripts/evidence/pattern-v2-budget-evidence.mjs --out
+cep-budget-evidence.json` after building. CI uploads the same JSON as a
+machine-readable `cep-budget-evidence` artifact. The report records:
+
+- package version, Node version, OS platform/architecture, and the optional
+  `GITHUB_SHA` commit identity available in CI;
+- deterministic seed **20261014**, fixed UTC clock, each synthetic source
+  occurrence's ID/ref/timestamp, and stable SHA-256 hashes of the complete
+  synthetic source fixture and canonical Pattern definition (the report
+  includes the complete synthetic source objects so both hashes can be
+  independently recomputed; never use this fixture dumper for live private
+  event payloads);
+- configured candidate/semantic/buffer budgets, lateness, and raw
+  `truncated`, matches, pending, and semantic evaluation counts.
+
+A diagnostic-only interpretation is derived from the canonical evaluator's
+result with the following precedence: `incomplete_budget` if
+`truncated=true`; otherwise `awaiting_temporal_finality` if there are
+pending candidates; otherwise `matched` if any matches exist; otherwise
+`complete_no_match`. This is **not a second evaluator**, a new public
+runtime API or an authorization decision. In particular, a negative window
+pending completion must not be reported as definitely absent.
+
+The adversarial fixture evaluates the **same event corpus** with both
+`maxCandidates=1` and `maxCandidates=32`. The smaller budget truncates an
+intermediate `anyOf` branch and returns **no** matches; the larger budget
+finds the adjacent `b→c` match. The test detects this distinction, also
+proves an actually complete no-match, checks pending negative finality,
+and confirms that a semantic evaluator with a one-call budget stops
+with explicit truncation.
+
+**Limits:** These are deterministic bounded synthetic **snapshot**
+examples, not a proof that arbitrary Pattern ASTs preserve all valid
+matches when truncated. Incomplete results cannot justify a negative
+conclusion or external side effect. The report does not establish
+partition independence, OS-process restart equivalence, clock/DST
+exhaustiveness, semantic timeouts, unbounded nested patterns, or
+production workload limits. Those remain open in #44.
