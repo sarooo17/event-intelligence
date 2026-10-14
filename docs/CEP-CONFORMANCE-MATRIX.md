@@ -22,7 +22,16 @@ The source evaluator never gains runtime credentials or a second agent loop.
 ## Conformance report v3 and evidence integrity
 
 Run `npm run conformance:pattern-v2` for a JSON report tagged
-`event-intelligence.pattern-conformance.v3`. This npm command first deletes stale `dist` output and performs a fresh TypeScript build before attestation; invoking the underlying evidence script directly does not rebuild or clean the workspace. The report includes package
+`event-intelligence.pattern-conformance.v3`. This npm command first deletes
+stale `dist` output and performs a fresh TypeScript build. The evidence
+script then checks the original compiled tree, copies it into a private
+per-run snapshot beneath the repository, attests the snapshot, dynamically
+imports the evaluator **from the snapshot** and checks that the snapshot's
+compiled hash did not change after evaluation. The private copy is removed
+in `finally`. A concurrent modification of the working `dist` tree
+therefore cannot silently change the evaluated bytes after import; tampering
+with the private snapshot causes a failed report if its final digest differs.
+Invoking the evidence script directly does not clean or rebuild the workspace. The report includes package
 version, canonical AST version, Node/OS/platform/architecture, optional CI
 Git commit, harness-file SHA-256, the imported attestation-helper SHA-256, entrypoint module hashes, a
 **deterministic SHA-256 over every compiled `dist/src/**/*.js` runtime
@@ -31,9 +40,11 @@ module** (including transitively imported modules), and a SHA-256 of
 source fixture SHA-256 for each case, execution budgets, run counts and
 *explicit* complete versus inconclusive totals. The runtime build tree is
 sorted by relative path before hashing `[{path,sha256}]`; the report tests
-independently recompute that digest. Any symlink inside the compiled
-tree (file or directory), or passed as its **root directory**, **rejects
-attestation** rather than silently skipping Node-followed runtime code.
+independently recompute that digest. Any symlink beneath the explicitly trusted repository/build root, including
+`dist` and nested compiled modules, **rejects attestation** instead of being
+skipped. Known benign OS/workspace symlinks **above** that trusted boundary
+(such as macOS `/var`) are outside the check. The private snapshot is
+attested under its own temporary trusted root.
 An isolated regression constructs symlinked runtime fixtures and verifies
 these cases fail closed. On local worktrees where GitHub SHA is
 absent this still binds the report to the **actual compiled** code and
