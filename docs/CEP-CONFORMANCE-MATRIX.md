@@ -28,7 +28,10 @@ script then checks the original compiled tree, copies it into a private
 per-run snapshot beneath the repository, attests the snapshot, dynamically
 imports the evaluator **from the snapshot** and checks that the snapshot's
 compiled hash did not change after evaluation. The private copy is removed
-in `finally`. A concurrent modification of the working `dist` tree
+in `finally`. The attestation helper is also copied into this private
+snapshot, dynamically imported from those exact bytes, and rehashed after
+execution: its reported digest cannot silently describe a different
+working-tree revision. A concurrent modification of the working `dist` tree
 therefore cannot silently change the evaluated bytes after import; tampering
 with the private snapshot causes a failed report if its final digest differs.
 Invoking the evidence script directly does not clean or rebuild the workspace. The report includes package
@@ -100,6 +103,7 @@ node --test test/pattern-v2-oracle.test.mjs \
   test/pattern-v2-negation-oracle.test.mjs \
   test/pattern-v2-repeat-oracle.test.mjs
 npm run conformance:pattern-v2
+npm run evidence:pattern-v2  # uses the same clean-build conformance gate before benchmarking
 npm run conformance:pattern-v2-budget
 ```
 
