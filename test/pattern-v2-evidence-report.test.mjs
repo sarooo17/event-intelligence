@@ -179,7 +179,7 @@ test('POSIX conformance launcher strips ambient Node preload options before spaw
   if (process.platform === 'win32') return;
   const packageData = JSON.parse(readFileSync('package.json', 'utf8'));
   assert.match(packageData.scripts['conformance:pattern-v2'],
-    /&& env -u NODE_OPTIONS node scripts\\/evidence\\/pattern-v2-conformance\\.mjs$/,
+    /&& env -u NODE_OPTIONS node scripts\/evidence\/pattern-v2-conformance\.mjs$/,
     'attested evaluator must run in a new Node process with NODE_OPTIONS unset by the shell');
   const clean = execFileSync('env', [
     '-u', 'NODE_OPTIONS', process.execPath,
