@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
-import { fileURLToPath } from 'node:url';
+import { cp, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { join } from 'node:path';
 import { attestCompiledRuntime } from './compiled-runtime-attestation.mjs';
 import os from 'node:os';
-import {
-  PatternAstV2DefinitionSchema,
-  evaluatePatternV2,
-} from '../../dist/src/intelligenceProtocol/index.js';
+
+let PatternAstV2DefinitionSchema;
+let evaluatePatternV2;
 
 function event(ref, id, at, data = {}) {
   return {
@@ -66,11 +66,23 @@ const attestationHelperContent = await readFile(
   new URL('./compiled-runtime-attestation.mjs', import.meta.url),
 );
 
-// The complete executable tree is fingerprinted, and any symlinked
-// module or directory makes attestation fail closed.
-const compiledRuntime = await attestCompiledRuntime(fileURLToPath(
-  new URL('../../dist/src/', import.meta.url),
-));
+// Copy a fully attested compiled runtime to a private per-run workspace,
+// then import the evaluator FROM THAT SAME SNAPSHOT rather than from a
+// mutable checkout. This keeps concurrent subsequent dist rebuilds from
+// changing the on-disk bytes that the report claims produced its results.
+const trustedRepoRoot = fileURLToPath(new URL('../../', import.meta.url));
+const buildRoot = fileURLToPath(new URL('../../dist/src/', import.meta.url));
+const originalBuild = await attestCompiledRuntime(buildRoot, trustedRepoRoot);
+const snapshotWorkspace = await mkdtemp(join(trustedRepoRoot, '.cep-conformance-snapshot-'));
+try {
+  const snapshotRoot = join(snapshotWorkspace, 'dist', 'src');
+  await cp(buildRoot, snapshotRoot, { recursive: true, errorOnExist: true });
+  const compiledRuntime = await attestCompiledRuntime(snapshotRoot, snapshotWorkspace);
+  assert.deepEqual(compiledRuntime, originalBuild,
+    'compiled runtime changed during snapshot creation');
+  ({ PatternAstV2DefinitionSchema, evaluatePatternV2 } = await import(
+    pathToFileURL(join(snapshotRoot, 'intelligenceProtocol', 'index.js')).href
+  ));
 // These are the actual compiled modules loaded by evaluatePatternV2().
 // Hashing only this harness or the package version would allow a different
 // evaluator to masquerade as the same conformance execution.
@@ -81,7 +93,7 @@ const evaluatedModules = await Promise.all([
 ].map(async modulePath => ({
   path: modulePath,
   sha256: createHash('sha256')
-    .update(await readFile(new URL('../../' + modulePath, import.meta.url)))
+    .update(await readFile(join(snapshotRoot, modulePath.replace(/^dist\\/src\\//, ''))))
     .digest('hex'),
 })));
 const sha256 = value => createHash('sha256')
@@ -305,6 +317,10 @@ await check('semantic node is explicit and budgeted', async () => {
 });
 
 
+const verifiedSnapshot = await attestCompiledRuntime(snapshotRoot, snapshotWorkspace);
+assert.deepEqual(verifiedSnapshot, compiledRuntime,
+  'compiled evaluator bytes changed after import/evaluation; aborting evidence report');
+
 const summary = checks.reduce((totals, entry) => ({
   complete: totals.complete + entry.outcomes.complete,
   inconclusive: totals.inconclusive + entry.outcomes.inconclusive,
@@ -348,3 +364,6 @@ console.log(JSON.stringify({
   failed: 0,
   evaluations: summary,
 }, null, 2));
+} finally {
+  await rm(snapshotWorkspace, { recursive: true, force: true });
+}
