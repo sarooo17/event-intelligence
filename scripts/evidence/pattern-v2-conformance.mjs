@@ -1,9 +1,8 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { cp, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { join } from 'node:path';
-import { attestCompiledRuntime } from './compiled-runtime-attestation.mjs';
 import os from 'node:os';
 
 let PatternAstV2DefinitionSchema;
@@ -62,19 +61,24 @@ const packageData = JSON.parse(
   await readFile(new URL('../../package.json', import.meta.url), 'utf8'),
 );
 const fileContent = await readFile(new URL(import.meta.url));
-const attestationHelperContent = await readFile(
-  new URL('./compiled-runtime-attestation.mjs', import.meta.url),
-);
-
-// Copy a fully attested compiled runtime to a private per-run workspace,
-// then import the evaluator FROM THAT SAME SNAPSHOT rather than from a
-// mutable checkout. This keeps concurrent subsequent dist rebuilds from
-// changing the on-disk bytes that the report claims produced its results.
+// Every executed attestation must use the exact helper bytes fingerprinted
+// in the report. A static import could load old code before a concurrent
+// checkout update, then hash different bytes from the changed source file.
 const trustedRepoRoot = fileURLToPath(new URL('../../', import.meta.url));
 const buildRoot = fileURLToPath(new URL('../../dist/src/', import.meta.url));
-const originalBuild = await attestCompiledRuntime(buildRoot, trustedRepoRoot);
 const snapshotWorkspace = await mkdtemp(join(trustedRepoRoot, '.cep-conformance-snapshot-'));
 try {
+  const snapshotHelper = join(snapshotWorkspace, 'compiled-runtime-attestation.mjs');
+  await writeFile(snapshotHelper,
+    await readFile(new URL('./compiled-runtime-attestation.mjs', import.meta.url)),
+    { flag: 'wx' });
+  const attestationHelperContent = await readFile(snapshotHelper);
+  const helperSha256 = createHash('sha256')
+    .update(attestationHelperContent).digest('hex');
+  // Dynamic import from the same isolated, fingerprinted file instead of the
+  // mutable working tree. Verify the snapshot has not changed after execution.
+  const { attestCompiledRuntime } = await import(pathToFileURL(snapshotHelper).href);
+  const originalBuild = await attestCompiledRuntime(buildRoot, trustedRepoRoot);
   const snapshotRoot = join(snapshotWorkspace, 'dist', 'src');
   await cp(buildRoot, snapshotRoot, { recursive: true, errorOnExist: true });
   const compiledRuntime = await attestCompiledRuntime(snapshotRoot, snapshotWorkspace);
@@ -324,6 +328,10 @@ await check('semantic node is explicit and budgeted', async () => {
 const verifiedSnapshot = await attestCompiledRuntime(snapshotRoot, snapshotWorkspace);
 assert.deepEqual(verifiedSnapshot, compiledRuntime,
   'compiled evaluator bytes changed after import/evaluation; aborting evidence report');
+const verifiedHelperSha256 = createHash('sha256')
+  .update(await readFile(snapshotHelper)).digest('hex');
+assert.equal(verifiedHelperSha256, helperSha256,
+  'loaded attestation helper bytes changed after import; aborting evidence report');
 
 const summary = checks.reduce((totals, entry) => ({
   complete: totals.complete + entry.outcomes.complete,
@@ -350,7 +358,7 @@ console.log(JSON.stringify({
     sourceSha256: sha256(fileContent),
     attestationHelper: {
       path: 'scripts/evidence/compiled-runtime-attestation.mjs',
-      sha256: sha256(attestationHelperContent),
+      sha256: helperSha256,
     },
     evaluatedModules,
     completeRuntimeBuild: {
