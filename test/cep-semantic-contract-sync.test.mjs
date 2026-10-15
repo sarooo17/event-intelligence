@@ -89,9 +89,16 @@ function schemaKinds(source) {
   const factory = outer.arguments[0];
   assert.ok(ts.isArrowFunction(factory) && ts.isBlock(factory.body),
     'canonical lazy factory must have a static block body');
-  const returns = factory.body.statements.filter(ts.isReturnStatement);
+  const returns = [];
+  // Fail closed on any conditional/nested return that could widen the
+  // accepted AST without altering the final top-level return statement.
+  function collectReturns(node) {
+    if (ts.isReturnStatement(node)) returns.push(node);
+    ts.forEachChild(node, collectReturns);
+  }
+  collectReturns(factory.body);
   assert.equal(returns.length, 1,
-    'canonical factory must have one inspectable top-level return');
+    'canonical factory must contain exactly one return at any nesting depth');
   const returned = returns[0].expression;
   assert.ok(returned && ts.isIdentifier(returned) && returned.text === 'node',
     'factory must return exactly inspected node union; composition needs review');
@@ -215,7 +222,14 @@ test('schema drift detects quotes, constants and externally declared union membe
       '  return node;\n});');
   assert.notEqual(hidden,schema,'must create a syntactically changed factory');
   assert.throws(() => schemaKinds(hidden),
-    /factory returned node must resolve to a statically inspectable z.union/);
+    /factory (?:must contain exactly one return|returned node must resolve to a statically inspectable z.union)/);
+
+  const conditional = schema.replace('  return node;',
+    '  if (true) return node.or(z.object({kind:z.literal("conditional-kind")}));\n' +
+    '  return node;');
+  assert.notEqual(conditional,schema,'conditional fixture must modify factory');
+  assert.throws(() => schemaKinds(conditional),
+    /factory must contain exactly one return/);
 });
 
 test('every operator row declares evidence level and remaining gap', () => {
