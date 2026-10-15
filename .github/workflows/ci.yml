@@ -29,6 +29,13 @@ jobs:
           name: cep-budget-evidence
           path: cep-budget-evidence.json
           if-no-files-found: error
+      - name: Kill bounded compiled CEP mutations (independent oracle)
+        run: node scripts/evidence/cep-production-mutation-report.mjs --out cep-production-mutation-evidence.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cep-production-mutation-evidence
+          path: cep-production-mutation-evidence.json
+          if-no-files-found: error
 
   postgres-ha:
     runs-on: ubuntu-latest

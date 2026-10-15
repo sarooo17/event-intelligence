@@ -342,6 +342,42 @@ selection/late events, high-cardinality PostgreSQL or multi-worker runtime.
 Host interpretation of `truncated` remains mandatory and the parent #44
 still requires expanded adversarial/mutation and operational evidence.
 
+## Production evaluator mutation gate (2026-10-15)
+
+The CI/release gate now runs **real modified compiled evaluator modules**,
+not mocked functions or mutated reference-oracle expectations:
+`node scripts/evidence/cep-production-mutation-report.mjs --out
+cep-production-mutation-evidence.json`. The file is archived as
+`cep-production-mutation-evidence` in CI and as
+`public-release-cep-mutation-evidence` on public release-check pushes.
+The normal `npm run check` also runs the same mutation-kill assertions.
+
+Three deliberately seeded compiled-JavaScript mutations must produce
+a different result from the independent finite witness specification:
+1. `event_dropped_truncation`: dropping the event-cap incompleteness flag
+   while retaining only the capped source prefix;
+2. `allof_dropped_truncation`: not propagating join-budget truncation;
+3. `negative_forbidden_deadline_exclusive`: changing inclusive forbidden
+   deadline to exclusive.
+
+Each mutation is evaluated over 16 deterministic arrival permutations
+with seed `20261015`. The report binds the compiled evaluator SHA-256,
+mutant source SHA-256, fixture hashes, seed, exact expected projection,
+and a witnessed wrong result. Mutants **must import and evaluate
+successfully**; a syntax error or crashed evaluator is not accepted as
+a killed semantic mutation. Temporary snapshot modules are deleted in
+`finally`. The gate fails on a surviving mutant or changed mutation
+anchor, preventing silent drift of the regression claims.
+
+**Scope:** This is a **three-mutant targeted proof**, not a mutation score
+for the whole engine, randomized falsification of all 22 AST nodes,
+coverage of nested temporal/selection states, or a full resource bound.
+The working Node/OS, repository and test dependencies are trusted. The
+fixture events are synthetic only; this script must not be extended to
+emit live private source events. Parent #44 remains open until
+expanded composition/fuzz/release evidence and remaining resource
+invariants have been validated.
+
 ## Equal-timestamp ordering and extreme ISO date witness (2026-10-15)
 
 `test/pattern-v2-equal-time-ordering-oracle.test.mjs` compares
