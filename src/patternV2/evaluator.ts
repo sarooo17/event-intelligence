@@ -765,8 +765,10 @@ async function evaluateNode(
     const seen = new Set<string>();
     for (const event of all) {
       if (event.clauseId !== node.ref) continue;
-      const candidate = candidateFromBindings({ [node.ref]: [event] }, all);
-      const key = candidateSignature(candidate);
+      // Ref is fixed for this event-node invocation, so physical identity
+      // identifies the same candidate as its one-event signature. Skip
+      // replayed copies *before* allocating and indexing a candidate.
+      const key = eventIdentity(event);
       if (seen.has(key)) continue;
       seen.add(key);
       // Do not build an unbounded event-candidate array only to discard
@@ -776,7 +778,7 @@ async function evaluateNode(
         context.truncated = true;
         break;
       }
-      values.push(candidate);
+      values.push(candidateFromBindings({ [node.ref]: [event] }, all));
     }
     return values;
   }
