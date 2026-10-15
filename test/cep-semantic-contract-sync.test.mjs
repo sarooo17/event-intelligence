@@ -71,6 +71,11 @@ function schemaKinds(source) {
       if (matches.length > 0) {
         assert.equal(matches.length, 1, 'ambiguous lexical schema binding: '+identifier.text);
         const declaration = matches[0];
+        assert.ok(
+          ts.isVariableDeclarationList(declaration.parent) &&
+          (declaration.parent.flags & ts.NodeFlags.Const) !== 0,
+          'schema alias must be immutable: ' + identifier.text,
+        );
         assert.ok(declaration.initializer,
           'schema binding must have a static initializer: '+identifier.text);
         return declaration;
@@ -230,6 +235,17 @@ PatternNodeV2Schema = PatternNodeV2Schema.or(
   assert.throws(() => schemaKinds(writableAndReassigned),
     /canonical exported schema must be immutable/,
     'valid TypeScript with a mutable exported schema cannot hide a widened runtime kind');
+});
+
+test('mutable factory-local aliases cannot widen runtime AST after initialization', () => {
+  const mutableAlias = schema
+    .replace('const node = z.union([', 'let node: any = z.union([')
+    .replace('  return node;', `
+  node = node.or(z.object({ kind: z.literal('alias-widened-kind') }));
+  return node;`);
+  assert.notEqual(mutableAlias, schema);
+  assert.throws(() => schemaKinds(mutableAlias),
+    /schema alias must be immutable: node/);
 });
 
 test('schema drift detects quotes, constants and externally declared union members', () => {
