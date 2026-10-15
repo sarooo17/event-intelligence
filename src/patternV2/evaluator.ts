@@ -128,11 +128,13 @@ function durableSemanticCacheKey(
 }
 
 function eventIdentity(event: TriggerSourceEvent): string {
-  return [
-    event.serverId ?? '-',
+  // JSON tuple serialization is unambiguous even when server/source IDs
+  // contain ':' or '|' (unlike delimiter-joined components).
+  return JSON.stringify([
+    event.serverId ?? null,
     event.sourceEventId,
-    JSON.stringify(stableValue(event.subscriptionArguments ?? {})),
-  ].join(':');
+    stableValue(event.subscriptionArguments ?? {}),
+  ]);
 }
 
 function eventOrder(
@@ -240,10 +242,19 @@ function mergeCandidates(
 }
 
 function candidateSignature(candidate: PatternV2Candidate): string {
-  return candidate.events
-    .map((event) => `${event.clauseId}:${eventIdentity(event)}`)
-    .sort()
-    .join('|');
+  // Stable, self-delimiting encoding for persisted pattern signatures.
+  return JSON.stringify(candidate.events
+    .map((event) => [event.clauseId, eventIdentity(event)])
+    .sort((left, right) =>
+      JSON.stringify(left).localeCompare(JSON.stringify(right))
+    ));
+}
+
+function candidateDedupeKey(candidate: PatternV2Candidate): string {
+  return JSON.stringify([
+    candidateSignature(candidate),
+    candidate.pendingUntil ?? null,
+  ]);
 }
 
 function dedupe(
@@ -258,10 +269,7 @@ function dedupe(
   let truncated = false;
 
   for (const candidate of candidates) {
-    const key = [
-      candidateSignature(candidate),
-      candidate.pendingUntil ?? '-',
-    ].join('#');
+    const key = candidateDedupeKey(candidate);
     if (seen.has(key)) continue;
     seen.add(key);
     if (values.length >= max) {
@@ -827,10 +835,7 @@ async function evaluateNode(
         for (const right of next) {
           const merged = mergeCandidates(left, right, all);
           if (!merged) continue;
-          const key = [
-            candidateSignature(merged),
-            merged.pendingUntil ?? '-',
-          ].join('#');
+          const key = candidateDedupeKey(merged);
           if (seen.has(key)) continue;
           seen.add(key);
           if (combined.length >= context.maxCandidates) {
