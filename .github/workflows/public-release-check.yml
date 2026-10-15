@@ -30,6 +30,18 @@ jobs:
         if: github.event_name != 'pull_request'
         run: npm run check
 
+      - name: CEP compiled production mutation release gate
+        if: github.event_name != 'pull_request'
+        run: node scripts/evidence/cep-production-mutation-report.mjs --out cep-production-mutation-evidence.json
+
+      - name: Retain CEP mutation release evidence
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: public-release-cep-mutation-evidence
+          path: cep-production-mutation-evidence.json
+          if-no-files-found: error
+
       - name: Verify npm package contents
         run: npm run pack:check
 
