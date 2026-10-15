@@ -1159,6 +1159,11 @@ async function evaluateNode(
   if (node.kind === 'notNext') {
     const bases = await evaluateNode(node.child, context);
     const forbidden = await evaluateNode(node.forbidden, context);
+    // A capped forbidden branch may omit the exact event that blocks a
+    // negative match. The host can persist returned matches even when
+    // truncated=true, so never emit negative matches from incomplete
+    // evidence. A prior child truncation also warrants a fail-closed exit.
+    if (context.truncated) return [];
     return bases.filter((base) => {
       if (!base.events.length) return false;
       return !forbidden.some(
@@ -1172,6 +1177,9 @@ async function evaluateNode(
   if (node.kind === 'notFollowedBy') {
     const bases = await evaluateNode(node.child, context);
     const forbidden = await evaluateNode(node.forbidden, context);
+    // Never finalize or expose a negative result if the full set of
+    // potentially disqualifying evidence was not evaluated.
+    if (context.truncated) return [];
     const output: PatternV2Candidate[] = [];
 
     for (const base of bases) {
