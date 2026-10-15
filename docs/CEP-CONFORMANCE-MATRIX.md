@@ -266,7 +266,10 @@ deduplicator's truncation state. In particular, an optional branch with
 the AST, selection policy or persisted state; callers must already treat
 `truncated:true` as incomplete. The regression fixture exercises
 greedy/lazy options, changed delivery order, nested sequences and repeat
-with low/high caps. No data migration is required; the deliberately
+with low/high caps. The `repeat` traversal stops only on its **own**
+enumeration cap, not merely because a nested optional child recorded a
+truncation; valid retained nonempty child units still produce all reachable
+combinations within the repeat's local limit. No data migration is required; the deliberately
 changed result is the completeness diagnostic for budget-limited runs.
 
 ## Nested candidate-completeness safety witness (2026-10-14)
