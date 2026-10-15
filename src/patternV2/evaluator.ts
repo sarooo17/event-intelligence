@@ -245,9 +245,12 @@ function candidateSignature(candidate: PatternV2Candidate): string {
   // Stable, self-delimiting encoding for persisted pattern signatures.
   return JSON.stringify(candidate.events
     .map((event) => [event.clauseId, eventIdentity(event)])
-    .sort((left, right) =>
-      JSON.stringify(left).localeCompare(JSON.stringify(right))
-    ));
+    .sort((left, right) => {
+      const a = JSON.stringify(left);
+      const b = JSON.stringify(right);
+      // Unicode code-unit ordering is stable across host locales/ICU.
+      return a < b ? -1 : a > b ? 1 : 0;
+    }));
 }
 
 function candidateDedupeKey(candidate: PatternV2Candidate): string {
