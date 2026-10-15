@@ -786,15 +786,31 @@ async function evaluateNode(
     for (const child of node.children as PatternNodeV2[]) {
       const next = await evaluateNode(child, context);
       const combined: PatternV2Candidate[] = [];
+      const seen = new Set<string>();
+      let truncated = false;
+      // Generate only the first maxCandidates unique combinations.
+      // Materializing every Cartesian pair before dedupe defeats the cap
+      // and permits unbounded intermediate memory/work in a bounded run.
+      combinations:
       for (const left of current) {
         for (const right of next) {
           const merged = mergeCandidates(left, right, all);
-          if (merged) combined.push(merged);
+          if (!merged) continue;
+          const key = [
+            candidateSignature(merged),
+            merged.pendingUntil ?? '-',
+          ].join('#');
+          if (seen.has(key)) continue;
+          seen.add(key);
+          if (combined.length >= context.maxCandidates) {
+            truncated = true;
+            break combinations;
+          }
+          combined.push(merged);
         }
       }
-      const limited = dedupe(combined, context.maxCandidates);
-      context.truncated ||= limited.truncated;
-      current = limited.values;
+      context.truncated ||= truncated;
+      current = combined;
       if (!current.length) break;
     }
     return current;
