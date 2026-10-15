@@ -123,6 +123,9 @@ test('negative branches with incomplete nonblocking evidence emit no matches',as
   const sources=[
     source('b','b-old','2026-10-15T12:00:00.000Z'),
     source('a','a-anchor','2026-10-15T12:00:01.000Z'),
+    // The immediate successor is neutral. Without it, b-late would
+    // truly block notNext even when outside the notFollowedBy deadline.
+    source('noise','neutral-next','2026-10-15T12:00:02.000Z'),
     source('b','b-late','2026-10-15T12:00:30.000Z'),
   ];
   for(const negative of [
