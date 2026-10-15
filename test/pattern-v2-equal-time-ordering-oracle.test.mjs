@@ -64,8 +64,8 @@ async function assertMatches(events, label){
 test('same-instant ordering is explicitly by source ID then clause, independent of ingress',async()=>{
   const when='2026-10-15T12:00:00.000Z';
   const fixture=[
-    event('b','shared',when),
-    event('a','shared',when),
+    {...event('b','shared',when),serverId:'tie-host-b'},
+    {...event('a','shared',when),serverId:'tie-host-a'},
     event('b','zz',when),
     event('a','aa',when),
   ];
