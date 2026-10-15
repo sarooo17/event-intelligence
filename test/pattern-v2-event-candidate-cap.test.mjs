@@ -85,3 +85,65 @@ test('physical duplicates do not consume distinct candidate budget slots',async(
   assert.equal(result.truncated,false,
     'replayed physical duplicates are not independent candidates');
 });
+
+test('negative branches fail closed when candidate cap hides a later blocker',async()=>{
+  const sources=[
+    source('b','b-old','2026-10-15T12:00:00.000Z'),
+    source('a','a-anchor','2026-10-15T12:00:01.000Z'),
+    source('b','b-blocker','2026-10-15T12:00:02.000Z'),
+  ];
+  for(const negative of [
+    {kind:'notNext',child:{kind:'event',ref:'a'},
+      forbidden:{kind:'event',ref:'b'}},
+    {kind:'notFollowedBy',id:'no-next-b',
+      child:{kind:'event',ref:'a'},forbidden:{kind:'event',ref:'b'},
+      withinMs:5000},
+  ]) {
+    for(const delivered of [sources,[...sources].reverse()]){
+      const low=await evaluatePatternV2({
+        definition:pattern(negative,1),events:delivered,
+        now:new Date('2026-10-15T12:00:10.000Z'),
+      });
+      const complete=await evaluatePatternV2({
+        definition:pattern(negative,8),events:delivered,
+        now:new Date('2026-10-15T12:00:10.000Z'),
+      });
+      assert.deepEqual(ids(low),[],
+        'a hidden blocker cannot produce a positive negative-pattern match');
+      assert.deepEqual(low.pending,[],
+        'incomplete evidence must not schedule a potentially false negative');
+      assert.equal(low.truncated,true);
+      assert.deepEqual(ids(complete),[]);
+      assert.equal(complete.truncated,false);
+    }
+  }
+});
+
+test('negative branches with incomplete nonblocking evidence emit no matches',async()=>{
+  const sources=[
+    source('b','b-old','2026-10-15T12:00:00.000Z'),
+    source('a','a-anchor','2026-10-15T12:00:01.000Z'),
+    source('b','b-late','2026-10-15T12:00:30.000Z'),
+  ];
+  for(const negative of [
+    {kind:'notNext',child:{kind:'event',ref:'a'},
+      forbidden:{kind:'event',ref:'b'}},
+    {kind:'notFollowedBy',id:'no-near-b',withinMs:5000,
+      child:{kind:'event',ref:'a'},
+      forbidden:{kind:'event',ref:'b'}},
+  ]) {
+    const incomplete=await evaluatePatternV2({
+      definition:pattern(negative,1),events:sources,
+      now:new Date('2026-10-15T12:01:00.000Z'),
+    });
+    const complete=await evaluatePatternV2({
+      definition:pattern(negative,8),events:sources,
+      now:new Date('2026-10-15T12:01:00.000Z'),
+    });
+    assert.deepEqual(ids(incomplete),[],
+      'even an ultimately valid negative remains unsafe until forbidden evidence is complete');
+    assert.equal(incomplete.truncated,true);
+    assert.deepEqual(ids(complete),[['a-anchor']]);
+    assert.equal(complete.truncated,false);
+  }
+});
