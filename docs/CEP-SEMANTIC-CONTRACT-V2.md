@@ -61,9 +61,12 @@ A source/schema drift regression verifies the catalogue remains synchronized.
    timers, wake behavior and watermark advancement belong to host integration.
 3. **Budgets and diagnostic outcomes.** `maxCandidates` caps **retained
    candidates at deduplication checkpoints**, but does **not** currently
-   bound peak candidate generation or memory usage: event-node expansion
-   and `allOf` Cartesian products can be fully materialized before the cap
-   is enforced. Work/memory bounding remains a separate hardening gap.
+   bound peak candidate generation or memory usage: `allOf` now
+   streams its unique Cartesian combinations and stops at the first
+   over-cap candidate (#159), but event-node expansion and `sequence`
+   intermediate combinations can still materialize more candidates than
+   the configured cap. Other operators need separate hardening and
+   the limit is not a global CPU/memory resource budget.
    `maxSemanticEvaluations` bounds **new** semantic model calls.
    Reusable exact cache decisions do not consume the call budget.
    Exhaustion may return a partial set with `truncated:true`, even when
