@@ -58,6 +58,22 @@ function schemaKinds(source) {
     }
     ts.forEachChild(node,find);
   }
+  // The exported z.lazy factory must return the exact union inspected
+  // below. A return-level z.union(...) or node.or(...) would otherwise
+  // widen the accepted AST without changing the inner named `node`.
+  const outer = resolve(root);
+  assert.ok(method(outer, 'lazy') && outer.arguments.length === 1,
+    'canonical schema must remain one inspectable lazy factory');
+  const factory = outer.arguments[0];
+  assert.ok(ts.isArrowFunction(factory) && ts.isBlock(factory.body),
+    'canonical lazy factory must have a static block body');
+  const returns = factory.body.statements.filter(ts.isReturnStatement);
+  assert.equal(returns.length, 1,
+    'canonical factory must have one inspectable top-level return');
+  const returned = returns[0].expression;
+  assert.ok(returned && ts.isIdentifier(returned) && returned.text === 'node',
+    'factory must return exactly inspected node union; composition needs review');
+
   find(root);
   assert.ok(union, 'canonical union missing');
   const array = resolve(union.arguments[0]);
@@ -138,6 +154,17 @@ test('schema drift detects quotes, constants and externally declared union membe
   assert.equal(schemaKinds(indirect).length,original.length + 1);
   const decorated = indirect.replace('ExtraNode,','ExtraNode.strict(),');
   assert.deepEqual(schemaKinds(decorated),schemaKinds(indirect));
+
+  // New members attached at the factory's return must fail closed too:
+  // inspecting only the inner local `node` would silently miss them.
+  const replacement = 'const ExternalNode = z.object({kind:z.literal("outer-kind")});\\n' +
+    '  return node;';
+  const introduced = schema.replace('return node;', replacement);
+  assert.notEqual(introduced, schema, 'fixture must mutate factory return');
+  assert.throws(() => schemaKinds(introduced.replace('return node;',
+    'return node.or(ExternalNode);')), /factory must return exactly/);
+  assert.throws(() => schemaKinds(introduced.replace('return node;',
+    'return z.union([node, ExternalNode]);')), /factory must return exactly/);
 });
 
 test('every operator row declares evidence level and remaining gap', () => {
