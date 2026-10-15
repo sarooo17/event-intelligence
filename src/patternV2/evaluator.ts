@@ -878,6 +878,7 @@ async function evaluateNode(
       units.length,
     );
     const output: Array<{ candidate: PatternV2Candidate; count: number }> = [];
+    let localRepeatLimitReached = false;
 
     if (node.min === 0) {
       output.push({ candidate: emptyCandidate(), count: 0 });
@@ -891,6 +892,7 @@ async function evaluateNode(
       if (count >= node.min) {
         output.push({ candidate: selected, count });
         if (output.length >= context.maxCandidates) {
+          localRepeatLimitReached = true;
           context.truncated = true;
           return;
         }
@@ -927,7 +929,10 @@ async function evaluateNode(
         const merged = mergeCandidates(selected, unit, all);
         if (!merged) continue;
         walk(index + 1, merged, count + 1);
-        if (context.truncated) return;
+        // A prior child (e.g. optional) may be truncated even when all
+        // its retained non-empty units are still usable. Only this
+        // repeat's own enumeration cap can stop this traversal.
+        if (localRepeatLimitReached) return;
       }
     };
 
