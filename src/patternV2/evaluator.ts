@@ -761,11 +761,26 @@ async function evaluateNode(
   const all = context.events;
 
   if (node.kind === 'event') {
-    return all
-      .filter((event) => event.clauseId === node.ref)
-      .map((event) =>
-        candidateFromBindings({ [node.ref]: [event] }, all)
-      );
+    const values: PatternV2Candidate[] = [];
+    const seen = new Set<string>();
+    for (const event of all) {
+      if (event.clauseId !== node.ref) continue;
+      // Ref is fixed for this event-node invocation, so physical identity
+      // identifies the same candidate as its one-event signature. Skip
+      // replayed copies *before* allocating and indexing a candidate.
+      const key = eventIdentity(event);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      // Do not build an unbounded event-candidate array only to discard
+      // it at the root or a later branch. Preserve a conservative
+      // completeness signal when downstream filters need later events.
+      if (values.length >= context.maxCandidates) {
+        context.truncated = true;
+        break;
+      }
+      values.push(candidateFromBindings({ [node.ref]: [event] }, all));
+    }
+    return values;
   }
 
   if (node.kind === 'anyOf') {
@@ -1146,6 +1161,11 @@ async function evaluateNode(
   if (node.kind === 'notNext') {
     const bases = await evaluateNode(node.child, context);
     const forbidden = await evaluateNode(node.forbidden, context);
+    // A capped forbidden branch may omit the exact event that blocks a
+    // negative match. The host can persist returned matches even when
+    // truncated=true, so never emit negative matches from incomplete
+    // evidence. A prior child truncation also warrants a fail-closed exit.
+    if (context.truncated) return [];
     return bases.filter((base) => {
       if (!base.events.length) return false;
       return !forbidden.some(
@@ -1159,6 +1179,9 @@ async function evaluateNode(
   if (node.kind === 'notFollowedBy') {
     const bases = await evaluateNode(node.child, context);
     const forbidden = await evaluateNode(node.forbidden, context);
+    // Never finalize or expose a negative result if the full set of
+    // potentially disqualifying evidence was not evaluated.
+    if (context.truncated) return [];
     const output: PatternV2Candidate[] = [];
 
     for (const base of bases) {
