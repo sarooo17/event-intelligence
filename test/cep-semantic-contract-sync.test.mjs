@@ -24,11 +24,32 @@ function schemaKinds(source) {
       if (ts.isIdentifier(declaration.name) &&
           declaration.name.text === 'PatternNodeV2Schema') {
         assert.equal(root, null, 'canonical schema must have one top-level declaration');
+        assert.ok(
+          (statement.declarationList.flags & ts.NodeFlags.Const) !== 0,
+          'canonical exported schema must be immutable (export const)',
+        );
+        assert.ok(statement.modifiers?.some(
+          modifier => modifier.kind === ts.SyntaxKind.ExportKeyword),
+        'canonical exported schema must remain exported',
+        );
         root = declaration.initializer;
       }
     }
   }
   assert.ok(root, 'canonical schema declaration missing');
+  // Parsing the initializer alone is unsafe if a later assignment replaces
+  // the canonical export. TypeScript would reject a write to const anyway,
+  // but assert explicitly so the drift detector fails closed on source edits.
+  function rejectCanonicalWrites(node) {
+    if (ts.isBinaryExpression(node) &&
+        ts.isIdentifier(node.left) &&
+        node.left.text === 'PatternNodeV2Schema' &&
+        node.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+      assert.fail('canonical schema must not be reassigned');
+    }
+    ts.forEachChild(node, rejectCanonicalWrites);
+  }
+  rejectCanonicalWrites(parsed);
   function lexicalDeclaration(identifier) {
     for (let scope = identifier.parent; scope; scope = scope.parent) {
       if (ts.isFunctionLike(scope) && scope.parameters.some(parameter =>
@@ -164,6 +185,28 @@ test('semantic contract covers every canonical Pattern AST v2 kind exactly once'
     'duplicate operator rows would conceal missing coverage');
   assert.deepEqual(documented.sort(), actual,
     'a new/removed AST node must update its public semantic and test category row');
+});
+
+test('mutable canonical export and post-declaration widening fail closed', () => {
+  const mutable = schema.replace(
+    'export const PatternNodeV2Schema', 'export let PatternNodeV2Schema');
+  assert.notEqual(mutable, schema);
+  assert.throws(() => schemaKinds(mutable), /canonical exported schema must be immutable/);
+
+  const reassigned = schema + `
+PatternNodeV2Schema = PatternNodeV2Schema.or(
+  z.object({ kind: z.literal('shadow-new-kind') })
+);
+`;
+  assert.throws(() => schemaKinds(reassigned), /canonical schema must not be reassigned/);
+  const writableAndReassigned = mutable + `
+PatternNodeV2Schema = PatternNodeV2Schema.or(
+  z.object({ kind: z.literal('shadow-new-kind') })
+);
+`;
+  assert.throws(() => schemaKinds(writableAndReassigned),
+    /canonical exported schema must be immutable/,
+    'valid TypeScript with a mutable exported schema cannot hide a widened runtime kind');
 });
 
 test('schema drift detects quotes, constants and externally declared union members', () => {
