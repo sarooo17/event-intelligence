@@ -89,9 +89,10 @@ A source/schema drift regression verifies the catalogue remains synchronized.
    candidate set should **not** be mistaken for the final delivered matches
    of a production host. Independent full selection-policy cross-product
    coverage remains open.
-6. **Replay and identity.** Physical source identity is a stable,
-   unambiguously encoded tuple of server ID, source-event ID and
-   canonicalized subscription arguments. `threshold` and `rate`
+6. **Replay and identity.** Evaluator **and composite host** use the same
+   stable, unambiguously encoded tuple of server ID, source-event ID and
+   canonicalized subscription arguments. Persisted candidate-signature
+   tuples use locale-independent Unicode code-unit sorting. `threshold` and `rate`
    count distinct source identities consistently with the returned bindings;
    replay copies cannot fabricate additional occurrences. The count's
    selected witnesses are **unioned with a child's existing bindings** if
@@ -111,7 +112,8 @@ A source/schema drift regression verifies the catalogue remains synchronized.
    then rebuild timers under the new signature format. Release/migration
    acceptance remains tracked by #50. No existing consumer is updated by
    this PR.
-7. **Trust and versioning.** The only AST is version `2`; semantic evaluators
+7. **Trust and versioning.** The only AST is version `2`; the schema contract guard requires immutable
+   lexical aliases and rejects uninspected object-spread/computed-key forms. Semantic evaluators
    receive projected event content and no new runtime privileges. This
    document is an implementation contract, **not** authorization to use
    remote payloads as instructions. No additional execution DSL is implied.
