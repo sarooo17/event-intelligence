@@ -95,3 +95,32 @@ test('repeat exhaustive and limited results keep explicit cap diagnostics', asyn
   assert.equal(complete.truncated,false);
   assert.ok(complete.matches.length > limited.matches.length);
 });
+
+
+test('repeat(optional(event)) retains all valid pairs despite truncated child', async () => {
+  const events = [ev('x', 0), ev('x', 1), ev('x', 2)];
+  const root = {
+    kind: 'repeat', min: 2, max: 2,
+    mode: 'greedy', contiguity: 'combinations',
+    child: {
+      kind: 'optional', mode: 'greedy',
+      child: { kind: 'event', ref: 'x' },
+    },
+  };
+  const expected = ['x:0,x:1', 'x:0,x:2', 'x:1,x:2'];
+  for (const delivered of [events, [...events].reverse()]) {
+    const low = await evaluatePatternV2({
+      definition: pattern(root, 3), events: delivered,
+    });
+    const high = await evaluatePatternV2({
+      definition: pattern(root, 12), events: delivered,
+    });
+    const pairs = output => identities(output).map(ids => ids.join(',')).sort();
+    assert.deepEqual(pairs(low), expected,
+      'earlier child truncation must not abort repeat enumeration');
+    assert.deepEqual(pairs(high), expected);
+    assert.equal(low.truncated, true,
+      'discarded optional branch still makes bounded output incomplete');
+    assert.equal(high.truncated, false);
+  }
+});
