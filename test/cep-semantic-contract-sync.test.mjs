@@ -143,6 +143,13 @@ function schemaKinds(source) {
     if (method(value,'object')) {
       const shape = resolve(value.arguments[0]);
       assert.ok(ts.isObjectLiteralExpression(shape),'static object shape required');
+      // An object spread/computed key *after* kind can override its
+      // discriminator. Never certify a shape we do not inspect fully.
+      for (const property of shape.properties) {
+        assert.ok(ts.isPropertyAssignment(property) &&
+          (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)),
+          'canonical node shape must not use uninspected spreads or computed keys');
+      }
       const properties = shape.properties.filter(p =>
         ts.isPropertyAssignment(p) &&
         (ts.isIdentifier(p.name) || ts.isStringLiteral(p.name)) &&
@@ -185,6 +192,22 @@ test('semantic contract covers every canonical Pattern AST v2 kind exactly once'
     'duplicate operator rows would conceal missing coverage');
   assert.deepEqual(documented.sort(), actual,
     'a new/removed AST node must update its public semantic and test category row');
+});
+
+test('schema drift rejects a spread that can override the kind discriminator', () => {
+  const spread = schema.replace(
+    "kind: z.literal('event'),",
+    "kind: z.literal('event'),\n      ...{ kind: z.literal('surprise-kind') },",
+  );
+  assert.notEqual(spread,schema);
+  assert.throws(() => schemaKinds(spread),
+    /canonical node shape must not use uninspected spreads or computed keys/);
+  const computed = schema.replace(
+    "kind: z.literal('event'),",
+    "kind: z.literal('event'),\n      ['kind']: z.literal('computed-kind'),",
+  );
+  assert.throws(() => schemaKinds(computed),
+    /canonical node shape must not use uninspected spreads or computed keys/);
 });
 
 test('mutable canonical export and post-declaration widening fail closed', () => {
