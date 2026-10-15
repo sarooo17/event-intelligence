@@ -38,8 +38,8 @@ A source/schema drift regression verifies the catalogue remains synchronized.
 | `after` | Keeps a child candidate only when the latest bound `ref` event is strictly later than the latest `afterRef` event. | Behavior test: `test/pattern-v2-after-until-debounce.test.mjs` (before/equal/after boundary) | Independently enumerated repeated-reference ordering |
 | `until` | Keeps a child candidate only when the latest `ref` is at/before the latest `beforeRef` event. | Behavior test: `test/pattern-v2-after-until-debounce.test.mjs` (inclusive equality) | Independent nested/repeated boundaries |
 | `debounce` | Binds the latest ref event; candidate remains pending until latest event-time + `forMs` + allowed lateness. | Behavior test: `test/pattern-v2-after-until-debounce.test.mjs` (clock and new event boundaries) | Restart and late-arrival monotonicity across timer updates |
-| `threshold` | Requires at least `atLeast` occurrences of `ref` and binds the earliest required set to the child candidate. | Behavior test: `test/pattern-v2-threshold-witness.test.mjs` (exact count, earliest provenance, reversed arrival) | Independent high-cardinality and crossing-threshold oracle |
-| `rate` | Counts ref events in the inclusive `perMs` interval ending at latest event time; binds the last `atLeast` members if enough exist. | Behavior test: `test/pattern-v2-rate-window-witness.test.mjs` (inclusive 1ms boundary, last witness IDs, arrival permutations) | Independent rolling-window differential and partition adversaries |
+| `threshold` | Requires at least `atLeast` **distinct physical source occurrences** of `ref` and binds the earliest required unique set to the child candidate; replay copies do not increase the count. | Behavior tests: `test/pattern-v2-threshold-witness.test.mjs`, `test/pattern-v2-threshold-rate-physical-replay.test.mjs` (replays, cross-server ID collisions and exact bindings) | Independent high-cardinality and crossing-threshold oracle |
+| `rate` | Counts **distinct physical** ref occurrences in the inclusive `perMs` interval ending at latest event time; binds the last `atLeast` unique members, ignoring replay copies. | Behavior tests: `test/pattern-v2-rate-window-witness.test.mjs`, `test/pattern-v2-threshold-rate-physical-replay.test.mjs` (replays, cross-server identity, exact inclusive-window bindings) | Independent rolling-window differential and partition adversaries |
 | `distinct` | Collects earliest distinct primitive string/number/boolean values at `path` for `ref`; binds `atLeast` witnesses, excluding unsupported field types. | Behavior test: `test/pattern-v2-distinct-witness.test.mjs` (duplicate, primitive, invalid-path, bound witness and arrival permutation checks) | Larger reference/aggregate compositions and edge-case collisions |
 | `compare` | Evaluates arithmetic, field, timestamp or literal operands against an explicit comparison operation on child candidates. | Behavior test: `test/pattern-v2.test.mjs` | Independent numeric/invalid-value/metamorphic oracle |
 | `aggregate` | Computes the configured numeric aggregate on the bound reference and filters with a numeric comparator. | Behavior test: `test/pattern-v2.test.mjs` | Independent aggregate/repeat/window edge corpus |
@@ -90,6 +90,9 @@ A source/schema drift regression verifies the catalogue remains synchronized.
    of a production host. Independent full selection-policy cross-product
    coverage remains open.
 6. **Replay and identity.** Physical source identity includes server ID,
+   Threshold and rate occurrence counts use the **same physical identity**
+   as returned bindings: server ID, source-event ID and canonical subscription
+   arguments. Replayed copies cannot fabricate a higher occurrence count.
    source-event ID and canonicalized subscription arguments. Durable JSONL
    replay/reopen invariance is exercised in the partition/restart oracle.
    These bounded fixtures are not a global exactly-once guarantee across
