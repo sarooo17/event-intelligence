@@ -225,7 +225,7 @@ test('every operator row declares evidence level and remaining gap', () => {
     .filter(line => /^\| `[^\`]+` \|/.test(line));
   assert.equal(rows.length, 22);
   for (const row of rows) {
-    assert.match(row, /\| (?:Differential subset|Behavior test|Gap): /,
+    assert.match(row, /\| (?:Differential subset|Behavior tests?|Gap): /,
       'each operator needs an honest proof category: ' + row);
     assert.match(row, /\| [^|]+\|$/,
       'each operator must disclose a specific outstanding gap: ' + row);
