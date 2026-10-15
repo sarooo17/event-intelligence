@@ -21,6 +21,7 @@ The source evaluator never gains runtime credentials or a second agent loop.
 | Execution budgets and interpretation | A bounded intermediate candidate branch can lose a real match yet return zero matches; `truncated:true` means **inconclusive**, not no-match. Temporal pending and capped semantic calls have distinct evidence | `test/pattern-v2-budget-evidence.test.mjs`; `scripts/evidence/pattern-v2-budget-evidence.mjs` |
 | Candidate and semantic budgets | Budget exhaustion sets `truncated:true` even when `matches:[]`; only an untruncated empty result is a conclusive no-match within the modeled bounded snapshot | `test/pattern-v2-budget-outcomes.test.mjs`, `scripts/evidence/pattern-v2-conformance.mjs` |
 | Nested budget completeness | `window(allOf(a,b))` and `window(repeat(x,2..3))` can hide a real match behind intermediate candidate truncation; exhausted runs retain `truncated:true`, while independently enumerated high-cap runs recover the exact match | `test/pattern-v2-nested-budget-completeness.test.mjs`; Cartesian pairs, finite subsets, opposite delivery orders, low-vs-high cap |
+| Incremental `allOf` candidate cap | Joins consume candidate pairs only until the first `maxCandidates + 1` **unique** Cartesian witness, preserving first-match order and explicit `truncated:true`; no full `allOf` product materialization | `test/pattern-v2-allof-streaming-cap.test.mjs`; deterministic 3×3 pair parity and measured witness-access fanout |
 | Semantic evaluation | Runs only when explicitly configured and respects bounded call count | `test/pattern-v2-semantic-cache.test.mjs`, `test/semantic-scope-budget-conformance.test.mjs` |
 | Cached semantic decisions vs call cap | The cap bounds **new evaluator calls**, not valid exact-cache hits; a zero-call budget can resolve cached candidates without truncation, whereas any uncached candidate makes the result explicitly incomplete | `test/pattern-v2-semantic-cache-budget-order.test.mjs`; complete cache, missing cache, partial cache and tenant-key isolation |
 | Nested semantic failure-state behavior | For `semantic(window(allOf(issue,mail)))`, exact thresholds and uncertain policy are explicit; missing evaluator defaults to a thrown error, configured `onUnavailable:reject` opts into a no-match, provider errors/invalid probabilities/timeouts reject evaluation instead of returning a complete negative; timed-out decisions never enter durable cache | `test/pattern-v2-semantic-failure-matrix.test.mjs`; two arrival permutations, policy cases, boundary scores, timeout, failure/retry, cache and structurally impossible pair controls |
@@ -254,6 +255,26 @@ irreversible external authorization. The independent monotonicity witness
 
 The seeded corpus is finite, synthetic, unpartitioned, with no multi-worker
 scheduler, PostgreSQL or live external producer. Parent #44 remains open.
+
+## Incremental allOf join cap (2026-10-15)
+
+`allOf` now deduplicates and retains candidate combinations **during**
+Cartesian traversal; it stops after discovering the first additional unique
+candidate beyond `maxCandidates`. Previously, the full product was
+materialized before the cap, exposing evaluation to excessive peak
+intermediate memory and CPU. The first retained witnesses, chronological
+candidate ordering, and the explicit `truncated` outcome are preserved.
+The regression compares exact Cartesian-source pair identity at high cap
+and its first capped prefix in two arrival orders; a measured-access
+probe verifies that small caps no longer process the complete 32×32
+fanout.
+
+This is a focused **work/peak-memory hardening** of `allOf`, not a
+universal evaluator budget: standalone `event` expansion, `sequence`,
+`repeat` and other composed operators still require their own caps.
+No persisted-data or AST migration is needed. The observable semantics
+remain bounded candidate results plus `truncated:true` when there are
+additional unique candidate combinations.
 
 ## Nested candidate-completeness safety witness (2026-10-14)
 
