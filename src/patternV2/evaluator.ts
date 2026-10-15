@@ -838,7 +838,7 @@ async function evaluateNode(
       const next = await evaluateNode(child, context);
       const combined: PatternV2Candidate[] = [];
       const seen = new Set<string>();
-      let truncated = false;
+      let sequenceTruncated = false;
 
       // As with allOf, avoid materializing every selected sequence pair
       // before enforcing the candidate cap. Preserve rank/preference order
@@ -899,14 +899,14 @@ async function evaluateNode(
           if (seen.has(key)) continue;
           seen.add(key);
           if (combined.length >= context.maxCandidates) {
-            truncated = true;
+            sequenceTruncated = true;
             break sequenceJoin;
           }
           combined.push(merged);
         }
       }
 
-      context.truncated ||= truncated;
+      context.truncated ||= sequenceTruncated;
       current = combined;
       if (!current.length) break;
     }
