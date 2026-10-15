@@ -24,6 +24,7 @@ The source evaluator never gains runtime credentials or a second agent loop.
 | `optional` / `repeat` candidate-cap completeness | Both branches must propagate `dedupe(...).truncated` to the evaluation-level `truncated` diagnostic; low cap=1 may suppress optional members even inside nested sequences | `test/pattern-v2-optional-repeat-truncation.test.mjs`; greedy/lazy, arrival reversal, nested sequence and repeat low/high caps |
 | Incremental `allOf` candidate cap | Joins consume candidate pairs only until the first `maxCandidates + 1` **unique** Cartesian witness, preserving first-match order and explicit `truncated:true`; no full `allOf` product materialization | `test/pattern-v2-allof-streaming-cap.test.mjs`; deterministic 3×3 pair parity and measured witness-access fanout |
 | Bounded `event` source candidate generation | Every `event(ref)` node emits at most `maxCandidates` unique physical event identities before downstream filters; additional unique sources set `truncated:true` even if downstream filtering produces zero matches | `test/pattern-v2-event-candidate-cap.test.mjs`; large source fanout, calendar-filtered late match and replay duplicates |
+| Negative branches under candidate truncation | `notNext` and `notFollowedBy` suppress output entirely when candidate evidence is incomplete; `truncated:true` alone is not safe because the host may persist matches | `test/pattern-v2-event-candidate-cap.test.mjs`; hidden blocker and genuine no-blocker controls at low/high caps |
 | Semantic evaluation | Runs only when explicitly configured and respects bounded call count | `test/pattern-v2-semantic-cache.test.mjs`, `test/semantic-scope-budget-conformance.test.mjs` |
 | Cached semantic decisions vs call cap | The cap bounds **new evaluator calls**, not valid exact-cache hits; a zero-call budget can resolve cached candidates without truncation, whereas any uncached candidate makes the result explicitly incomplete | `test/pattern-v2-semantic-cache-budget-order.test.mjs`; complete cache, missing cache, partial cache and tenant-key isolation |
 | Nested semantic failure-state behavior | For `semantic(window(allOf(issue,mail)))`, exact thresholds and uncertain policy are explicit; missing evaluator defaults to a thrown error, configured `onUnavailable:reject` opts into a no-match, provider errors/invalid probabilities/timeouts reject evaluation instead of returning a complete negative; timed-out decisions never enter durable cache | `test/pattern-v2-semantic-failure-matrix.test.mjs`; two arrival permutations, policy cases, boundary scores, timeout, failure/retry, cache and structurally impossible pair controls |
@@ -268,6 +269,16 @@ cap also protects later `calendar` or other filters: if a valid match
 appears after the cap, the result may be empty but **cannot** be interpreted
 as a complete no-match because `truncated:true` remains set. Repeated
 copies of the same physical event identity do not consume distinct slots.
+
+**Negation safety:** a truncated forbidden pattern in `notNext` or
+`notFollowedBy` could omit the blocker and cause a false negative-pattern
+match. Because the composite host may persist matches even with
+`truncated:true`, these operators now fail closed when candidate
+evaluation is incomplete: `matches:[]`, `pending:[]`,
+`truncated:true`, not a best-effort negative match. When forbidden
+evidence is complete, true negative matches remain available.
+`test/pattern-v2-event-candidate-cap.test.mjs` exercises hidden
+blockers and true negative controls under both operators.
 
 This limits candidate-object creation after input sorting; it is not
 an input/stream buffer size cap or a universal CPU/memory budget.
