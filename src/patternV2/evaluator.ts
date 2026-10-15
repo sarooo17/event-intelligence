@@ -761,11 +761,24 @@ async function evaluateNode(
   const all = context.events;
 
   if (node.kind === 'event') {
-    return all
-      .filter((event) => event.clauseId === node.ref)
-      .map((event) =>
-        candidateFromBindings({ [node.ref]: [event] }, all)
-      );
+    const values: PatternV2Candidate[] = [];
+    const seen = new Set<string>();
+    for (const event of all) {
+      if (event.clauseId !== node.ref) continue;
+      const candidate = candidateFromBindings({ [node.ref]: [event] }, all);
+      const key = candidateSignature(candidate);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      // Do not build an unbounded event-candidate array only to discard
+      // it at the root or a later branch. Preserve a conservative
+      // completeness signal when downstream filters need later events.
+      if (values.length >= context.maxCandidates) {
+        context.truncated = true;
+        break;
+      }
+      values.push(candidate);
+    }
+    return values;
   }
 
   if (node.kind === 'anyOf') {
