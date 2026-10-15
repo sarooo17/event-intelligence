@@ -125,8 +125,20 @@ test('debounce waits until latest source + quiet interval + allowed lateness', a
   for (const candidate of beforeLatest.pending) {
     assert.equal(candidate.pendingUntil, '2026-10-14T10:00:05.800Z');
   }
+  assert.deepEqual(
+    beforeLatest.pending.map(candidate =>
+      candidate.bindings.a.map(source => source.sourceEventId)),
+    [['a-0', 'a-1'], ['a-1']],
+    'each pending debounce candidate must bind the latest ref event, even the older a0 child',
+  );
   const atLatest = await check([a0,a1], '2026-10-14T10:00:05.800Z');
-  assert.ok(atLatest.matches.length >= 1);
+  assert.equal(atLatest.matches.length, 2);
+  assert.deepEqual(
+    atLatest.matches.map(candidate =>
+      candidate.bindings.a.map(source => source.sourceEventId)),
+    [['a-0', 'a-1'], ['a-1']],
+    'finalized debounce must retain the same latest-source binding as pending',
+  );
   assert.equal(atLatest.pending.length, 0);
   assert.equal(atLatest.truncated, false);
 });
