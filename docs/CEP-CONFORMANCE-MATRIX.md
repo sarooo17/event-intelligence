@@ -11,6 +11,7 @@ The source evaluator never gains runtime credentials or a second agent loop.
 | `window(allOf(a,b))` | All Cartesian a/b candidates that satisfy an independent bounded window test: within, sliding, tumbling, hopping, session or count; chronological position is independent of lexical source IDs | `test/pattern-v2-window-allof-oracle.test.mjs`; 100 seeds × 3 delivery permutations × 6 window variants, inclusive-boundary/mutation probes |
 | `anyOf(a,b)` | Each eligible a or b occurrence matches, unrelated noise does not | `test/pattern-v2-anyof-oracle.test.mjs`; 250 seeds × 3 shuffles |
 | `sequence(next)` | Only an immediately adjacent a→b ordered pair | `test/pattern-v2-oracle.test.mjs`; 250 seeds × 3 shuffles |
+| Equal event-time ordering and extreme ISO dates | Stable tie-breaking by source ID and then clause ref at identical absolute event instants, independent of delivery order; distinguish distinct physical sources even when IDs coincide across servers | `test/pattern-v2-equal-time-ordering-oracle.test.mjs`; 96 seeded tied streams × 3 arrival permutations, clause fallback, explicit offset-equivalence and years 0001/9999 |
 | `sequence(followedBy)` | First later b per qualifying a under this bounded oracle subset | `test/pattern-v2-oracle.test.mjs`; 250 seeds × 3 shuffles |
 | `notPresent(ref=b, child=allOf(a,c))` | For each Cartesian (a,c) pair, reject only when a b lies inside that pair's inclusive chronological span; outside b and unrelated noise do not veto | `test/pattern-v2-nested-notpresent-oracle.test.mjs`; 250 seeds × 3 arrival permutations, boundary/mutation probes |
 | `notNext(event(a),event(b))` | On one finite unpartitioned snapshot, an a survives unless the immediately following event-time occurrence (including noise) is b; a at the tail survives **only as a snapshot result**, not a finalized negative claim | `test/pattern-v2-notnext-oracle.test.mjs`; 250 seeds × 3 arrival permutations + boundary and mutation probes |
@@ -376,6 +377,20 @@ fixture events are synthetic only; this script must not be extended to
 emit live private source events. Parent #44 remains open until
 expanded composition/fuzz/release evidence and remaining resource
 invariants have been validated.
+
+## Equal-timestamp ordering and extreme ISO date witness (2026-10-15)
+
+`test/pattern-v2-equal-time-ordering-oracle.test.mjs` compares
+`sequence(next)` to an independent finite adjacency oracle ordered by
+(1) absolute `occurredAt` instant, (2) `sourceEventId`, then
+(3) `clauseId`. All 96 seeded fixtures deliberately include simultaneous
+occurrences and three arrival permutations. A separate witness exercises
+the third tie-break rule with identical source IDs owned by **different
+servers**, plus UTC-offset-equivalent timestamps and valid ISO years 0001
+and 9999. The comparator is a *specified* part of the current canonical
+evaluator contract; this finite test is not a universal proof for
+duplicate physical provider event IDs, very large input arrays,
+process-specific locales or all calendar/timezone implementations.
 
 ## Unproven combinations
 
