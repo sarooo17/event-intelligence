@@ -939,10 +939,12 @@ async function evaluateNode(
         : a.count - b.count || a.candidate.startIndex - b.candidate.startIndex
     );
 
-    return dedupe(
+    const limited = dedupe(
       output.map((entry) => entry.candidate),
       context.maxCandidates,
-    ).values;
+    );
+    context.truncated ||= limited.truncated;
+    return limited.values;
   }
 
   if (node.kind === 'optional') {
@@ -950,7 +952,11 @@ async function evaluateNode(
     const candidates = node.mode === 'greedy'
       ? [...child, emptyCandidate()]
       : [emptyCandidate(), ...child];
-    return dedupe(candidates, context.maxCandidates).values;
+    const limited = dedupe(candidates, context.maxCandidates);
+    // Returning the candidate slice alone can falsely signal a complete
+    // negative outcome when an optional branch was discarded by the cap.
+    context.truncated ||= limited.truncated;
+    return limited.values;
   }
 
   if (node.kind === 'window') {
