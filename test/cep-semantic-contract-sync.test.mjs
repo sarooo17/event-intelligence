@@ -157,7 +157,7 @@ test('schema drift detects quotes, constants and externally declared union membe
 
   // New members attached at the factory's return must fail closed too:
   // inspecting only the inner local `node` would silently miss them.
-  const replacement = 'const ExternalNode = z.object({kind:z.literal("outer-kind")});\\n' +
+  const replacement = 'const ExternalNode = z.object({kind:z.literal("outer-kind")});\n' +
     '  return node;';
   const introduced = schema.replace('return node;', replacement);
   assert.notEqual(introduced, schema, 'fixture must mutate factory return');
