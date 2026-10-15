@@ -14,7 +14,7 @@ test('bounded production evaluator mutations must all be killed by independent i
   assert.equal(result.totalMutants, 3);
   assert.equal(result.killedMutants, result.totalMutants);
   assert.deepEqual(result.mutants.map(x => x.mutation), [
-    'event_limit_off_by_one',
+    'event_dropped_truncation',
     'allof_dropped_truncation',
     'negative_forbidden_deadline_exclusive',
   ]);
