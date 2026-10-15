@@ -73,11 +73,13 @@ function stablePatternValue(value: unknown): unknown {
 function patternPhysicalIdentity(
   event: TriggerMatchRecord['sourceEvents'][number],
 ): string {
-  return [
-    event.serverId ?? '-',
+  // Keep host-level overlap, buffered-event and after-match identities
+  // byte-for-byte equivalent to the canonical Pattern v2 evaluator.
+  return JSON.stringify([
+    event.serverId ?? null,
     event.sourceEventId,
-    JSON.stringify(stablePatternValue(event.subscriptionArguments ?? {})),
-  ].join(':');
+    stablePatternValue(event.subscriptionArguments ?? {}),
+  ]);
 }
 
 export interface CompositeTriggerEngineOptions {
