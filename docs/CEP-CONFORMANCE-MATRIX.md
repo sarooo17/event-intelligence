@@ -353,7 +353,8 @@ The normal `npm run check` also runs the same mutation-kill assertions.
 
 Three deliberately seeded compiled-JavaScript mutations must produce
 a different result from the independent finite witness specification:
-1. `event_limit_off_by_one`: allowing one extra event under `maxCandidates`;
+1. `event_dropped_truncation`: dropping the event-cap incompleteness flag
+   while retaining only the capped source prefix;
 2. `allof_dropped_truncation`: not propagating join-budget truncation;
 3. `negative_forbidden_deadline_exclusive`: changing inclusive forbidden
    deadline to exclusive.
