@@ -5,7 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { CompositeTriggerEngine } from '../dist/src/composite/engine.js';
-import { PatternAstV2DefinitionSchema } from '../dist/src/intelligenceProtocol/index.js';
+import { PatternAstV2DefinitionSchema, evaluatePatternV2, patternV2CandidateSignature } from '../dist/src/intelligenceProtocol/index.js';
 import { PersistentEventStore } from '../scripts/lib/persistent-event-store.mjs';
 
 const pattern = PatternAstV2DefinitionSchema.parse({
@@ -74,4 +74,47 @@ test('host buffer cap counts delimiter-colliding physical sources separately', a
       await rm(dir,{recursive:true,force:true});
     }
   }
+});
+
+test('persisted candidate signature uses locale-independent code-unit tuple order', async () => {
+  const exactTime = '2026-10-15T12:00:00.000Z';
+  const eventFor = sourceEventId => ({
+    clauseId: 'item',
+    traceId: 'locale-independent:' + sourceEventId,
+    sourceEventId,
+    eventName: 'item.event',
+    occurredAt: exactTime,
+    serverId: 'fixture',
+    provider: 'synthetic',
+    subscriptionArguments: {},
+    data: {},
+  });
+  const definition = PatternAstV2DefinitionSchema.parse({
+    version: '2',
+    root: {
+      kind: 'repeat', min: 2, max: 2, mode: 'greedy',
+      contiguity: 'combinations', child: { kind: 'event', ref: 'item' },
+    },
+    partitionBy: [],
+    selection: {
+      overlap: 'allow', afterMatch: 'keepAll', maxMatchesPerEvent: 10,
+    },
+    execution: {
+      maxCandidates: 16, maxSemanticEvaluations: 0, maxBufferedEvents: 16,
+    },
+  });
+  const events = [eventFor('Å'), eventFor('z')];
+  const signatures = [];
+  for (const delivery of [events, [...events].reverse()]) {
+    const result = await evaluatePatternV2({definition,events:delivery});
+    assert.equal(result.matches.length,1);
+    assert.equal(result.truncated,false);
+    signatures.push(patternV2CandidateSignature(result.matches[0]));
+  }
+  const expected = JSON.stringify([
+    ['item', JSON.stringify(['fixture','z',{}])],
+    ['item', JSON.stringify(['fixture','Å',{}])],
+  ]);
+  assert.deepEqual(signatures,[expected,expected],
+    'signature ordering must not depend on host locale or delivery order');
 });
