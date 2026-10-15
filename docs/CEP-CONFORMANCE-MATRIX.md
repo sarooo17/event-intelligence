@@ -21,6 +21,7 @@ The source evaluator never gains runtime credentials or a second agent loop.
 | Execution budgets and interpretation | A bounded intermediate candidate branch can lose a real match yet return zero matches; `truncated:true` means **inconclusive**, not no-match. Temporal pending and capped semantic calls have distinct evidence | `test/pattern-v2-budget-evidence.test.mjs`; `scripts/evidence/pattern-v2-budget-evidence.mjs` |
 | Candidate and semantic budgets | Budget exhaustion sets `truncated:true` even when `matches:[]`; only an untruncated empty result is a conclusive no-match within the modeled bounded snapshot | `test/pattern-v2-budget-outcomes.test.mjs`, `scripts/evidence/pattern-v2-conformance.mjs` |
 | Nested budget completeness | `window(allOf(a,b))` and `window(repeat(x,2..3))` can hide a real match behind intermediate candidate truncation; exhausted runs retain `truncated:true`, while independently enumerated high-cap runs recover the exact match | `test/pattern-v2-nested-budget-completeness.test.mjs`; Cartesian pairs, finite subsets, opposite delivery orders, low-vs-high cap |
+| `optional` / `repeat` candidate-cap completeness | Both branches must propagate `dedupe(...).truncated` to the evaluation-level `truncated` diagnostic; low cap=1 may suppress optional members even inside nested sequences | `test/pattern-v2-optional-repeat-truncation.test.mjs`; greedy/lazy, arrival reversal, nested sequence and repeat low/high caps |
 | Incremental `allOf` candidate cap | Joins consume candidate pairs only until the first `maxCandidates + 1` **unique** Cartesian witness, preserving first-match order and explicit `truncated:true`; no full `allOf` product materialization | `test/pattern-v2-allof-streaming-cap.test.mjs`; deterministic 3×3 pair parity and measured witness-access fanout |
 | Semantic evaluation | Runs only when explicitly configured and respects bounded call count | `test/pattern-v2-semantic-cache.test.mjs`, `test/semantic-scope-budget-conformance.test.mjs` |
 | Cached semantic decisions vs call cap | The cap bounds **new evaluator calls**, not valid exact-cache hits; a zero-call budget can resolve cached candidates without truncation, whereas any uncached candidate makes the result explicitly incomplete | `test/pattern-v2-semantic-cache-budget-order.test.mjs`; complete cache, missing cache, partial cache and tenant-key isolation |
@@ -275,6 +276,22 @@ universal evaluator budget: standalone `event` expansion, `sequence`,
 No persisted-data or AST migration is needed. The observable semantics
 remain bounded candidate results plus `truncated:true` when there are
 additional unique candidate combinations.
+
+## Optional/repeat completeness correction (2026-10-15)
+
+The canonical v2 evaluator formerly returned only
+`dedupe(...).values` in `optional` and `repeat` without forwarding the
+deduplicator's truncation state. In particular, an optional branch with
+`maxCandidates=1` could silently drop real event candidates while reporting
+`truncated:false`. The correction propagates these flags without changing
+the AST, selection policy or persisted state; callers must already treat
+`truncated:true` as incomplete. The regression fixture exercises
+greedy/lazy options, changed delivery order, nested sequences and repeat
+with low/high caps. The `repeat` traversal stops only on its **own**
+enumeration cap, not merely because a nested optional child recorded a
+truncation; valid retained nonempty child units still produce all reachable
+combinations within the repeat's local limit. No data migration is required; the deliberately
+changed result is the completeness diagnostic for budget-limited runs.
 
 ## Nested candidate-completeness safety witness (2026-10-14)
 
