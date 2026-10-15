@@ -123,3 +123,31 @@ test('extreme valid ISO dates and explicit equivalent UTC offsets remain determi
     ['a:a-1','b:b-1'],
   ]);
 });
+
+test('same-clause, same-ID, same-instant occurrences from separate servers remain distinct',async()=>{
+  const time='2026-10-15T12:00:00.000Z';
+  const fromAlpha={...event('a','duplicated-across-servers',time),serverId:'alpha'};
+  const fromBeta={...event('a','duplicated-across-servers',time),serverId:'beta'};
+  const repeated=PatternAstV2DefinitionSchema.parse({
+    version:'2',
+    root:{kind:'repeat',min:2,max:2,mode:'greedy',
+      contiguity:'combinations',child:{kind:'event',ref:'a'}},
+    partitionBy:[],
+    selection:{overlap:'allow',afterMatch:'keepAll',maxMatchesPerEvent:100},
+    execution:{maxCandidates:16,maxSemanticEvaluations:0,maxBufferedEvents:16},
+  });
+  for(const delivery of [[fromAlpha,fromBeta],[fromBeta,fromAlpha]]){
+    const result=await evaluatePatternV2({
+      definition:repeated,events:delivery,
+    });
+    assert.equal(result.truncated,false);
+    assert.deepEqual(result.pending,[]);
+    assert.equal(result.matches.length,1,
+      'two physically distinct servers may contribute two units to repeat');
+    assert.deepEqual(result.matches[0].events.map(e=>e.serverId).sort(),
+      ['alpha','beta'],
+      'source-event ID alone or ref+ID is not a sufficient physical identity');
+    assert.deepEqual(result.matches[0].bindings.a.map(e=>e.serverId).sort(),
+      ['alpha','beta']);
+  }
+});
