@@ -14,24 +14,56 @@ function schemaKinds(source) {
   const parsed = ts.createSourceFile('patternV2Schemas.ts', source,
     ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   assert.equal(parsed.parseDiagnostics.length, 0, 'schema must parse');
-  const declarations = new Map();
+  // Resolve aliases from their actual lexical block, not a file-wide
+  // map keyed only by identifier name. Unrelated functions may declare
+  // identical names without changing the canonical schema's binding.
   let root = null;
-  function index(node) {
-    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
-      declarations.set(node.name.text, node.initializer);
-      if (node.name.text === 'PatternNodeV2Schema') root = node.initializer;
+  for (const statement of parsed.statements) {
+    if (!ts.isVariableStatement(statement)) continue;
+    for (const declaration of statement.declarationList.declarations) {
+      if (ts.isIdentifier(declaration.name) &&
+          declaration.name.text === 'PatternNodeV2Schema') {
+        assert.equal(root, null, 'canonical schema must have one top-level declaration');
+        root = declaration.initializer;
+      }
     }
-    ts.forEachChild(node, index);
   }
-  index(parsed);
   assert.ok(root, 'canonical schema declaration missing');
+  function lexicalDeclaration(identifier) {
+    for (let scope = identifier.parent; scope; scope = scope.parent) {
+      if (ts.isFunctionLike(scope) && scope.parameters.some(parameter =>
+        ts.isIdentifier(parameter.name) &&
+        parameter.name.text === identifier.text)) {
+        assert.fail('schema alias shadowed by unsupported function parameter: '+identifier.text);
+      }
+      if (!ts.isBlock(scope) && !ts.isSourceFile(scope)) continue;
+      const matches = [];
+      for (const statement of scope.statements) {
+        if (!ts.isVariableStatement(statement)) continue;
+        for (const declaration of statement.declarationList.declarations) {
+          if (ts.isIdentifier(declaration.name) &&
+              declaration.name.text === identifier.text) {
+            matches.push(declaration);
+          }
+        }
+      }
+      if (matches.length > 0) {
+        assert.equal(matches.length, 1, 'ambiguous lexical schema binding: '+identifier.text);
+        const declaration = matches[0];
+        assert.ok(declaration.initializer,
+          'schema binding must have a static initializer: '+identifier.text);
+        return declaration;
+      }
+    }
+    assert.fail('unresolvable lexical schema alias: '+identifier.text);
+  }
   function resolve(node, visiting = new Set()) {
     if (ts.isParenthesizedExpression(node)) return resolve(node.expression, visiting);
     if (ts.isIdentifier(node)) {
-      assert.ok(!visiting.has(node.text), 'cyclic schema alias');
-      const expr = declarations.get(node.text);
-      assert.ok(expr, 'unresolvable schema alias: ' + node.text);
-      return resolve(expr, new Set([...visiting,node.text]));
+      const declaration = lexicalDeclaration(node);
+      assert.ok(!visiting.has(declaration), 'cyclic lexical schema alias');
+      return resolve(declaration.initializer,
+        new Set([...visiting, declaration]));
     }
     return node;
   }
@@ -154,6 +186,18 @@ test('schema drift detects quotes, constants and externally declared union membe
   assert.equal(schemaKinds(indirect).length,original.length + 1);
   const decorated = indirect.replace('ExtraNode,','ExtraNode.strict(),');
   assert.deepEqual(schemaKinds(decorated),schemaKinds(indirect));
+
+  // Regression: lexical factory-local symbol is not the later unrelated
+  // function-local variable of the same name. The old file-wide symbol
+  // map would incorrectly report event instead of scope-new-kind.
+  const scoped = schema.replace('const node = z.union([',
+    "const SHADOWED_KIND = 'scope-new-kind';\n  const node = z.union([")
+    .replace(needle,'kind: z.literal(SHADOWED_KIND)') +
+    "\nfunction unrelatedShadow() { const SHADOWED_KIND = 'event'; }";
+  assert.ok(schemaKinds(scoped).includes('scope-new-kind'),
+    'factory-local discriminator must not be overwritten by later unrelated bindings');
+  assert.ok(!schemaKinds(scoped).includes('event'),
+    'shadowing in another lexical scope cannot hide a new canonical kind');
 
   // New members attached at the factory's return must fail closed too:
   // inspecting only the inner local `node` would silently miss them.
