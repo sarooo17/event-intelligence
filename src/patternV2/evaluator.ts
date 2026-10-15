@@ -585,6 +585,22 @@ function eventsForRef(
     .sort(eventOrder);
 }
 
+// Threshold and rate count *physical* source events, not repeated deliveries.
+// Use the same identity as withBindingEvents so counted occurrences and the
+// provenance returned to callers cannot disagree under replay.
+function distinctEventsForRef(
+  context: EvaluationContext,
+  ref: string,
+): TriggerSourceEvent[] {
+  const seen = new Set<string>();
+  return eventsForRef(context, ref).filter((event) => {
+    const identity = eventIdentity(event);
+    if (seen.has(identity)) return false;
+    seen.add(identity);
+    return true;
+  });
+}
+
 function latestBoundEvent(
   candidate: PatternV2Candidate,
   ref: string,
@@ -1049,7 +1065,7 @@ async function evaluateNode(
   }
 
   if (node.kind === 'threshold') {
-    const refEvents = eventsForRef(context, node.ref);
+    const refEvents = distinctEventsForRef(context, node.ref);
     if (refEvents.length < node.atLeast) return [];
     return (await evaluateNode(node.child, context))
       .map((candidate) =>
@@ -1088,7 +1104,7 @@ async function evaluateNode(
   }
 
   if (node.kind === 'rate') {
-    const refEvents = eventsForRef(context, node.ref);
+    const refEvents = distinctEventsForRef(context, node.ref);
     if (!refEvents.length) return [];
     const latest = Math.max(
       ...refEvents.map((event) => Date.parse(event.occurredAt)),
