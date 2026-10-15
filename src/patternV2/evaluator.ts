@@ -837,7 +837,13 @@ async function evaluateNode(
     for (const child of (node.children as PatternNodeV2[]).slice(1)) {
       const next = await evaluateNode(child, context);
       const combined: PatternV2Candidate[] = [];
+      const seen = new Set<string>();
+      let truncated = false;
 
+      // As with allOf, avoid materializing every selected sequence pair
+      // before enforcing the candidate cap. Preserve rank/preference order
+      // and stop only after the first additional *unique* completion.
+      sequenceJoin:
       for (const left of current) {
         const compatible = next
           .map((candidate, rank) => ({ candidate, rank }))
@@ -885,13 +891,23 @@ async function evaluateNode(
 
         for (const right of selected) {
           const merged = mergeCandidates(left, right, all);
-          if (merged) combined.push(merged);
+          if (!merged) continue;
+          const key = [
+            candidateSignature(merged),
+            merged.pendingUntil ?? '-',
+          ].join('#');
+          if (seen.has(key)) continue;
+          seen.add(key);
+          if (combined.length >= context.maxCandidates) {
+            truncated = true;
+            break sequenceJoin;
+          }
+          combined.push(merged);
         }
       }
 
-      const limited = dedupe(combined, context.maxCandidates);
-      context.truncated ||= limited.truncated;
-      current = limited.values;
+      context.truncated ||= truncated;
+      current = combined;
       if (!current.length) break;
     }
     return current;
