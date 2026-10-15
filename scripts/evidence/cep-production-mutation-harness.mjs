@@ -68,10 +68,12 @@ const cases = {
 // modifications to an independent reference oracle.
 const mutants = [
   {
-    id: 'event_limit_off_by_one',
+    id: 'event_dropped_truncation',
     fixture: 'event_limit',
+    // Preserve the capped source prefix but suppress its incompleteness
+    // diagnosis, so the final evaluator dedupe cannot mask this mutant.
     find: 'if (values.length >= context.maxCandidates) {',
-    replace: 'if (values.length > context.maxCandidates) {',
+    replace: 'if (values.length >= context.maxCandidates) { break;',
   },
   {
     id: 'allof_dropped_truncation',
