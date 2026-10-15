@@ -116,3 +116,55 @@ test('rate retains the last two distinct sources across a replay-heavy inclusive
   assert.deepEqual(outside.matches, []);
   assert.equal(outside.truncated, false);
 });
+
+for (const kind of ['threshold', 'rate']) {
+  test(kind + ' cannot collide colon-separated server and source identifiers', async () => {
+    const first = event('item', 'c', 500, 'a:b');
+    const second = event('item', 'b:c', 600, 'a');
+    const source = [anchor, first, second, duplicate(first)];
+    for (const delivered of [source, [...source].reverse()]) {
+      const output = await run(kind, 2, delivered);
+      assert.equal(output.matches.length, 1,
+        'different server/source tuples must be distinct despite identical colon-joined keys');
+      assert.deepEqual(
+        output.matches[0].bindings.item
+          .map(e => [e.serverId, e.sourceEventId]).sort((a,b) => a[1].localeCompare(b[1])),
+        [['a','b:c'], ['a:b','c']],
+      );
+      assert.equal(output.truncated, false);
+    }
+  });
+
+  test(kind + ' unions counted witnesses with an already bound child reference', async () => {
+    const data = [
+      event('item','one',500),
+      event('item','two',1000),
+      event('item','three',1200),
+    ];
+    const combined = PatternAstV2DefinitionSchema.parse({
+      version:'2',
+      root: {
+        kind, ref:'item', atLeast:2,
+        ...(kind === 'rate' ? {perMs:1000} : {}),
+        child:{kind:'event',ref:'item'},
+      },
+      partitionBy:[],
+      selection:{overlap:'allow',afterMatch:'keepAll',maxMatchesPerEvent:100},
+      execution:{maxCandidates:64,maxSemanticEvaluations:0,maxBufferedEvents:64},
+    });
+    for (const delivered of [data, [...data].reverse()]) {
+      const result=await evaluatePatternV2({definition:combined,events:delivered});
+      assert.equal(result.truncated,false);
+      assert.ok(result.matches.length>=1);
+      const bindings=result.matches.map(candidate =>
+        candidate.bindings.item.map(e=>e.sourceEventId));
+      assert.ok(bindings.some(ids=>ids.length===3),
+        'child-bound refs must union with required witnesses instead of overwriting');
+      if(kind==='threshold') {
+        assert.ok(bindings.some(ids=>ids.join(',')==='one,two'));
+      } else {
+        assert.ok(bindings.some(ids=>ids.join(',')==='two,three'));
+      }
+    }
+  });
+}
