@@ -59,9 +59,13 @@ A source/schema drift regression verifies the catalogue remains synchronized.
    configured allowance. A finite snapshot match does not automatically
    prove future absence under newly arriving late events. Persisted
    timers, wake behavior and watermark advancement belong to host integration.
-3. **Budgets and diagnostic outcomes.** `maxCandidates` bounds candidate
-   expansion, and `maxSemanticEvaluations` bounds **new** semantic model
-   calls. Reusable exact cache decisions do not consume the call budget.
+3. **Budgets and diagnostic outcomes.** `maxCandidates` caps **retained
+   candidates at deduplication checkpoints**, but does **not** currently
+   bound peak candidate generation or memory usage: event-node expansion
+   and `allOf` Cartesian products can be fully materialized before the cap
+   is enforced. Work/memory bounding remains a separate hardening gap.
+   `maxSemanticEvaluations` bounds **new** semantic model calls.
+   Reusable exact cache decisions do not consume the call budget.
    Exhaustion may return a partial set with `truncated:true`, even when
    `matches:[]`. Hosts **must not** interpret a truncated empty result as
    complete no-match. `pending` means temporal finality not yet achieved.
