@@ -263,7 +263,9 @@ scheduler, PostgreSQL or live external producer. Parent #44 remains open.
 
 The `event` node now creates at most `maxCandidates` **unique physical
 source candidates** per evaluation and checks one extra distinct event to
-set `truncated:true`. Previously, even root `event` patterns generated
+set `truncated:true`. The physical replay identity is checked **before**
+building any candidate, preventing repeated transient candidate allocations
+for duplicate deliveries. Previously, even root `event` patterns generated
 an unbounded candidate array before deduplication. This conservative
 cap also protects later `calendar` or other filters: if a valid match
 appears after the cap, the result may be empty but **cannot** be interpreted
