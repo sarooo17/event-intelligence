@@ -24,6 +24,7 @@ The source evaluator never gains runtime credentials or a second agent loop.
 | Nested budget completeness | `window(allOf(a,b))` and `window(repeat(x,2..3))` can hide a real match behind intermediate candidate truncation; exhausted runs retain `truncated:true`, while independently enumerated high-cap runs recover the exact match | `test/pattern-v2-nested-budget-completeness.test.mjs`; Cartesian pairs, finite subsets, opposite delivery orders, low-vs-high cap |
 | `optional` / `repeat` candidate-cap completeness | Both branches must propagate `dedupe(...).truncated` to the evaluation-level `truncated` diagnostic; low cap=1 may suppress optional members even inside nested sequences | `test/pattern-v2-optional-repeat-truncation.test.mjs`; greedy/lazy, arrival reversal, nested sequence and repeat low/high caps |
 | Incremental `allOf` candidate cap | Joins consume candidate pairs only until the first `maxCandidates + 1` **unique** Cartesian witness, preserving first-match order and explicit `truncated:true`; no full `allOf` product materialization | `test/pattern-v2-allof-streaming-cap.test.mjs`; deterministic 3×3 pair parity and measured witness-access fanout |
+| Incremental `sequence` join cap | For `next`, `followedBy`, and `followedByAny`, preserve compatible-candidate order and deduplicate while generating; stop after one additional distinct completion beyond `maxCandidates` and set `truncated:true` | `test/pattern-v2-sequence-streaming-cap.test.mjs`; exact first-prefix/high-cap results, partial-empty safety witness, two arrival orders, bounded 24×24 fan-out |
 | Bounded `event` source candidate generation | Every `event(ref)` node emits at most `maxCandidates` unique physical event identities before downstream filters; additional unique sources set `truncated:true` even if downstream filtering produces zero matches | `test/pattern-v2-event-candidate-cap.test.mjs`; large source fanout, calendar-filtered late match and replay duplicates |
 | Negative branches under candidate truncation | `notNext` and `notFollowedBy` suppress output entirely when candidate evidence is incomplete; `truncated:true` alone is not safe because the host may persist matches | `test/pattern-v2-event-candidate-cap.test.mjs`; hidden blocker and genuine no-blocker controls at low/high caps |
 | Semantic evaluation | Runs only when explicitly configured and respects bounded call count | `test/pattern-v2-semantic-cache.test.mjs`, `test/semantic-scope-budget-conformance.test.mjs` |
@@ -288,6 +289,19 @@ an input/stream buffer size cap or a universal CPU/memory budget.
 The change can mark previously exhaustive post-filter evaluations
 incomplete when the source exceeds the cap; this is an intentional
 correctness guarantee, with no AST/schema/persistence migration.
+
+## Incremental sequence completion bound (2026-10-15)
+
+`sequence` now collects only the first `maxCandidates` distinct merged
+completions in their existing `next`, `followedBy`, or `followedByAny`
+preference/order, and stops on the first additional distinct completion
+with `truncated:true`. Earlier, all compatible merged pairs were materialized
+before a final deduplication cap. The regression tests verify low/high-cap
+prefix equivalence, `followedBy` first-successor selection and `next`
+false-negative incompleteness, plus a finite 24×24 fan-out source-access
+witness. This bounds retained *merged completions*; per-left compatible
+successor sorting and evaluator input sorting remain separate resource
+costs. It is not a global memory/CPU guarantee or a new AST version.
 
 ## Incremental allOf join cap (2026-10-15)
 
