@@ -150,3 +150,20 @@ test('negative branches with incomplete nonblocking evidence emit no matches',as
     assert.equal(complete.truncated,false);
   }
 });
+
+test('duplicate-heavy event input does not construct one candidate per replay',async()=>{
+  const counter={calls:0};
+  const date='2026-10-15T12:00:00.000Z';
+  const replays=Array.from({length:160},(_,i)=>source('x','same-physical',date,counter));
+  const second=source('x','later-distinct','2026-10-15T12:00:01.000Z',counter);
+  const result=await evaluatePatternV2({
+    definition:pattern({kind:'event',ref:'x'},1),
+    events:[...replays,second],
+  });
+  assert.deepEqual(ids(result),[['same-physical']]);
+  assert.equal(result.truncated,true);
+  // Every input must be read once for physical identity, but duplicates
+  // must not go through candidateFromBindings/indexFor/signature again.
+  assert.ok(counter.calls < replays.length*2,
+    'replayed copies must be filtered before candidate construction: '+counter.calls);
+});
