@@ -106,14 +106,14 @@ test('tie-break oracle covers seeded mixed-time streams and reverse delivery', {
 
 test('extreme valid ISO dates and explicit equivalent UTC offsets remain deterministic',async()=>{
   const fixture=[
-    event('b','year-0001-b','0001-01-01T00:00:00.000Z'),
-    event('a','year-0001-a','0001-01-01T00:00:00.000Z'),
-    event('b','year-9999-b','9999-12-31T23:59:59.999Z'),
-    event('a','year-9999-a','9999-12-31T23:59:59.999Z'),
+    event('b','zz-b','0001-01-01T00:00:00.000Z'),
+    event('a','zz-a','0001-01-01T00:00:00.000Z'),
+    event('b','aa-b','9999-12-31T23:59:59.999Z'),
+    event('a','aa-a','9999-12-31T23:59:59.999Z'),
   ];
   assert.deepEqual(await assertMatches(fixture,'extreme-date'),[
-    ['a:year-0001-a','b:year-0001-b'],
-    ['a:year-9999-a','b:year-9999-b'],
+    ['a:zz-a','b:zz-b'],
+    ['a:aa-a','b:aa-b'],
   ]);
   const sameInstant=[
     event('a','a-1','2026-10-15T14:00:00.000+02:00'),
