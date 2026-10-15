@@ -80,16 +80,6 @@ function schemaKinds(source) {
       ts.isNoSubstitutionTemplateLiteral(value), 'nonliteral discriminator');
     return value.text;
   }
-  let union = null;
-  function find(node) {
-    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) &&
-      node.name.text === 'node' && node.initializer &&
-      method(node.initializer,'union')) {
-      assert.equal(union,null,'ambiguous canonical union');
-      union = node.initializer;
-    }
-    ts.forEachChild(node,find);
-  }
   // The exported z.lazy factory must return the exact union inspected
   // below. A return-level z.union(...) or node.or(...) would otherwise
   // widen the accepted AST without changing the inner named `node`.
@@ -106,8 +96,11 @@ function schemaKinds(source) {
   assert.ok(returned && ts.isIdentifier(returned) && returned.text === 'node',
     'factory must return exactly inspected node union; composition needs review');
 
-  find(root);
-  assert.ok(union, 'canonical union missing');
+  // Resolve the actual lexical binding returned by the factory, not
+  // an unrelated nested helper's union whose variable is also 'node'.
+  const union = resolve(returned);
+  assert.ok(method(union,'union') && union.arguments.length === 1,
+    'factory returned node must resolve to a statically inspectable z.union');
   const array = resolve(union.arguments[0]);
   assert.ok(ts.isArrayLiteralExpression(array), 'canonical union is not a static array');
   const kinds = [];
@@ -209,6 +202,20 @@ test('schema drift detects quotes, constants and externally declared union membe
     'return node.or(ExternalNode);')), /factory must return exactly/);
   assert.throws(() => schemaKinds(introduced.replace('return node;',
     'return z.union([node, ExternalNode]);')), /factory must return exactly/);
+
+  // A nested helper can contain a legitimate 22-kind union with a local
+  // 'node', while the *returned* outer node is a wider composition.
+  // The reader must inspect the actual returned declaration, not a
+  // convenient same-name declaration found elsewhere in the factory.
+  const hidden = schema.replace('  const node = z.union([',
+    '  function original() { const node = z.union([')
+    .replace('  return node;\n});',
+      '    return node; }\n' +
+      '  const node = original().or(z.object({kind:z.literal("hidden-kind")}));\n' +
+      '  return node;\n});');
+  assert.notEqual(hidden,schema,'must create a syntactically changed factory');
+  assert.throws(() => schemaKinds(hidden),
+    /factory returned node must resolve to a statically inspectable z.union/);
 });
 
 test('every operator row declares evidence level and remaining gap', () => {
