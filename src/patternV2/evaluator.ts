@@ -1198,8 +1198,11 @@ async function evaluateNode(
     const forbidden = eventsForRef(context, node.ref);
     const children = await evaluateNode(node.child, context);
     if (context.truncated) return [];
-    return children.filter((candidate) =>
+    const complete = children.filter((candidate) =>
         !forbidden.some((event) => {
+          // Each candidate x forbidden probe is work; charging only the
+          // initial eventsForRef() scan misses O(N*M) nested scans.
+          if (!consumeWork(context)) return false;
           const index = indexFor(context.events, event);
           return (
             index >= candidate.startIndex &&
@@ -1207,6 +1210,8 @@ async function evaluateNode(
           );
         })
       );
+    // Never emit a false absence after crossing the shared resource cap.
+    return context.truncated ? [] : complete;
   }
 
   if (node.kind === 'after') {
@@ -1332,9 +1337,11 @@ async function evaluateNode(
       const finalAt = due.getTime() + context.allowedLatenessMs;
       const anchorMs = Date.parse(anchor.occurredAt);
       const blocked = forbidden.some((event) => {
+        if (!consumeWork(context)) return false;
         const at = Date.parse(event.occurredAt);
         return at >= anchorMs && at <= due.getTime();
       });
+      if (context.truncated) return [];
       if (blocked) continue;
       output.push({
         ...base,
