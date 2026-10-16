@@ -236,3 +236,37 @@ test('notNext and notFollowedBy cannot bypass budget via Cartesian scans', {
     },kind+' must not emit false-complete negatives after budget exhaustion');
   }
 });
+
+test('a wide arithmetic tree is charged for each compare candidate', {
+  timeout:15000,
+},async()=>{
+  // Ternary depth six = 1093 arithmetic/literal node visits for each
+  // candidate. Without per-candidate charging 900 x 1093 walks consume
+  // almost a million expression nodes with truncated:false.
+  let left={kind:'literal',value:1};
+  for(let depth=0;depth<6;depth++){
+    left={kind:'arithmetic',op:'add',
+      args:[left, structuredClone(left), structuredClone(left)]};
+  }
+  const root={
+    kind:'compare',op:'eq',child:{kind:'event',ref:'x'},
+    left,right:{kind:'literal',value:729},
+  };
+  const small=await evaluatePatternV2({
+    definition:definition(root,1100),
+    events:Array.from({length:15},(_,i)=>event('x',i)),
+  });
+  assert.equal(small.truncated,false,
+    'small witness must retain conclusive positive evidence');
+  assert.equal(small.matches.length,15);
+  const large=await evaluatePatternV2({
+    definition:definition(root,1100),
+    events:Array.from({length:900},(_,i)=>event('x',i)),
+  });
+  assert.equal(large.truncated,true,
+    'large expression x candidate work must explicitly exhaust budget');
+  assert.ok(large.matches.length<900,
+    'budget exhaustion cannot masquerade as a complete result');
+  assert.ok(large.matches.length>0,
+    'allowed positive prefix remains available as incomplete evidence');
+});
