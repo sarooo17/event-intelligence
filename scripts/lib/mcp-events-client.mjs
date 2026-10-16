@@ -1219,6 +1219,18 @@ export class McpEventsClientManager {
         ? producerNextPollMs
         : Math.max(connection.pollFloorMs, producerNextPollMs);
 
+      // A truncated page may contain ordinary events. Commit the
+      // incomplete-delivery marker BEFORE passing the first event to CEP;
+      // that ingress can schedule or finalize a negative wake concurrently.
+      // Do not advance the cursor until all page events are ingested.
+      if (result.truncated === true) {
+        await this.saveSubscriptionState(connection, context, subscription, {
+          deliveryMode: 'poll',
+          truncated: true,
+          gapDetectedAt: this.now().toISOString(),
+        });
+      }
+
       for (const raw of boundedEvents) {
         const receipt = await this.ingestOccurrence(
           connection,
