@@ -4,6 +4,25 @@ import type {
 } from '../intelligenceProtocol/triggerSchemas.js';
 
 export interface CompositeTriggerStore {
+  // The host selects the tenant/scope store before constructing the engine.
+  // This is a scope-local, read-only projection of durable transport evidence.
+  listMcpClientStates?(connectionId?: string): Array<{
+    connectionId: string;
+    serverId: string;
+    eventName: string;
+    arguments?: Record<string, unknown>;
+    truncated?: boolean;
+    gapUnresolved?: boolean;
+    gapDetectedAt?: string;
+  }> | Promise<Array<{
+    connectionId: string;
+    serverId: string;
+    eventName: string;
+    arguments?: Record<string, unknown>;
+    truncated?: boolean;
+    gapUnresolved?: boolean;
+    gapDetectedAt?: string;
+  }>>;
   storeCapabilities?(): {
     partitionLeases?: string;
     [key: string]: unknown;
