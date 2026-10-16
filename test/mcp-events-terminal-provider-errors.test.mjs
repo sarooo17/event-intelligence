@@ -36,7 +36,7 @@ function requestStub(fn){
     },
   };
 }
-async function setup(onPoll){
+async function setup(onPoll,{now=()=>new Date()}={}){
   const dir=await mkdtemp(path.join(os.tmpdir(),'ei-terminal-provider-'));
   const store=new PersistentEventStore(dir);
   await store.init();
@@ -50,7 +50,7 @@ async function setup(onPoll){
     pollIntervalMs:5000,maxPollBatches:2,
   });
   const manager=new McpEventsClientManager({
-    store,compositeEventConsumer:consumer,connections:[conn],
+    store,compositeEventConsumer:consumer,connections:[conn],now,
     registerEventSource:source=>control.registerEventSource(source,{
       type:'system',principal_id:'terminal-provider-fixture',
     }),
@@ -177,7 +177,7 @@ test('terminal error after a good backlog page reports committed effects',async(
       }],
       cursor:'a:1',hasMore:true,nextPollMs:0,
     };
-  });
+  },{now:()=>new Date('2026-10-16T12:00:00.000Z')});
   try{
     const result=await fx.manager.pollConnection('conn');
     const stopped=result.find(x=>x.eventName==='a.updated');
@@ -188,10 +188,10 @@ test('terminal error after a good backlog page reports committed effects',async(
     assert.equal(stopped.cursor,'a:1');
     assert.equal(fx.store.getMcpClientState('conn','a.updated').cursor,'a:1');
     const delay=await fx.manager.nextDelay(fx.manager.connections.get('conn'));
-    // The other active subscription's dueAt is wall-clock based; reading
-    // it can observe a few milliseconds of elapsed real time.
-    assert.ok(delay>=4500 && delay<=5000,
-      `retired terminal state caused a too-fast retry (${delay}ms)`);
+    // A fixed clock guarantees the remaining healthy source delay is
+    // exactly 5000ms, independent of CI machine scheduling.
+    assert.equal(delay,5000,
+      'terminal source must be excluded from the next timer deadline');
     const again=await fx.manager.pollConnection('conn');
     assert.equal(again.find(x=>x.eventName==='a.updated').accepted,0);
     assert.equal(calls,2,'no retries after NotFound');
