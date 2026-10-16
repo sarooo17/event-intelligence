@@ -154,8 +154,16 @@ function schemaKinds(source) {
       return;
     }
     if (method(value,'object')) {
-      const shape = resolve(value.arguments[0]);
-      assert.ok(ts.isObjectLiteralExpression(shape),'static object shape required');
+      // Resolve only the complete node expression, never its object-shape
+      // argument: a `const shape = {...}` alias remains writable via
+      // `shape.kind = ...` or Object.assign(shape, ...). Reading only the
+      // initializer would certify a stale discriminator. Require a direct
+      // literal in z.object, not a mutable shape alias.
+      assert.equal(value.arguments.length, 1,
+        'canonical z.object must have one inspectable shape');
+      const shape = value.arguments[0];
+      assert.ok(ts.isObjectLiteralExpression(shape),
+        'canonical node shapes must be inline (object aliases are mutable)');
       // An object spread/computed key *after* kind can override its
       // discriminator. Never certify a shape we do not inspect fully.
       for (const property of shape.properties) {
@@ -221,6 +229,52 @@ test('schema drift rejects a spread that can override the kind discriminator', (
   );
   assert.throws(() => schemaKinds(computed),
     /canonical node shape must not use uninspected spreads or computed keys/);
+});
+
+test('mutable const object-shape aliases cannot hide an AST discriminator', () => {
+  const original = `    z.object({
+      kind: z.literal('event'),
+      ref: Id,
+    }).strict(),`;
+  assert.ok(schema.includes(original),
+    'fixture must target the actual canonical event member');
+
+  // An object-valued const is not immutable: this is valid TypeScript and
+  // Zod sees the overwritten kind even though its initializer said event.
+  const inlineShape = `  const shape: any = {
+    kind: z.literal('event'),
+    ref: Id,
+  };
+`;
+  const setup = '  const node = z.union([';
+  assert.ok(schema.includes(setup));
+  const withAlias = schema.replace(setup, inlineShape + setup)
+    .replace(original, '    z.object(shape).strict(),');
+  assert.notEqual(withAlias, schema);
+  assert.throws(() => schemaKinds(withAlias),
+    /canonical node shapes must be inline/,
+    'shape alias must fail even before an explicit write');
+
+  const assignment = withAlias.replace(setup,
+    `  shape.kind = z.literal('property-write-kind');
+` + setup);
+  assert.throws(() => schemaKinds(assignment),
+    /canonical node shapes must be inline/,
+    'post-declaration property assignment must not evade drift detection');
+
+  const assigned = withAlias.replace(setup,
+    `  Object.assign(shape, { kind: z.literal('object-assign-kind') });
+` + setup);
+  assert.throws(() => schemaKinds(assigned),
+    /canonical node shapes must be inline/,
+    'Object.assign must not hide a newly accepted kind');
+
+  const indexed = withAlias.replace(setup,
+    `  shape['kind'] = z.literal('computed-write-kind');
+` + setup);
+  assert.throws(() => schemaKinds(indexed),
+    /canonical node shapes must be inline/,
+    'computed property writes must not evade the canonical contract');
 });
 
 test('mutable canonical export and post-declaration widening fail closed', () => {
