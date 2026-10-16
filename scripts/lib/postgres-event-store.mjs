@@ -950,6 +950,11 @@ export class PostgresEventStore {
     return this.tx(async (client) => {
       await this.lock(client, 'mcp-client-state', key);
       const previous = await this.get('mcp_client_state', key, client);
+      if (input.gapReconciled === true &&
+          (typeof input.reconciliationEvidenceId !== 'string' ||
+            !input.reconciliationEvidenceId.trim())) {
+        throw new Error('Gap reconciliation requires host evidence ID');
+      }
       const state = {
         connectionId,
         serverId: String(input.serverId || previous?.serverId || connectionId),
@@ -963,10 +968,15 @@ export class PostgresEventStore {
         ),
         cursor: input.cursor == null ? null : String(input.cursor),
         updatedAt: new Date().toISOString(),
-        gapUnresolved: input.truncated === true ||
+        gapUnresolved: input.gapReconciled === true ? false :
+          input.truncated === true ||
           input.gapUnresolved === true ||
           previous?.gapUnresolved === true ||
           previous?.truncated === true,
+        ...(input.gapReconciled === true
+          ? { reconciliationEvidenceId: input.reconciliationEvidenceId,
+              reconciledAt: new Date().toISOString() }
+          : {}),
         ...((input.truncated === true || input.gapUnresolved === true ||
           previous?.gapUnresolved === true || previous?.truncated === true)
           ? { gapDetectedAt: previous?.gapDetectedAt ??
@@ -980,8 +990,10 @@ export class PostgresEventStore {
           ? { lastEventAt: String(input.lastEventAt || previous.lastEventAt) }
           : {}),
         ...(input.lastError ? { lastError: String(input.lastError) } : {}),
-        ...(typeof input.truncated === 'boolean'
-          ? { truncated: input.truncated }
+        ...(input.gapReconciled === true
+          ? { truncated: false }
+          : typeof input.truncated === 'boolean'
+            ? { truncated: input.truncated }
           : typeof previous?.truncated === 'boolean'
             ? { truncated: previous.truncated }
             : {}),
