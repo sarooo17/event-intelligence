@@ -156,7 +156,6 @@ function schemaKinds(source) {
     }
     ts.forEachChild(node,rejectUnionInitializerEscapes);
   }
-  rejectUnionInitializerEscapes(union);
   assert.ok(method(union,'union') && union.arguments.length === 1,
     'factory returned node must resolve to a statically inspectable z.union');
   const array = resolve(union.arguments[0]);
@@ -255,6 +254,10 @@ function schemaKinds(source) {
     assert.fail('uninspectable canonical member: '+value.getText(parsed));
   }
   array.elements.forEach(member);
+  // The per-member checks produce specific errors for known unsupported
+  // forms; the whole-initializer pass catches deferred callbacks buried
+  // in any otherwise valid property expression.
+  rejectUnionInitializerEscapes(union);
   // A returned `const node` is still an object. A post-initialization
   // `node.options.push(...)`, `Object.assign(node,...)` or an indirect
   // const-initializer side effect can widen its runtime union while the
