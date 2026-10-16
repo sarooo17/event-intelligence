@@ -19,11 +19,11 @@ export const MCP_EVENTS_ERROR = Object.freeze({
   INVALID_PARAMS: -32602,
   METHOD_NOT_FOUND: -32601,
   INTERNAL_ERROR: -32603,
-  NOT_FOUND: -32011,
-  FORBIDDEN: -32012,
-  RESOURCE_EXHAUSTED: -32013,
-  UNSUPPORTED: -32014,
-  CALLBACK_ENDPOINT_ERROR: -32015,
+  NOT_FOUND: -32023,
+  FORBIDDEN: -32024,
+  RESOURCE_EXHAUSTED: -32025,
+  UNSUPPORTED: -32026,
+  CALLBACK_ENDPOINT_ERROR: -32027,
 });
 
 export class McpEventsProtocolError extends Error {
@@ -49,7 +49,7 @@ export interface ProviderPollRequest<TContext = unknown> {
 
 export interface ProviderPollResult {
   events: EventOccurrence[];
-  cursor: string | null;
+  cursor?: string | null;
   truncated?: boolean;
   hasMore?: boolean;
   nextPollMs?: number;
@@ -307,10 +307,10 @@ function normalizePollParams(
   const name = String(params.name ?? '').trim();
   if (!name) invalidParams('events/poll requires name');
 
-  const cursor =
-    params.cursor === undefined || params.cursor === null
-      ? null
-      : String(params.cursor);
+  const cursor = params.cursor ?? null;
+  if (cursor !== null && typeof cursor !== 'string') {
+    invalidParams('events/poll cursor must be string|null');
+  }
 
   const argumentsValue =
     params.arguments === undefined
@@ -485,7 +485,7 @@ export class McpEventsProvider<TContext = unknown> {
     const result = rawResult as unknown as Record<string, unknown>;
 
     const cursor =
-      result.cursor === null
+      result.cursor === undefined || result.cursor === null
         ? null
         : typeof result.cursor === 'string'
           ? result.cursor
@@ -555,7 +555,8 @@ export class McpEventsProvider<TContext = unknown> {
   }
 
   private ok(id: string | number, result: unknown): JsonRpcResponse {
-    return { jsonrpc: '2.0', id, result };
+    // SEP-3415 inherits the 2026-07-28 MCP result envelope.
+    return { jsonrpc: '2.0', id, result: { ...(result as object), resultType: 'complete' } };
   }
 
   private error(

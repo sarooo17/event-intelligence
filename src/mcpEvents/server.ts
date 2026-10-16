@@ -82,14 +82,38 @@ export class ExperimentalMcpEventsServer {
           });
 
         case 'events/poll': {
-          const params = (request.params ?? {}) as PollEventsParams;
+          const supplied = request.params ?? {};
+          if (typeof supplied !== 'object' || supplied === null ||
+            Array.isArray(supplied)) {
+            return this.error(request.id, -32602, 'events/poll params must be an object');
+          }
+          const params = supplied as PollEventsParams;
+          if (params.cursor !== undefined && params.cursor !== null &&
+            typeof params.cursor !== 'string') {
+            return this.error(request.id, -32602, 'events/poll cursor must be string|null');
+          }
+          if (params.arguments !== undefined &&
+            (!params.arguments || Array.isArray(params.arguments) ||
+              typeof params.arguments !== 'object')) {
+            return this.error(request.id, -32602, 'events/poll arguments must be an object');
+          }
+          if (params.maxEvents !== undefined &&
+            (!Number.isInteger(params.maxEvents) ||
+              params.maxEvents < 1 || params.maxEvents > 500)) {
+            return this.error(request.id, -32602, 'maxEvents must be an integer between 1 and 500');
+          }
+          if (params.maxAgeMs !== undefined &&
+            (typeof params.maxAgeMs !== 'number' ||
+              !Number.isFinite(params.maxAgeMs) || params.maxAgeMs < 0)) {
+            return this.error(request.id, -32602, 'maxAgeMs must be a non-negative number');
+          }
           if (!params.name || typeof params.name !== 'string') {
             return this.error(request.id, -32602, 'events/poll requires name');
           }
           if (!this.events.has(params.name)) {
             return this.error(
               request.id,
-              -32011,
+              -32023,
               `Unknown event: ${params.name}`,
               { kind: 'event' },
             );
@@ -114,6 +138,31 @@ export class ExperimentalMcpEventsServer {
   }
 
   async poll(params: PollEventsParams): Promise<PollEventsResult> {
+    // Exported direct-call API must enforce the same preflight as JSON-RPC:
+    // otherwise invalid maxEvents bypasses the wire cap.
+    if (!params || typeof params !== 'object' || Array.isArray(params) ||
+        typeof params.name !== 'string' || !params.name) {
+      throw new Error('events/poll requires name');
+    }
+    if (params.cursor !== undefined && params.cursor !== null &&
+        typeof params.cursor !== 'string') {
+      throw new Error('events/poll cursor must be string|null');
+    }
+    if (params.maxEvents !== undefined &&
+        (!Number.isInteger(params.maxEvents) ||
+          params.maxEvents < 1 || params.maxEvents > 500)) {
+      throw new Error('maxEvents must be an integer between 1 and 500');
+    }
+    if (params.maxAgeMs !== undefined &&
+        (typeof params.maxAgeMs !== 'number' ||
+          !Number.isFinite(params.maxAgeMs) || params.maxAgeMs < 0)) {
+      throw new Error('maxAgeMs must be a non-negative finite number');
+    }
+    if (params.arguments !== undefined &&
+        (!params.arguments || typeof params.arguments !== 'object' ||
+          Array.isArray(params.arguments))) {
+      throw new Error('events/poll arguments must be an object');
+    }
     const registered = this.events.get(params.name);
     if (!registered) {
       throw new Error(`Unknown event: ${params.name}`);
@@ -132,7 +181,7 @@ export class ExperimentalMcpEventsServer {
     }
 
     const start = decodeMcpEventCursor(params.cursor);
-    const limit = Math.max(1, Math.min(params.maxEvents ?? 50, 500));
+    const limit = params.maxEvents ?? 50;
     const minTimestamp =
       params.maxAgeMs === undefined
         ? Number.NEGATIVE_INFINITY
@@ -187,7 +236,7 @@ export class ExperimentalMcpEventsServer {
   }
 
   private ok(id: string | number, result: unknown): JsonRpcResponse {
-    return { jsonrpc: '2.0', id, result };
+    return { jsonrpc: '2.0', id, result: { ...(result as object), resultType: 'complete' } };
   }
 
   private error(
