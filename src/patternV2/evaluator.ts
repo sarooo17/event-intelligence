@@ -61,6 +61,7 @@ export interface PatternV2Evaluation {
 
 interface EvaluationContext {
   events: TriggerSourceEvent[];
+  eventsByRef: Map<string, TriggerSourceEvent[]>;
   evaluator: SemanticEvaluator | null;
   now: Date;
   maxCandidates: number;
@@ -86,39 +87,66 @@ const MAX_EVALUATION_AST_NODES = 4_096;
 const MAX_EVALUATION_AST_DEPTH = 128;
 const MAX_EVALUATION_WORK_STEPS = 250_000;
 
-function consumeWork(context: EvaluationContext): boolean {
+function consumeWork(
+  context: EvaluationContext,
+  units = 1,
+): boolean {
   if (context.workExhausted) return false;
-  if (++context.workSteps <= context.maxWorkSteps) return true;
+  context.workSteps += units;
+  if (context.workSteps <= context.maxWorkSteps) return true;
   context.workExhausted = true;
   context.truncated = true;
   return false;
 }
 
 function boundedAst(root: PatternNodeV2): boolean {
-  const pending: Array<{ node: PatternNodeV2; depth: number }> =
-    [{ node: root, depth: 0 }];
-  const seen = new Set<object>();
+  // DFS with explicit exits counts each occurrence but only rejects
+  // references present on the *active ancestor path*. Reused immutable
+  // acyclic subtrees are allowed; circular objects cannot recurse.
+  type Frame = { value: unknown; depth: number; exit: boolean };
+  const pending: Frame[] = [{ value: root, depth: 0, exit: false }];
+  const active = new Set<object>();
+  let visited = 0;
   while (pending.length) {
-    const { node, depth } = pending.pop()!;
+    const { value, depth, exit } = pending.pop()!;
+    if (!value || typeof value !== 'object') return false;
+    if (exit) {
+      active.delete(value);
+      continue;
+    }
     if (depth > MAX_EVALUATION_AST_DEPTH ||
-      seen.size >= MAX_EVALUATION_AST_NODES ||
-      seen.has(node)) return false;
-    seen.add(node);
-    if ('children' in node && Array.isArray(node.children)) {
-      if (node.children.length + pending.length + seen.size >
-        MAX_EVALUATION_AST_NODES) return false;
-      for (const child of node.children) {
-        pending.push({ node: child, depth: depth + 1 });
+      ++visited > MAX_EVALUATION_AST_NODES ||
+      active.has(value)) return false;
+    active.add(value);
+    const node = value as Record<string, unknown>;
+    pending.push({ value, depth, exit: true });
+    const branches: unknown[] = [];
+    if (Array.isArray(node.children)) {
+      if (node.children.length + visited > MAX_EVALUATION_AST_NODES) {
+        return false;
       }
+      branches.push(...node.children);
     }
-    if ('child' in node && node.child) {
-      pending.push({ node: node.child, depth: depth + 1 });
+    if (node.child) branches.push(node.child);
+    if (node.forbidden && typeof node.forbidden === 'object') {
+      branches.push(node.forbidden);
     }
-    if ('forbidden' in node && node.forbidden &&
-      typeof node.forbidden === 'object') {
-      pending.push({ node: node.forbidden, depth: depth + 1 });
+    // A shallow compare may contain arbitrarily deep arithmetic trees.
+    // Count these as part of the same bounded structural traversal.
+    if (node.kind === 'compare') {
+      if (node.left) branches.push(node.left);
+      if (node.right) branches.push(node.right);
     }
-    if (pending.length + seen.size > MAX_EVALUATION_AST_NODES) return false;
+    if (node.kind === 'arithmetic' && Array.isArray(node.args)) {
+      if (node.args.length + visited > MAX_EVALUATION_AST_NODES) {
+        return false;
+      }
+      branches.push(...node.args);
+    }
+    if (branches.length + visited > MAX_EVALUATION_AST_NODES) return false;
+    for (let i=branches.length-1;i>=0;i--){
+      pending.push({ value:branches[i], depth:depth+1, exit:false });
+    }
   }
   return true;
 }
@@ -652,9 +680,13 @@ function eventsForRef(
   context: EvaluationContext,
   ref: string,
 ): TriggerSourceEvent[] {
-  return context.events
-    .filter((event) => event.clauseId === ref)
-    .sort(eventOrder);
+  // The input is already sorted; index once by ref rather than rescanning
+  // up to 50k events for every branch of a wide anyOf or nested predicate.
+  const values = context.eventsByRef.get(ref) ?? [];
+  // A consumer can still traverse the full returned reference array;
+  // charge its size to the shared budget even on cache hits.
+  if (!consumeWork(context, values.length)) return [];
+  return values;
 }
 
 // Threshold and rate count *physical* source events, not repeated deliveries.
@@ -852,8 +884,8 @@ async function evaluateNode(
   if (node.kind === 'event') {
     const values: PatternV2Candidate[] = [];
     const seen = new Set<string>();
-    for (const event of all) {
-      if (event.clauseId !== node.ref) continue;
+    for (const event of eventsForRef(context, node.ref)) {
+      if (!consumeWork(context)) break;
       // Ref is fixed for this event-node invocation, so physical identity
       // identifies the same candidate as its one-event signature. Skip
       // replayed copies *before* allocating and indexing a candidate.
@@ -1535,8 +1567,15 @@ export async function evaluatePatternV2({
     };
   }
   const ordered = [...events].sort(eventOrder);
+  const eventsByRef = new Map<string, TriggerSourceEvent[]>();
+  for (const event of ordered) {
+    const bucket = eventsByRef.get(event.clauseId) ?? [];
+    bucket.push(event);
+    eventsByRef.set(event.clauseId, bucket);
+  }
   const context: EvaluationContext = {
     events: ordered,
+    eventsByRef,
     evaluator,
     now,
     maxCandidates: definition.execution.maxCandidates,
