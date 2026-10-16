@@ -49,7 +49,7 @@ export interface ProviderPollRequest<TContext = unknown> {
 
 export interface ProviderPollResult {
   events: EventOccurrence[];
-  cursor: string | null;
+  cursor?: string | null;
   truncated?: boolean;
   hasMore?: boolean;
   nextPollMs?: number;
