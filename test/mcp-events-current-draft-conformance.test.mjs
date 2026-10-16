@@ -136,7 +136,7 @@ test('draft conformance regression: discovery and poll contract', async () => {
       cursor: null,
     }),
   );
-  assert.equal(unknown.error.code, -32011);
+  assert.equal(unknown.error.code, -32023);
   assert.deepEqual(unknown.error.data, { kind: 'event' });
 
   const bootstrap = await provider.handleRequest(
