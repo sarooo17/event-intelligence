@@ -53,6 +53,18 @@ const cases = {
     now: new Date(clockOrigin + 500),
     expected: {matches:['a:0|b:0','a:0|b:1'],pending:[],truncated:true},
   },
+  sequence_join_limit: {
+    // A finite a->b sequence has four chronological combinations, but the
+    // cap keeps only the first two unique completions. No child event node
+    // individually exhausts its source budget (two a, two b), so dropping
+    // *join-level* truncation produces an observable false-complete result.
+    definition: definition({kind:'sequence',contiguity:'followedByAny',
+      children:[{kind:'event',ref:'a'},{kind:'event',ref:'b'}]}, 2),
+    events: [occurrence('a','a:0',0),occurrence('a','a:1',100),
+      occurrence('b','b:0',200),occurrence('b','b:1',300)],
+    now: new Date(clockOrigin + 500),
+    expected: {matches:['a:0|b:0','a:0|b:1'],pending:[],truncated:true},
+  },
   forbidden_inclusive_deadline: {
     definition: definition({kind:'notFollowedBy',id:'forbidden-deadline',
       child:{kind:'event',ref:'a'},forbidden:{kind:'event',ref:'b'},
@@ -82,13 +94,21 @@ const mutants = [
     replace: 'context.truncated ||= false;',
   },
   {
+    id: 'sequence_dropped_truncation',
+    fixture: 'sequence_join_limit',
+    // Keep the same two valid completions, but incorrectly claim that
+    // ungenerated third/fourth combinations were conclusively absent.
+    find: 'context.truncated ||= sequenceTruncated;',
+    replace: 'context.truncated ||= false;',
+  },
+  {
     id: 'negative_forbidden_deadline_exclusive',
     fixture: 'forbidden_inclusive_deadline',
     find: 'completedAt <= dueAt',
     replace: 'completedAt < dueAt',
   },
 ];
-export const MUTATION_CORPUS_VERSION = 'ei.cep-production-mutation.v1';
+export const MUTATION_CORPUS_VERSION = 'ei.cep-production-mutation.v2';
 
 function shuffle(original, id) {
   const events = [...original];
