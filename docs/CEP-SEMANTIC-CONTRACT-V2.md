@@ -118,6 +118,21 @@ A source/schema drift regression verifies the catalogue remains synchronized.
    document is an implementation contract, **not** authorization to use
    remote payloads as instructions. No additional execution DSL is implied.
 
+## Canonical schema source-change review gate
+
+The executable conformance test has two complementary guards: AST inspection
+of the 22 documented discriminators **and** an exact Git blob source commitment
+for `src/intelligenceProtocol/patternV2Schemas.ts`. The latter is a
+**change-review tripwire**, not runtime code signing or a formal static-analysis
+proof: any deliberate edit to the canonical schema or its definition root
+requires updating the reviewed source fingerprint in
+`test/cep-semantic-contract-sync.test.mjs`, discussing the semantic and
+migration impact, and receiving an independent PR review. An edit to source
+code with no matching fingerprint update fails CI even if clever JavaScript
+indirection evades a specific syntactic AST walker rule. This deliberately
+increases pre-v1 review friction for the authoritative Pattern schema; normal
+event data and downstream host configuration are unaffected.
+
 ## Acceptance coverage vs certification
 
 The catalogue above satisfies **the written operator-to-test-category
