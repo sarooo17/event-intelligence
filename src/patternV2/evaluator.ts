@@ -128,11 +128,13 @@ function durableSemanticCacheKey(
 }
 
 function eventIdentity(event: TriggerSourceEvent): string {
-  return [
-    event.serverId ?? '-',
+  // JSON tuple serialization is unambiguous even when server/source IDs
+  // contain ':' or '|' (unlike delimiter-joined components).
+  return JSON.stringify([
+    event.serverId ?? null,
     event.sourceEventId,
-    JSON.stringify(stableValue(event.subscriptionArguments ?? {})),
-  ].join(':');
+    stableValue(event.subscriptionArguments ?? {}),
+  ]);
 }
 
 function eventOrder(
@@ -240,10 +242,22 @@ function mergeCandidates(
 }
 
 function candidateSignature(candidate: PatternV2Candidate): string {
-  return candidate.events
-    .map((event) => `${event.clauseId}:${eventIdentity(event)}`)
-    .sort()
-    .join('|');
+  // Stable, self-delimiting encoding for persisted pattern signatures.
+  return JSON.stringify(candidate.events
+    .map((event) => [event.clauseId, eventIdentity(event)])
+    .sort((left, right) => {
+      const a = JSON.stringify(left);
+      const b = JSON.stringify(right);
+      // Unicode code-unit ordering is stable across host locales/ICU.
+      return a < b ? -1 : a > b ? 1 : 0;
+    }));
+}
+
+function candidateDedupeKey(candidate: PatternV2Candidate): string {
+  return JSON.stringify([
+    candidateSignature(candidate),
+    candidate.pendingUntil ?? null,
+  ]);
 }
 
 function dedupe(
@@ -258,10 +272,7 @@ function dedupe(
   let truncated = false;
 
   for (const candidate of candidates) {
-    const key = [
-      candidateSignature(candidate),
-      candidate.pendingUntil ?? '-',
-    ].join('#');
+    const key = candidateDedupeKey(candidate);
     if (seen.has(key)) continue;
     seen.add(key);
     if (values.length >= max) {
@@ -585,6 +596,22 @@ function eventsForRef(
     .sort(eventOrder);
 }
 
+// Threshold and rate count *physical* source events, not repeated deliveries.
+// Use the same identity as withBindingEvents so counted occurrences and the
+// provenance returned to callers cannot disagree under replay.
+function distinctEventsForRef(
+  context: EvaluationContext,
+  ref: string,
+): TriggerSourceEvent[] {
+  const seen = new Set<string>();
+  return eventsForRef(context, ref).filter((event) => {
+    const identity = eventIdentity(event);
+    if (seen.has(identity)) return false;
+    seen.add(identity);
+    return true;
+  });
+}
+
 function latestBoundEvent(
   candidate: PatternV2Candidate,
   ref: string,
@@ -811,10 +838,7 @@ async function evaluateNode(
         for (const right of next) {
           const merged = mergeCandidates(left, right, all);
           if (!merged) continue;
-          const key = [
-            candidateSignature(merged),
-            merged.pendingUntil ?? '-',
-          ].join('#');
+          const key = candidateDedupeKey(merged);
           if (seen.has(key)) continue;
           seen.add(key);
           if (combined.length >= context.maxCandidates) {
@@ -1093,7 +1117,7 @@ async function evaluateNode(
   }
 
   if (node.kind === 'threshold') {
-    const refEvents = eventsForRef(context, node.ref);
+    const refEvents = distinctEventsForRef(context, node.ref);
     if (refEvents.length < node.atLeast) return [];
     return (await evaluateNode(node.child, context))
       .map((candidate) =>
@@ -1132,7 +1156,7 @@ async function evaluateNode(
   }
 
   if (node.kind === 'rate') {
-    const refEvents = eventsForRef(context, node.ref);
+    const refEvents = distinctEventsForRef(context, node.ref);
     if (!refEvents.length) return [];
     const latest = Math.max(
       ...refEvents.map((event) => Date.parse(event.occurredAt)),
