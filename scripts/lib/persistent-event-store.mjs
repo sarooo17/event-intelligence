@@ -933,6 +933,11 @@ export class PersistentEventStore {
           ? input.arguments
           : {};
       const previous = this.getMcpClientState(connectionId, eventName, args);
+      if (input.gapReconciled === true &&
+          (typeof input.reconciliationEvidenceId !== 'string' ||
+            !input.reconciliationEvidenceId.trim())) {
+        throw new Error('Gap reconciliation requires host evidence ID');
+      }
       const state = {
         connectionId,
         serverId: String(input.serverId || previous?.serverId || connectionId),
@@ -950,10 +955,15 @@ export class PersistentEventStore {
         // A later healthy poll page cannot prove that skipped earlier
         // events were replayed. Retain the gap until an explicit
         // host-owned reconciliation (never an untrusted producer hint).
-        gapUnresolved: input.truncated === true ||
+        gapUnresolved: input.gapReconciled === true ? false :
+          input.truncated === true ||
           input.gapUnresolved === true ||
           previous?.gapUnresolved === true ||
           previous?.truncated === true,
+        ...(input.gapReconciled === true
+          ? { reconciliationEvidenceId: input.reconciliationEvidenceId,
+              reconciledAt: new Date().toISOString() }
+          : {}),
         ...((input.truncated === true || input.gapUnresolved === true ||
           previous?.gapUnresolved === true || previous?.truncated === true)
           ? { gapDetectedAt: previous?.gapDetectedAt ??
@@ -969,8 +979,10 @@ export class PersistentEventStore {
         ...(input.lastError
           ? { lastError: String(input.lastError) }
           : {}),
-        ...(typeof input.truncated === 'boolean'
-          ? { truncated: input.truncated }
+        ...(input.gapReconciled === true
+          ? { truncated: false }
+          : typeof input.truncated === 'boolean'
+            ? { truncated: input.truncated }
           : typeof previous?.truncated === 'boolean'
             ? { truncated: previous.truncated }
             : {}),
