@@ -52,6 +52,7 @@ function importedSchemaMutations(source,filename) {
       !statement.importClause ||
       statement.importClause.isTypeOnly) continue;
     const imp=statement.importClause.namedBindings;
+    if(!imp) continue;
     if(ts.isNamedImports(imp)) {
       for(const element of imp.elements) {
         if(!element.isTypeOnly &&
