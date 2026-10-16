@@ -161,3 +161,37 @@ test('malformed or transient provider failures keep neutral diagnostics and do n
     assert.equal(calls,2,'transient errors remain eligible for bounded retry');
   }finally{await fixture.close();}
 });
+
+test('terminal error after a good backlog page reports committed effects',async()=>{
+  let calls=0;
+  const fx=await setup(params=>{
+    if(params.name!=='a.updated') {
+      return {events:[],cursor:'b',hasMore:false,nextPollMs:5000};
+    }
+    calls++;
+    if(calls===2) throw unavailable(-32023);
+    return {
+      events:[{
+        eventId:'a-event-1',name:'a.updated',
+        timestamp:'2026-10-16T12:00:00.000Z',data:{},
+      }],
+      cursor:'a:1',hasMore:true,nextPollMs:0,
+    };
+  });
+  try{
+    const result=await fx.manager.pollConnection('conn');
+    const stopped=result.find(x=>x.eventName==='a.updated');
+    assert.equal(stopped.status,'terminal');
+    assert.equal(stopped.reason,'not_found');
+    assert.equal(stopped.accepted,1);
+    assert.equal(stopped.batches,1);
+    assert.equal(stopped.cursor,'a:1');
+    assert.equal(fx.store.getMcpClientState('conn','a.updated').cursor,'a:1');
+    assert.equal(await fx.manager.nextDelay(
+      fx.manager.connections.get('conn')),5000,
+      'retired terminal schedule must not trigger 250ms spin');
+    const again=await fx.manager.pollConnection('conn');
+    assert.equal(again.find(x=>x.eventName==='a.updated').accepted,0);
+    assert.equal(calls,2,'no retries after NotFound');
+  }finally{await fx.close();}
+});
