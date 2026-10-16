@@ -140,6 +140,23 @@ function schemaKinds(source) {
   // Resolve the actual lexical binding returned by the factory, not
   // an unrelated nested helper's union whose variable is also 'node'.
   const union = resolve(returned);
+  // Treat the entire canonical union initializer as an opaque executable
+  // subtree before attempting member-by-member semantic extraction.
+  // A callback attached to ANY field, wrapper or optional Zod error map
+  // may run after construction; not just the callbacks recognized by
+  // member(). No expression inside the initializer may capture the future
+  // returned union or construct dynamically evaluated JS.
+  function rejectUnionInitializerEscapes(node) {
+    if (ts.isIdentifier(node) && node.text === returned.text) {
+      assert.fail('canonical union initializer must not capture returned node');
+    }
+    if (ts.isIdentifier(node) &&
+        ['eval','Function','globalThis'].includes(node.text)) {
+      assert.fail('canonical union initializer must not evaluate dynamic code');
+    }
+    ts.forEachChild(node,rejectUnionInitializerEscapes);
+  }
+  rejectUnionInitializerEscapes(union);
   assert.ok(method(union,'union') && union.arguments.length === 1,
     'factory returned node must resolve to a statically inspectable z.union');
   const array = resolve(union.arguments[0]);
@@ -376,6 +393,28 @@ test('mutable const object-shape aliases cannot hide an AST discriminator', () =
   assert.throws(() => schemaKinds(indexed),
     /canonical node shapes must be inline/,
     'computed property writes must not evade the canonical contract');
+});
+
+test('canonical union initializer rejects captures in any nested field callback',()=>{
+  const sourceField='      ref: Id,';
+  assert.ok(schema.includes(sourceField));
+  const nested=schema.replace(sourceField,
+    `      ref: Id.refine(() => {
+        node.options.push(z.object({kind:z.literal('field-callback-kind')}));
+        return true;
+      }),`);
+  assert.notEqual(nested,schema);
+  assert.throws(()=>schemaKinds(nested),
+    /canonical union initializer must not capture returned node/,
+    'a nested field refinement can widen the runtime union after creation');
+
+  const dynamic=schema.replace(sourceField,
+    `      ref: Id.refine(() => {
+        globalThis['eval']("node.options.push(extra)");
+        return true;
+      }),`);
+  assert.throws(()=>schemaKinds(dynamic),
+    /canonical union initializer must not evaluate dynamic code/);
 });
 
 test('nested union and literal/enum callback arguments fail closed', () => {
