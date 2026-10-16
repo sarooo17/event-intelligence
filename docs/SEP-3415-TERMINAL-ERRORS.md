@@ -24,7 +24,7 @@ A validated Forbidden prevents any subsequent poll request on
 the same exact host-owned connection object, including other
 subscriptions, without disabling unrelated connections.
 Terminal polls return `{status:"terminal",reason:"not_found"|"forbidden",
-accepted:0}` without cursor mutations, event matches or new wakes.
+accepted:0}` without *new* effects from the terminal response. Earlier successful pages in the same poll sweep may already have committed events, cursor checkpoints and wakes; the terminal result reports their real `accepted`, `batches`, `cursor` and `truncated` values.
 No automatic unapproved action or reauthorization occurs. A host
 re-attachment with a new connection object may deliberately re-probe.
 
@@ -43,3 +43,9 @@ Evidence: `test/mcp-events-terminal-provider-errors.test.mjs` checks
 terminal kind/code combinations, hostile Proxy/getter errors, fixed
 diagnostics, no cross-subscription false suspension on NotFound,
 connection-wide Forbidden suspension, and transient failure retry.
+
+Terminal source IDs no longer selected by active triggers are pruned from
+the in-memory quarantine during desired-subscription reconciliation.
+Retired subscriptions are skipped in the timer's next-deadline scan,
+preventing an expired historical `nextPollAt` from causing a 250ms
+poll/scheduler spin; a Forbidden connection stops scheduled polling.
