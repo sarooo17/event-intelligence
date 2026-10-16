@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { isProxy } from 'node:util/types';
 import { snapshotUntrustedEventData } from '../../dist/src/protocol/ownPath.js';
 import * as z from 'zod/v4';
+import { classifyTerminalMcpProviderError } from './mcp-provider-terminal-error.mjs';
 import {
   McpEventOccurrenceSchema,
 } from '../../dist/src/intelligenceProtocol/index.js';
@@ -297,6 +298,15 @@ function normalizePositiveInteger(value, fallback, min, max, name) {
   return normalized;
 }
 
+function normalizePollFloorMs(value) {
+  const floor=value===undefined?1000:value;
+  if(typeof floor!=='number' || !Number.isInteger(floor) ||
+    floor<1000 || floor>300000) {
+    throw new Error('pollFloorMs must be an integer between 1000 and 300000');
+  }
+  return floor;
+}
+
 function normalizeConnection(connection) {
   assertObject(connection, 'Invalid host-managed MCP Events connection');
   const connectionId = String(connection.connectionId || '').trim();
@@ -343,6 +353,7 @@ function normalizeConnection(connection) {
       300000,
       'pollIntervalMs',
     ),
+    pollFloorMs: normalizePollFloorMs(connection.pollFloorMs),
     maxEvents: normalizePositiveInteger(
       connection.maxEvents,
       100,
@@ -390,6 +401,7 @@ export function createHostMcpEventsConnection({
   capabilities,
   enabled = true,
   pollIntervalMs = 5000,
+  pollFloorMs = 1000,
   maxEvents = 100,
   maxPollBatches = 4,
   scopeId = DEFAULT_EVENT_SCOPE_ID,
@@ -428,6 +440,7 @@ export function createHostMcpEventsConnection({
     identity: client ?? request ?? directRequest,
     enabled,
     pollIntervalMs,
+    pollFloorMs,
     maxEvents,
     maxPollBatches,
     scopeId,
@@ -476,7 +489,7 @@ function sourceDescriptor(raw, profile) {
 }
 
 function normalizeCursor(cursor, label) {
-  if (cursor === null) return null;
+  if (cursor === null || cursor === undefined) return null;
   if (typeof cursor === 'string') return cursor;
   throw new Error(`${label} returned invalid cursor; expected string|null`);
 }
@@ -540,6 +553,10 @@ export class McpEventsClientManager {
     this.profiles = new Map();
     this.timers = new Map();
     this.lastErrors = new Map();
+    // Connection identity, not reusable connectionId, fences terminal poll
+    // responses against a later host-managed session replacement.
+    this.terminalPollSubscriptions = new WeakMap();
+    this.terminalConnections = new WeakSet();
     this.scopeContexts = new Map();
     this.pollInFlight = new Map();
     // Serialize durable source/cursor mutations by connection ID, including
@@ -711,9 +728,16 @@ export class McpEventsClientManager {
   async invokeProvider(operation) {
     try {
       return await operation();
-    } catch {
+    } catch (untrustedError) {
+      const terminal = classifyTerminalMcpProviderError(untrustedError);
       const failure = new Error(PROVIDER_ERROR_MESSAGE);
       failure.code = 'MCP_EVENTS_PROVIDER_REQUEST_FAILED';
+      // Copy only fixed strings derived from validated numeric/code fields.
+      // Never preserve the producer's Error, message, cause or data object.
+      if (terminal) {
+        failure.terminalReason = terminal.reason;
+        failure.terminalScope = terminal.scope;
+      }
       throw failure;
     }
   }
@@ -1054,6 +1078,20 @@ export class McpEventsClientManager {
     { respectSchedule = false } = {},
   ) {
     this.assertConnectionAttached(connection);
+    const suspended = this.terminalPollSubscriptions
+      .get(connection)?.get(subscription.subscriptionId);
+    if (suspended || this.terminalConnections.has(connection)) {
+      return {
+        subscriptionId: subscription.subscriptionId,
+        eventName: subscription.eventName,
+        delivery: 'poll',
+        status: 'terminal',
+        reason: this.terminalConnections.has(connection)
+          ? 'forbidden' : suspended,
+        accepted: 0,
+        consumerCount: subscription.consumerRefs.length,
+      };
+    }
     const store = context.store;
     const current = await store.getMcpClientState(
       connection.connectionId,
@@ -1089,12 +1127,43 @@ export class McpEventsClientManager {
       const profile =
         this.profiles.get(connection.connectionId) ??
         getMcpEventsCompatibilityProfile(connection.compatibilityProfile);
-      const rawResult = await this.rpc(connection, profile.pollMethod, {
-        name: subscription.eventName,
-        arguments: subscription.arguments,
-        cursor,
-        maxEvents: connection.maxEvents,
-      });
+      let rawResult;
+      try {
+        rawResult = await this.rpc(connection, profile.pollMethod, {
+          name: subscription.eventName,
+          arguments: subscription.arguments,
+          cursor,
+          maxEvents: connection.maxEvents,
+        });
+      } catch (error) {
+        this.assertConnectionAttached(connection);
+        if (error?.terminalReason === 'forbidden') {
+          this.terminalConnections.add(connection);
+        } else if (error?.terminalReason === 'not_found') {
+          let perConnection = this.terminalPollSubscriptions.get(connection);
+          if (!perConnection) {
+            perConnection = new Map();
+            this.terminalPollSubscriptions.set(connection, perConnection);
+          }
+          perConnection.set(subscription.subscriptionId, 'not_found');
+        } else {
+          throw error;
+        }
+        return {
+          subscriptionId: subscription.subscriptionId,
+          eventName: subscription.eventName,
+          delivery: 'poll',
+          status: 'terminal',
+          reason: error.terminalReason,
+          // Earlier pages in this same bounded sweep may already have
+          // committed matches and durable cursor checkpoints.
+          accepted,
+          batches,
+          cursor,
+          truncated,
+          consumerCount: subscription.consumerRefs.length,
+        };
+      }
       // Do not process an RPC response which completed after detach or after
       // another session replaced this connectionId.
       this.assertConnectionAttached(connection);
@@ -1136,11 +1205,19 @@ export class McpEventsClientManager {
         `MCP server ${connection.connectionId} events/poll`,
       );
       hasMore = result.hasMore === true;
+      if (hasMore && cursor === null) {
+        const error = new Error('MCP Events poll backlog requires a continuation cursor');
+        error.code = 'MCP_EVENTS_POLL_CURSOR_INVALID';
+        throw error;
+      }
       truncated = truncated || result.truncated === true;
-      nextPollMs = normalizeNextPollMs(
+      const producerNextPollMs = normalizeNextPollMs(
         result.nextPollMs,
         connection.pollIntervalMs,
       );
+      nextPollMs = hasMore
+        ? producerNextPollMs
+        : Math.max(connection.pollFloorMs, producerNextPollMs);
 
       for (const raw of boundedEvents) {
         const receipt = await this.ingestOccurrence(
@@ -1466,6 +1543,13 @@ export class McpEventsClientManager {
       );
     }
 
+    this.assertConnectionAttached(connection);
+    // A validated Forbidden revokes the current connection's polling
+    // authority. Only a fresh host-owned attachment may probe again.
+    if (this.terminalConnections.has(connection)) {
+      return [{ status: 'terminal', reason: 'forbidden',
+        delivery: 'poll', accepted: 0 }];
+    }
     const context = await this.scopeContext(connection);
     this.assertConnectionAttached(connection);
     let descriptors = this.descriptors.get(connectionId);
@@ -1475,10 +1559,31 @@ export class McpEventsClientManager {
 
     const desired = await this.desiredSubscriptions(connection, context);
     const desiredIds = new Set(desired.keys());
+    // Trigger definitions and subscription argument sets can churn forever.
+    // Forget terminal IDs no longer desired so a long-lived connection
+    // cannot accumulate an unbounded quarantine cache.
+    const suspended = this.terminalPollSubscriptions.get(connection);
+    if (suspended) {
+      for (const id of suspended.keys()) {
+        if (!desiredIds.has(id)) suspended.delete(id);
+      }
+    }
     const results = [];
 
     for (const subscription of desired.values()) {
       this.assertConnectionAttached(connection);
+      if (this.terminalConnections.has(connection)) {
+        results.push({
+          subscriptionId: subscription.subscriptionId,
+          eventName: subscription.eventName,
+          status: 'terminal',
+          reason: 'forbidden',
+          delivery: 'poll',
+          accepted: 0,
+          consumerCount: subscription.consumerRefs.length,
+        });
+        continue;
+      }
       const delivery = chooseDelivery(connection, subscription.descriptor);
       if (!delivery) {
         results.push({
@@ -1558,11 +1663,16 @@ export class McpEventsClientManager {
     const states = await context.store.listMcpClientStates(
       connection.connectionId,
     );
+    const suspended = this.terminalPollSubscriptions.get(connection);
     const now = this.now().getTime();
     const due = states
+      .filter((state) => !suspended?.has(state.subscriptionId))
       .map((state) => Date.parse(state.nextPollAt || ''))
       .filter(Number.isFinite)
-      .map((time) => Math.max(250, time - now));
+      // The producer floor was already applied when persisting nextPollAt.
+      // A restart just before its deadline must honor the *remaining* time;
+      // do not start a fresh full floor interval after every timer wake.
+      .map((time) => time > now ? time - now : 250);
     return due.length
       ? Math.min(connection.pollIntervalMs, ...due)
       : connection.pollIntervalMs;
@@ -1571,7 +1681,12 @@ export class McpEventsClientManager {
   scheduleConnection(connection, delay = connection.pollIntervalMs) {
     const existing = this.timers.get(connection.connectionId);
     if (existing) clearTimeout(existing);
-    if (!this.started) return;
+    // An exact-session Forbidden is terminal; do not run another timer
+    // just to rediscover that no further provider call is allowed.
+    if (!this.started || this.terminalConnections.has(connection)) {
+      this.timers.delete(connection.connectionId);
+      return;
+    }
 
     const timer = setTimeout(async () => {
       try {

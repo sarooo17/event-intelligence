@@ -54,6 +54,8 @@ export interface HostMcpConnectionOptions {
   /** Isolation partition used by the shared EI host. Defaults to \"default\". */
   scopeId?: string;
   pollIntervalMs?: number;
+  /** Minimum normal (non-backlog) poll interval: 1000-300000ms. */
+  pollFloorMs?: number;
   maxEvents?: number;
   /** Maximum number of immediately drained pages when the provider reports hasMore. */
   maxPollBatches?: number;
@@ -192,6 +194,7 @@ export function createHostMcpEventsConnection(
   getCapabilities(): unknown | Promise<unknown>;
   enabled: boolean;
   pollIntervalMs: number;
+  pollFloorMs: number;
   maxEvents: number;
   maxPollBatches: number;
   preferredDelivery: 'poll' | 'push' | 'webhook' | null;

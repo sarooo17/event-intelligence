@@ -672,17 +672,24 @@ function windowMatches(
     return firstBucket === lastBucket;
   }
 
-  const latestStart =
-    Math.floor((latest - offset) / window.hopMs) * window.hopMs + offset;
-  const earliestStart = latest - window.sizeMs + 1;
-  for (
-    let start = latestStart;
-    start >= earliestStart;
-    start -= window.hopMs
-  ) {
-    if (earliest >= start && latest < start + window.sizeMs) return true;
-  }
-  return false;
+  // A hopping window contains the candidate iff there is a grid-aligned
+  // start in [latest - sizeMs + 1, earliest]. The rightmost start <=
+  // earliest is sufficient: scanning backwards from latest can take
+  // billions of iterations for valid sizeMs >> hopMs input.
+  // BigInt avoids an unsafe intermediate (earliest - offset)/hop for
+  // large but valid offsets, and gives mathematically exact floor division
+  // for negative epochs (JS number/BigInt division normally truncates).
+  const first = BigInt(earliest);
+  const last = BigInt(latest);
+  const hop = BigInt(window.hopMs);
+  const gridOffset = BigInt(offset);
+  const delta = first - gridOffset;
+  const quotient = delta >= 0n
+    ? delta / hop
+    : -((-delta + hop - 1n) / hop);
+  const start = quotient * hop + gridOffset;
+  const size = BigInt(window.sizeMs);
+  return start >= last - size + 1n && last < start + size;
 }
 
 function eventsForRef(
