@@ -574,17 +574,14 @@ function windowMatches(
     return firstBucket === lastBucket;
   }
 
-  const latestStart =
-    Math.floor((latest - offset) / window.hopMs) * window.hopMs + offset;
-  const earliestStart = latest - window.sizeMs + 1;
-  for (
-    let start = latestStart;
-    start >= earliestStart;
-    start -= window.hopMs
-  ) {
-    if (earliest >= start && latest < start + window.sizeMs) return true;
-  }
-  return false;
+  // A hopping window contains the candidate iff there is a grid-aligned
+  // start in [latest - sizeMs + 1, earliest]. The rightmost start <=
+  // earliest is sufficient: scanning backwards from latest can take
+  // billions of iterations for valid sizeMs >> hopMs input.
+  const start =
+    Math.floor((earliest - offset) / window.hopMs) * window.hopMs + offset;
+  return start >= latest - window.sizeMs + 1 &&
+    latest < start + window.sizeMs;
 }
 
 function eventsForRef(
