@@ -403,6 +403,24 @@ function numeric(value: unknown): number | null {
     : null;
 }
 
+// A compare expression is re-evaluated for each child candidate. Count
+// every structural occurrence, including shared DAG edges, once per node
+// invocation; then reserve that work for *each* candidate before executing
+// recursive arithmetic. This prevents a wide shallow expression multiplied
+// by thousands of candidates from silently bypassing the shared work cap.
+function arithmeticNodeCost(value: PatternArithmeticValue): number {
+  let cost = 0;
+  const pending: PatternArithmeticValue[] = [value];
+  while (pending.length) {
+    const item = pending.pop()!;
+    cost += 1;
+    if (item.kind === 'arithmetic') {
+      pending.push(...item.args);
+    }
+  }
+  return cost;
+}
+
 function evaluateValue(
   value: PatternArithmeticValue,
   candidate: PatternV2Candidate,
@@ -1430,13 +1448,18 @@ async function evaluateNode(
   const child = await evaluateNode(node.child, context);
 
   if (node.kind === 'compare') {
-    return child.filter((candidate) =>
-      compareValue(
-        evaluateValue(node.left, candidate),
-        node,
-        candidate,
-      )
-    );
+    const cost = arithmeticNodeCost(node.left) +
+      (node.right ? arithmeticNodeCost(node.right) : 0);
+    const selected: PatternV2Candidate[] = [];
+    for (const candidate of child) {
+      // A saturated budget is inconclusive, not a definitive no-match.
+      // Negative ancestors already fail closed on context.truncated.
+      if (!consumeWork(context, cost)) break;
+      if (compareValue(evaluateValue(node.left, candidate), node, candidate)) {
+        selected.push(candidate);
+      }
+    }
+    return selected;
   }
 
   if (node.kind === 'aggregate') {
