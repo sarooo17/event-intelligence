@@ -5,7 +5,7 @@ import { TriggerInspector } from '../scripts/lib/trigger-inspector.mjs';
 const now='2026-10-16T10:00:00.000Z';
 const rawSecret='should-never-be-in-any-diagnosis';
 function fixture({state='active',matchStatus='partial',wakeStatus=null,
-  pendingDeadline=false,withMatch=true}={}){
+  pendingDeadline=false,withMatch=true,conditionOnly=false}={}){
   const source={
     clauseId:'a',serverId:'github',eventName:'issue.updated',
     sourceEventId:'issue-1',traceId:'trace-1',
@@ -21,7 +21,9 @@ function fixture({state='active',matchStatus='partial',wakeStatus=null,
   };
   const store={
     listTriggers:()=>[{
-      triggerId:'observe',version:'1',clauses:[
+      triggerId:'observe',version:'1',conditionOnly,
+      ...(conditionOnly?{}:{target:{runtime:'test',kind:'task',id:'x'}}),
+      clauses:[
         {id:'a',event:'issue.updated'},
         {id:'b',event:'issue.reviewed'},
       ],pattern:{root:{kind:'allOf',children:[
@@ -51,6 +53,7 @@ test('diagnostic state reasons are versioned, bounded and do not claim upstream 
     [{matchStatus:'partial'},'pattern_pending'],
     [{matchStatus:'partial',pendingDeadline:true},'temporal_pending'],
     [{matchStatus:'matched'},'effect_pending'],
+    [{matchStatus:'matched',conditionOnly:true},'condition_satisfied'],
     [{matchStatus:'fired'},'fired'],
     [{matchStatus:'emitted'},'derived_emitted'],
     [{matchStatus:'expired'},'match_expired'],
