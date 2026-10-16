@@ -270,3 +270,38 @@ test('a wide arithmetic tree is charged for each compare candidate', {
   assert.ok(large.matches.length>0,
     'allowed positive prefix remains available as incomplete evidence');
 });
+
+test('large threshold/rate/distinct witness sets are charged per child', {
+  timeout:20000,
+},async()=>{
+  const witness=Array.from({length:500},(_,i)=>({
+    ...event('w',i),data:{unique:i},
+  }));
+  const children=Array.from({length:800},(_,i)=>event('x',i+2000));
+  const cases=[
+    {kind:'threshold',ref:'w',atLeast:500,child:{kind:'event',ref:'x'}},
+    {kind:'rate',ref:'w',perMs:10000,atLeast:500,
+      child:{kind:'event',ref:'x'}},
+    {kind:'distinct',ref:'w',path:'unique',atLeast:500,
+      child:{kind:'event',ref:'x'}},
+  ];
+  for(const root of cases){
+    const large=await evaluatePatternV2({
+      definition:definition(root,1000),
+      events:[...witness,...children],
+    });
+    assert.equal(large.truncated,true,
+      root.kind+' must charge each materialized witness set');
+    assert.ok(large.matches.length<800,
+      'work saturation must not masquerade as complete evidence');
+    assert.ok(large.matches.length>0,
+      'positive prefix may survive with explicit incompleteness');
+    const small=await evaluatePatternV2({
+      definition:definition(root,1000),
+      events:[...witness,...children.slice(0,10)],
+    });
+    assert.equal(small.truncated,false,
+      root.kind+' smaller witness must remain complete');
+    assert.equal(small.matches.length,10);
+  }
+});
