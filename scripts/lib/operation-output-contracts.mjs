@@ -118,6 +118,19 @@ const stdioInspect = z.object({
     code: z.string().min(1),
     summary: z.string().min(1),
   }).passthrough(),
+  diagnosis: z.object({
+    contract: z.literal('ei.trigger-inspection.v1'),
+    kind: z.enum([
+      'inactive', 'lifecycle_ended', 'wake_failed', 'fired',
+      'derived_emitted', 'condition_satisfied', 'effect_pending',
+      'match_expired', 'temporal_pending', 'no_local_match',
+      'pattern_pending',
+    ]),
+    evidence: z.literal('persisted_state'),
+    sourceCertainty: z.literal('unverified'),
+    missingClauseIds: z.array(z.string()),
+    pendingDeadlineCount: z.number().int().nonnegative(),
+  }).strict(),
 }).passthrough();
 
 const stdioSimulation = z.object({
