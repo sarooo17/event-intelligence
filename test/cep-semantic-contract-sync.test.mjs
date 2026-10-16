@@ -352,7 +352,11 @@ function schemaKinds(source) {
     return ts.isIdentifier(current) && targets.has(current.text);
   }
   function rejectExportedSchemaMutation(node) {
-    if(ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) &&
+    // Object and array binding patterns can alias writable Zod shape
+    // properties just as identifier declarations can. Reject any binding
+    // initialized from the audited schema, including destructuring and
+    // TypeScript assertion-wrapped aliases.
+    if(ts.isVariableDeclaration(node) &&
       node.initializer && schemaTarget(node.initializer)) {
       assert.fail('canonical exported schema must not be aliased');
     }
@@ -541,6 +545,11 @@ test('exported schema property writes, mutating calls and aliases fail closed',(
     `const SavedSchema:any = (PatternAstV2DefinitionSchema as any);
       SavedSchema.shape.root = z.object({
         kind:z.literal('asserted-alias-mutation')});`,
+    `const { shape }: any = PatternAstV2DefinitionSchema;
+      shape.root = z.object({kind:z.literal('destructured-root-kind')});`,
+    `const { shape: mutableShape }: any =
+      (PatternAstV2DefinitionSchema as any);
+      mutableShape.root = z.object({kind:z.literal('asserted-destructured-kind')});`,
     `PatternAstV2DefinitionSchema.shape.root &&=
       z.object({kind:z.literal('and-assign-mutation')});`,
     `PatternAstV2DefinitionSchema.shape.root ||= 
