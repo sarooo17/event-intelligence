@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { readFileSync, existsSync } from 'node:fs';
 import test from 'node:test';
 import ts from 'typescript';
@@ -384,6 +385,22 @@ function schemaKinds(source) {
   assert.equal(new Set(kinds).size,kinds.length,'duplicate node discriminator');
   return kinds.sort();
 }
+
+// Hash the *entire reviewed schema source*, including the definition root,
+// callbacks and exported Zod objects. The AST walker gives useful granular
+// diagnostics; this source-commitment gate catches any remaining JavaScript
+// alias/evaluation escape without pretending the walker is a sound general
+// static analyzer. Intentional schema edits must explicitly update this pin
+// and receive a review of their semantic/compatibility impact.
+test('reviewed canonical schema source cannot drift without explicit approval',()=>{
+  const bytes=Buffer.from(schema,'utf8');
+  const gitBlob=createHash('sha1')
+    .update('blob '+bytes.byteLength+'\\0')
+    .update(bytes)
+    .digest('hex');
+  assert.equal(gitBlob,'2e685162e3c9457e9017af97b54d82df0215bac8',
+    'canonical Pattern schema bytes changed: review AST contract and update the pinned source commitment');
+});
 
 test('semantic contract covers every canonical Pattern AST v2 kind exactly once', () => {
   const actual = schemaKinds(schema);
