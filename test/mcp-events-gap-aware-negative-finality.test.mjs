@@ -200,3 +200,116 @@ test('two actual scopes under the same JSONL root isolate gap state across reope
     await rm(dir,{recursive:true,force:true});
   }
 });
+
+test('anchor arriving during an unresolved gap has a durable retry deadline',async()=>{
+  const dir=await mkdtemp(path.join(os.tmpdir(),'ei-gap-before-anchor-'));
+  const t0=Date.now()+3600000;
+  let store;
+  try{
+    store=new PersistentEventStore(dir);
+    await store.init();
+    const engine=new CompositeTriggerEngine(store,null,()=>new Date(t0));
+    await engine.register({
+      triggerId:'during-gap',version:'1',conditionOnly:true,
+      clauses:[
+        {id:'anchor',event:'job.started',serverId:'upstream',arguments:{},where:[]},
+        {id:'forbidden',event:'job.failed',serverId:'upstream',arguments:{},where:[]},
+      ],
+      pattern,withinMs:60000,
+    });
+    await store.putMcpClientState({
+      connectionId:'upstream-conn',serverId:'upstream',
+      eventName:'job.failed',arguments:{},cursor:'gap:1',
+      deliveryMode:'poll',truncated:true,
+    });
+    await engine.ingest(event('job.started',t0,'anchor-during-gap'));
+    const pending=store.listTemporalDeadlines({triggerId:'during-gap',status:'pending'});
+    assert.equal(pending.length,1,
+      'missing evidence must not erase the temporal retry deadline');
+    assert.equal(pending[0].dueAt,new Date(t0+negativeWindowMs).toISOString());
+    let now=new Date(t0+negativeWindowMs);
+    const scheduler=new TemporalDeadlineScheduler({
+      store,now:()=>now,
+      compositeEventConsumer:new CompositeEventConsumer({
+        store,triggerEngine:engine,wakeCoordinators:new Map(),
+      }),
+    });
+    assert.deepEqual((await scheduler.runDue()).map(x=>x.status),['deferred']);
+    assert.equal(store.listTemporalDeadlines({
+      triggerId:'during-gap',status:'pending'}).length,1);
+    const previous=store.getMcpClientState('upstream-conn','job.failed');
+    await store.putMcpClientState({
+      ...previous,gapReconciled:true,
+      reconciliationEvidenceId:'verified-history:gap-before-anchor',
+      truncated:false,
+    });
+    assert.equal(store.getMcpClientState('upstream-conn','job.failed')
+      .gapUnresolved,false);
+    const completed=await scheduler.runDue();
+    assert.deepEqual(completed.map(x=>x.status),['fired']);
+    assert.equal(store.listTriggerMatches('during-gap')
+      .filter(x=>x.patternState?.role==='match'&&x.status==='matched').length,1);
+  }finally{await store?.close();await rm(dir,{recursive:true,force:true});}
+});
+
+test('gapped negative timer never consumes independent positive debounce deadline',async()=>{
+  const dir=await mkdtemp(path.join(os.tmpdir(),'ei-gap-mixed-anyof-'));
+  const t0=Date.now()+3600000;
+  let store;
+  try{
+    store=new PersistentEventStore(dir);
+    await store.init();
+    let now=new Date(t0);
+    const engine=new CompositeTriggerEngine(store,null,()=>now);
+    await engine.register({
+      triggerId:'mixed-gap',version:'1',conditionOnly:true,
+      clauses:[
+        {id:'anchor',event:'job.started',serverId:'upstream',arguments:{},where:[]},
+        {id:'forbidden',event:'job.failed',serverId:'upstream',arguments:{},where:[]},
+      ],
+      pattern:PatternAstV2DefinitionSchema.parse({
+        version:'2',root:{kind:'anyOf',children:[
+          {kind:'debounce',id:'positive-delay',ref:'anchor',
+            forMs:500,child:{kind:'event',ref:'anchor'}},
+          {kind:'notFollowedBy',id:'negative-delay',
+            child:{kind:'event',ref:'anchor'},
+            forbidden:{kind:'event',ref:'forbidden'},withinMs:4000},
+        ]},
+        partitionBy:[],
+        selection:{overlap:'allow',afterMatch:'keepAll',maxMatchesPerEvent:10},
+        execution:{maxCandidates:64,maxBufferedEvents:64,
+          maxSemanticEvaluations:0},
+      }),
+      withinMs:60000,
+    });
+    await store.putMcpClientState({
+      connectionId:'upstream-conn',serverId:'upstream',
+      eventName:'job.failed',arguments:{},truncated:true,
+    });
+    await engine.ingest(event('job.started',t0,'mixed-anchor'));
+    const pending=store.listTemporalDeadlines({
+      triggerId:'mixed-gap',status:'pending',
+    });
+    assert.equal(pending.length,2,
+      'positive debounce and negative gap each retain a distinct deadline');
+    const scheduler=new TemporalDeadlineScheduler({
+      store,now:()=>now,
+      compositeEventConsumer:new CompositeEventConsumer({
+        store,triggerEngine:engine,wakeCoordinators:new Map(),
+      }),
+    });
+    now=new Date(t0+500);
+    const first=await scheduler.runDue();
+    assert.ok(first.some(x=>x.status==='fired'),
+      'positive deadline must fire even while negative evidence is unknown');
+    assert.equal(store.listTemporalDeadlines({
+      triggerId:'mixed-gap',status:'pending',
+    }).length,1);
+    now=new Date(t0+4000);
+    const second=await scheduler.runDue();
+    assert.deepEqual(second.map(x=>x.status),['deferred']);
+    assert.equal(store.listTemporalDeadlines({
+      triggerId:'mixed-gap',status:'pending',
+    }).length,1);
+  }finally{await store?.close();await rm(dir,{recursive:true,force:true});}
+});
