@@ -34,3 +34,15 @@ classification (to follow in a separate #166 B PR), gap propagation to
 negative CEP finality (#166 C), native host-owned stream/webhook
 transport renewal or future SEP changes. No EI runtime polling
 delegation to the agent, no npm publish and no Muffin/Artemis changes.
+
+### Cursor omission in host-owned push/webhook callbacks
+
+Unlike `events/poll` responses, absence of a `cursor` **field** from
+`onEvent`, `onActive`, or the returned delivery handle **preserves
+previous persisted cursor state**. It represents an event/heartbeat that
+does not advance or reset the durable cursor, not an explicit rebootstrap.
+An **explicit `cursor:null`** resets the retained cursor to null.
+This distinction avoids silently erasing a valid cursor when a push event
+includes no cursor metadata. Host adapters needing reset MUST send an
+explicit null. This is an intentional adapter boundary semantic; the
+draft MCP Events poll response omitted-cursor rule remains null.
