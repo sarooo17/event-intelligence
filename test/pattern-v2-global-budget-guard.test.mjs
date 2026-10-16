@@ -189,3 +189,27 @@ test('negative operators fail closed on incomplete child evidence',async()=>{
     },negative+' cannot assert a negative result from truncated child evidence');
   }
 });
+
+test('negative scans charge candidate x forbidden visits and fail closed', {
+  timeout:15000,
+},async()=>{
+  // 1k candidate windows x 1k forbidden events outside every window:
+  // the old .some() path ran 1M probes while reporting complete evidence.
+  const source=[
+    ...Array.from({length:1000},(_,i)=>event('x',i)),
+    ...Array.from({length:1000},(_,i)=>event('forbidden',i+10000)),
+  ];
+  for(const kind of ['notPresent','absence']){
+    const root=kind==='notPresent'
+      ?{kind,ref:'forbidden',child:{kind:'event',ref:'x'}}
+      :{kind,id:'quiet',ref:'forbidden',afterRef:'x',
+        forMs:1000,child:{kind:'event',ref:'x'}};
+    const result=await evaluatePatternV2({
+      definition:definition(root,1500),events:source,
+      now:new Date(base+300000),
+    });
+    assert.deepEqual(snapshot(result),{
+      matches:[],pending:[],truncated:true,
+    },kind+' must declare incomplete evidence if negative scan exceeds budget');
+  }
+});
