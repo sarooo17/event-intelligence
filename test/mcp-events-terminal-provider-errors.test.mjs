@@ -187,9 +187,11 @@ test('terminal error after a good backlog page reports committed effects',async(
     assert.equal(stopped.batches,1);
     assert.equal(stopped.cursor,'a:1');
     assert.equal(fx.store.getMcpClientState('conn','a.updated').cursor,'a:1');
-    assert.equal(await fx.manager.nextDelay(
-      fx.manager.connections.get('conn')),5000,
-      'retired terminal schedule must not trigger 250ms spin');
+    const delay=await fx.manager.nextDelay(fx.manager.connections.get('conn'));
+    // The other active subscription's dueAt is wall-clock based; reading
+    // it can observe a few milliseconds of elapsed real time.
+    assert.ok(delay>=4500 && delay<=5000,
+      `retired terminal state caused a too-fast retry (${delay}ms)`);
     const again=await fx.manager.pollConnection('conn');
     assert.equal(again.find(x=>x.eventName==='a.updated').accepted,0);
     assert.equal(calls,2,'no retries after NotFound');
