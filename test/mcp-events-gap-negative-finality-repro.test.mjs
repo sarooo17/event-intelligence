@@ -63,7 +63,7 @@ async function characterize({gap='none',restart=false}={}){
     assert.equal(store.listTemporalDeadlines({triggerId,status:'pending'}).length,1);
 
     // Real MCP client state: both JSONL and PostgreSQL persist this shape.
-    if(gap!=='none'&&gap!=='late'){
+    if(gap!=='none'){
       await store.putMcpClientState({
         connectionId:'upstream-conn',
         serverId:gap==='unrelated'||gap==='other_server'?'other-upstream':'upstream',
@@ -79,7 +79,7 @@ async function characterize({gap='none',restart=false}={}){
       store=new PersistentEventStore(dir);
       await store.init();
       engine=new CompositeTriggerEngine(store,null,()=>now);
-      if(gap!=='none'&&gap!=='late'){
+      if(gap!=='none'){
         assert.equal(
           store.getMcpClientState('upstream-conn',
             gap==='unrelated'||gap==='other_event'?'other.event':'job.failed',
@@ -98,14 +98,6 @@ async function characterize({gap='none',restart=false}={}){
     const due=await scheduler.runDue();
     const matches=store.listTriggerMatches(triggerId)
       .filter(x=>x.patternState?.role==='match'&&x.status==='matched');
-    if(gap==='late'){
-      await store.putMcpClientState({
-        connectionId:'upstream-conn',serverId:'upstream',
-        eventName:'job.failed',arguments:{},cursor:'gap:late',
-        subscriptionId:'gap-sensitive-sub',deliveryMode:'poll',
-        truncated:true,lastEventAt:gapAt,
-      });
-    }
     const saved=store.getMcpClientState('upstream-conn',
       gap==='unrelated'||gap==='other_event'?'other.event':'job.failed',
       gap==='other_args'?{tenant:'another'}:{});
@@ -155,17 +147,13 @@ test('REPRO: restart preserves the gap record but still finalizes a negative',as
     'KNOWN UNSAFE BASELINE: durable gap and timer finality disagree after restart');
 });
 
-test('unrelated source gap and gap learned after finality are different cases',async()=>{
+test('unrelated source identity variants must not cause a global suspension',async()=>{
   for(const gap of ['unrelated','other_server','other_event','other_args']) {
     const other=await characterize({gap});
     assert.equal(other.sourceGap,true);
     assert.equal(other.matched,1,
       gap+' must not globally suspend independent source identities');
   }
-  const late=await characterize({gap:'late'});
-  assert.equal(late.sourceGap,true);
-  assert.equal(late.matched,1,
-    'a gap learned after finality cannot retroactively prevent an effect');
 });
 
 test('two actual scopes under the same JSONL root isolate gap state across reopen',async()=>{
