@@ -14,7 +14,9 @@ import { TemporalDeadlineScheduler } from '../scripts/lib/temporal-deadline-sche
 // not assert that gap-aware finality is implemented. It proves that current
 // timer-driven negative finality ignores a persisted provider gap.
 // The follow-up safety PR must INVERT the gap-before-finality assertions.
-const base = Date.UTC(2026, 9, 16, 12, 0, 0);
+// Keep the fixture's event-time horizon strictly AFTER the store's real
+// updatedAt clock; otherwise a gap written now looks discovered too late.
+const base = Date.now() + 60 * 60 * 1000;
 const negativeWindowMs = 4000;
 const triggerId = 'sep3415-gap-repro';
 
@@ -64,9 +66,9 @@ async function characterize({gap='none',restart=false}={}){
     if(gap!=='none'&&gap!=='late'){
       await store.putMcpClientState({
         connectionId:'upstream-conn',
-        serverId:gap==='unrelated'?'other-upstream':'upstream',
-        eventName:gap==='unrelated'?'other.event':'job.failed',
-        arguments:{},cursor:'gap:after:previous',
+        serverId:gap==='unrelated'||gap==='other_server'?'other-upstream':'upstream',
+        eventName:gap==='unrelated'||gap==='other_event'?'other.event':'job.failed',
+        arguments:gap==='other_args'?{tenant:'another'}:{},cursor:'gap:after:previous',
         subscriptionId:'gap-sensitive-sub',
         deliveryMode:gap==='push'?'push':gap==='webhook'?'webhook':'poll',
         truncated:true,lastEventAt:gapAt,
@@ -80,7 +82,8 @@ async function characterize({gap='none',restart=false}={}){
       if(gap!=='none'&&gap!=='late'){
         assert.equal(
           store.getMcpClientState('upstream-conn',
-            gap==='unrelated'?'other.event':'job.failed').truncated,
+            gap==='unrelated'||gap==='other_event'?'other.event':'job.failed',
+            gap==='other_args'?{tenant:'another'}:{}).truncated,
           true,'a provider gap must survive durable store reopen');
       }
     }
@@ -104,12 +107,17 @@ async function characterize({gap='none',restart=false}={}){
       });
     }
     const saved=store.getMcpClientState('upstream-conn',
-      gap==='unrelated'?'other.event':'job.failed');
+      gap==='unrelated'||gap==='other_event'?'other.event':'job.failed',
+      gap==='other_args'?{tenant:'another'}:{});
     return {
       due:due.map(x=>x.status),
       matched:matches.length,
       sourceGap:saved?.truncated===true,
       gapSource:saved?.eventName??null,
+      gapServer:saved?.serverId??null,
+      gapArguments:saved?.arguments??null,
+      gapUpdatedAt:saved?.updatedAt??null,
+      dueAt:new Date(base+negativeWindowMs).toISOString(),
       fired:store.listTemporalDeadlines({triggerId,status:'fired'}).length,
       pending:store.listTemporalDeadlines({triggerId,status:'pending'}).length,
     };
@@ -131,6 +139,8 @@ test('REPRO: poll/push/webhook provider gaps currently do not block negative fin
     const result=await characterize({gap});
     assert.equal(result.sourceGap,true);
     assert.equal(result.gapSource,'job.failed');
+    assert.ok(Date.parse(result.gapUpdatedAt)<Date.parse(result.dueAt),
+      'persisted gap discovery must precede the simulated deadline');
     assert.equal(result.matched,1,
       'KNOWN UNSAFE BASELINE: a persisted missing-source gap is ignored');
     assert.equal(result.fired,1);
@@ -146,23 +156,41 @@ test('REPRO: restart preserves the gap record but still finalizes a negative',as
 });
 
 test('unrelated source gap and gap learned after finality are different cases',async()=>{
-  const other=await characterize({gap:'unrelated'});
+  for(const gap of ['unrelated','other_server','other_event','other_args']) {
+    const other=await characterize({gap});
+    assert.equal(other.sourceGap,true);
+    assert.equal(other.matched,1,
+      gap+' must not globally suspend independent source identities');
+  }
   const late=await characterize({gap:'late'});
-  assert.equal(other.sourceGap,true);
-  assert.equal(other.gapSource,'other.event');
-  assert.equal(other.matched,1,
-    'unrelated source gap must not globally suspend independent trigger');
   assert.equal(late.sourceGap,true);
   assert.equal(late.matched,1,
     'a gap learned after finality cannot retroactively prevent an effect');
 });
 
-test('two independent JSONL scope stores do not share gap state',async()=>{
-  const [gap,clean]=await Promise.all([
-    characterize({gap:'poll',restart:true}),
-    characterize({gap:'none',restart:true}),
-  ]);
-  assert.equal(gap.sourceGap,true);
-  assert.equal(clean.sourceGap,false);
-  assert.equal(clean.matched,1);
+test('two actual scopes under the same JSONL root isolate gap state across reopen',async()=>{
+  const dir=await mkdtemp(path.join(os.tmpdir(),'ei-gap-scopes-'));
+  let root;
+  try{
+    root=new PersistentEventStore(dir);
+    await root.init();
+    const a=await root.forScope('tenant-a');
+    const b=await root.forScope('tenant-b');
+    await a.putMcpClientState({
+      connectionId:'same-conn',serverId:'upstream',eventName:'job.failed',
+      arguments:{},cursor:'gap:a',deliveryMode:'poll',truncated:true,
+    });
+    assert.equal(a.getMcpClientState('same-conn','job.failed').truncated,true);
+    assert.equal(b.getMcpClientState('same-conn','job.failed'),null);
+    await root.close();
+    root=new PersistentEventStore(dir);
+    await root.init();
+    const reopenedA=await root.forScope('tenant-a');
+    const reopenedB=await root.forScope('tenant-b');
+    assert.equal(reopenedA.getMcpClientState('same-conn','job.failed').truncated,true);
+    assert.equal(reopenedB.getMcpClientState('same-conn','job.failed'),null);
+  }finally{
+    await root?.close();
+    await rm(dir,{recursive:true,force:true});
+  }
 });
