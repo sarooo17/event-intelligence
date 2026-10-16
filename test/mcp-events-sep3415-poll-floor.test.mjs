@@ -216,3 +216,31 @@ test('poll source gap sticks across healthy responses/reopen until host verifies
       'host-verified-history-replay:fixture-1');
   }finally{await x.close();}
 });
+
+test('truncated poll page is fenced before first MCP occurrence enters CEP',async()=>{
+  const x=await fixture(()=>({
+    events:[{
+      eventId:'gap:e1',name:'change.detected',
+      timestamp:new Date(t0).toISOString(),data:{},
+    }],cursor:'page:1',hasMore:false,truncated:true,nextPollMs:1500,
+  }));
+  try{
+    let observed=false;
+    const existing=x.manager.compositeEventConsumer.ingestMcpOccurrence.bind(
+      x.manager.compositeEventConsumer);
+    x.manager.compositeEventConsumer.ingestMcpOccurrence=async input=>{
+      const durable=x.state();
+      assert.equal(durable?.gapUnresolved,true,
+        'before first event ingress the durable gap must be visible');
+      assert.equal(durable.cursor,null,
+        'cursor must not advance before event ingestion succeeds');
+      observed=true;
+      return existing(input);
+    };
+    const results=await x.manager.pollConnection('source');
+    assert.equal(observed,true);
+    assert.equal(results[0].status,'ok');
+    assert.equal(x.state().cursor,'page:1');
+    assert.equal(x.state().gapUnresolved,true);
+  }finally{await x.close();}
+});
