@@ -210,6 +210,15 @@ function schemaKinds(source) {
             assert.fail(
               'canonical member wrapper must not capture returned union');
           }
+          // Callback-time eval/Function/globalThis access defeats finite
+          // source-AST inspection. Reject the dynamic execution escapes,
+          // including indirect eval and computed global constructor paths,
+          // rather than trying to interpret arbitrary runtime JS strings.
+          if (ts.isIdentifier(child) &&
+              ['eval', 'Function', 'globalThis'].includes(child.text)) {
+            assert.fail(
+              'canonical member wrapper must not use dynamic code execution');
+          }
           ts.forEachChild(child, rejectReturnedUnionCapture);
         }
         rejectReturnedUnionCapture(argument);
@@ -358,6 +367,28 @@ test('mutable const object-shape aliases cannot hide an AST discriminator', () =
   assert.throws(() => schemaKinds(indexed),
     /canonical node shapes must be inline/,
     'computed property writes must not evade the canonical contract');
+});
+
+test('refinement callbacks cannot dynamically evaluate schema mutations', () => {
+  const needle = `    z.object({
+      kind: z.literal('event'),
+      ref: Id,
+    }).strict(),`;
+  assert.ok(schema.includes(needle));
+  for(const expression of [
+    `eval("node.options.push(z.object({kind:z.literal('evaluated-kind')}))")`,
+    `(0,eval)("node.options.push(z.object({kind:z.literal('indirect-eval-kind')}))")`,
+    `Function("node", "node.options.push(z.object({kind:z.literal('func-kind')}))")(node)`,
+    `globalThis['eval']("node.options.push(z.object({kind:z.literal('global-kind')}))")`,
+  ]) {
+    const invalid=schema.replace(needle,
+      needle.replace('.strict(),',
+        `.strict().superRefine(() => { ${expression}; }),`));
+    assert.notEqual(invalid,schema);
+    assert.throws(() => schemaKinds(invalid),
+      /canonical member wrapper must not use dynamic code execution/,
+      'dynamic JS evaluation cannot be certified by a static schema audit');
+  }
 });
 
 test('refinement wrapper callbacks cannot capture and mutate returned union', () => {
