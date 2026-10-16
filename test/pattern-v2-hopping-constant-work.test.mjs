@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import test from 'node:test';
 import {
   PatternAstV2DefinitionSchema, evaluatePatternV2,
@@ -63,14 +64,49 @@ test('hopping matches independent finite lattice across offsets and boundaries',
   }
 });
 
-test('billion-hop window is bounded for positive and negative membership', {
-  timeout:12000,
-},async()=>{
-  const size=1_000_000_000;
-  const compatible=await evaluate(0,size-1,size,1,0);
-  assert.equal(compatible.length,1,
-    'a valid billion-hop range must not require a billion loop iterations');
-  const incompatible=await evaluate(0,size+1,size,1,0);
-  assert.deepEqual(incompatible,[],
-    'a nonmatching billion-hop range must terminate without linear scanning');
+test('huge offsets preserve the exact lattice across the Unix epoch',async()=>{
+  const a={...event('a',0),occurredAt:new Date(0).toISOString()};
+  const b={...event('b',1),occurredAt:new Date(1).toISOString()};
+  const result=await evaluatePatternV2({
+    definition:definition(3,3,Number.MAX_SAFE_INTEGER),
+    events:[a,b],
+  });
+  assert.equal(result.truncated,false);
+  assert.deepEqual(result.matches,[],
+    'a rounded offset must not invent a containing hopping window');
+});
+
+test('billion-hop adversary finishes before an externally enforced subprocess deadline', {
+  timeout:15000,
+},()=>{
+  // A node:test timeout cannot interrupt a blocked synchronous loop.
+  // The OS-level child-process timeout enforces the work bound even if
+  // production regresses to the previous size/hop-iteration algorithm.
+  const child=`import { evaluatePatternV2 } from './dist/src/intelligenceProtocol/index.js';
+    const base=Date.UTC(2026,9,16,12);
+    const mk=(i,ms)=>({
+      clauseId:'x',sourceEventId:'x:'+i,traceId:'x:'+i,eventName:'x',
+      occurredAt:new Date(base+ms).toISOString(),
+      serverId:'test',provider:'test',subscriptionArguments:{},data:{}
+    });
+    const policy={
+      version:'2',partitionBy:[],
+      root:{kind:'window',window:{type:'hopping',
+        sizeMs:1000000000,hopMs:1,offsetMs:0},
+        child:{kind:'repeat',min:2,max:2,mode:'greedy',
+          contiguity:'combinations',child:{kind:'event',ref:'x'}}},
+      selection:{overlap:'allow',afterMatch:'keepAll',maxMatchesPerEvent:10},
+      execution:{maxCandidates:32,maxBufferedEvents:32,maxSemanticEvaluations:0},
+    };
+    for(const [end,count] of [[999999999,1],[1000000001,0]]) {
+      const r=await evaluatePatternV2({
+        definition:policy,events:[mk('a',0),mk('b',end)],
+      });
+      if(r.truncated||r.matches.length!==count) process.exit(7);
+    }`;
+  assert.doesNotThrow(()=>execFileSync(process.execPath,
+    ['--input-type=module','-e',child],{
+      timeout:3000,stdio:'pipe',encoding:'utf8',
+    }),
+  'hopping evaluation must complete without O(size/hop) scanning');
 });
