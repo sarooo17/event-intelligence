@@ -16,7 +16,9 @@ function fixture({state='active',matchStatus='partial',wakeStatus=null,
     status:matchStatus,updatedAt:now,openedAt:now,
     expiresAt:'2026-10-16T12:00:00.000Z',
     sourceEvents:[source],partitionKey:null,
-    firedWakeId:wakeStatus?'wake-1':null,
+    // Real failed deliveries have no firedWakeId; the inspector must
+    // correlate the canonical wake ID independently.
+    firedWakeId:matchStatus==='fired'?'wake-1':null,
     derivedEventIds:[],patternState:{version:'2',role:'buffer',semanticDecisions:[]},
   };
   const store={
