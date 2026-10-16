@@ -402,20 +402,20 @@ test('canonical union initializer rejects captures in any nested field callback'
   const sourceField='      ref: Id,';
   assert.ok(schema.includes(sourceField));
   const nested=schema.replace(sourceField,
-    `      ref: Id.refine(() => {
-        node.options.push(z.object({kind:z.literal('field-callback-kind')}));
-        return true;
-      }),`);
+    `      ref: Id.refine(() => (
+        node.options.push(z.object({kind:z.literal('field-callback-kind')})),
+        true
+      )),`);
   assert.notEqual(nested,schema);
   assert.throws(()=>schemaKinds(nested),
     /canonical union initializer must not capture returned node/,
     'a nested field refinement can widen the runtime union after creation');
 
   const dynamic=schema.replace(sourceField,
-    `      ref: Id.refine(() => {
-        globalThis['eval']("node.options.push(extra)");
-        return true;
-      }),`);
+    `      ref: Id.refine(() => (
+        globalThis['eval']("node.options.push(extra)"),
+        true
+      )),`);
   assert.throws(()=>schemaKinds(dynamic),
     /canonical union initializer must not evaluate dynamic code/);
 });
