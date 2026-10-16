@@ -83,7 +83,7 @@ test('terminal error decoder reads own data descriptors without invoking hostile
     {reason:'forbidden',scope:'connection'});
   for(const err of [
     unavailable(-32025),unavailable(-32026),unavailable(-32027),
-    unavailable(-32011),unavailable('-32023',unavailable(-32023,'surprise'),
+    unavailable(-32011),unavailable('-32023'),unavailable(-32023,'surprise'),
     {...unavailable(-32023),data:null},
     new Proxy(unavailable(-32023),{
       get(){throw new Error(secret)},
