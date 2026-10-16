@@ -1198,20 +1198,23 @@ async function evaluateNode(
     const forbidden = eventsForRef(context, node.ref);
     const children = await evaluateNode(node.child, context);
     if (context.truncated) return [];
-    const complete = children.filter((candidate) =>
-        !forbidden.some((event) => {
-          // Each candidate x forbidden probe is work; charging only the
-          // initial eventsForRef() scan misses O(N*M) nested scans.
-          if (!consumeWork(context)) return false;
-          const index = indexFor(context.events, event);
-          return (
-            index >= candidate.startIndex &&
-            index <= candidate.endIndex
-          );
-        })
-      );
-    // Never emit a false absence after crossing the shared resource cap.
-    return context.truncated ? [] : complete;
+    const complete: PatternV2Candidate[] = [];
+    for (const candidate of children) {
+      let blocked = false;
+      for (const event of forbidden) {
+        // Stop *both* loops at the first exhausted work unit. A false
+        // .some() callback would keep scanning millions of times.
+        if (!consumeWork(context)) return [];
+        const index = indexFor(context.events, event);
+        if (index >= candidate.startIndex &&
+            index <= candidate.endIndex) {
+          blocked = true;
+          break;
+        }
+      }
+      if (!blocked) complete.push(candidate);
+    }
+    return complete;
   }
 
   if (node.kind === 'after') {
@@ -1336,12 +1339,15 @@ async function evaluateNode(
       const due = absenceNodeDueAt(node, anchor);
       const finalAt = due.getTime() + context.allowedLatenessMs;
       const anchorMs = Date.parse(anchor.occurredAt);
-      const blocked = forbidden.some((event) => {
-        if (!consumeWork(context)) return false;
+      let blocked = false;
+      for (const event of forbidden) {
+        if (!consumeWork(context)) return [];
         const at = Date.parse(event.occurredAt);
-        return at >= anchorMs && at <= due.getTime();
-      });
-      if (context.truncated) return [];
+        if (at >= anchorMs && at <= due.getTime()) {
+          blocked = true;
+          break;
+        }
+      }
       if (blocked) continue;
       output.push({
         ...base,
@@ -1362,15 +1368,21 @@ async function evaluateNode(
     // truncated=true, so never emit negative matches from incomplete
     // evidence. A prior child truncation also warrants a fail-closed exit.
     if (context.truncated) return [];
-    const allowed = bases.filter((base) => {
-      if (!base.events.length) return false;
-      return !forbidden.some((candidate) => {
-        if (!consumeWork(context)) return false;
-        return candidate.events.length &&
-          candidate.startIndex === base.endIndex + 1;
-      });
-    });
-    return context.truncated ? [] : allowed;
+    const allowed: PatternV2Candidate[] = [];
+    for (const base of bases) {
+      if (!base.events.length) continue;
+      let blocked = false;
+      for (const candidate of forbidden) {
+        if (!consumeWork(context)) return [];
+        if (candidate.events.length &&
+            candidate.startIndex === base.endIndex + 1) {
+          blocked = true;
+          break;
+        }
+      }
+      if (!blocked) allowed.push(base);
+    }
+    return allowed;
   }
 
   if (node.kind === 'notFollowedBy') {
@@ -1386,17 +1398,17 @@ async function evaluateNode(
       const anchor = Date.parse(base.events.at(-1)!.occurredAt);
       const dueAt = anchor + node.withinMs;
       const finalAt = dueAt + context.allowedLatenessMs;
-      const blocked = forbidden.some((candidate) => {
-        if (!consumeWork(context)) return false;
-        if (!candidate.events.length) return false;
+      let blocked = false;
+      for (const candidate of forbidden) {
+        if (!consumeWork(context)) return [];
+        if (!candidate.events.length) continue;
         const startedAt = Date.parse(candidate.events[0]!.occurredAt);
         const completedAt = Date.parse(candidate.events.at(-1)!.occurredAt);
-        return (
-          startedAt > anchor &&
-          completedAt <= dueAt
-        );
-      });
-      if (context.truncated) return [];
+        if (startedAt > anchor && completedAt <= dueAt) {
+          blocked = true;
+          break;
+        }
+      }
       if (blocked) continue;
       output.push({
         ...base,
