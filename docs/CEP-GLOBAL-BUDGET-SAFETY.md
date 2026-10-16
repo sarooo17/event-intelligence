@@ -10,6 +10,7 @@ bounded execution envelope even when called outside a host buffer:
 | Evaluation work | min(250,000, max(4,096, maxCandidates × 128)) counted node/inner join attempts | `truncated:true`; produced positive candidates are a potentially incomplete prefix, not a complete result |
 | AnyOf | Streaming deduplication with at most `maxCandidates` retained outcomes | First extra unique candidate marks `truncated:true`, without materializing every child's candidate arrays |
 | Arithmetic comparisons | Each arithmetic AST node occurrence is charged once per selected child candidate, before recursive evaluation | Shared work saturation returns a truncated positive prefix; negative ancestors fail closed |
+| Witness attachment (`threshold`, `rate`, `distinct`, `debounce`) | Each child candidate reserves work for the witness set plus existing bound references before copying, hashing and sorting | Saturation stops further attachment with an explicitly truncated positive prefix, never silent completion |
 | AllOf / sequence / repeat | Every explored join/compatibility step spends a unit of this shared work budget; repeat keeps its own stricter local work/depth cap | Prefix/incomplete evidence signaled, never silent complete no-match |
 | Source-index lookups | Per-invocation weakly keyed first-position index map | Reuses O(1) physical-identity/claused index lookup rather than scanning all input events per candidate |
 | `notPresent` and `absence` | Do not assert negative results when their child already returned incomplete evidence | Empty with `truncated:true`; the existing `notNext`/`notFollowedBy` fail-closed checks remain |
@@ -45,3 +46,11 @@ a shared-anchor nested `allOf` dead-end corpus where a larger scan becomes
 incomplete instead of a definitive no-match, complete smaller negative
 control, 50,001-event preflight witness, depth/width AST limit,
 anyOf dedup/prefix behavior, and fail-closed negative operators.
+
+**Witness fanout limit:** finite source input and finite candidate counts
+are not enough by themselves: copying a large selected witness set into
+thousands of candidates is multiplicative. `attachBindingsBounded`
+charges source witnesses and existing candidate binding references on
+every materialization, including `debounce`. The conservative accounting
+can report incompleteness sooner, which is an explicit pre-v1 semantic
+migration covered by the replay policy above.
