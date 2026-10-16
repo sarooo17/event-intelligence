@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { isProxy } from 'node:util/types';
 import { snapshotUntrustedEventData } from '../../dist/src/protocol/ownPath.js';
 import * as z from 'zod/v4';
+import { classifyTerminalMcpProviderError } from './mcp-provider-terminal-error.mjs';
 import {
   McpEventOccurrenceSchema,
 } from '../../dist/src/intelligenceProtocol/index.js';
@@ -540,6 +541,10 @@ export class McpEventsClientManager {
     this.profiles = new Map();
     this.timers = new Map();
     this.lastErrors = new Map();
+    // Connection identity, not reusable connectionId, fences terminal poll
+    // responses against a later host-managed session replacement.
+    this.terminalPollSubscriptions = new WeakMap();
+    this.terminalConnections = new WeakSet();
     this.scopeContexts = new Map();
     this.pollInFlight = new Map();
     // Serialize durable source/cursor mutations by connection ID, including
@@ -711,9 +716,16 @@ export class McpEventsClientManager {
   async invokeProvider(operation) {
     try {
       return await operation();
-    } catch {
+    } catch (untrustedError) {
+      const terminal = classifyTerminalMcpProviderError(untrustedError);
       const failure = new Error(PROVIDER_ERROR_MESSAGE);
       failure.code = 'MCP_EVENTS_PROVIDER_REQUEST_FAILED';
+      // Copy only fixed strings derived from validated numeric/code fields.
+      // Never preserve the producer's Error, message, cause or data object.
+      if (terminal) {
+        failure.terminalReason = terminal.reason;
+        failure.terminalScope = terminal.scope;
+      }
       throw failure;
     }
   }
@@ -1054,6 +1066,20 @@ export class McpEventsClientManager {
     { respectSchedule = false } = {},
   ) {
     this.assertConnectionAttached(connection);
+    const suspended = this.terminalPollSubscriptions
+      .get(connection)?.get(subscription.subscriptionId);
+    if (suspended || this.terminalConnections.has(connection)) {
+      return {
+        subscriptionId: subscription.subscriptionId,
+        eventName: subscription.eventName,
+        delivery: 'poll',
+        status: 'terminal',
+        reason: this.terminalConnections.has(connection)
+          ? 'forbidden' : suspended,
+        accepted: 0,
+        consumerCount: subscription.consumerRefs.length,
+      };
+    }
     const store = context.store;
     const current = await store.getMcpClientState(
       connection.connectionId,
@@ -1089,12 +1115,38 @@ export class McpEventsClientManager {
       const profile =
         this.profiles.get(connection.connectionId) ??
         getMcpEventsCompatibilityProfile(connection.compatibilityProfile);
-      const rawResult = await this.rpc(connection, profile.pollMethod, {
-        name: subscription.eventName,
-        arguments: subscription.arguments,
-        cursor,
-        maxEvents: connection.maxEvents,
-      });
+      let rawResult;
+      try {
+        rawResult = await this.rpc(connection, profile.pollMethod, {
+          name: subscription.eventName,
+          arguments: subscription.arguments,
+          cursor,
+          maxEvents: connection.maxEvents,
+        });
+      } catch (error) {
+        this.assertConnectionAttached(connection);
+        if (error?.terminalReason === 'forbidden') {
+          this.terminalConnections.add(connection);
+        } else if (error?.terminalReason === 'not_found') {
+          let perConnection = this.terminalPollSubscriptions.get(connection);
+          if (!perConnection) {
+            perConnection = new Map();
+            this.terminalPollSubscriptions.set(connection, perConnection);
+          }
+          perConnection.set(subscription.subscriptionId, 'not_found');
+        } else {
+          throw error;
+        }
+        return {
+          subscriptionId: subscription.subscriptionId,
+          eventName: subscription.eventName,
+          delivery: 'poll',
+          status: 'terminal',
+          reason: error.terminalReason,
+          accepted: 0,
+          consumerCount: subscription.consumerRefs.length,
+        };
+      }
       // Do not process an RPC response which completed after detach or after
       // another session replaced this connectionId.
       this.assertConnectionAttached(connection);
@@ -1466,6 +1518,13 @@ export class McpEventsClientManager {
       );
     }
 
+    this.assertConnectionAttached(connection);
+    // A validated Forbidden revokes the current connection's polling
+    // authority. Only a fresh host-owned attachment may probe again.
+    if (this.terminalConnections.has(connection)) {
+      return [{ status: 'terminal', reason: 'forbidden',
+        delivery: 'poll', accepted: 0 }];
+    }
     const context = await this.scopeContext(connection);
     this.assertConnectionAttached(connection);
     let descriptors = this.descriptors.get(connectionId);
@@ -1479,6 +1538,18 @@ export class McpEventsClientManager {
 
     for (const subscription of desired.values()) {
       this.assertConnectionAttached(connection);
+      if (this.terminalConnections.has(connection)) {
+        results.push({
+          subscriptionId: subscription.subscriptionId,
+          eventName: subscription.eventName,
+          status: 'terminal',
+          reason: 'forbidden',
+          delivery: 'poll',
+          accepted: 0,
+          consumerCount: subscription.consumerRefs.length,
+        });
+        continue;
+      }
       const delivery = chooseDelivery(connection, subscription.descriptor);
       if (!delivery) {
         results.push({
