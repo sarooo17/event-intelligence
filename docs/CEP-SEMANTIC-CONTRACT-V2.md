@@ -64,10 +64,12 @@ A source/schema drift regression verifies the catalogue remains synchronized.
    bound peak candidate generation or memory usage: `allOf` now
    streams its unique Cartesian combinations and stops at the first
    over-cap candidate (#159), and `event` limits generation to the
-   first `maxCandidates` unique physical events (#160). However, `sequence`
-   intermediate combinations and other operators can still materialize
-   more candidates than the configured cap. Input sorting and buffers are
-   not covered: this remains **not** a global CPU/memory resource budget.
+   first `maxCandidates` unique physical events (#160). The `sequence`
+   intermediate join streams capped unique completions (#163) and ranks
+   successors once per child (#165). `repeat` also bounds exploration at
+   `maxCandidates * 32` steps and depth 256 (#167), reporting
+   `truncated:true` on work/depth exhaustion. Other operators, input
+   sorting, and buffers are not covered by a **global** CPU/memory budget.
    `maxSemanticEvaluations` bounds **new** semantic model calls.
    Reusable exact cache decisions do not consume the call budget.
    Exhaustion may return a partial set with `truncated:true`, even when
