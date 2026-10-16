@@ -76,3 +76,26 @@ historical wake rollback. Existing deployments must replay or
 explicitly reconcile recorded gaps before permitting new
 absence-trigger wakeups; prior irreversible actions need host review.
 No npm publication and no Artemis/Muffin changes are included.
+
+## Independent P1 review hardening
+
+A producer may attach ordinary events to a `truncated:true` poll page.
+EI now durably records the unresolved delivery gap **before the first
+such event enters CEP**; only after successful page event ingestion does
+it checkpoint the producer cursor. A failure between these steps keeps
+an unresolved gap and the prior cursor, never a false-complete negative.
+
+An anchor arriving when a gap is **already known** still creates a
+bounded `incompletePending` deadline hint for `notFollowedBy` or
+`absence`, without emitting a match. The scheduler retains this durable
+deadline while the gap remains open and retries evaluation after host
+reconciliation, so a correctly absent event can eventually finalize
+without a new source occurrence. The hint is not a conclusive semantic
+result and cannot create a wake.
+
+On due timers, the engine continues to evaluate unaffected positive
+branches (including `debounce` inside `anyOf`). The scheduler marks a
+Pattern v2 deadline fired only when a resulting matched signature equals
+that deadline's condition ID. A positive timer does not consume an
+independent gapped negative timer. Dedicated tests exercise all three
+review failures, real JSONL persistence and host replay recovery.
