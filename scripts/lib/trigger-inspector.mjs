@@ -284,11 +284,11 @@ export class TriggerInspector {
     // Failed deliveries do not set firedWakeId. Derive the same stable
     // wake ID as CompositeWakeCoordinator from the selected match + target,
     // then read only that one wake (no unbounded global history scan).
-    const wakeId = match && definition.target
+    const wakeId = match?.firedWakeId ?? (match && definition.target
       ? 'wake_' + (await sha256Hex(
           `composite:${match.matchId}:${definition.target.runtime}:${definition.target.id}`,
         )).slice(0, 24)
-      : match?.firedWakeId ?? null;
+      : null);
     const wake = wakeId ? await this.store.latestWake(wakeId) : null;
 
     const derivedOutputs = match
