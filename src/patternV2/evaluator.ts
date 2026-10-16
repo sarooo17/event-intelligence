@@ -909,7 +909,7 @@ async function evaluateNode(
     // children.length * maxCandidates candidates before the dedupe cap.
     // Traverse in the same deterministic child order and stop after the
     // first extra unique outcome. A stopped branch is always truncated.
-    const values: PatternV2Candidate[] = [];
+    const unionCandidates: PatternV2Candidate[] = [];
     const seen = new Set<string>();
     for (const child of node.children as PatternNodeV2[]) {
       if (context.workExhausted) break;
@@ -919,15 +919,15 @@ async function evaluateNode(
         const key = candidateDedupeKey(candidate);
         if (seen.has(key)) continue;
         seen.add(key);
-        if (values.length >= context.maxCandidates) {
+        if (unionCandidates.length >= context.maxCandidates) {
           context.truncated = true;
-          return values;
+          return unionCandidates;
         }
-        values.push(candidate);
+        unionCandidates.push(candidate);
       }
       if (context.workExhausted) break;
     }
-    return values;
+    return unionCandidates;
   }
 
   if (node.kind === 'allOf') {
