@@ -947,6 +947,19 @@ export class PersistentEventStore {
           ? null
           : String(input.cursor),
         updatedAt: new Date().toISOString(),
+        // A later healthy poll page cannot prove that skipped earlier
+        // events were replayed. Retain the gap until an explicit
+        // host-owned reconciliation (never an untrusted producer hint).
+        gapUnresolved: input.truncated === true ||
+          input.gapUnresolved === true ||
+          previous?.gapUnresolved === true ||
+          previous?.truncated === true,
+        ...((input.truncated === true || input.gapUnresolved === true ||
+          previous?.gapUnresolved === true || previous?.truncated === true)
+          ? { gapDetectedAt: previous?.gapDetectedAt ??
+              (typeof input.gapDetectedAt === 'string'
+                ? input.gapDetectedAt : new Date().toISOString()) }
+          : {}),
         ...(input.nextPollAt || previous?.nextPollAt
           ? { nextPollAt: String(input.nextPollAt || previous.nextPollAt) }
           : {}),
