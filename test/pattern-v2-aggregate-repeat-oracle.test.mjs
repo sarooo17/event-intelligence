@@ -115,7 +115,7 @@ test('sum-gte(repeat(order,2..2)) agrees with finite independent Cartesian oracl
     'generator must witness accepted and rejected sum pairs');
 });
 
-test('aggregate reference rejects boundary and invalid-domain mutations',()=>{
+test('aggregate rejects numeric-string coercion and oracle domain mutations',async()=>{
   const a={...stream(1)[0],clauseId:'order',
     data:{total:7},occurredAt:new Date(origin).toISOString()};
   const b={...stream(1)[1],clauseId:'order',
@@ -124,8 +124,25 @@ test('aggregate reference rejects boundary and invalid-domain mutations',()=>{
     'sum equality must satisfy gte');
   assert.equal(oracle([a,b],21).length,0,
     'sum just below threshold must not satisfy gte');
-  assert.deepEqual(oracle([a,{...b,data:{total:'13'}}],20),[],
-    'non-numeric field must not silently coerce');
-  assert.throws(()=>oracle([a,a],20),/strict times/);
+  const numericString={...b,data:{total:'13'}};
+  const expected=oracle([a,numericString],20);
+  assert.deepEqual(expected,[],
+    'numeric-string field must not silently coerce');
+  for(const order of [[a,numericString],[numericString,a]]){
+    const actual=await evaluatePatternV2({
+      definition:definition(20,'greedy'),events:order,
+    });
+    assert.equal(actual.truncated,false);
+    assert.deepEqual(actual.pending,[]);
+    assert.deepEqual(output(actual),expected,
+      'production evaluator must not coerce numeric strings');
+  }
+  // Independent domain witnesses: each violates exactly one condition.
+  assert.throws(()=>oracle([a,{...b,sourceEventId:a.sourceEventId}],20),
+    /strict times, refs and unique IDs/,
+    'duplicate IDs must fail despite strictly increasing timestamps');
+  assert.throws(()=>oracle([a,{...b,occurredAt:a.occurredAt}],20),
+    /strict times, refs and unique IDs/,
+    'equal instants must fail despite distinct IDs');
   assert.throws(()=>oracle([a,b],Infinity),/domain/);
 });
