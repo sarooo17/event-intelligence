@@ -1362,14 +1362,15 @@ async function evaluateNode(
     // truncated=true, so never emit negative matches from incomplete
     // evidence. A prior child truncation also warrants a fail-closed exit.
     if (context.truncated) return [];
-    return bases.filter((base) => {
+    const allowed = bases.filter((base) => {
       if (!base.events.length) return false;
-      return !forbidden.some(
-        (candidate) =>
-          candidate.events.length &&
-          candidate.startIndex === base.endIndex + 1,
-      );
+      return !forbidden.some((candidate) => {
+        if (!consumeWork(context)) return false;
+        return candidate.events.length &&
+          candidate.startIndex === base.endIndex + 1;
+      });
     });
+    return context.truncated ? [] : allowed;
   }
 
   if (node.kind === 'notFollowedBy') {
@@ -1386,6 +1387,7 @@ async function evaluateNode(
       const dueAt = anchor + node.withinMs;
       const finalAt = dueAt + context.allowedLatenessMs;
       const blocked = forbidden.some((candidate) => {
+        if (!consumeWork(context)) return false;
         if (!candidate.events.length) return false;
         const startedAt = Date.parse(candidate.events[0]!.occurredAt);
         const completedAt = Date.parse(candidate.events.at(-1)!.occurredAt);
@@ -1394,6 +1396,7 @@ async function evaluateNode(
           completedAt <= dueAt
         );
       });
+      if (context.truncated) return [];
       if (blocked) continue;
       output.push({
         ...base,
