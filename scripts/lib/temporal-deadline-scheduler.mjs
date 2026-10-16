@@ -67,7 +67,16 @@ export class TemporalDeadlineScheduler {
           },
         });
 
-        if (result.results.length > 0) {
+        // A due negative deadline can coexist with an independent
+        // positive disjunction branch. The latter may fire, but MUST NOT
+        // consume the negative deadline still waiting for source repair.
+        const satisfiesDeadline = deadline.conditionId.startsWith('pattern-v2:')
+          ? result.results.some(item=>
+              item.match?.patternState?.signature &&
+              'pattern-v2:' + item.match.patternState.signature ===
+                deadline.conditionId)
+          : result.results.length > 0;
+        if (satisfiesDeadline) {
           await this.store.setTemporalDeadlineStatus(
             deadline.deadlineId,
             'fired',
