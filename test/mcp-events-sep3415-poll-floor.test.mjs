@@ -177,3 +177,42 @@ test('scheduled manager restart uses remaining durable deadline, not another ful
       'must not delay a one-second-away deadline by another five minutes');
   }finally{await x.close();}
 });
+
+test('poll source gap sticks across healthy responses/reopen until host verifies replay',async()=>{
+  const x=await fixture((_params,n)=>({
+    events:[],cursor:'poll:'+n,hasMore:false,
+    nextPollMs:1000,truncated:n===1,
+  }));
+  try{
+    const first=await x.manager.pollConnection('source');
+    assert.equal(first[0].truncated,true);
+    assert.equal(x.state().gapUnresolved,true);
+    assert.ok(x.state().gapDetectedAt);
+    const recorded=x.state().gapDetectedAt;
+    x.now.ms+=1000;
+    const second=await x.manager.pollConnection('source');
+    assert.equal(second[0].truncated,false);
+    assert.equal(x.state().truncated,false,
+      'latest producer page can be individually complete');
+    assert.equal(x.state().gapUnresolved,true,
+      'later healthy page never proves old gap repaired');
+    assert.equal(x.state().gapDetectedAt,recorded);
+
+    const reopened=new PersistentEventStore(x.dir);
+    await reopened.init();
+    assert.equal(reopened.getMcpClientState('source','change.detected').gapUnresolved,true);
+    await reopened.close();
+
+    await assert.rejects(x.manager.acknowledgeReconciledGap({
+      connectionId:'source',eventName:'change.detected',evidenceId:'',
+    }),/evidence ID/);
+    const cleared=await x.manager.acknowledgeReconciledGap({
+      connectionId:'source',eventName:'change.detected',
+      evidenceId:'host-verified-history-replay:fixture-1',
+    });
+    assert.equal(cleared.gapUnresolved,false);
+    assert.equal(cleared.truncated,false);
+    assert.equal(cleared.reconciliationEvidenceId,
+      'host-verified-history-replay:fixture-1');
+  }finally{await x.close();}
+});
