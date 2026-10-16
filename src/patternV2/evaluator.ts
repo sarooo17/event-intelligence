@@ -211,15 +211,29 @@ function stableEvents(
   return output.sort(eventOrder);
 }
 
+// Every candidate merge used to scan the entire source array for every
+// bound event (O(events * candidates * bindings)). Cache the first ordered
+// location per physical identity; the evaluator never mutates "all".
+const orderedIndexes = new WeakMap<
+  TriggerSourceEvent[], Map<string, number>
+>();
+function indexedKey(event: TriggerSourceEvent): string {
+  return JSON.stringify([event.clauseId, eventIdentity(event)]);
+}
 function indexFor(
   all: TriggerSourceEvent[],
   event: TriggerSourceEvent,
 ): number {
-  return all.findIndex(
-    (candidate) =>
-      candidate.clauseId === event.clauseId &&
-      eventIdentity(candidate) === eventIdentity(event),
-  );
+  let indexes = orderedIndexes.get(all);
+  if (!indexes) {
+    indexes = new Map();
+    for (let i = 0; i < all.length; i++) {
+      const key = indexedKey(all[i]!);
+      if (!indexes.has(key)) indexes.set(key, i);
+    }
+    orderedIndexes.set(all, indexes);
+  }
+  return indexes.get(indexedKey(event)) ?? -1;
 }
 
 function candidateFromBindings(
@@ -859,16 +873,29 @@ async function evaluateNode(
   }
 
   if (node.kind === 'anyOf') {
-    const candidates = (
-      await Promise.all(
-        node.children.map((child: PatternNodeV2) =>
-          evaluateNode(child, context)
-        ),
-      )
-    ).flat();
-    const limited = dedupe(candidates, context.maxCandidates);
-    context.truncated ||= limited.truncated;
-    return limited.values;
+    // Parallel child materialization + flat() can retain
+    // children.length * maxCandidates candidates before the dedupe cap.
+    // Traverse in the same deterministic child order and stop after the
+    // first extra unique outcome. A stopped branch is always truncated.
+    const values: PatternV2Candidate[] = [];
+    const seen = new Set<string>();
+    for (const child of node.children as PatternNodeV2[]) {
+      if (context.workExhausted) break;
+      const candidates = await evaluateNode(child, context);
+      for (const candidate of candidates) {
+        if (!consumeWork(context)) break;
+        const key = candidateDedupeKey(candidate);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        if (values.length >= context.maxCandidates) {
+          context.truncated = true;
+          return values;
+        }
+        values.push(candidate);
+      }
+      if (context.workExhausted) break;
+    }
+    return values;
   }
 
   if (node.kind === 'allOf') {
