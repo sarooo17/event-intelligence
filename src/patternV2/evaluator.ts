@@ -62,6 +62,7 @@ export interface PatternV2Evaluation {
 interface EvaluationContext {
   events: TriggerSourceEvent[];
   eventsByRef: Map<string, TriggerSourceEvent[]>;
+  incompleteSourceRefs: ReadonlySet<string>;
   evaluator: SemanticEvaluator | null;
   now: Date;
   maxCandidates: number;
@@ -929,6 +930,27 @@ async function withTimeout<T>(
   }
 }
 
+// A missing source on any forbidden predicate branch prevents a negative
+// proof. Inspect only bounded/schema-validated Pattern AST descendants.
+function forbiddenNeedsIncompleteSource(
+  root: PatternNodeV2,
+  context: EvaluationContext,
+): boolean {
+  if (!context.incompleteSourceRefs.size) return false;
+  const nodes: PatternNodeV2[] = [root];
+  while (nodes.length) {
+    const node = nodes.pop()!;
+    if ('ref' in node && typeof node.ref === 'string' &&
+      context.incompleteSourceRefs.has(node.ref)) return true;
+    if ('child' in node && node.child) nodes.push(node.child);
+    if ('children' in node && Array.isArray(node.children)) {
+      nodes.push(...node.children);
+    }
+    if ('forbidden' in node && node.forbidden) nodes.push(node.forbidden);
+  }
+  return false;
+}
+
 async function evaluateNode(
   node: PatternNodeV2,
   context: EvaluationContext,
@@ -1241,6 +1263,10 @@ async function evaluateNode(
   }
 
   if (node.kind === 'notPresent') {
+    if (context.incompleteSourceRefs.has(node.ref)) {
+      context.truncated = true;
+      return [];
+    }
     const forbidden = eventsForRef(context, node.ref);
     const children = await evaluateNode(node.child, context);
     if (context.truncated) return [];
@@ -1354,6 +1380,10 @@ async function evaluateNode(
   }
 
   if (node.kind === 'absence') {
+    if (context.incompleteSourceRefs.has(node.ref)) {
+      context.truncated = true;
+      return [];
+    }
     const bases = await evaluateNode(node.child, context);
     const forbidden = eventsForRef(context, node.ref);
     const output: PatternV2Candidate[] = [];
@@ -1388,6 +1418,10 @@ async function evaluateNode(
   }
 
   if (node.kind === 'notNext') {
+    if (forbiddenNeedsIncompleteSource(node.forbidden, context)) {
+      context.truncated = true;
+      return [];
+    }
     const bases = await evaluateNode(node.child, context);
     const forbidden = await evaluateNode(node.forbidden, context);
     // A capped forbidden branch may omit the exact event that blocks a
@@ -1413,6 +1447,10 @@ async function evaluateNode(
   }
 
   if (node.kind === 'notFollowedBy') {
+    if (forbiddenNeedsIncompleteSource(node.forbidden, context)) {
+      context.truncated = true;
+      return [];
+    }
     const bases = await evaluateNode(node.child, context);
     const forbidden = await evaluateNode(node.forbidden, context);
     // Never finalize or expose a negative result if the full set of
@@ -1611,6 +1649,7 @@ export async function evaluatePatternV2({
   allowedLatenessMs = 0,
   semanticCache = null,
   semanticCacheNamespace = '',
+  incompleteSourceRefs = new Set<string>(),
 }: {
   definition: PatternAstV2Definition;
   events: TriggerSourceEvent[];
@@ -1619,6 +1658,7 @@ export async function evaluatePatternV2({
   allowedLatenessMs?: number;
   semanticCache?: PatternV2SemanticCache | null;
   semanticCacheNamespace?: string;
+  incompleteSourceRefs?: ReadonlySet<string>;
 }): Promise<PatternV2Evaluation> {
   // Bounded preflight before input cloning/sort or AST recursion.
   if (events.length > MAX_EVALUATION_INPUT_EVENTS ||
@@ -1639,6 +1679,7 @@ export async function evaluatePatternV2({
   const context: EvaluationContext = {
     events: ordered,
     eventsByRef,
+    incompleteSourceRefs,
     evaluator,
     now,
     maxCandidates: definition.execution.maxCandidates,
