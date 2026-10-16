@@ -1,4 +1,5 @@
 import { readOwnEventPath } from '../protocol/ownPath.js';
+import { incompleteNegativeRefs, negativeForbiddenSourceRefs } from './deliveryGap.js';
 import {
   evaluatePatternV2,
   patternV2CandidateSignature,
@@ -351,6 +352,10 @@ export class CompositeTriggerEngine {
       match.patternState?.version === '2' &&
       match.patternState.role === 'buffer'
     ) {
+      // A timer is the last step before a negative absence can become
+      // an irreversible wake. Keep it PENDING if relevant transport
+      // evidence is incomplete. The scheduler will retry after repair.
+      if ((await this.incompleteSourceRefs(definition)).size) return [];
       return this.evaluatePatternBuffer(
         definition,
         match,
@@ -685,6 +690,23 @@ export class CompositeTriggerEngine {
     return Math.max(...times) - Math.min(...times) <= withinMs;
   }
 
+  private async incompleteSourceRefs(
+    definition: CompositeTriggerDefinition,
+  ): Promise<Set<string>> {
+    if (!this.store.listMcpClientStates ||
+        !negativeForbiddenSourceRefs(definition.pattern.root).size) {
+      return new Set();
+    }
+    const [states, triggerState] = await Promise.all([
+      this.store.listMcpClientStates(),
+      this.store.getTriggerState?.(definition.triggerId, definition.version),
+    ]);
+    return incompleteNegativeRefs(
+      definition, states,
+      triggerState?.connectionIds ?? [],
+    );
+  }
+
   private async evaluatePatternBuffer(
     definition: CompositeTriggerDefinition,
     buffer: TriggerMatchRecord,
@@ -719,8 +741,10 @@ export class CompositeTriggerEngine {
             )
         : [];
 
+    const incompleteSourceRefs = await this.incompleteSourceRefs(definition);
     const evaluation = await evaluatePatternV2({
       definition: pattern,
+      incompleteSourceRefs,
       events: buffer.sourceEvents,
       evaluator: this.evaluator,
       now: evaluationNow,
@@ -750,7 +774,12 @@ export class CompositeTriggerEngine {
       });
     }
 
-    await this.support.cancelDeadlinesForMatch(buffer.matchId);
+    // Do not cancel a pending negative deadline merely because the
+    // relevant provider stopped giving complete evidence. Timer retries
+    // remain possible after authoritative host replay/reconciliation.
+    if (!incompleteSourceRefs.size) {
+      await this.support.cancelDeadlinesForMatch(buffer.matchId);
+    }
     if (evaluation.pending.length) {
       const deadlines = evaluation.pending
         .filter((candidate) =>
