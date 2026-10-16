@@ -173,7 +173,7 @@ test('provider returns draft error semantics for invalid args and unknown events
       cursor: null,
     }),
   );
-  assert.equal(missing.error.code, -32011);
+  assert.equal(missing.error.code, -32023);
   assert.deepEqual(missing.error.data, { kind: 'event' });
 });
 
