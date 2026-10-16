@@ -1582,10 +1582,10 @@ export class McpEventsClientManager {
     const due = states
       .map((state) => Date.parse(state.nextPollAt || ''))
       .filter(Number.isFinite)
-      .map((time) => Math.max(
-        time <= now ? 250 : connection.pollFloorMs,
-        time - now,
-      ));
+      // The producer floor was already applied when persisting nextPollAt.
+      // A restart just before its deadline must honor the *remaining* time;
+      // do not start a fresh full floor interval after every timer wake.
+      .map((time) => time > now ? time - now : 250);
     return due.length
       ? Math.min(connection.pollIntervalMs, ...due)
       : connection.pollIntervalMs;
