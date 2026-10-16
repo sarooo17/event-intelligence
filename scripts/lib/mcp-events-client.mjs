@@ -1167,6 +1167,24 @@ export class McpEventsClientManager {
       // Do not process an RPC response which completed after detach or after
       // another session replaced this connectionId.
       this.assertConnectionAttached(connection);
+      // The producer has already declared missing history. Persist that
+      // fact BEFORE ANY subsequent page validation: bad event arrays,
+      // cursors or scheduling hints cannot silently erase a reported gap.
+      // Read only a non-Proxy own DATA property (never invoke getters).
+      if (rawResult && typeof rawResult === 'object' &&
+          !isProxy(rawResult)) {
+        const reportedGap=Object.getOwnPropertyDescriptor(
+          rawResult,'truncated',
+        );
+        if (reportedGap && Object.hasOwn(reportedGap,'value') &&
+            reportedGap.value === true) {
+          await this.saveSubscriptionState(connection,context,subscription,{
+            deliveryMode:'poll',
+            truncated:true,
+            gapDetectedAt:this.now().toISOString(),
+          });
+        }
+      }
       const result = ownPollPage(rawResult);
       const remoteEvents = result.events;
       // A producer adapter can return a Proxy, accessor-backed array or a
@@ -1218,18 +1236,6 @@ export class McpEventsClientManager {
       nextPollMs = hasMore
         ? producerNextPollMs
         : Math.max(connection.pollFloorMs, producerNextPollMs);
-
-      // A truncated page may contain ordinary events. Commit the
-      // incomplete-delivery marker BEFORE passing the first event to CEP;
-      // that ingress can schedule or finalize a negative wake concurrently.
-      // Do not advance the cursor until all page events are ingested.
-      if (result.truncated === true) {
-        await this.saveSubscriptionState(connection, context, subscription, {
-          deliveryMode: 'poll',
-          truncated: true,
-          gapDetectedAt: this.now().toISOString(),
-        });
-      }
 
       for (const raw of boundedEvents) {
         const receipt = await this.ingestOccurrence(
