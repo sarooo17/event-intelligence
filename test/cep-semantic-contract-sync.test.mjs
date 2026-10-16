@@ -395,7 +395,7 @@ function schemaKinds(source) {
 test('reviewed canonical schema source cannot drift without explicit approval',()=>{
   const bytes=Buffer.from(schema,'utf8');
   const gitBlob=createHash('sha1')
-    .update('blob '+bytes.byteLength+'\\0')
+    .update('blob '+bytes.byteLength+'\0')
     .update(bytes)
     .digest('hex');
   assert.equal(gitBlob,'2e685162e3c9457e9017af97b54d82df0215bac8',
