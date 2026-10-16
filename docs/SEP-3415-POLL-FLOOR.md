@@ -19,10 +19,11 @@ continuation cursor is rejected before ingest or cursor checkpoint.
 Across cycles, the existing scheduler can resume a backlog after a
 short bounded timer; there is no always-running agent loop.
 
-Explicit-null **or omitted** cursor is interpreted as `null` at the
-poll, push and webhook adapter boundary. A producer that cannot
-support replay may return no cursor, but may not claim an addressable
-`hasMore` backlog without one.
+On `events/poll` results, explicit-null **or omitted** cursor is
+interpreted as `null`. A poll producer that cannot support replay may
+return no cursor, but cannot claim an addressable `hasMore` backlog
+without one. Host-owned push/webhook callback omission is different:
+it preserves the previous cursor, as detailed below.
 
 Evidence: `test/mcp-events-sep3415-poll-floor.test.mjs` and existing
 `test/mcp-polling-backpressure.test.mjs`. Reproducible fixtures cover
