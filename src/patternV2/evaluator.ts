@@ -766,6 +766,27 @@ function withBindingEvents(
   });
 }
 
+// A witness set is copied, hashed and sorted into *each* selected child.
+// Charging eventsForRef() once is insufficient: N candidates × M attached
+// witnesses may amplify bounded input into unbounded CPU/memory use.
+function attachBindingsBounded(
+  context: EvaluationContext,
+  children: PatternV2Candidate[],
+  ref: string,
+  witnesses: TriggerSourceEvent[],
+): PatternV2Candidate[] {
+  const output: PatternV2Candidate[] = [];
+  for (const candidate of children) {
+    const boundCount = Object.values(candidate.bindings)
+      .reduce((total, events) => total + events.length, 0);
+    if (!consumeWork(context, Math.max(1, witnesses.length + boundCount))) {
+      break;
+    }
+    output.push(withBindingEvents(candidate, ref, witnesses, context.events));
+  }
+  return output;
+}
+
 function calendarNodeMatches(
   node: Extract<PatternNodeV2, { kind: 'calendar' }>,
   event: TriggerSourceEvent,
@@ -1271,15 +1292,10 @@ async function evaluateNode(
   if (node.kind === 'threshold') {
     const refEvents = distinctEventsForRef(context, node.ref);
     if (refEvents.length < node.atLeast) return [];
-    return (await evaluateNode(node.child, context))
-      .map((candidate) =>
-        withBindingEvents(
-          candidate,
-          node.ref,
-          refEvents.slice(0, node.atLeast),
-          context.events,
-        )
-      );
+    const child = await evaluateNode(node.child, context);
+    return attachBindingsBounded(
+      context, child, node.ref, refEvents.slice(0, node.atLeast),
+    );
   }
 
   if (node.kind === 'distinct') {
@@ -1301,10 +1317,8 @@ async function evaluateNode(
       if (values.size >= node.atLeast) break;
     }
     if (values.size < node.atLeast) return [];
-    return (await evaluateNode(node.child, context))
-      .map((candidate) =>
-        withBindingEvents(candidate, node.ref, chosen, context.events)
-      );
+    const child = await evaluateNode(node.child, context);
+    return attachBindingsBounded(context, child, node.ref, chosen);
   }
 
   if (node.kind === 'rate') {
@@ -1317,15 +1331,10 @@ async function evaluateNode(
       (event) => latest - Date.parse(event.occurredAt) <= node.perMs,
     );
     if (inWindow.length < node.atLeast) return [];
-    return (await evaluateNode(node.child, context))
-      .map((candidate) =>
-        withBindingEvents(
-          candidate,
-          node.ref,
-          inWindow.slice(-node.atLeast),
-          context.events,
-        )
-      );
+    const child = await evaluateNode(node.child, context);
+    return attachBindingsBounded(
+      context, child, node.ref, inWindow.slice(-node.atLeast),
+    );
   }
 
   if (node.kind === 'debounce') {
@@ -1334,21 +1343,14 @@ async function evaluateNode(
     if (!latest) return [];
     const dueAt = Date.parse(latest.occurredAt) + node.forMs;
     const finalAt = dueAt + context.allowedLatenessMs;
-    return (await evaluateNode(node.child, context))
-      .map((candidate) => {
-        const augmented = withBindingEvents(
-          candidate,
-          node.ref,
-          [latest],
-          context.events,
-        );
-        return {
-          ...augmented,
-          ...(context.now.getTime() < finalAt
-            ? { pendingUntil: new Date(finalAt).toISOString() }
-            : {}),
-        };
-      });
+    const child = await evaluateNode(node.child, context);
+    return attachBindingsBounded(context, child, node.ref, [latest])
+      .map((augmented) => ({
+        ...augmented,
+        ...(context.now.getTime() < finalAt
+          ? { pendingUntil: new Date(finalAt).toISOString() }
+          : {}),
+      }));
   }
 
   if (node.kind === 'absence') {
