@@ -117,6 +117,61 @@ test('anyOf streaming retains stable first distinct prefix and does not flag dup
   assert.equal(result.truncated,true);
 });
 
+test('wide absent-reference AST scans input once and may prove complete no-match', {
+  timeout:15000,
+},async()=>{
+  const source=event('irrelevant',0);
+  const all=Array(50_000).fill(source);
+  const policy=definition({kind:'event',ref:'missing'},2);
+  const result=await evaluatePatternV2({
+    definition:{...policy,root:{kind:'anyOf',children:
+      Array.from({length:4095},(_,i)=>({
+        kind:'event',ref:'missing-'+i,
+      }))}},
+    events:all,
+  });
+  assert.deepEqual(snapshot(result),{
+    matches:[],pending:[],truncated:false,
+  },'indexed absent references have no work-scan amplification');
+});
+
+test('arithmetic expression depth and AST cycles fail closed, but shared DAGs pass', {
+  timeout:10000,
+},async()=>{
+  const policy=definition({kind:'event',ref:'x'},32);
+  let expr={kind:'literal',value:3};
+  for(let i=0;i<150;i++) expr={
+    kind:'arithmetic',op:'abs',args:[expr],
+  };
+  const deep=await evaluatePatternV2({
+    definition:{...policy,root:{
+      kind:'compare',child:{kind:'event',ref:'x'},
+      left:expr,op:'eq',right:{kind:'literal',value:3},
+    }},
+    events:[event('x',0)],
+  });
+  assert.deepEqual(snapshot(deep),{
+    matches:[],pending:[],truncated:true,
+  },'nested arithmetic cannot recurse past structural preflight');
+
+  const cyclic={kind:'optional',mode:'greedy'};
+  cyclic.child=cyclic;
+  const rejected=await evaluatePatternV2({
+    definition:{...policy,root:cyclic},events:[event('x',0)],
+  });
+  assert.deepEqual(snapshot(rejected),{
+    matches:[],pending:[],truncated:true,
+  });
+  const reused={kind:'event',ref:'x'};
+  const dag=await evaluatePatternV2({
+    definition:{...policy,root:{kind:'anyOf',children:[reused,reused]}},
+    events:[event('x',0)],
+  });
+  assert.deepEqual(snapshot(dag),{
+    matches:[['work:x:0']],pending:[],truncated:false,
+  },'shared acyclic child objects must not count as a cycle');
+});
+
 test('negative operators fail closed on incomplete child evidence',async()=>{
   for(const negative of ['notPresent','absence']) {
     const child={kind:'event',ref:'x'};
