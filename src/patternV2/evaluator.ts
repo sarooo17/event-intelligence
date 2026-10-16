@@ -69,11 +69,58 @@ interface EvaluationContext {
   semanticCacheHits: number;
   semanticCacheMisses: number;
   truncated: boolean;
+  workSteps: number;
+  maxWorkSteps: number;
+  workExhausted: boolean;
   semanticCache: Map<string, SemanticDecision>;
   durableSemanticCache: PatternV2SemanticCache | null;
   semanticCacheNamespace: string;
   semanticTrace: PatternV2SemanticTrace[];
   allowedLatenessMs: number;
+}
+
+// Fixed process-local caps are separate from public AST execution fields.
+// Every exceeded limit is inconclusive, never a complete no-match.
+const MAX_EVALUATION_INPUT_EVENTS = 50_000;
+const MAX_EVALUATION_AST_NODES = 4_096;
+const MAX_EVALUATION_AST_DEPTH = 128;
+const MAX_EVALUATION_WORK_STEPS = 250_000;
+
+function consumeWork(context: EvaluationContext): boolean {
+  if (context.workExhausted) return false;
+  if (++context.workSteps <= context.maxWorkSteps) return true;
+  context.workExhausted = true;
+  context.truncated = true;
+  return false;
+}
+
+function boundedAst(root: PatternNodeV2): boolean {
+  const pending: Array<{ node: PatternNodeV2; depth: number }> =
+    [{ node: root, depth: 0 }];
+  const seen = new Set<object>();
+  while (pending.length) {
+    const { node, depth } = pending.pop()!;
+    if (depth > MAX_EVALUATION_AST_DEPTH ||
+      seen.size >= MAX_EVALUATION_AST_NODES ||
+      seen.has(node)) return false;
+    seen.add(node);
+    if ('children' in node && Array.isArray(node.children)) {
+      if (node.children.length + pending.length + seen.size >
+        MAX_EVALUATION_AST_NODES) return false;
+      for (const child of node.children) {
+        pending.push({ node: child, depth: depth + 1 });
+      }
+    }
+    if ('child' in node && node.child) {
+      pending.push({ node: node.child, depth: depth + 1 });
+    }
+    if ('forbidden' in node && node.forbidden &&
+      typeof node.forbidden === 'object') {
+      pending.push({ node: node.forbidden, depth: depth + 1 });
+    }
+    if (pending.length + seen.size > MAX_EVALUATION_AST_NODES) return false;
+  }
+  return true;
 }
 
 function stableValue(value: unknown): unknown {
@@ -785,6 +832,7 @@ async function evaluateNode(
   node: PatternNodeV2,
   context: EvaluationContext,
 ): Promise<PatternV2Candidate[]> {
+  if (!consumeWork(context)) return [];
   const all = context.events;
 
   if (node.kind === 'event') {
@@ -836,6 +884,7 @@ async function evaluateNode(
       combinations:
       for (const left of current) {
         for (const right of next) {
+          if (!consumeWork(context)) break combinations;
           const merged = mergeCandidates(left, right, all);
           if (!merged) continue;
           const key = candidateDedupeKey(merged);
@@ -897,6 +946,7 @@ async function evaluateNode(
       sequenceJoin:
       for (const left of current) {
         for (const { candidate: right } of rankedSuccessors) {
+          if (!consumeWork(context)) break sequenceJoin;
           if (right.events.length && left.events.length) {
             if (right.startIndex <= left.endIndex) continue;
             if (node.contiguity === 'next' &&
@@ -998,7 +1048,7 @@ async function evaluateNode(
 
       const compatibleIndexes: number[] = [];
       for (let index = start; index < units.length; index += 1) {
-        if (!consumeStep()) return;
+        if (!consumeWork(context) || !consumeStep()) return;
         const unit = units[index]!;
         if (
           selected.events.length &&
@@ -1023,7 +1073,7 @@ async function evaluateNode(
       }
 
       for (const index of compatibleIndexes) {
-        if (!consumeStep()) return;
+        if (!consumeWork(context) || !consumeStep()) return;
         const unit = units[index]!;
         const merged = mergeCandidates(selected, unit, all);
         if (!merged) continue;
@@ -1078,8 +1128,9 @@ async function evaluateNode(
 
   if (node.kind === 'notPresent') {
     const forbidden = eventsForRef(context, node.ref);
-    return (await evaluateNode(node.child, context))
-      .filter((candidate) =>
+    const children = await evaluateNode(node.child, context);
+    if (context.truncated) return [];
+    return children.filter((candidate) =>
         !forbidden.some((event) => {
           const index = indexFor(context.events, event);
           return (
@@ -1203,6 +1254,8 @@ async function evaluateNode(
     const bases = await evaluateNode(node.child, context);
     const forbidden = eventsForRef(context, node.ref);
     const output: PatternV2Candidate[] = [];
+    // An incomplete child cannot establish a negative absence fact.
+    if (context.truncated) return [];
 
     for (const base of bases) {
       const anchor = latestBoundEvent(base, node.afterRef);
@@ -1445,6 +1498,15 @@ export async function evaluatePatternV2({
   semanticCache?: PatternV2SemanticCache | null;
   semanticCacheNamespace?: string;
 }): Promise<PatternV2Evaluation> {
+  // Bounded preflight before input cloning/sort or AST recursion.
+  if (events.length > MAX_EVALUATION_INPUT_EVENTS ||
+    !boundedAst(definition.root)) {
+    return {
+      matches: [], pending: [], semanticEvaluations: 0,
+      semanticCacheHits: 0, semanticCacheMisses: 0,
+      semanticTrace: [], truncated: true,
+    };
+  }
   const ordered = [...events].sort(eventOrder);
   const context: EvaluationContext = {
     events: ordered,
@@ -1456,6 +1518,10 @@ export async function evaluatePatternV2({
     semanticCacheHits: 0,
     semanticCacheMisses: 0,
     truncated: false,
+    workSteps: 0,
+    maxWorkSteps: Math.min(MAX_EVALUATION_WORK_STEPS,
+      Math.max(4_096, definition.execution.maxCandidates * 128)),
+    workExhausted: false,
     semanticCache: new Map(),
     durableSemanticCache: semanticCache,
     semanticCacheNamespace,
