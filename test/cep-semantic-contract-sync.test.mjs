@@ -88,7 +88,15 @@ function schemaKinds(source) {
     if (ts.isIdentifier(node)) {
       const declaration = lexicalDeclaration(node);
       assert.ok(!visiting.has(declaration), 'cyclic lexical schema alias');
-      return resolve(declaration.initializer,
+      // Unlike a primitive const string or Zod object, a const *array*
+      // remains mutable. z.union(members) can be widened by members.push()
+      // after initialization while an initializer-only walk sees 22 kinds.
+      // Require inline arrays for union/enum inputs instead of attempting
+      // incomplete data-flow analysis of mutable collection aliases.
+      const initializer = declaration.initializer;
+      assert.ok(!ts.isArrayLiteralExpression(initializer),
+        'schema collection aliases must be inlined (const arrays are mutable)');
+      return resolve(initializer,
         new Set([...visiting, declaration]));
     }
     return node;
@@ -235,6 +243,28 @@ PatternNodeV2Schema = PatternNodeV2Schema.or(
   assert.throws(() => schemaKinds(writableAndReassigned),
     /canonical exported schema must be immutable/,
     'valid TypeScript with a mutable exported schema cannot hide a widened runtime kind');
+});
+
+test('mutated const union member arrays cannot silently widen canonical schema', () => {
+  const literal = '  const node = z.union([';
+  const close = '  ]);\n\n  return node;';
+  assert.ok(schema.includes(literal) && schema.includes(close));
+  const aliased = schema.replace(literal, '  const members: any = [')
+    .replace(close, '  ];\n  const node = z.union(members);\n\n  return node;');
+  assert.notEqual(aliased, schema);
+  assert.throws(() => schemaKinds(aliased),
+    /schema collection aliases must be inlined/,
+    'even a const array cannot prove immutable member collection');
+
+  const widened = schema.replace(literal, '  const members: any = [')
+    .replace(close,
+      '  ];\n' +
+      '  members.push(z.object({kind:z.literal("injected-kind")}));\n' +
+      '  const node = z.union(members);\n\n  return node;');
+  assert.notEqual(widened, schema);
+  assert.throws(() => schemaKinds(widened),
+    /schema collection aliases must be inlined/,
+    'a post-initializer .push must not evade the operator contract');
 });
 
 test('mutable factory-local aliases cannot widen runtime AST after initialization', () => {
