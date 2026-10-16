@@ -115,6 +115,15 @@ test('low-level server has the same draft wire semantics with bounded paging',as
   assert.equal(next.result.hasMore,true);
 
   const prev=reads;
+  // The public server.poll() entrypoint must never bypass the per-page
+  // limit enforced by JSON-RPC handleRequest.
+  for(const maxEvents of [Infinity,0,-1,501,1.5]){
+    await assert.rejects(
+      server.poll({name:descriptor.name,cursor:'mcp-events-v1:0',maxEvents}),
+      /maxEvents/,
+    );
+  }
+  assert.equal(reads,prev);
   for(const cursor of [123,true,{},[]]){
     const bad=await server.handleRequest(call(6,'events/poll',{
       name:descriptor.name,cursor,
