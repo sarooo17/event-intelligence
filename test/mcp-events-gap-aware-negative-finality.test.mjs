@@ -102,6 +102,9 @@ async function characterize({gap='none',restart=false}={}){
         eventName:'job.failed',arguments:{},cursor:'gap:late',
         subscriptionId:'gap-sensitive-sub',deliveryMode:'poll',
         truncated:true,lastEventAt:gapAt,
+        // Host learns the gap only after the due timer was finalized;
+        // unlike pre-fix store.updatedAt, this is explicit provenance.
+        gapDetectedAt:new Date(base+negativeWindowMs+1).toISOString(),
       });
     }
     const saved=store.getMcpClientState('upstream-conn',
@@ -115,6 +118,7 @@ async function characterize({gap='none',restart=false}={}){
       gapServer:saved?.serverId??null,
       gapArguments:saved?.arguments??null,
       gapUpdatedAt:saved?.updatedAt??null,
+      gapDetectedAt:saved?.gapDetectedAt??null,
       dueAt:new Date(base+negativeWindowMs).toISOString(),
       fired:store.listTemporalDeadlines({triggerId,status:'fired'}).length,
       pending:store.listTemporalDeadlines({triggerId,status:'pending'}).length,
@@ -164,8 +168,10 @@ test('unrelated source gap and gap learned after finality are different cases',a
   }
   const late=await characterize({gap:'late'});
   assert.equal(late.sourceGap,true);
+  assert.ok(Date.parse(late.gapDetectedAt)>Date.parse(late.dueAt),
+    'late-gap case must carry post-deadline durable provenance');
   assert.equal(late.matched,1,
-    'a gap learned after finality cannot retroactively prevent an effect');
+    'an already committed effect requires compensation, not time travel');
 });
 
 test('two actual scopes under the same JSONL root isolate gap state across reopen',async()=>{
