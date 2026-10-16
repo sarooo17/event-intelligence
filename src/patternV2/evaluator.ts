@@ -840,69 +840,67 @@ async function evaluateNode(
       const seen = new Set<string>();
       let sequenceTruncated = false;
 
-      // As with allOf, avoid materializing every selected sequence pair
-      // before enforcing the candidate cap. Preserve rank/preference order
-      // and stop only after the first additional *unique* completion.
+      // Selection rank depends on the *right* candidate and the child's
+      // greedy/lazy preference, not on the current left-hand anchor.
+      // Sort once per child: the previous per-left map/filter/sort built an
+      // O(right) temporary array and re-sorted it for every left candidate
+      // even when maxCandidates let only the first few joins survive.
+      const emptyPreference =
+        (child.kind === 'optional' ||
+          (child.kind === 'repeat' && child.min === 0))
+          ? child.mode
+          : 'lazy';
+      const rankedSuccessors = next
+        .map((candidate, rank) => ({ candidate, rank }))
+        .sort((a, b) => {
+          const aEmpty = a.candidate.events.length === 0;
+          const bEmpty = b.candidate.events.length === 0;
+          if (aEmpty !== bEmpty) {
+            return emptyPreference === 'greedy'
+              ? Number(aEmpty) - Number(bEmpty)
+              : Number(bEmpty) - Number(aEmpty);
+          }
+          if (!aEmpty && !bEmpty) {
+            return a.candidate.startIndex - b.candidate.startIndex ||
+              a.rank - b.rank;
+          }
+          return a.rank - b.rank;
+        });
+
+      // As with allOf, avoid materializing every selected sequence pair.
+      // Stop at maxCandidates + 1 unique completions, preserving the same
+      // priority order as the formerly per-left sorted compatible subset.
       sequenceJoin:
       for (const left of current) {
-        const compatible = next
-          .map((candidate, rank) => ({ candidate, rank }))
-          .filter(({ candidate: right }) => {
-            if (!right.events.length) return true;
-            if (!left.events.length) return true;
-            if (right.startIndex <= left.endIndex) return false;
-            if (
-              node.contiguity === 'next' &&
-              right.startIndex !== left.endIndex + 1
-            ) {
-              return false;
-            }
-            return true;
-          })
-          .sort((a, b) => {
-            const leftEmpty = a.candidate.events.length === 0;
-            const rightEmpty = b.candidate.events.length === 0;
-            if (leftEmpty !== rightEmpty) {
-              const preference =
-                (
-                  child.kind === 'optional' ||
-                  (child.kind === 'repeat' && child.min === 0)
-                )
-                  ? child.mode
-                  : 'lazy';
-              return preference === 'greedy'
-                ? Number(leftEmpty) - Number(rightEmpty)
-                : Number(rightEmpty) - Number(leftEmpty);
-            }
-            if (!leftEmpty && !rightEmpty) {
-              return (
-                a.candidate.startIndex - b.candidate.startIndex ||
-                a.rank - b.rank
-              );
-            }
-            return a.rank - b.rank;
-          })
-          .map(({ candidate }) => candidate);
-
-        const selected =
-          node.contiguity === 'followedBy'
-            ? compatible.slice(0, 1)
-            : compatible;
-
-        for (const right of selected) {
+        for (const { candidate: right } of rankedSuccessors) {
+          if (right.events.length && left.events.length) {
+            if (right.startIndex <= left.endIndex) continue;
+            if (node.contiguity === 'next' &&
+              right.startIndex !== left.endIndex + 1) continue;
+          }
+          // followedBy selects only the first compatible right, even if
+          // mergeCandidates rejects it: do not fall through to a later one.
+          const firstOnly = node.contiguity === 'followedBy';
           const merged = mergeCandidates(left, right, all);
-          if (!merged) continue;
+          if (!merged) {
+            if (firstOnly) break;
+            continue;
+          }
           const key = [
             candidateSignature(merged),
             merged.pendingUntil ?? '-',
           ].join('#');
-          if (seen.has(key)) continue;
+          if (seen.has(key)) {
+            if (firstOnly) break;
+            continue;
+          }
           seen.add(key);
           if (combined.length >= context.maxCandidates) {
             sequenceTruncated = true;
             break sequenceJoin;
           }
           combined.push(merged);
+          if (firstOnly) break;
         }
       }
 
