@@ -9,9 +9,15 @@ bounded execution envelope even when called outside a host buffer:
 | Pattern tree | 4,096 node occurrences, max depth 128, no cyclic object graph | Zero matches and pending, `truncated:true`, before recursive evaluation |
 | Evaluation work | min(250,000, max(4,096, maxCandidates × 128)) counted node/inner join attempts | `truncated:true`; produced positive candidates are a potentially incomplete prefix, not a complete result |
 | AnyOf | Streaming deduplication with at most `maxCandidates` retained outcomes | First extra unique candidate marks `truncated:true`, without materializing every child's candidate arrays |
+| Arithmetic comparisons | Each arithmetic AST node occurrence is charged once per selected child candidate, before recursive evaluation | Shared work saturation returns a truncated positive prefix; negative ancestors fail closed |
 | AllOf / sequence / repeat | Every explored join/compatibility step spends a unit of this shared work budget; repeat keeps its own stricter local work/depth cap | Prefix/incomplete evidence signaled, never silent complete no-match |
 | Source-index lookups | Per-invocation weakly keyed first-position index map | Reuses O(1) physical-identity/claused index lookup rather than scanning all input events per candidate |
 | `notPresent` and `absence` | Do not assert negative results when their child already returned incomplete evidence | Empty with `truncated:true`; the existing `notNext`/`notFollowedBy` fail-closed checks remain |
+
+This work bound charges compare-expression evaluation by reserving the
+structural expression-node count for each candidate, even when a predicate
+would short-circuit before evaluating its right operand. This conservative
+reservation avoids hiding candidate × arithmetic-size fanout.
 
 This work bound counts named hotspots and is a **conservative operational
 counter**, not a formally measured upper bound for every arithmetic/regex,
