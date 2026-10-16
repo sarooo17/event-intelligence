@@ -213,3 +213,26 @@ test('negative scans charge candidate x forbidden visits and fail closed', {
     },kind+' must declare incomplete evidence if negative scan exceeds budget');
   }
 });
+
+test('notNext and notFollowedBy cannot bypass budget via Cartesian scans', {
+  timeout:15000,
+},async()=>{
+  const records=[
+    ...Array.from({length:1000},(_,i)=>event('x',i)),
+    ...Array.from({length:1000},(_,i)=>event('forbidden',i+10000)),
+  ];
+  for(const kind of ['notNext','notFollowedBy']){
+    const root={
+      kind,child:{kind:'event',ref:'x'},
+      forbidden:{kind:'event',ref:'forbidden'},
+      ...(kind==='notFollowedBy'?{id:'quiet',withinMs:1000}:{}),
+    };
+    const result=await evaluatePatternV2({
+      definition:definition(root,1500),
+      events:records,now:new Date(base+300000),
+    });
+    assert.deepEqual(snapshot(result),{
+      matches:[],pending:[],truncated:true,
+    },kind+' must not emit false-complete negatives after budget exhaustion');
+  }
+});
