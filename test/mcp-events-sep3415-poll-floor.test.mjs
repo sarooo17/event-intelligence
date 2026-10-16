@@ -162,3 +162,18 @@ test('persistent cursor resumes safely after restart and still respects poll flo
     assert.equal(x.calls.length,1);
   }finally{await x.close();}
 });
+
+test('scheduled manager restart uses remaining durable deadline, not another full floor',async()=>{
+  const x=await fixture(()=>({
+    events:[],cursor:'checkpoint',nextPollMs:300000,hasMore:false,
+  }),{pollIntervalMs:300000,pollFloorMs:300000});
+  try{
+    await x.manager.pollConnection('source');
+    assert.equal(x.state().nextPollAt,new Date(t0+300000).toISOString());
+    x.now.ms+=299000;
+    const scheduled=await x.manager.pollConnection('source',{respectSchedule:true});
+    assert.equal(scheduled[0].status,'scheduled');
+    assert.equal(await x.manager.nextDelay(x.connection),1000,
+      'must not delay a one-second-away deadline by another five minutes');
+  }finally{await x.close();}
+});
