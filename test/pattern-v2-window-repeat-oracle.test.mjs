@@ -9,7 +9,9 @@ const windows=[
   {type:'within',sizeMs:400},
   {type:'sliding',sizeMs:400},
   {type:'tumbling',sizeMs:600,offsetMs:0},
+  {type:'tumbling',sizeMs:600,offsetMs:137},
   {type:'hopping',sizeMs:600,hopMs:300,offsetMs:0},
+  {type:'hopping',sizeMs:600,hopMs:300,offsetMs:137},
   {type:'session',gapMs:400},
   {type:'count',size:3},
 ];
@@ -111,7 +113,8 @@ function projection(output) {
 }
 
 for(const window of windows) {
-  test('window(repeat(x,2..2)) finite differential '+window.type, async()=>{
+  test('window(repeat(x,2..2)) finite differential '+window.type+
+    ('offsetMs' in window ? '/offset='+window.offsetMs : ''), async()=>{
     let kept=0,rejected=0;
     for(let seed=1;seed<=100;seed++) {
       const corpus=sample(seed);
@@ -139,6 +142,38 @@ for(const window of windows) {
       window.type+' must witness accepted and rejected nested candidates');
   });
 }
+
+test('nonzero offsets change actual tumbling and hopping membership',async()=>{
+  // Fixed epoch anchors make an offset=0 bucket valid but offset=137 split
+  // that exact pair. This rejects an evaluator that silently ignores
+  // offsetMs, unlike a self-only independent reference mutation.
+  const bucket=Math.floor(origin/600)*600;
+  const fixture=[
+    {...sample(2)[0],clauseId:'x',sourceEventId:'boundary:a',
+      occurredAt:new Date(bucket+100).toISOString()},
+    {...sample(2)[1],clauseId:'x',sourceEventId:'boundary:b',
+      occurredAt:new Date(bucket+550).toISOString()},
+  ];
+  for(const kind of ['tumbling','hopping']){
+    const atZero=kind==='tumbling'?
+      {type:kind,sizeMs:600,offsetMs:0}:
+      {type:kind,sizeMs:600,hopMs:300,offsetMs:0};
+    const offset={...atZero,offsetMs:137};
+    assert.equal(oracle(fixture,atZero).length,1);
+    assert.equal(oracle(fixture,offset).length,0);
+    for(const mode of ['greedy','lazy']){
+      const old=await evaluatePatternV2({
+        definition:config(atZero,mode),events:fixture,
+      });
+      const shifted=await evaluatePatternV2({
+        definition:config(offset,mode),events:[...fixture].reverse(),
+      });
+      assert.equal(old.truncated,false);assert.equal(shifted.truncated,false);
+      assert.deepEqual(projection(old),oracle(fixture,atZero));
+      assert.deepEqual(projection(shifted),oracle(fixture,offset));
+    }
+  }
+});
 
 test('nested reference rejects unsupported and mutated boundary assumptions',()=>{
   const events=[sample(1)[0],sample(1)[2]];
