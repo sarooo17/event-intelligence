@@ -157,6 +157,11 @@ function schemaKinds(source) {
       'canonical union members must be inline (schema aliases are mutable)');
     const value = resolve(unwrapped);
     if (method(value,'union')) {
+      // Zod accepts an optional error-map callback as argument 2. It can
+      // execute after the returned union exists and mutate node.options;
+      // silently ignoring it would defeat the canonical schema audit.
+      assert.equal(value.arguments.length, 1,
+        'nested canonical union must have exactly one static argument');
       const inner = resolve(value.arguments[0]);
       assert.ok(ts.isArrayLiteralExpression(inner),'nested union must be static');
       inner.elements.forEach(member);
@@ -187,8 +192,12 @@ function schemaKinds(source) {
       assert.equal(properties.length,1,'each union member needs one kind');
       const kind = resolve(properties[0].initializer);
       if(method(kind,'literal')) {
+        assert.equal(kind.arguments.length, 1,
+          'canonical discriminator literal must have one static argument');
         kinds.push(literal(kind.arguments[0]));
       } else if(method(kind,'enum')) {
+        assert.equal(kind.arguments.length, 1,
+          'canonical discriminator enum must have one static argument');
         const values=resolve(kind.arguments[0]);
         assert.ok(ts.isArrayLiteralExpression(values),'static z.enum required');
         kinds.push(...values.elements.map(literal));
@@ -367,6 +376,40 @@ test('mutable const object-shape aliases cannot hide an AST discriminator', () =
   assert.throws(() => schemaKinds(indexed),
     /canonical node shapes must be inline/,
     'computed property writes must not evade the canonical contract');
+});
+
+test('nested union and literal/enum callback arguments fail closed', () => {
+  const eventMember=`    z.object({
+      kind: z.literal('event'),
+      ref: Id,
+    }).strict(),`;
+  assert.ok(schema.includes(eventMember));
+  const unionMember=schema.replace(eventMember,
+    `    z.union([${eventMember.slice(4,-1)}], {
+      error: () => (node.options.push(
+        z.object({ kind: z.literal('extra-union-kind') })), 'invalid'),
+    }),`);
+  assert.notEqual(unionMember,schema);
+  assert.throws(() => schemaKinds(unionMember),
+    /nested canonical union must have exactly one static argument/);
+
+  const literalSource="kind: z.literal('event')";
+  assert.ok(schema.includes(literalSource));
+  const widenedLiteral=schema.replace(literalSource,
+    `kind: z.literal('event', {
+      error: () => (node.options.push(
+        z.object({ kind: z.literal('extra-literal-kind') })), 'invalid'),
+    })`);
+  assert.throws(() => schemaKinds(widenedLiteral),
+    /canonical discriminator literal must have one static argument/);
+
+  const enumKind=schema.replace(literalSource,
+    `kind: z.enum(['event'], {
+      error: () => (node.options.push(
+        z.object({ kind: z.literal('extra-enum-kind') })), 'invalid'),
+    })`);
+  assert.throws(() => schemaKinds(enumKind),
+    /canonical discriminator enum must have one static argument/);
 });
 
 test('refinement callbacks cannot dynamically evaluate schema mutations', () => {
