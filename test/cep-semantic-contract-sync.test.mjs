@@ -285,6 +285,93 @@ function schemaKinds(source) {
         'canonical factory auxiliary declarations must be primitive strings');
     }
   }
+  // The documented catalogue matters only if production definitions use
+  // this exact union for their root. Reject widened/wrapped root schemas and
+  // object-spread overrides in the exported definition.
+  const defs=[];
+  for(const statement of parsed.statements) {
+    if(!ts.isVariableStatement(statement)) continue;
+    for(const declaration of statement.declarationList.declarations) {
+      if(ts.isIdentifier(declaration.name) &&
+        declaration.name.text==='PatternAstV2DefinitionSchema') {
+        assert.ok((statement.declarationList.flags & ts.NodeFlags.Const)!==0,
+          'canonical definition must be an immutable export');
+        assert.ok(statement.modifiers?.some(m=>
+          m.kind===ts.SyntaxKind.ExportKeyword),
+          'canonical definition must remain exported');
+        defs.push(declaration);
+      }
+    }
+  }
+  assert.equal(defs.length,1,'exactly one canonical definition required');
+  let definition=defs[0].initializer;
+  while(ts.isCallExpression(definition) &&
+    ts.isPropertyAccessExpression(definition.expression) &&
+    ['strict','superRefine','refine','readonly','describe'].includes(
+      definition.expression.name.text)) {
+    definition=definition.expression.expression;
+  }
+  assert.ok(method(definition,'object') && definition.arguments.length===1,
+    'canonical definition must directly use an inspectable z.object');
+  const defShape=definition.arguments[0];
+  assert.ok(ts.isObjectLiteralExpression(defShape),
+    'canonical definition shape must be inline');
+  for(const prop of defShape.properties) {
+    assert.ok(ts.isPropertyAssignment(prop) &&
+      (ts.isIdentifier(prop.name) || ts.isStringLiteral(prop.name)),
+      'canonical definition cannot use spread/computed root overrides');
+  }
+  const roots=defShape.properties.filter(p=>p.name?.text==='root');
+  assert.equal(roots.length,1,'canonical definition must have one root');
+  assert.ok(ts.isIdentifier(roots[0].initializer) &&
+    roots[0].initializer.text==='PatternNodeV2Schema',
+    'canonical definition root must use audited PatternNodeV2Schema exactly');
+
+  // A const Zod binding is not a frozen Zod object. Catch writes to the
+  // exported node/definition schema, their properties, mutating methods,
+  // and aliases. Keep this fail-closed instead of guessing JS dataflow.
+  const targets=new Set([
+    'PatternNodeV2Schema','PatternAstV2DefinitionSchema',
+  ]);
+  function schemaTarget(expression) {
+    let current=expression;
+    while(ts.isPropertyAccessExpression(current) ||
+      ts.isElementAccessExpression(current)) current=current.expression;
+    return ts.isIdentifier(current) && targets.has(current.text);
+  }
+  function rejectExportedSchemaMutation(node) {
+    if(ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) &&
+      node.initializer && ts.isIdentifier(node.initializer) &&
+      targets.has(node.initializer.text)) {
+      assert.fail('canonical exported schema must not be aliased');
+    }
+    if(ts.isBinaryExpression(node) &&
+      schemaTarget(node.left) && [
+        ts.SyntaxKind.EqualsToken,ts.SyntaxKind.PlusEqualsToken,
+        ts.SyntaxKind.BarBarEqualsToken,ts.SyntaxKind.QuestionQuestionEqualsToken,
+      ].includes(node.operatorToken.kind)) {
+      assert.fail('canonical exported schema properties must not be mutated');
+    }
+    if(ts.isDeleteExpression(node) && schemaTarget(node.expression)) {
+      assert.fail('canonical exported schema properties must not be mutated');
+    }
+    if(ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression)) {
+      const fn=node.expression.name.text;
+      if(['push','pop','shift','unshift','splice','set','delete','clear',
+        'sort','reverse'].includes(fn) &&
+        schemaTarget(node.expression.expression)) {
+        assert.fail('canonical exported schema properties must not be mutated');
+      }
+      if(['assign','defineProperty','defineProperties','setPrototypeOf',
+        'set'].includes(fn) &&
+        node.arguments.length>0 && schemaTarget(node.arguments[0])) {
+        assert.fail('canonical exported schema properties must not be mutated');
+      }
+    }
+    ts.forEachChild(node,rejectExportedSchemaMutation);
+  }
+  rejectExportedSchemaMutation(parsed);
   assert.equal(new Set(kinds).size,kinds.length,'duplicate node discriminator');
   return kinds.sort();
 }
@@ -396,6 +483,42 @@ test('mutable const object-shape aliases cannot hide an AST discriminator', () =
   assert.throws(() => schemaKinds(indexed),
     /canonical node shapes must be inline/,
     'computed property writes must not evade the canonical contract');
+});
+
+test('definition root cannot widen or replace the audited canonical union',()=>{
+  const root='root: PatternNodeV2Schema,';
+  assert.ok(schema.includes(root));
+  const widened=schema.replace(root,
+    `root: PatternNodeV2Schema.or(
+      z.object({kind:z.literal('root-extra-kind')})),`);
+  assert.throws(()=>schemaKinds(widened),
+    /canonical definition root must use audited PatternNodeV2Schema exactly/);
+  const override=schema.replace(root,
+    `root: PatternNodeV2Schema,
+      ...{root:z.object({kind:z.literal('spread-root-kind')})},`);
+  assert.throws(()=>schemaKinds(override),
+    /canonical definition cannot use spread\/computed root overrides/);
+});
+
+test('exported schema property writes, mutating calls and aliases fail closed',()=>{
+  for(const snippet of [
+    `PatternNodeV2Schema._def.getter = () => z.object({
+      kind:z.literal('property-mutation-kind')});`,
+    `Object.assign(PatternNodeV2Schema._def, { getter: () =>
+      z.object({kind:z.literal('assign-kind')}) });`,
+    `Object.defineProperty(PatternNodeV2Schema, '_def', {
+      value:{getter:()=>z.object({kind:z.literal('define-kind')})},
+    });`,
+    `const SavedSchema:any = PatternNodeV2Schema;
+      SavedSchema._def.getter = () => z.object({
+        kind:z.literal('alias-mutation-kind')});`,
+    `PatternAstV2DefinitionSchema.shape.root = z.object({
+      kind:z.literal('definition-mutation-kind')});`,
+  ]){
+    assert.throws(()=>schemaKinds(schema+'\n'+snippet),
+      /canonical exported schema (?:properties must not be mutated|must not be aliased)/,
+      'schema must reject post-declaration authority changes');
+  }
 });
 
 test('canonical union initializer rejects captures in any nested field callback',()=>{
