@@ -61,6 +61,7 @@ export interface PatternV2Evaluation {
 
 interface EvaluationContext {
   events: TriggerSourceEvent[];
+  eventsByRef: Map<string, TriggerSourceEvent[]>;
   evaluator: SemanticEvaluator | null;
   now: Date;
   maxCandidates: number;
@@ -69,11 +70,85 @@ interface EvaluationContext {
   semanticCacheHits: number;
   semanticCacheMisses: number;
   truncated: boolean;
+  workSteps: number;
+  maxWorkSteps: number;
+  workExhausted: boolean;
   semanticCache: Map<string, SemanticDecision>;
   durableSemanticCache: PatternV2SemanticCache | null;
   semanticCacheNamespace: string;
   semanticTrace: PatternV2SemanticTrace[];
   allowedLatenessMs: number;
+}
+
+// Fixed process-local caps are separate from public AST execution fields.
+// Every exceeded limit is inconclusive, never a complete no-match.
+const MAX_EVALUATION_INPUT_EVENTS = 50_000;
+const MAX_EVALUATION_AST_NODES = 4_096;
+const MAX_EVALUATION_AST_DEPTH = 128;
+const MAX_EVALUATION_WORK_STEPS = 250_000;
+
+function consumeWork(
+  context: EvaluationContext,
+  units = 1,
+): boolean {
+  if (context.workExhausted) return false;
+  context.workSteps += units;
+  if (context.workSteps <= context.maxWorkSteps) return true;
+  context.workExhausted = true;
+  context.truncated = true;
+  return false;
+}
+
+function boundedAst(root: PatternNodeV2): boolean {
+  // DFS with explicit exits counts each occurrence but only rejects
+  // references present on the *active ancestor path*. Reused immutable
+  // acyclic subtrees are allowed; circular objects cannot recurse.
+  type Frame = { value: unknown; depth: number; exit: boolean };
+  const pending: Frame[] = [{ value: root, depth: 0, exit: false }];
+  const active = new Set<object>();
+  let visited = 0;
+  while (pending.length) {
+    const { value, depth, exit } = pending.pop()!;
+    if (!value || typeof value !== 'object') return false;
+    if (exit) {
+      active.delete(value);
+      continue;
+    }
+    if (depth > MAX_EVALUATION_AST_DEPTH ||
+      ++visited > MAX_EVALUATION_AST_NODES ||
+      active.has(value)) return false;
+    active.add(value);
+    const node = value as Record<string, unknown>;
+    pending.push({ value, depth, exit: true });
+    const branches: unknown[] = [];
+    if (Array.isArray(node.children)) {
+      if (node.children.length + visited > MAX_EVALUATION_AST_NODES) {
+        return false;
+      }
+      branches.push(...node.children);
+    }
+    if (node.child) branches.push(node.child);
+    if (node.forbidden && typeof node.forbidden === 'object') {
+      branches.push(node.forbidden);
+    }
+    // A shallow compare may contain arbitrarily deep arithmetic trees.
+    // Count these as part of the same bounded structural traversal.
+    if (node.kind === 'compare') {
+      if (node.left) branches.push(node.left);
+      if (node.right) branches.push(node.right);
+    }
+    if (node.kind === 'arithmetic' && Array.isArray(node.args)) {
+      if (node.args.length + visited > MAX_EVALUATION_AST_NODES) {
+        return false;
+      }
+      branches.push(...node.args);
+    }
+    if (branches.length + visited > MAX_EVALUATION_AST_NODES) return false;
+    for (let i=branches.length-1;i>=0;i--){
+      pending.push({ value:branches[i], depth:depth+1, exit:false });
+    }
+  }
+  return true;
 }
 
 function stableValue(value: unknown): unknown {
@@ -164,15 +239,38 @@ function stableEvents(
   return output.sort(eventOrder);
 }
 
+// Every candidate merge used to scan the entire source array for every
+// bound event (O(events * candidates * bindings)). Cache the first ordered
+// location per physical identity; the evaluator never mutates "all".
+const orderedIndexes = new WeakMap<
+  TriggerSourceEvent[],
+  { indexes: Map<string, number>; scanned: number }
+>();
+function indexedKey(event: TriggerSourceEvent): string {
+  return JSON.stringify([event.clauseId, eventIdentity(event)]);
+}
 function indexFor(
   all: TriggerSourceEvent[],
   event: TriggerSourceEvent,
 ): number {
-  return all.findIndex(
-    (candidate) =>
-      candidate.clauseId === event.clauseId &&
-      eventIdentity(candidate) === eventIdentity(event),
-  );
+  let state = orderedIndexes.get(all);
+  if (!state) {
+    state = { indexes: new Map(), scanned: 0 };
+    orderedIndexes.set(all, state);
+  }
+  const key = indexedKey(event);
+  const known = state.indexes.get(key);
+  if (known !== undefined) return known;
+  // Lazily index only the input prefix necessary to resolve a witness.
+  // Eagerly hashing every buffered event would make a low candidate cap
+  // perform the same expensive identity work as a full evaluation.
+  while (state.scanned < all.length) {
+    const i = state.scanned++;
+    const sourceKey = indexedKey(all[i]!);
+    if (!state.indexes.has(sourceKey)) state.indexes.set(sourceKey, i);
+    if (sourceKey === key) return state.indexes.get(key)!;
+  }
+  return -1;
 }
 
 function candidateFromBindings(
@@ -303,6 +401,24 @@ function numeric(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value)
     ? value
     : null;
+}
+
+// A compare expression is re-evaluated for each child candidate. Count
+// every structural occurrence, including shared DAG edges, once per node
+// invocation; then reserve that work for *each* candidate before executing
+// recursive arithmetic. This prevents a wide shallow expression multiplied
+// by thousands of candidates from silently bypassing the shared work cap.
+function arithmeticNodeCost(value: PatternArithmeticValue): number {
+  let cost = 0;
+  const pending: PatternArithmeticValue[] = [value];
+  while (pending.length) {
+    const item = pending.pop()!;
+    cost += 1;
+    if (item.kind === 'arithmetic') {
+      pending.push(...item.args);
+    }
+  }
+  return cost;
 }
 
 function evaluateValue(
@@ -598,9 +714,13 @@ function eventsForRef(
   context: EvaluationContext,
   ref: string,
 ): TriggerSourceEvent[] {
-  return context.events
-    .filter((event) => event.clauseId === ref)
-    .sort(eventOrder);
+  // The input is already sorted; index once by ref rather than rescanning
+  // up to 50k events for every branch of a wide anyOf or nested predicate.
+  const values = context.eventsByRef.get(ref) ?? [];
+  // A consumer can still traverse the full returned reference array;
+  // charge its size to the shared budget even on cache hits.
+  if (!consumeWork(context, values.length)) return [];
+  return values;
 }
 
 // Threshold and rate count *physical* source events, not repeated deliveries.
@@ -644,6 +764,27 @@ function withBindingEvents(
       : {}),
     semanticDecisions: [...candidate.semanticDecisions],
   });
+}
+
+// A witness set is copied, hashed and sorted into *each* selected child.
+// Charging eventsForRef() once is insufficient: N candidates × M attached
+// witnesses may amplify bounded input into unbounded CPU/memory use.
+function attachBindingsBounded(
+  context: EvaluationContext,
+  children: PatternV2Candidate[],
+  ref: string,
+  witnesses: TriggerSourceEvent[],
+): PatternV2Candidate[] {
+  const output: PatternV2Candidate[] = [];
+  for (const candidate of children) {
+    const boundCount = Object.values(candidate.bindings)
+      .reduce((total, events) => total + events.length, 0);
+    if (!consumeWork(context, Math.max(1, witnesses.length + boundCount))) {
+      break;
+    }
+    output.push(withBindingEvents(candidate, ref, witnesses, context.events));
+  }
+  return output;
 }
 
 function calendarNodeMatches(
@@ -792,13 +933,14 @@ async function evaluateNode(
   node: PatternNodeV2,
   context: EvaluationContext,
 ): Promise<PatternV2Candidate[]> {
+  if (!consumeWork(context)) return [];
   const all = context.events;
 
   if (node.kind === 'event') {
     const values: PatternV2Candidate[] = [];
     const seen = new Set<string>();
-    for (const event of all) {
-      if (event.clauseId !== node.ref) continue;
+    for (const event of eventsForRef(context, node.ref)) {
+      if (!consumeWork(context)) break;
       // Ref is fixed for this event-node invocation, so physical identity
       // identifies the same candidate as its one-event signature. Skip
       // replayed copies *before* allocating and indexing a candidate.
@@ -818,16 +960,29 @@ async function evaluateNode(
   }
 
   if (node.kind === 'anyOf') {
-    const candidates = (
-      await Promise.all(
-        node.children.map((child: PatternNodeV2) =>
-          evaluateNode(child, context)
-        ),
-      )
-    ).flat();
-    const limited = dedupe(candidates, context.maxCandidates);
-    context.truncated ||= limited.truncated;
-    return limited.values;
+    // Parallel child materialization + flat() can retain
+    // children.length * maxCandidates candidates before the dedupe cap.
+    // Traverse in the same deterministic child order and stop after the
+    // first extra unique outcome. A stopped branch is always truncated.
+    const unionCandidates: PatternV2Candidate[] = [];
+    const seen = new Set<string>();
+    for (const child of node.children as PatternNodeV2[]) {
+      if (context.workExhausted) break;
+      const candidates = await evaluateNode(child, context);
+      for (const candidate of candidates) {
+        if (!consumeWork(context)) break;
+        const key = candidateDedupeKey(candidate);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        if (unionCandidates.length >= context.maxCandidates) {
+          context.truncated = true;
+          return unionCandidates;
+        }
+        unionCandidates.push(candidate);
+      }
+      if (context.workExhausted) break;
+    }
+    return unionCandidates;
   }
 
   if (node.kind === 'allOf') {
@@ -843,6 +998,7 @@ async function evaluateNode(
       combinations:
       for (const left of current) {
         for (const right of next) {
+          if (!consumeWork(context)) break combinations;
           const merged = mergeCandidates(left, right, all);
           if (!merged) continue;
           const key = candidateDedupeKey(merged);
@@ -904,6 +1060,7 @@ async function evaluateNode(
       sequenceJoin:
       for (const left of current) {
         for (const { candidate: right } of rankedSuccessors) {
+          if (!consumeWork(context)) break sequenceJoin;
           if (right.events.length && left.events.length) {
             if (right.startIndex <= left.endIndex) continue;
             if (node.contiguity === 'next' &&
@@ -1005,7 +1162,7 @@ async function evaluateNode(
 
       const compatibleIndexes: number[] = [];
       for (let index = start; index < units.length; index += 1) {
-        if (!consumeStep()) return;
+        if (!consumeWork(context) || !consumeStep()) return;
         const unit = units[index]!;
         if (
           selected.events.length &&
@@ -1030,7 +1187,7 @@ async function evaluateNode(
       }
 
       for (const index of compatibleIndexes) {
-        if (!consumeStep()) return;
+        if (!consumeWork(context) || !consumeStep()) return;
         const unit = units[index]!;
         const merged = mergeCandidates(selected, unit, all);
         if (!merged) continue;
@@ -1085,16 +1242,25 @@ async function evaluateNode(
 
   if (node.kind === 'notPresent') {
     const forbidden = eventsForRef(context, node.ref);
-    return (await evaluateNode(node.child, context))
-      .filter((candidate) =>
-        !forbidden.some((event) => {
-          const index = indexFor(context.events, event);
-          return (
-            index >= candidate.startIndex &&
-            index <= candidate.endIndex
-          );
-        })
-      );
+    const children = await evaluateNode(node.child, context);
+    if (context.truncated) return [];
+    const complete: PatternV2Candidate[] = [];
+    for (const candidate of children) {
+      let blocked = false;
+      for (const event of forbidden) {
+        // Stop *both* loops at the first exhausted work unit. A false
+        // .some() callback would keep scanning millions of times.
+        if (!consumeWork(context)) return [];
+        const index = indexFor(context.events, event);
+        if (index >= candidate.startIndex &&
+            index <= candidate.endIndex) {
+          blocked = true;
+          break;
+        }
+      }
+      if (!blocked) complete.push(candidate);
+    }
+    return complete;
   }
 
   if (node.kind === 'after') {
@@ -1126,15 +1292,10 @@ async function evaluateNode(
   if (node.kind === 'threshold') {
     const refEvents = distinctEventsForRef(context, node.ref);
     if (refEvents.length < node.atLeast) return [];
-    return (await evaluateNode(node.child, context))
-      .map((candidate) =>
-        withBindingEvents(
-          candidate,
-          node.ref,
-          refEvents.slice(0, node.atLeast),
-          context.events,
-        )
-      );
+    const child = await evaluateNode(node.child, context);
+    return attachBindingsBounded(
+      context, child, node.ref, refEvents.slice(0, node.atLeast),
+    );
   }
 
   if (node.kind === 'distinct') {
@@ -1156,10 +1317,8 @@ async function evaluateNode(
       if (values.size >= node.atLeast) break;
     }
     if (values.size < node.atLeast) return [];
-    return (await evaluateNode(node.child, context))
-      .map((candidate) =>
-        withBindingEvents(candidate, node.ref, chosen, context.events)
-      );
+    const child = await evaluateNode(node.child, context);
+    return attachBindingsBounded(context, child, node.ref, chosen);
   }
 
   if (node.kind === 'rate') {
@@ -1172,15 +1331,10 @@ async function evaluateNode(
       (event) => latest - Date.parse(event.occurredAt) <= node.perMs,
     );
     if (inWindow.length < node.atLeast) return [];
-    return (await evaluateNode(node.child, context))
-      .map((candidate) =>
-        withBindingEvents(
-          candidate,
-          node.ref,
-          inWindow.slice(-node.atLeast),
-          context.events,
-        )
-      );
+    const child = await evaluateNode(node.child, context);
+    return attachBindingsBounded(
+      context, child, node.ref, inWindow.slice(-node.atLeast),
+    );
   }
 
   if (node.kind === 'debounce') {
@@ -1189,27 +1343,22 @@ async function evaluateNode(
     if (!latest) return [];
     const dueAt = Date.parse(latest.occurredAt) + node.forMs;
     const finalAt = dueAt + context.allowedLatenessMs;
-    return (await evaluateNode(node.child, context))
-      .map((candidate) => {
-        const augmented = withBindingEvents(
-          candidate,
-          node.ref,
-          [latest],
-          context.events,
-        );
-        return {
-          ...augmented,
-          ...(context.now.getTime() < finalAt
-            ? { pendingUntil: new Date(finalAt).toISOString() }
-            : {}),
-        };
-      });
+    const child = await evaluateNode(node.child, context);
+    return attachBindingsBounded(context, child, node.ref, [latest])
+      .map((augmented) => ({
+        ...augmented,
+        ...(context.now.getTime() < finalAt
+          ? { pendingUntil: new Date(finalAt).toISOString() }
+          : {}),
+      }));
   }
 
   if (node.kind === 'absence') {
     const bases = await evaluateNode(node.child, context);
     const forbidden = eventsForRef(context, node.ref);
     const output: PatternV2Candidate[] = [];
+    // An incomplete child cannot establish a negative absence fact.
+    if (context.truncated) return [];
 
     for (const base of bases) {
       const anchor = latestBoundEvent(base, node.afterRef);
@@ -1217,10 +1366,15 @@ async function evaluateNode(
       const due = absenceNodeDueAt(node, anchor);
       const finalAt = due.getTime() + context.allowedLatenessMs;
       const anchorMs = Date.parse(anchor.occurredAt);
-      const blocked = forbidden.some((event) => {
+      let blocked = false;
+      for (const event of forbidden) {
+        if (!consumeWork(context)) return [];
         const at = Date.parse(event.occurredAt);
-        return at >= anchorMs && at <= due.getTime();
-      });
+        if (at >= anchorMs && at <= due.getTime()) {
+          blocked = true;
+          break;
+        }
+      }
       if (blocked) continue;
       output.push({
         ...base,
@@ -1241,14 +1395,21 @@ async function evaluateNode(
     // truncated=true, so never emit negative matches from incomplete
     // evidence. A prior child truncation also warrants a fail-closed exit.
     if (context.truncated) return [];
-    return bases.filter((base) => {
-      if (!base.events.length) return false;
-      return !forbidden.some(
-        (candidate) =>
-          candidate.events.length &&
-          candidate.startIndex === base.endIndex + 1,
-      );
-    });
+    const allowed: PatternV2Candidate[] = [];
+    for (const base of bases) {
+      if (!base.events.length) continue;
+      let blocked = false;
+      for (const candidate of forbidden) {
+        if (!consumeWork(context)) return [];
+        if (candidate.events.length &&
+            candidate.startIndex === base.endIndex + 1) {
+          blocked = true;
+          break;
+        }
+      }
+      if (!blocked) allowed.push(base);
+    }
+    return allowed;
   }
 
   if (node.kind === 'notFollowedBy') {
@@ -1264,15 +1425,17 @@ async function evaluateNode(
       const anchor = Date.parse(base.events.at(-1)!.occurredAt);
       const dueAt = anchor + node.withinMs;
       const finalAt = dueAt + context.allowedLatenessMs;
-      const blocked = forbidden.some((candidate) => {
-        if (!candidate.events.length) return false;
+      let blocked = false;
+      for (const candidate of forbidden) {
+        if (!consumeWork(context)) return [];
+        if (!candidate.events.length) continue;
         const startedAt = Date.parse(candidate.events[0]!.occurredAt);
         const completedAt = Date.parse(candidate.events.at(-1)!.occurredAt);
-        return (
-          startedAt > anchor &&
-          completedAt <= dueAt
-        );
-      });
+        if (startedAt > anchor && completedAt <= dueAt) {
+          blocked = true;
+          break;
+        }
+      }
       if (blocked) continue;
       output.push({
         ...base,
@@ -1287,13 +1450,18 @@ async function evaluateNode(
   const child = await evaluateNode(node.child, context);
 
   if (node.kind === 'compare') {
-    return child.filter((candidate) =>
-      compareValue(
-        evaluateValue(node.left, candidate),
-        node,
-        candidate,
-      )
-    );
+    const cost = arithmeticNodeCost(node.left) +
+      (node.right ? arithmeticNodeCost(node.right) : 0);
+    const selected: PatternV2Candidate[] = [];
+    for (const candidate of child) {
+      // A saturated budget is inconclusive, not a definitive no-match.
+      // Negative ancestors already fail closed on context.truncated.
+      if (!consumeWork(context, cost)) break;
+      if (compareValue(evaluateValue(node.left, candidate), node, candidate)) {
+        selected.push(candidate);
+      }
+    }
+    return selected;
   }
 
   if (node.kind === 'aggregate') {
@@ -1452,9 +1620,25 @@ export async function evaluatePatternV2({
   semanticCache?: PatternV2SemanticCache | null;
   semanticCacheNamespace?: string;
 }): Promise<PatternV2Evaluation> {
+  // Bounded preflight before input cloning/sort or AST recursion.
+  if (events.length > MAX_EVALUATION_INPUT_EVENTS ||
+    !boundedAst(definition.root)) {
+    return {
+      matches: [], pending: [], semanticEvaluations: 0,
+      semanticCacheHits: 0, semanticCacheMisses: 0,
+      semanticTrace: [], truncated: true,
+    };
+  }
   const ordered = [...events].sort(eventOrder);
+  const eventsByRef = new Map<string, TriggerSourceEvent[]>();
+  for (const event of ordered) {
+    const bucket = eventsByRef.get(event.clauseId) ?? [];
+    bucket.push(event);
+    eventsByRef.set(event.clauseId, bucket);
+  }
   const context: EvaluationContext = {
     events: ordered,
+    eventsByRef,
     evaluator,
     now,
     maxCandidates: definition.execution.maxCandidates,
@@ -1463,6 +1647,10 @@ export async function evaluatePatternV2({
     semanticCacheHits: 0,
     semanticCacheMisses: 0,
     truncated: false,
+    workSteps: 0,
+    maxWorkSteps: Math.min(MAX_EVALUATION_WORK_STEPS,
+      Math.max(4_096, definition.execution.maxCandidates * 128)),
+    workExhausted: false,
     semanticCache: new Map(),
     durableSemanticCache: semanticCache,
     semanticCacheNamespace,
