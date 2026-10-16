@@ -297,6 +297,15 @@ function normalizePositiveInteger(value, fallback, min, max, name) {
   return normalized;
 }
 
+function normalizePollFloorMs(value) {
+  const floor=value===undefined?1000:value;
+  if(typeof floor!=='number' || !Number.isInteger(floor) ||
+    floor<1000 || floor>300000) {
+    throw new Error('pollFloorMs must be an integer between 1000 and 300000');
+  }
+  return floor;
+}
+
 function normalizeConnection(connection) {
   assertObject(connection, 'Invalid host-managed MCP Events connection');
   const connectionId = String(connection.connectionId || '').trim();
@@ -343,13 +352,7 @@ function normalizeConnection(connection) {
       300000,
       'pollIntervalMs',
     ),
-    pollFloorMs: normalizePositiveInteger(
-      connection.pollFloorMs,
-      1000,
-      1000,
-      300000,
-      'pollFloorMs',
-    ),
+    pollFloorMs: normalizePollFloorMs(connection.pollFloorMs),
     maxEvents: normalizePositiveInteger(
       connection.maxEvents,
       100,
