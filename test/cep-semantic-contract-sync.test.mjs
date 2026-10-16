@@ -205,6 +205,33 @@ function schemaKinds(source) {
     assert.fail('uninspectable canonical member: '+value.getText(parsed));
   }
   array.elements.forEach(member);
+  // A returned `const node` is still an object. A post-initialization
+  // `node.options.push(...)`, `Object.assign(node,...)` or an indirect
+  // const-initializer side effect can widen its runtime union while the
+  // initializer-only AST reader still reports the same 22 members.
+  // Rather than pretending to solve JS dataflow, accept a deliberately
+  // narrow static factory: const union plus primitive string constants,
+  // immediately followed by the only, direct return. A refactor outside
+  // this subset requires an explicit contract-guard design review.
+  assert.equal(factory.body.statements.at(-1), returns[0],
+    'canonical lazy factory must end in its direct return');
+  for (const statement of factory.body.statements.slice(0, -1)) {
+    assert.ok(ts.isVariableStatement(statement) &&
+      (statement.declarationList.flags & ts.NodeFlags.Const) !== 0,
+      'canonical lazy factory must not contain mutating statements');
+    for (const declaration of statement.declarationList.declarations) {
+      assert.ok(ts.isIdentifier(declaration.name) && declaration.initializer,
+        'canonical lazy factory requires inspectable const declarations');
+      if (declaration.name.text === 'node') continue;
+      // Primitive string constants cannot have their properties mutated.
+      // Whole-schema objects, arrays, calls and arbitrary expressions
+      // can mutate the canonical union as hidden side effects.
+      const initializer = declaration.initializer;
+      assert.ok(ts.isStringLiteral(initializer) ||
+        ts.isNoSubstitutionTemplateLiteral(initializer),
+        'canonical factory auxiliary declarations must be primitive strings');
+    }
+  }
   assert.equal(new Set(kinds).size,kinds.length,'duplicate node discriminator');
   return kinds.sort();
 }
@@ -316,6 +343,33 @@ test('mutable const object-shape aliases cannot hide an AST discriminator', () =
   assert.throws(() => schemaKinds(indexed),
     /canonical node shapes must be inline/,
     'computed property writes must not evade the canonical contract');
+});
+
+test('returned union cannot be mutated by later factory statements', () => {
+  const returned = '  return node;';
+  assert.ok(schema.includes(returned));
+
+  const cases = [
+    `  node.options.push(z.object({kind: z.literal('hidden-mutant')}));
+`,
+    `  Object.assign(node, { options: [
+    ...node.options, z.object({kind:z.literal('assigned-mutant')})
+  ] });
+`,
+    `  const sideEffect = node.options.push(
+    z.object({kind:z.literal('indirect-mutant')}));
+`,
+    `  if (true) node.options.push(
+    z.object({kind:z.literal('conditional-mutant')}));
+`,
+  ];
+  for (const snippet of cases) {
+    const widened = schema.replace(returned, snippet + returned);
+    assert.notEqual(widened, schema);
+    assert.throws(() => schemaKinds(widened),
+      /canonical (?:lazy factory must not contain mutating statements|factory auxiliary declarations must be primitive strings)/,
+      'post-declaration mutation must not evade the documented operator count');
+  }
 });
 
 test('mutable canonical export and post-declaration widening fail closed', () => {
