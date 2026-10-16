@@ -370,17 +370,20 @@ cep-production-mutation-evidence.json`. The file is archived as
 `public-release-cep-mutation-evidence` on public release-check pushes.
 The normal `npm run check` also runs the same mutation-kill assertions.
 
-Four deliberately seeded compiled-JavaScript mutations must produce
+Five deliberately seeded compiled-JavaScript mutations must produce
 a different result from the independent finite witness specification:
 1. `event_dropped_truncation`: dropping the event-cap incompleteness flag
    while retaining only the capped source prefix;
 2. `allof_dropped_truncation`: not propagating Cartesian join-budget truncation;
 3. `sequence_dropped_truncation`: suppressing sequence join-budget
    incompleteness for `followedByAny` even when both children fit the cap;
-4. `negative_forbidden_deadline_exclusive`: changing inclusive forbidden
+4. `repeat_dropped_exploration_budget`: ignoring the recursive repeat
+   work-step limit, which changes an incomplete zero-match into a falsely
+   complete zero-match;
+5. `negative_forbidden_deadline_exclusive`: changing inclusive forbidden
    deadline to exclusive.
 
-The expanded corpus is versioned `ei.cep-production-mutation.v2`; it
+The expanded corpus is versioned `ei.cep-production-mutation.v3`; it
 changes only synthetic CI/release-gate evidence, not the Pattern AST,
 runtime package API, persistence or downstream integrations. The
 sequence oracle is the simple independent finite chronological
@@ -396,7 +399,7 @@ a killed semantic mutation. Temporary snapshot modules are deleted in
 `finally`. The gate fails on a surviving mutant or changed mutation
 anchor, preventing silent drift of the regression claims.
 
-**Scope:** This is a **four-mutant targeted proof**, not a mutation score
+**Scope:** This is a **five-mutant targeted proof**, not a mutation score
 for the whole engine, randomized falsification of all 22 AST nodes,
 coverage of nested temporal/selection states, or a full resource bound.
 The working Node/OS, repository and test dependencies are trusted. The

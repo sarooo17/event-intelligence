@@ -65,6 +65,22 @@ const cases = {
     now: new Date(clockOrigin + 500),
     expected: {matches:['a:0|b:0','a:0|b:1'],pending:[],truncated:true},
   },
+  repeat_exploration_budget: {
+    // Each allOf(a,b) unit contains the very same physical a:0. No
+    // two units may form a valid repeat(min=2); exploring alternatives
+    // consumes work although the correct complete answer is no-match.
+    // maxCandidates=100 admits all 100 child units without truncation.
+    // Only the repeat-local exploration cap makes it *inconclusive*.
+    definition: definition({kind:'repeat',min:2,max:2,mode:'greedy',
+      contiguity:'combinations',child:{kind:'allOf',children:[
+        {kind:'event',ref:'a'},{kind:'event',ref:'b'},
+      ]}},100,256),
+    events:[occurrence('a','a:0',0),
+      ...Array.from({length:100},(_,i)=>
+        occurrence('b','b:'+i,(i+1)*10))],
+    now:new Date(clockOrigin+2000),
+    expected:{matches:[],pending:[],truncated:true},
+  },
   forbidden_inclusive_deadline: {
     definition: definition({kind:'notFollowedBy',id:'forbidden-deadline',
       child:{kind:'event',ref:'a'},forbidden:{kind:'event',ref:'b'},
@@ -102,13 +118,22 @@ const mutants = [
     replace: 'context.truncated ||= false;',
   },
   {
+    id: 'repeat_dropped_exploration_budget',
+    fixture: 'repeat_exploration_budget',
+    // Disable only repeat's exploration threshold, not the candidate
+    // count cap or non-overlap checks. An unbounded complete zero-match
+    // must differ from the correct budget-inconclusive empty projection.
+    find: 'explorationSteps <= maxExplorationSteps',
+    replace: 'explorationSteps <= Number.MAX_SAFE_INTEGER',
+  },
+  {
     id: 'negative_forbidden_deadline_exclusive',
     fixture: 'forbidden_inclusive_deadline',
     find: 'completedAt <= dueAt',
     replace: 'completedAt < dueAt',
   },
 ];
-export const MUTATION_CORPUS_VERSION = 'ei.cep-production-mutation.v2';
+export const MUTATION_CORPUS_VERSION = 'ei.cep-production-mutation.v3';
 
 function shuffle(original, id) {
   const events = [...original];

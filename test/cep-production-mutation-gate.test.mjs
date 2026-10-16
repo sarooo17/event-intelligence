@@ -11,12 +11,13 @@ test('bounded production evaluator mutations must all be killed by independent i
   const result = await runMutationCorpus();
   assert.equal(result.format, MUTATION_CORPUS_VERSION);
   assert.equal(result.seed, 20261015);
-  assert.equal(result.totalMutants, 4);
+  assert.equal(result.totalMutants, 5);
   assert.equal(result.killedMutants, result.totalMutants);
   assert.deepEqual(result.mutants.map(x => x.mutation), [
     'event_dropped_truncation',
     'allof_dropped_truncation',
     'sequence_dropped_truncation',
+    'repeat_dropped_exploration_budget',
     'negative_forbidden_deadline_exclusive',
   ]);
   for (const mutation of result.mutants) {
