@@ -52,6 +52,8 @@ export interface PatternV2SemanticCache {
 export interface PatternV2Evaluation {
   matches: PatternV2Candidate[];
   pending: PatternV2Candidate[];
+  // Source-gap deferred deadlines, never independently valid matches.
+  incompletePending?: PatternV2Candidate[];
   semanticEvaluations: number;
   semanticCacheHits: number;
   semanticCacheMisses: number;
@@ -63,6 +65,7 @@ interface EvaluationContext {
   events: TriggerSourceEvent[];
   eventsByRef: Map<string, TriggerSourceEvent[]>;
   incompleteSourceRefs: ReadonlySet<string>;
+  incompletePending: PatternV2Candidate[];
   evaluator: SemanticEvaluator | null;
   now: Date;
   maxCandidates: number;
@@ -1381,6 +1384,24 @@ async function evaluateNode(
 
   if (node.kind === 'absence') {
     if (context.incompleteSourceRefs.has(node.ref)) {
+      const bases = await evaluateNode(node.child, context);
+      if (context.truncated) return [];
+      for (const base of bases) {
+        if (!consumeWork(context)) break;
+        if (context.incompletePending.length >= context.maxCandidates) {
+          context.truncated = true;
+          break;
+        }
+        const anchor = latestBoundEvent(base, node.afterRef);
+        if (!anchor) continue;
+        const due = absenceNodeDueAt(node, anchor);
+        context.incompletePending.push({
+          ...base,
+          pendingUntil: new Date(
+            due.getTime()+context.allowedLatenessMs,
+          ).toISOString(),
+        });
+      }
       context.truncated = true;
       return [];
     }
@@ -1448,6 +1469,23 @@ async function evaluateNode(
 
   if (node.kind === 'notFollowedBy') {
     if (forbiddenNeedsIncompleteSource(node.forbidden, context)) {
+      const bases = await evaluateNode(node.child, context);
+      if (context.truncated) return [];
+      // Preserve an actual durable timer for an anchor created DURING
+      // a delivery gap. It is only a reevaluation hint, NEVER a match.
+      for (const base of bases) {
+        if (!base.events.length) continue;
+        if (!consumeWork(context)) break;
+        if (context.incompletePending.length >= context.maxCandidates) {
+          context.truncated = true;
+          break;
+        }
+        const anchor = Date.parse(base.events.at(-1)!.occurredAt);
+        const deadline = anchor + node.withinMs + context.allowedLatenessMs;
+        context.incompletePending.push({
+          ...base, pendingUntil: new Date(deadline).toISOString(),
+        });
+      }
       context.truncated = true;
       return [];
     }
@@ -1680,6 +1718,7 @@ export async function evaluatePatternV2({
     events: ordered,
     eventsByRef,
     incompleteSourceRefs,
+    incompletePending: [],
     evaluator,
     now,
     maxCandidates: definition.execution.maxCandidates,
@@ -1717,6 +1756,8 @@ export async function evaluatePatternV2({
   return {
     matches,
     pending,
+    ...(context.incompletePending.length
+      ? { incompletePending: context.incompletePending } : {}),
     semanticEvaluations: context.semanticEvaluations,
     semanticCacheHits: context.semanticCacheHits,
     semanticCacheMisses: context.semanticCacheMisses,
