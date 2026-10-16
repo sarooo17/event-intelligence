@@ -103,3 +103,44 @@ restart and owner guard evidence, **not** runtime-wide authorization,
 network failover, actual OS process kill, a total causal graph, or every
 explanation status code. Do not mark all of #48 as production-ready based on
 this single scenario.
+
+
+## Versioned machine-readable diagnosis (new #48 slice)
+
+`TriggerInspector.inspect()` now additionally returns a small
+`diagnosis` object: `contract:"ei.trigger-inspection.v1"`,
+`kind`, `evidence:"persisted_state"`,
+`sourceCertainty:"unverified"`, `missingClauseIds` and
+`pendingDeadlineCount`. This is **additive**; existing `why.code`,
+`evidenceSummary`, and host-owned owner/scope authorization do not
+change. Kinds are `no_local_match`, `pattern_pending`,
+`temporal_pending`, `effect_pending`, `wake_failed`,
+`fired`, `derived_emitted`, `match_expired`,
+`inactive` and `lifecycle_ended`.
+
+The classification uses only previously read persisted state: the
+trigger lifecycle, selected match, deadline list and wake status.
+`wake_failed` requires a real `dead_letter` wake; when no wake
+is present the reason is only `effect_pending`, never a fabricated
+delivery failure. `temporal_pending` requires a stored pending
+deadline. `missingClauseIds` reports refs not present on the
+**selected** match only, not a proof that an arbitrary Pattern AST
+branch is unsatisfiable.
+
+All statuses retain `sourceCertainty:"unverified"`, explicitly
+preventing a diagnosis from claiming provider delivery completeness,
+upstream event impossibility, watermark consistency or source
+availability without authoritative source-gap/health evidence.
+Cross-source missing events and unknown source availability remain
+inconclusive. Semantic budget truncation is not materialized on the
+canonical Pattern match record: this slice cannot reliably report it,
+and does not invent such metadata. See #166 C for gap propagation
+and #44 for budget proof.
+
+Deterministic test: `test/trigger-inspector-diagnosis-v1.test.mjs`.
+It checks twelve status transitions, dead-letter, suspended state,
+deadline boundaries, payload redaction and equivalent inspector
+projections from two separately instantiated stores. No new
+retention, database schema, authority or model dependency is added.
+Full #48 acceptance still requires runtime source/gap state, bounded
+high-cardinality read guarantees, tracing failure chaos and review.
