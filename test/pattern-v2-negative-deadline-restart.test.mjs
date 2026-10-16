@@ -51,13 +51,17 @@ function summary(store) {
       .filter(x=>x.patternState?.role==='match' &&
         x.status==='matched')
       .map(x=>({
+        matchId:x.matchId,
         evidence:x.sourceEvents.map(e=>e.sourceEventId),
         completedAt:x.patternState.completedAt,
       }))
       .sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b))),
     deadlines:store.listTemporalDeadlines({triggerId})
-      .map(x=>({dueAt:x.dueAt,status:x.status})).sort((a,b)=>
-        a.dueAt.localeCompare(b.dueAt)),
+      .map(x=>({
+        deadlineId:x.deadlineId,matchId:x.matchId,
+        triggerId:x.triggerId,triggerVersion:x.triggerVersion,
+        conditionId:x.conditionId,dueAt:x.dueAt,status:x.status,
+      })).sort((a,b)=>a.deadlineId.localeCompare(b.deadlineId)),
   };
 }
 
@@ -81,6 +85,11 @@ async function execute(seed,blocked,doRestart){
     assert.equal(initial.length,1,
       'initial anchor must create one pending notFollowedBy deadline');
     assert.equal(initial[0].dueAt,new Date(t0+withinMs+latenessMs).toISOString());
+    assert.equal(initial[0].matchId,first[0].match.matchId,
+      'pending deadline must reference the persisted partial match');
+    assert.equal(initial[0].triggerVersion,trigger.version);
+    assert.ok(initial[0].conditionId && initial[0].deadlineId,
+      'durable deadline needs stable condition and deadline identities');
 
     if(doRestart){
       await store.close();
@@ -107,12 +116,37 @@ async function execute(seed,blocked,doRestart){
     assert.deepEqual(early,[],
       'scheduler must not finish negative match one millisecond early');
     now=new Date(t0+withinMs);
-    await scheduler.runDue();
+    const firstDue=await scheduler.runDue();
     const actual=summary(store);
-
+    assert.equal(actual.deadlines.length,1,
+      'one pending negative deadline must have one terminal outcome');
+    assert.equal(actual.deadlines[0].status,blocked?'cancelled':'fired',
+      'forbidden negative branch must cancel, clean branch must fire');
+    assert.equal(store.listTemporalDeadlines({triggerId,status:'pending'}).length,0,
+      'no completed/cancelled deadline may remain pending');
+    assert.equal(actual.deadlines[0].deadlineId,initial[0].deadlineId);
+    assert.equal(actual.deadlines[0].conditionId,initial[0].conditionId);
+    assert.equal(actual.deadlines[0].matchId,initial[0].matchId);
+    assert.equal(actual.deadlines[0].triggerVersion,trigger.version);
+    assert.ok(store.listTriggerMatches(triggerId).some(
+      x=>x.matchId===actual.deadlines[0].matchId),
+      'terminal deadline must retain a corresponding persisted match');
+    if(!blocked){
+      assert.equal(firstDue.length,1,
+        'clean negative deadline must result in one due timer action');
+      assert.equal(firstDue[0].status,'fired');
+    }
     // Replay on the same clock and across another physical store reopen:
-    // no additional match, and no change to authoritative deadline state.
-    await scheduler.runDue();
+    // no additional match, audit append, hidden partial history or timer.
+    const auditBefore=store.listAudit().length;
+    const historyBefore=store.listTriggerMatchHistory().length;
+    const again=await scheduler.runDue();
+    assert.deepEqual(again,[],
+      'terminal deadline cannot be executed a second time');
+    assert.equal(store.listAudit().length,auditBefore,
+      'second timer pass must not append audit entries');
+    assert.equal(store.listTriggerMatchHistory().length,historyBefore,
+      'second timer pass must not append hidden match-history revisions');
     assert.deepEqual(summary(store),actual,
       'same-clock second timer pass must not duplicate negative evidence');
     assert.equal(await store.verifyAudit(),true);
