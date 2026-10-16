@@ -199,6 +199,21 @@ function schemaKinds(source) {
       ts.isPropertyAccessExpression(value.expression) &&
       ['strict','superRefine','refine','describe','readonly'].includes(
         value.expression.name.text)) {
+      // Refinement callbacks run after the surrounding union is created.
+      // Capturing the returned "node" can mutate node.options even when
+      // the factory itself contains only const declarations and a return.
+      // Do not certify wrapper arguments whose callbacks reference the
+      // returned union. Inspect AST identifiers (not raw source strings).
+      for (const argument of value.arguments) {
+        function rejectReturnedUnionCapture(child) {
+          if (ts.isIdentifier(child) && child.text === returned.text) {
+            assert.fail(
+              'canonical member wrapper must not capture returned union');
+          }
+          ts.forEachChild(child, rejectReturnedUnionCapture);
+        }
+        rejectReturnedUnionCapture(argument);
+      }
       member(value.expression.expression);
       return;
     }
@@ -343,6 +358,35 @@ test('mutable const object-shape aliases cannot hide an AST discriminator', () =
   assert.throws(() => schemaKinds(indexed),
     /canonical node shapes must be inline/,
     'computed property writes must not evade the canonical contract');
+});
+
+test('refinement wrapper callbacks cannot capture and mutate returned union', () => {
+  const needle = `    z.object({
+      kind: z.literal('event'),
+      ref: Id,
+    }).strict(),`;
+  assert.ok(schema.includes(needle));
+  for (const callback of [
+    `() => node.options.push(z.object({kind:z.literal('callback-mutant')}))`,
+    `(value, ctx) => {
+      if (value.ref) Object.assign(node, {
+        options: [...node.options, z.object({kind:z.literal('closure-mutant')})],
+      });
+    }`,
+    `() => { const option = node.options; option.push(
+      z.object({kind:z.literal('indirect-closure-mutant')})); }`,
+  ]) {
+    const injected = schema.replace(
+      needle,
+      needle.replace('.strict(),', `.strict().superRefine(${callback}),`),
+    );
+    assert.notEqual(injected, schema);
+    assert.throws(() => schemaKinds(injected),
+      /canonical member wrapper must not capture returned union/,
+      'callbacks must not mutate a returned union via closure');
+  }
+  // Existing legitimate refinements use their own value/context arguments.
+  assert.equal(schemaKinds(schema).length, 22);
 });
 
 test('returned union cannot be mutated by later factory statements', () => {
