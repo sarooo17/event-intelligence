@@ -40,11 +40,17 @@ function fixture({state='active',matchStatus='partial',wakeStatus=null,
       matchId:'match-1',dueAt:'2026-10-16T10:30:00.000Z',
       status:'pending',
     }]:[],
-    latestWake:()=>wakeStatus?{
+    latestWake:(id)=>{
+      if(matchStatus==='fired') {
+        assert.equal(id,'wake-1',
+          'manually persisted firedWakeId wins over coordinator-derived hash');
+      }
+      return wakeStatus?{
       wakeId:'wake-1',status:wakeStatus,
       runtimeReceiptId:null,target:{runtime:'test',kind:'task',id:'x'},
       createdAt:now,
-    }:null,
+    }:null;
+    },
   };
   return store;
 }
