@@ -100,8 +100,8 @@ const mutants = [
     fixture: 'event_limit',
     // Preserve the capped source prefix but suppress its incompleteness
     // diagnosis, so the final evaluator dedupe cannot mask this mutant.
-    find: 'if (values.length >= context.maxCandidates) {\n        context.truncated = true;\n        break;',
-    replace: 'if (values.length >= context.maxCandidates) { break;\n        context.truncated = true;\n        break;',
+    find: 'if (values.length >= context.maxCandidates) {',
+    replace: 'if (values.length >= context.maxCandidates) { break;',
   },
   {
     id: 'allof_dropped_truncation',
