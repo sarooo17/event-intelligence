@@ -115,7 +115,7 @@ this single scenario.
 `evidenceSummary`, and host-owned owner/scope authorization do not
 change. Kinds are `no_local_match`, `pattern_pending`,
 `temporal_pending`, `effect_pending`, `wake_failed`,
-`fired`, `derived_emitted`, `match_expired`,
+`fired`, `derived_emitted`, `condition_satisfied`, `match_expired`,
 `inactive` and `lifecycle_ended`.
 
 The classification uses only previously read persisted state: the
@@ -144,3 +144,12 @@ projections from two separately instantiated stores. No new
 retention, database schema, authority or model dependency is added.
 Full #48 acceptance still requires runtime source/gap state, bounded
 high-cardinality read guarantees, tracing failure chaos and review.
+
+**Delivery failure correlation:** a failed wake may be `dead_letter`
+without a `firedWakeId` on the match. Inspection derives the same
+stable wake ID from selected match ID + target runtime/ID as the
+composite wake coordinator and reads `latestWake(wakeId)` (one keyed
+lookup, not an unbounded wake scan). A `conditionOnly` match with no
+effect reports `condition_satisfied`, not `effect_pending`. The
+stdio `inspect` and nested `simulate.inspection` output contracts
+both require and validate the versioned diagnosis shape.
