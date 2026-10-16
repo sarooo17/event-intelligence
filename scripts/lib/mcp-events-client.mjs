@@ -298,6 +298,15 @@ function normalizePositiveInteger(value, fallback, min, max, name) {
   return normalized;
 }
 
+function normalizePollFloorMs(value) {
+  const floor=value===undefined?1000:value;
+  if(typeof floor!=='number' || !Number.isInteger(floor) ||
+    floor<1000 || floor>300000) {
+    throw new Error('pollFloorMs must be an integer between 1000 and 300000');
+  }
+  return floor;
+}
+
 function normalizeConnection(connection) {
   assertObject(connection, 'Invalid host-managed MCP Events connection');
   const connectionId = String(connection.connectionId || '').trim();
@@ -344,6 +353,7 @@ function normalizeConnection(connection) {
       300000,
       'pollIntervalMs',
     ),
+    pollFloorMs: normalizePollFloorMs(connection.pollFloorMs),
     maxEvents: normalizePositiveInteger(
       connection.maxEvents,
       100,
@@ -391,6 +401,7 @@ export function createHostMcpEventsConnection({
   capabilities,
   enabled = true,
   pollIntervalMs = 5000,
+  pollFloorMs = 1000,
   maxEvents = 100,
   maxPollBatches = 4,
   scopeId = DEFAULT_EVENT_SCOPE_ID,
@@ -429,6 +440,7 @@ export function createHostMcpEventsConnection({
     identity: client ?? request ?? directRequest,
     enabled,
     pollIntervalMs,
+    pollFloorMs,
     maxEvents,
     maxPollBatches,
     scopeId,
@@ -477,7 +489,7 @@ function sourceDescriptor(raw, profile) {
 }
 
 function normalizeCursor(cursor, label) {
-  if (cursor === null) return null;
+  if (cursor === null || cursor === undefined) return null;
   if (typeof cursor === 'string') return cursor;
   throw new Error(`${label} returned invalid cursor; expected string|null`);
 }
@@ -1193,11 +1205,19 @@ export class McpEventsClientManager {
         `MCP server ${connection.connectionId} events/poll`,
       );
       hasMore = result.hasMore === true;
+      if (hasMore && cursor === null) {
+        const error = new Error('MCP Events poll backlog requires a continuation cursor');
+        error.code = 'MCP_EVENTS_POLL_CURSOR_INVALID';
+        throw error;
+      }
       truncated = truncated || result.truncated === true;
-      nextPollMs = normalizeNextPollMs(
+      const producerNextPollMs = normalizeNextPollMs(
         result.nextPollMs,
         connection.pollIntervalMs,
       );
+      nextPollMs = hasMore
+        ? producerNextPollMs
+        : Math.max(connection.pollFloorMs, producerNextPollMs);
 
       for (const raw of boundedEvents) {
         const receipt = await this.ingestOccurrence(
@@ -1649,7 +1669,10 @@ export class McpEventsClientManager {
       .filter((state) => !suspended?.has(state.subscriptionId))
       .map((state) => Date.parse(state.nextPollAt || ''))
       .filter(Number.isFinite)
-      .map((time) => Math.max(250, time - now));
+      // The producer floor was already applied when persisting nextPollAt.
+      // A restart just before its deadline must honor the *remaining* time;
+      // do not start a fresh full floor interval after every timer wake.
+      .map((time) => time > now ? time - now : 250);
     return due.length
       ? Math.min(connection.pollIntervalMs, ...due)
       : connection.pollIntervalMs;
