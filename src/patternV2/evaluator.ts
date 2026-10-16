@@ -243,7 +243,8 @@ function stableEvents(
 // bound event (O(events * candidates * bindings)). Cache the first ordered
 // location per physical identity; the evaluator never mutates "all".
 const orderedIndexes = new WeakMap<
-  TriggerSourceEvent[], Map<string, number>
+  TriggerSourceEvent[],
+  { indexes: Map<string, number>; scanned: number }
 >();
 function indexedKey(event: TriggerSourceEvent): string {
   return JSON.stringify([event.clauseId, eventIdentity(event)]);
@@ -252,16 +253,24 @@ function indexFor(
   all: TriggerSourceEvent[],
   event: TriggerSourceEvent,
 ): number {
-  let indexes = orderedIndexes.get(all);
-  if (!indexes) {
-    indexes = new Map();
-    for (let i = 0; i < all.length; i++) {
-      const key = indexedKey(all[i]!);
-      if (!indexes.has(key)) indexes.set(key, i);
-    }
-    orderedIndexes.set(all, indexes);
+  let state = orderedIndexes.get(all);
+  if (!state) {
+    state = { indexes: new Map(), scanned: 0 };
+    orderedIndexes.set(all, state);
   }
-  return indexes.get(indexedKey(event)) ?? -1;
+  const key = indexedKey(event);
+  const known = state.indexes.get(key);
+  if (known !== undefined) return known;
+  // Lazily index only the input prefix necessary to resolve a witness.
+  // Eagerly hashing every buffered event would make a low candidate cap
+  // perform the same expensive identity work as a full evaluation.
+  while (state.scanned < all.length) {
+    const i = state.scanned++;
+    const sourceKey = indexedKey(all[i]!);
+    if (!state.indexes.has(sourceKey)) state.indexes.set(sourceKey, i);
+    if (sourceKey === key) return state.indexes.get(key)!;
+  }
+  return -1;
 }
 
 function candidateFromBindings(
