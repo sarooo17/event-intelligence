@@ -333,6 +333,14 @@ export class PersistentEventStore {
         ...(raw.lastEventAt ? { lastEventAt: String(raw.lastEventAt) } : {}),
         ...(raw.lastError ? { lastError: String(raw.lastError) } : {}),
         ...(typeof raw.truncated === 'boolean' ? { truncated: raw.truncated } : {}),
+        gapUnresolved: raw.gapUnresolved === true ||
+          (raw.gapUnresolved === undefined && raw.truncated === true),
+        ...(typeof raw.gapDetectedAt === 'string'
+          ? { gapDetectedAt: raw.gapDetectedAt } : {}),
+        ...(typeof raw.reconciliationEvidenceId === 'string'
+          ? { reconciliationEvidenceId: raw.reconciliationEvidenceId } : {}),
+        ...(typeof raw.reconciledAt === 'string'
+          ? { reconciledAt: raw.reconciledAt } : {}),
       };
       this.#mcpClientStates.set(
         mcpClientStateKey(
