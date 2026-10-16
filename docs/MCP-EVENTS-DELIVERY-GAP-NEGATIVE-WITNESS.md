@@ -53,3 +53,16 @@ policy instead of claiming impossible retroactive guarantees.
 
 This PR adds no new runtime migration, protocol field, source-of-truth
 claim, npm release, or Artemis/Muffin change. SEP-3415 is still a draft.
+
+### Review-hardening of fixture provenance
+
+The diagnostic clock picks its event-time anchor one hour **after** the
+real write timestamp, then asserts that the persisted `updatedAt` of the
+gap precedes the pending deadline. `lastEventAt` remains the last accepted
+source event timestamp; it is **not** incorrectly treated as gap detection.
+The unrelated-identity controls separately vary only the server, only
+the event name, and only the subscription arguments, as well as the
+original fully unrelated source. Finally, two tenants use
+`PersistentEventStore.forScope()` beneath one shared root, and isolation
+is rechecked after physical reopen. These controls are required for a
+future canonical connection/source matching implementation.
