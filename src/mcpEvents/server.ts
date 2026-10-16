@@ -138,6 +138,31 @@ export class ExperimentalMcpEventsServer {
   }
 
   async poll(params: PollEventsParams): Promise<PollEventsResult> {
+    // Exported direct-call API must enforce the same preflight as JSON-RPC:
+    // otherwise invalid maxEvents bypasses the wire cap.
+    if (!params || typeof params !== 'object' || Array.isArray(params) ||
+        typeof params.name !== 'string' || !params.name) {
+      throw new Error('events/poll requires name');
+    }
+    if (params.cursor !== undefined && params.cursor !== null &&
+        typeof params.cursor !== 'string') {
+      throw new Error('events/poll cursor must be string|null');
+    }
+    if (params.maxEvents !== undefined &&
+        (!Number.isInteger(params.maxEvents) ||
+          params.maxEvents < 1 || params.maxEvents > 500)) {
+      throw new Error('maxEvents must be an integer between 1 and 500');
+    }
+    if (params.maxAgeMs !== undefined &&
+        (typeof params.maxAgeMs !== 'number' ||
+          !Number.isFinite(params.maxAgeMs) || params.maxAgeMs < 0)) {
+      throw new Error('maxAgeMs must be a non-negative finite number');
+    }
+    if (params.arguments !== undefined &&
+        (!params.arguments || typeof params.arguments !== 'object' ||
+          Array.isArray(params.arguments))) {
+      throw new Error('events/poll arguments must be an object');
+    }
     const registered = this.events.get(params.name);
     if (!registered) {
       throw new Error(`Unknown event: ${params.name}`);
