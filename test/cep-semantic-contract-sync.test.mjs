@@ -146,7 +146,16 @@ function schemaKinds(source) {
   assert.ok(ts.isArrayLiteralExpression(array), 'canonical union is not a static array');
   const kinds = [];
   function member(expr) {
-    const value = resolve(expr);
+    // An aliased Zod schema object is mutable even when its binding is
+    // const: e.g. Object.assign(EventNode.shape, { kind: z.literal('x') })
+    // changes the runtime union after its initializer. Never claim that
+    // inspecting an aliased initializer proves the effective member shape.
+    // Keep primitive string aliases in literal() supported separately.
+    const unwrapped = ts.isParenthesizedExpression(expr)
+      ? expr.expression : expr;
+    assert.ok(!ts.isIdentifier(unwrapped),
+      'canonical union members must be inline (schema aliases are mutable)');
+    const value = resolve(unwrapped);
     if (method(value,'union')) {
       const inner = resolve(value.arguments[0]);
       assert.ok(ts.isArrayLiteralExpression(inner),'nested union must be static');
@@ -229,6 +238,38 @@ test('schema drift rejects a spread that can override the kind discriminator', (
   );
   assert.throws(() => schemaKinds(computed),
     /canonical node shape must not use uninspected spreads or computed keys/);
+});
+
+test('mutable const whole-schema aliases cannot hide an AST discriminator', () => {
+  const literal = `    z.object({
+      kind: z.literal('event'),
+      ref: Id,
+    }).strict(),`;
+  const union = '  const node = z.union([';
+  assert.ok(schema.includes(literal) && schema.includes(union),
+    'fixture must target the canonical inline event and union');
+  const aliased = schema.replace(union,
+    `  const EventNode: any = z.object({
+    kind: z.literal('event'),
+    ref: Id,
+  }).strict();
+  const node = z.union([`)
+    .replace(literal, '    EventNode,');
+  assert.notEqual(aliased, schema);
+  assert.throws(() => schemaKinds(aliased),
+    /canonical union members must be inline/,
+    'const Zod members are objects and their shapes remain writable');
+  const mutated = aliased.replace(union,
+    `  Object.assign(EventNode.shape, { kind: z.literal('alias-mutant') });
+` + union);
+  assert.throws(() => schemaKinds(mutated),
+    /canonical union members must be inline/,
+    'mutating a referenced Zod schema shape must not bypass drift gate');
+
+  const chained = mutated.replace('    EventNode,', '    EventNode.strict(),');
+  assert.throws(() => schemaKinds(chained),
+    /canonical union members must be inline/,
+    'schema alias wrapped in Zod fluent methods is still mutable');
 });
 
 test('mutable const object-shape aliases cannot hide an AST discriminator', () => {
@@ -348,10 +389,13 @@ test('schema drift detects quotes, constants and externally declared union membe
   const indirect = schema.replace('const node = z.union([',
     'const ExtraNode = z.object({ kind: z.literal("alias-kind") });\n' +
     '  const node = z.union([\n    ExtraNode,');
-  assert.ok(schemaKinds(indirect).includes('alias-kind'));
-  assert.equal(schemaKinds(indirect).length,original.length + 1);
+  assert.throws(() => schemaKinds(indirect),
+    /canonical union members must be inline/,
+    'a const named Zod node does not guarantee an immutable runtime shape');
   const decorated = indirect.replace('ExtraNode,','ExtraNode.strict(),');
-  assert.deepEqual(schemaKinds(decorated),schemaKinds(indirect));
+  assert.throws(() => schemaKinds(decorated),
+    /canonical union members must be inline/,
+    'a method chain on a mutable schema alias cannot bypass the guard');
 
   // Regression: lexical factory-local symbol is not the later unrelated
   // function-local variable of the same name. The old file-wide symbol
