@@ -352,10 +352,9 @@ export class CompositeTriggerEngine {
       match.patternState?.version === '2' &&
       match.patternState.role === 'buffer'
     ) {
-      // A timer is the last step before a negative absence can become
-      // an irreversible wake. Keep it PENDING if relevant transport
-      // evidence is incomplete. The scheduler will retry after repair.
-      if ((await this.incompleteSourceRefs(definition)).size) return [];
+      // Evaluate the whole AST even under a source gap: independent
+      // positive branches (e.g. debounce in anyOf) must still progress.
+      // The evaluator blocks only negative branches with missing evidence.
       return this.evaluatePatternBuffer(
         definition,
         match,
@@ -780,8 +779,12 @@ export class CompositeTriggerEngine {
     if (!incompleteSourceRefs.size) {
       await this.support.cancelDeadlinesForMatch(buffer.matchId);
     }
-    if (evaluation.pending.length) {
-      const deadlines = evaluation.pending
+    const pendingForDeadlines=[
+      ...evaluation.pending,
+      ...(evaluation.incompletePending ?? []),
+    ];
+    if (pendingForDeadlines.length) {
+      const deadlines = pendingForDeadlines
         .filter((candidate) =>
           candidate.pendingUntil &&
           this.candidateFitsTriggerWindow(candidate, definition.withinMs)
