@@ -1143,7 +1143,12 @@ export class McpEventsClientManager {
           delivery: 'poll',
           status: 'terminal',
           reason: error.terminalReason,
-          accepted: 0,
+          // Earlier pages in this same bounded sweep may already have
+          // committed matches and durable cursor checkpoints.
+          accepted,
+          batches,
+          cursor,
+          truncated,
           consumerCount: subscription.consumerRefs.length,
         };
       }
@@ -1534,6 +1539,15 @@ export class McpEventsClientManager {
 
     const desired = await this.desiredSubscriptions(connection, context);
     const desiredIds = new Set(desired.keys());
+    // Trigger definitions and subscription argument sets can churn forever.
+    // Forget terminal IDs no longer desired so a long-lived connection
+    // cannot accumulate an unbounded quarantine cache.
+    const suspended = this.terminalPollSubscriptions.get(connection);
+    if (suspended) {
+      for (const id of suspended.keys()) {
+        if (!desiredIds.has(id)) suspended.delete(id);
+      }
+    }
     const results = [];
 
     for (const subscription of desired.values()) {
@@ -1629,8 +1643,10 @@ export class McpEventsClientManager {
     const states = await context.store.listMcpClientStates(
       connection.connectionId,
     );
+    const suspended = this.terminalPollSubscriptions.get(connection);
     const now = this.now().getTime();
     const due = states
+      .filter((state) => !suspended?.has(state.subscriptionId))
       .map((state) => Date.parse(state.nextPollAt || ''))
       .filter(Number.isFinite)
       .map((time) => Math.max(250, time - now));
@@ -1642,7 +1658,12 @@ export class McpEventsClientManager {
   scheduleConnection(connection, delay = connection.pollIntervalMs) {
     const existing = this.timers.get(connection.connectionId);
     if (existing) clearTimeout(existing);
-    if (!this.started) return;
+    // An exact-session Forbidden is terminal; do not run another timer
+    // just to rediscover that no further provider call is allowed.
+    if (!this.started || this.terminalConnections.has(connection)) {
+      this.timers.delete(connection.connectionId);
+      return;
+    }
 
     const timer = setTimeout(async () => {
       try {
