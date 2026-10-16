@@ -333,23 +333,32 @@ function schemaKinds(source) {
   const targets=new Set([
     'PatternNodeV2Schema','PatternAstV2DefinitionSchema',
   ]);
+  function transparent(expression) {
+    let value=expression;
+    while(ts.isParenthesizedExpression(value) ||
+      ts.isAsExpression(value) ||
+      ts.isTypeAssertionExpression(value) ||
+      ts.isNonNullExpression(value) ||
+      ts.isSatisfiesExpression(value)) value=value.expression;
+    return value;
+  }
   function schemaTarget(expression) {
-    let current=expression;
+    let current=transparent(expression);
     while(ts.isPropertyAccessExpression(current) ||
-      ts.isElementAccessExpression(current)) current=current.expression;
+      ts.isElementAccessExpression(current)) {
+      current=transparent(current.expression);
+    }
     return ts.isIdentifier(current) && targets.has(current.text);
   }
   function rejectExportedSchemaMutation(node) {
     if(ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) &&
-      node.initializer && ts.isIdentifier(node.initializer) &&
-      targets.has(node.initializer.text)) {
+      node.initializer && schemaTarget(node.initializer)) {
       assert.fail('canonical exported schema must not be aliased');
     }
     if(ts.isBinaryExpression(node) &&
-      schemaTarget(node.left) && [
-        ts.SyntaxKind.EqualsToken,ts.SyntaxKind.PlusEqualsToken,
-        ts.SyntaxKind.BarBarEqualsToken,ts.SyntaxKind.QuestionQuestionEqualsToken,
-      ].includes(node.operatorToken.kind)) {
+      schemaTarget(node.left) &&
+      node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+      node.operatorToken.kind <= ts.SyntaxKind.LastAssignment) {
       assert.fail('canonical exported schema properties must not be mutated');
     }
     if(ts.isDeleteExpression(node) && schemaTarget(node.expression)) {
@@ -512,6 +521,15 @@ test('exported schema property writes, mutating calls and aliases fail closed',(
     `const SavedSchema:any = PatternNodeV2Schema;
       SavedSchema._def.getter = () => z.object({
         kind:z.literal('alias-mutation-kind')});`,
+    `const SavedSchema:any = (PatternAstV2DefinitionSchema as any);
+      SavedSchema.shape.root = z.object({
+        kind:z.literal('asserted-alias-mutation')});`,
+    `PatternAstV2DefinitionSchema.shape.root &&=
+      z.object({kind:z.literal('and-assign-mutation')});`,
+    `PatternAstV2DefinitionSchema.shape.root ||= 
+      z.object({kind:z.literal('or-assign-mutation')});`,
+    `PatternAstV2DefinitionSchema.shape.root ??=
+      z.object({kind:z.literal('nullish-assign-mutation')});`,
     `PatternAstV2DefinitionSchema.shape.root = z.object({
       kind:z.literal('definition-mutation-kind')});`,
   ]){
