@@ -146,9 +146,9 @@ Full #48 acceptance still requires runtime source/gap state, bounded
 high-cardinality read guarantees, tracing failure chaos and review.
 
 **Delivery failure correlation:** a failed wake may be `dead_letter`
-without a `firedWakeId` on the match. Inspection derives the same
-stable wake ID from selected match ID + target runtime/ID as the
-composite wake coordinator and reads `latestWake(wakeId)` (one keyed
+without a `firedWakeId` on the match. Inspection **prefers** the persisted `firedWakeId` when present,
+otherwise derives the same stable wake ID from selected match ID + target
+runtime/ID as the composite wake coordinator, then reads `latestWake(wakeId)` (one keyed
 lookup, not an unbounded wake scan). A `conditionOnly` match with no
 effect reports `condition_satisfied`, not `effect_pending`. The
 stdio `inspect` and nested `simulate.inspection` output contracts
