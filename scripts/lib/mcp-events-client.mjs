@@ -1244,6 +1244,7 @@ export class McpEventsClientManager {
           deliveryMode: 'poll',
           cursor,
           truncated,
+          ...(truncated ? { gapDetectedAt: this.now().toISOString() } : {}),
           nextPollAt,
           ...(lastEventAt ? { lastEventAt } : {}),
         },
@@ -1366,7 +1367,9 @@ export class McpEventsClientManager {
             }
           : {}),
         ...(typeof update.truncated === 'boolean'
-          ? { truncated: update.truncated }
+          ? { truncated: update.truncated,
+              ...(update.truncated
+                ? { gapDetectedAt: this.now().toISOString() } : {}) }
           : {}),
       };
       await this.saveSubscriptionState(
@@ -1515,6 +1518,42 @@ export class McpEventsClientManager {
         await this.closeSession(subscriptionId, session);
       }
     }
+  }
+
+  /**
+   * Host-only explicit reconciliation after independently verified replay.
+   * Never exposed as an MCP tool or callable from a provider notification.
+   * An opaque cursor advancing is NOT evidence of replay completeness.
+   */
+  async acknowledgeReconciledGap({
+    connectionId, eventName, arguments: args = {}, evidenceId,
+  }) {
+    if(typeof evidenceId !== 'string' || !evidenceId.trim() ||
+       evidenceId.length > 256) {
+      throw new Error('Host reconciliation requires an evidence ID');
+    }
+    const connection=this.connections.get(connectionId);
+    if(!connection) throw new Error('Unknown host-managed connection');
+    this.assertConnectionAttached(connection);
+    const context=await this.scopeContext(connection);
+    this.assertConnectionAttached(connection);
+    return this.withConnectionMutation(connectionId,async()=>{
+      this.assertConnectionAttached(connection);
+      const previous=await context.store.getMcpClientState(
+        connectionId,eventName,args,
+      );
+      if(!previous || previous.serverId!==connection.serverId ||
+         !(previous.gapUnresolved===true || previous.truncated===true)) {
+        throw new Error('No unresolved gap for the attached source');
+      }
+      this.assertConnectionAttached(connection);
+      return context.store.putMcpClientState({
+        ...previous, connectionId, serverId:connection.serverId,
+        eventName,arguments:args,gapReconciled:true,
+        reconciliationEvidenceId:evidenceId,
+        truncated:false,
+      });
+    });
   }
 
   async pollConnection(connectionId, options = {}) {
