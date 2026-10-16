@@ -22,6 +22,7 @@ The source evaluator never gains runtime credentials or a second agent loop.
 | Execution budgets and interpretation | A bounded intermediate candidate branch can lose a real match yet return zero matches; `truncated:true` means **inconclusive**, not no-match. Temporal pending and capped semantic calls have distinct evidence | `test/pattern-v2-budget-evidence.test.mjs`; `scripts/evidence/pattern-v2-budget-evidence.mjs` |
 | Candidate and semantic budgets | Budget exhaustion sets `truncated:true` even when `matches:[]`; only an untruncated empty result is a conclusive no-match within the modeled bounded snapshot | `test/pattern-v2-budget-outcomes.test.mjs`, `scripts/evidence/pattern-v2-conformance.mjs` |
 | Nested budget completeness | `window(allOf(a,b))` and `window(repeat(x,2..3))` can hide a real match behind intermediate candidate truncation; exhausted runs retain `truncated:true`, while independently enumerated high-cap runs recover the exact match | `test/pattern-v2-nested-budget-completeness.test.mjs`; Cartesian pairs, finite subsets, opposite delivery orders, low-vs-high cap |
+| Bounded repeat exploration and depth | A repeat branch with no candidate output can still expend combinatorial work; exploration is capped at `maxCandidates * 32` scanned/attempted steps and 256 recursive levels. Exhaustion returns `truncated:true` even when `matches:[]`, whereas a mathematically impossible minimum (`min > available child units`) yields a complete no-match if child evidence is complete | `test/pattern-v2-repeat-exploration-budget.test.mjs`; two delivery orders, 100 overlapping allOf units, low/high work budgets, impossible minimum and 513-unit depth witness |
 | `optional` / `repeat` candidate-cap completeness | Both branches must propagate `dedupe(...).truncated` to the evaluation-level `truncated` diagnostic; low cap=1 may suppress optional members even inside nested sequences | `test/pattern-v2-optional-repeat-truncation.test.mjs`; greedy/lazy, arrival reversal, nested sequence and repeat low/high caps |
 | Incremental `allOf` candidate cap | Joins consume candidate pairs only until the first `maxCandidates + 1` **unique** Cartesian witness, preserving first-match order and explicit `truncated:true`; no full `allOf` product materialization | `test/pattern-v2-allof-streaming-cap.test.mjs`; deterministic 3×3 pair parity and measured witness-access fanout |
 | Once-sorted `sequence` successor ranking | The right-hand candidate order is independent of each left anchor: rank/sort once per child, then stream compatible successors with the same greedy/lazy, `next`/`followedBy`/`followedByAny` behavior and capped first prefix; no per-left filtered array/sort | `test/pattern-v2-sequence-once-sorted.test.mjs`; deterministic 24×24 source fanout, exact 512/576 prefix and array-sort instrumentation (not a global CPU limit) |
@@ -473,3 +474,27 @@ conclusion or external side effect. The report does not establish
 partition independence, OS-process restart equivalence, clock/DST
 exhaustiveness, semantic timeouts, unbounded nested patterns, or
 production workload limits. Those remain open in #44.
+
+## Repeat exploration safety policy (2026-10-16)
+
+The repeat evaluator now limits the **exploration itself**, not just the
+number of emitted candidates. Each repeat evaluation is bounded to
+`maxCandidates * 32` compatible-index/merge attempts and a maximum recursive
+search depth of 256. These are conservative pre-v1 work guards, not an
+independently tunable execution policy field. Exhaustion marks the evaluation
+`truncated:true` and must not be interpreted by the host as a conclusive
+no-match even if `matches:[]`. A root where `min > available child units`
+returns a complete empty result only when the child evidence was complete;
+a previously truncated child retains the shared `truncated:true` flag.
+
+**Compatibility decision:** no Pattern AST version, public API, persisted
+schema or migration is added. Higher fanout or deep pre-v1 patterns that
+previously could consume disproportionate resources (or throw stack errors)
+now yield an explicitly incomplete result. Hosts upgrading after prior
+unbounded evaluation should replay any relevant event range rather than
+assuming historical no-match statuses were durable negative evidence.
+This finite synthetic suite is not a global evaluator work budget: other
+operators, candidate sorting, multi-worker scheduling and load tests remain
+separate gaps for #44/#47. The 256-depth bound intentionally does not promise
+completeness for deeper, otherwise-valid repeat matches.
+

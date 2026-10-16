@@ -925,6 +925,24 @@ async function evaluateNode(
     const output: Array<{ candidate: PatternV2Candidate; count: number }> = [];
     let localRepeatLimitReached = false;
 
+    // maxCandidates bounds emitted results, not the number of dead-end
+    // recursive paths. Bound exploration separately so nested/high-fanout
+    // repeat patterns cannot silently consume unbounded work while
+    // returning zero matches. Exceeding the search budget is *incomplete*,
+    // never a conclusive no-match.
+    const maxExplorationSteps = context.maxCandidates * 32;
+    const maxSearchDepth = 256;
+    let explorationSteps = 0;
+    const consumeStep = (): boolean => {
+      explorationSteps += 1;
+      if (explorationSteps <= maxExplorationSteps) return true;
+      localRepeatLimitReached = true;
+      context.truncated = true;
+      return false;
+    };
+
+    if (node.min > units.length) return [];
+
     if (node.min === 0) {
       output.push({ candidate: emptyCandidate(), count: 0 });
     }
@@ -934,6 +952,9 @@ async function evaluateNode(
       selected: PatternV2Candidate,
       count: number,
     ) => {
+      if (localRepeatLimitReached) return;
+      // Even perfect compatibility cannot provide enough remaining units.
+      if (count + units.length - start < node.min) return;
       if (count >= node.min) {
         output.push({ candidate: selected, count });
         if (output.length >= context.maxCandidates) {
@@ -942,10 +963,18 @@ async function evaluateNode(
           return;
         }
       }
-      if (count >= max) return;
+      if (count >= max || start >= units.length) return;
+      if (count >= maxSearchDepth) {
+        // Keep the result explicitly inconclusive rather than overflowing
+        // the JavaScript call stack on a valid, high-minimum repeat.
+        localRepeatLimitReached = true;
+        context.truncated = true;
+        return;
+      }
 
       const compatibleIndexes: number[] = [];
       for (let index = start; index < units.length; index += 1) {
+        if (!consumeStep()) return;
         const unit = units[index]!;
         if (
           selected.events.length &&
@@ -970,6 +999,7 @@ async function evaluateNode(
       }
 
       for (const index of compatibleIndexes) {
+        if (!consumeStep()) return;
         const unit = units[index]!;
         const merged = mergeCandidates(selected, unit, all);
         if (!merged) continue;
