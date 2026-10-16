@@ -34,7 +34,7 @@ but require separate adversarial callback and reconnect tests.
 | Relevant gap before deadline | **Negative fires (unsafe)** | Inconclusive / no wake until verified reconciliation |
 | Gap retained over physical store reopen | **Negative fires (unsafe)** | Gap-aware durable finality gate |
 | Gap on unrelated server/event | Negative fires | Unaffected trigger continues |
-| Gap learned *after* finality | Earlier result remains | Define reconciliation/compensation policy; cannot undo effect |
+| Gap learned *after* finality | **Not characterized** (no controllable post-deadline write clock on pre-fix store) | Requires independent late-gap provenance/compensation witness in implementation PR #180 |
 | Two independent JSONL scope stores | No state sharing | Preserve tenant/scope isolation |
 
 **Required fix design before implementation:** use bounded, canonical
@@ -66,3 +66,9 @@ original fully unrelated source. Finally, two tenants use
 `PersistentEventStore.forScope()` beneath one shared root, and isolation
 is rechecked after physical reopen. These controls are required for a
 future canonical connection/source matching implementation.
+
+The earlier late-gap test case was removed following review: the baseline
+store's wall-clock `updatedAt` was before the test's future event-time
+deadline, despite the write being issued after a scheduler call. This
+would misrepresent a post-deadline gap. A future implementation with an
+explicit `gapDetectedAt` field can exercise that boundary correctly.
