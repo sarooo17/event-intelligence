@@ -1,5 +1,6 @@
 import * as z from 'zod/v4';
 import { isProxy } from 'node:util/types';
+import { sha256Hex } from '../../dist/src/intelligenceProtocol/index.js';
 
 import {
   CompositeTriggerEngine,
@@ -183,6 +184,36 @@ function explain({ state, match, wake }) {
   };
 }
 
+// Versioned, payload-free classification based only on authoritative
+// persisted trigger/match/wake/deadline records. These states do not infer
+// that an upstream event was impossible or that a source is available.
+function diagnosticState({ state, match, wake, clauses, pendingDeadlines, definition }) {
+  const contract='ei.trigger-inspection.v1';
+  const sourceCertainty='unverified';
+  const emit=(kind, evidence='persisted_state')=>({
+    contract,kind,evidence,sourceCertainty,
+    missingClauseIds:clauses.filter(c=>c.status==='waiting')
+      .map(c=>c.clauseId),
+    pendingDeadlineCount:pendingDeadlines.length,
+  });
+
+  if (state.status==='paused' || state.status==='deleted') {
+    return emit('inactive');
+  }
+  if (state.status==='expired' || state.status==='completed') {
+    return emit('lifecycle_ended');
+  }
+  if (wake?.status==='dead_letter') return emit('wake_failed');
+  if (match?.status==='fired') return emit('fired');
+  if (match?.status==='emitted') return emit('derived_emitted');
+  if (match?.status==='matched') return emit(definition.conditionOnly
+    ? 'condition_satisfied' : 'effect_pending');
+  if (match?.status==='expired') return emit('match_expired');
+  if (pendingDeadlines.length>0) return emit('temporal_pending');
+  if (!match) return emit('no_local_match');
+  return emit('pattern_pending');
+}
+
 export class TriggerInspector {
   constructor({
     store,
@@ -250,9 +281,15 @@ export class TriggerInspector {
       .map((deadline) => deadline.dueAt)
       .sort()[0] ?? null;
 
-    const wake = match?.firedWakeId
-      ? await this.store.latestWake(match.firedWakeId)
-      : null;
+    // Failed deliveries do not set firedWakeId. Derive the same stable
+    // wake ID as CompositeWakeCoordinator from the selected match + target,
+    // then read only that one wake (no unbounded global history scan).
+    const wakeId = match?.firedWakeId ?? (match && definition.target
+      ? 'wake_' + (await sha256Hex(
+          `composite:${match.matchId}:${definition.target.runtime}:${definition.target.id}`,
+        )).slice(0, 24)
+      : null);
+    const wake = wakeId ? await this.store.latestWake(wakeId) : null;
 
     const derivedOutputs = match
       ? (await this.store.listDerivedEvents?.({ matchId: match.matchId }) ?? [])
@@ -366,6 +403,9 @@ export class TriggerInspector {
         patternState: match?.patternState ?? null,
       },
       why: explain({ state, match, wake }),
+      diagnosis: diagnosticState({
+        state, match, wake, clauses, pendingDeadlines, definition,
+      }),
     };
   }
 }

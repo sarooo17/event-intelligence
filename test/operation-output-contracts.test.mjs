@@ -131,6 +131,11 @@ test('read-only inspector and simulator output contracts reject malformed wire e
       historyTruncated: false, historyLimit: null,
     },
     why: { code: 'waiting_for_pattern_evidence', summary: 'Awaiting events' },
+    diagnosis: {
+      contract: 'ei.trigger-inspection.v1', kind: 'no_local_match',
+      evidence: 'persisted_state', sourceCertainty: 'unverified',
+      missingClauseIds: ['ready'], pendingDeadlineCount: 0,
+    },
   };
   assert.equal(validateOperationOutput('stdio', 'inspect', inspection), inspection);
   for (const bad of [
@@ -138,6 +143,11 @@ test('read-only inspector and simulator output contracts reject malformed wire e
     { ...inspection, why: { code: '', summary: 'missing' } },
     { ...inspection, evidenceSummary: { ...inspection.evidenceSummary, pendingDeadlineCount: -1 } },
     { ...inspection, lineage: { ...inspection.lineage, matchHistory: null } },
+    { ...inspection, diagnosis: undefined },
+    { ...inspection, diagnosis: { ...inspection.diagnosis,
+      sourceCertainty: 'definitely_complete' } },
+    { ...inspection, diagnosis: { ...inspection.diagnosis,
+      kind: 'impossible_without_event' } },
   ]) {
     assert.throws(
       () => validateOperationOutput('stdio', 'inspect', bad),
