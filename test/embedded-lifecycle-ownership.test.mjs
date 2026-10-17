@@ -43,25 +43,16 @@ test('lower-level host is released when post-start agent-tools construction fail
   assert.equal(closed,1,'no host subscriptions may survive rejected installation');
 });
 
-test('neutral facade releases host after invalid tool names and preserves original failure',async()=>{
-  let closed=0;
+test('neutral facade validates host callback configuration before creating resources',async()=>{
+  let starts=0;
   await assert.rejects(
     createEventIntelligence({
-      runtime:{
-        deliver:activation.deliver,
-        resolveContext:()=>({}),
-        control:()=>({action:'execute'}),
-      },
-      tooling:{
-        resolveContext:()=>({}),
-        control:()=>({action:'execute'}),
-        names:{pause:'same-tool',resume:'same-tool'},
-      },
-      createHost:async()=>fakeHost(async()=>{closed++}),
+      runtime:{deliver:activation.deliver,control:()=>({action:'execute'})},
+      createHost:async()=>{starts++;return fakeHost(async()=>{})},
     }),
-    /Duplicate embedded tool name/,
+    error=>error instanceof TypeError&&error.code==='EI_HOST_CONTROL_REQUIRED',
   );
-  assert.equal(closed,1);
+  assert.equal(starts,0);
 });
 
 test('runtime facade releases host after invalid model-facing tools',async()=>{
