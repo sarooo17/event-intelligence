@@ -244,3 +244,26 @@ test('truncated poll page is fenced before first MCP occurrence enters CEP',asyn
     assert.equal(x.state().gapUnresolved,true);
   }finally{await x.close();}
 });
+
+test('provider-declared truncation is durable even if the rest of the page is malformed',async()=>{
+  for(const bad of [
+    {events:null,cursor:null,hasMore:false,truncated:true},
+    {events:[],cursor:123,hasMore:false,truncated:true},
+    {events:[],cursor:'ok',hasMore:false,nextPollMs:-4,truncated:true},
+  ]){
+    const x=await fixture(()=>bad);
+    try{
+      await assert.rejects(x.manager.pollConnection('source'));
+      assert.equal(x.calls.length,1);
+      assert.equal(x.state().gapUnresolved,true);
+      assert.equal(x.state().truncated,true);
+      assert.equal(x.state().cursor,null,
+        'invalid page must never checkpoint its claimed cursor');
+      const reopened=new PersistentEventStore(x.dir);
+      await reopened.init();
+      assert.equal(reopened.getMcpClientState('source','change.detected')
+        .gapUnresolved,true);
+      await reopened.close();
+    } finally {await x.close();}
+  }
+});
