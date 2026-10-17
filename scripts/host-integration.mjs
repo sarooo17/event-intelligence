@@ -416,6 +416,9 @@ export async function createEventIntelligenceHost({
       return runtime.mcpEventsClient.attachConnection(normalized);
     },
     async detachMcpClient(connectionId) {
+      // Revocation/disable writes cannot start after close fences the store.
+      // Keep registry ownership untouched when a late caller is rejected.
+      assertHostOpen();
       registryManaged.delete(connectionId);
       return runtime.mcpEventsClient.detachConnection(connectionId);
     },
