@@ -152,3 +152,11 @@ The real-host tests in `test/host-registry-shutdown-contract.test.mjs`
 check failed startup cleanup, late observer callbacks and an in-flight
 asynchronous registry enumeration resolved during host shutdown. This is a
 focused #42 lifecycle slice, not independent third-party conformance.
+
+During final shutdown EI also bounds the wait for **host-owned** push/webhook
+session close hooks to 500 ms. These hooks are best-effort at the EI boundary:
+a provider teardown that itself awaits `host.close()` must not deadlock
+`host.close()`. Already-started callbacks are tracked and drained before
+closing the store, and all new/late callbacks are fenced. The host remains
+responsible for the external transport's ultimate shutdown/release; EI does
+not pretend a timed-out host hook completed successfully.
