@@ -75,6 +75,40 @@ A provider's own-data `truncated:true` poll marker is durably written
 **before** validation of other page fields and before delivering events
 to the CEP engine; a rejected malformed page does not advance its cursor.
 
+## Atomic finality fencing and deadline reconciliation
+
+At the point a negative (or mixed-pattern) candidate would be
+persisted, a source-state snapshot from the evaluator's read is compared
+against the authoritative scope-local source-state snapshot **within
+the same serialized/transactional commit**. A stale snapshot prevents
+the match write and triggers one bounded reevaluation to retain any
+missing negative retry deadline. The JSONL reference store uses its
+serialized mutation queue. PostgreSQL takes a shared per-scope
+transaction advisory lock for both MCP source-state mutation and
+conditional match insertion, then checks the state projection before
+writing match history. This defines a linearization point for a newly
+reported provider gap; if the provider reports it only *after* the
+match was committed, the host's compensation/late-data contract still
+applies.
+
+The fingerprint is an exact, deterministic canonical representation
+of the scoped delivery-completeness records (limit 16,384 records),
+not a hash that could collide. Scope serialization has throughput
+costs; benchmark and partition appropriately before large-scale use.
+Unrelated positive branches retain their own matches. Every buffer
+evaluation reconciles pending deadline IDs against its **current**
+pending plus gap-retry candidate set, cancelling obsolete debounce
+or otherwise superseded timers rather than accumulating them while
+another branch is gapped.
+
+Tests include:
+- `test/mcp-gap-atomic-finality-race.test.mjs`: force a real gap
+  write between CEP's completeness snapshot and match persistence;
+  no negative effect, then verified replay recovers exactly once.
+- `test/mcp-gap-positive-deadline-reconciliation.test.mjs`:
+  replacing a positive debounce event cancels the obsolete deadline
+  while retaining an unrelated negative retry deadline.
+
 ## Tests and migration
 
 - `test/mcp-events-gap-aware-negative-finality.test.mjs`: real
