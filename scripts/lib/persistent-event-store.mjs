@@ -8,6 +8,7 @@ import {
 } from 'node:fs/promises';
 import path from 'node:path';
 import { mcpGapSnapshot } from '../../dist/src/composite/gapFingerprint.js';
+import { safeMcpSourceArguments } from './mcp-safe-arguments.mjs';
 import { validateHistoryWindowLimit } from './history-window.mjs';
 import { assertWakeClaimGeneration } from './wake-claim-generation.mjs';
 import {
@@ -58,7 +59,7 @@ function canonicalStateValue(value) {
 }
 
 function mcpClientStateKey(connectionId, eventName, args = {}) {
-  return `${String(connectionId)}::${String(eventName)}::${JSON.stringify(canonicalStateValue(args ?? {}))}`;
+  return `${String(connectionId)}::${String(eventName)}::${JSON.stringify(canonicalStateValue(safeMcpSourceArguments(args)))}`;
 }
 
 async function readJsonLines(filePath) {
@@ -973,10 +974,10 @@ export class PersistentEventStore {
       if (!connectionId || !eventName) {
         throw new Error('MCP client state requires connectionId and eventName');
       }
-      const args =
-        input.arguments && !Array.isArray(input.arguments) && typeof input.arguments === 'object'
-          ? input.arguments
-          : {};
+      // Snapshot identity before looking up or writing any gap state.
+      // Proxies, typed arrays, SharedArrayBuffer and non-JSON values are
+      // rejected rather than aliased into the in-memory completeness index.
+      const args = safeMcpSourceArguments(input.arguments);
       const previous = this.getMcpClientState(connectionId, eventName, args);
       const priorRevision = previous?.completenessRevision ?? 0;
       if (!Number.isSafeInteger(priorRevision) ||
