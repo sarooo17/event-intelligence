@@ -1,5 +1,6 @@
 import * as z from 'zod/v4';
 import { isProxy } from 'node:util/types';
+import { createCausalTimeline } from './causal-timeline.mjs';
 import { sha256Hex } from '../../dist/src/intelligenceProtocol/index.js';
 
 import {
@@ -403,6 +404,8 @@ export class TriggerInspector {
         patternState: match?.patternState ?? null,
       },
       why: explain({ state, match, wake }),
+      // Never claim upstream absence or expose payload/host instructions.
+      causalTimeline: createCausalTimeline({ match, wake }),
       diagnosis: diagnosticState({
         state, match, wake, clauses, pendingDeadlines, definition,
       }),
