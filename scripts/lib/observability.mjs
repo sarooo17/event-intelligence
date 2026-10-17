@@ -1,4 +1,4 @@
-import { isProxy } from 'node:util/types';
+import { isNativeError, isProxy } from 'node:util/types';
 
 const LEVELS = new Set(['debug', 'info', 'warn', 'error']);
 const SENSITIVE_KEY = /(authorization|cookie|credential|password|secret|token|payload|instruction|context|evidence|body|content|data)/i;
@@ -62,7 +62,9 @@ function sanitize(value, depth = 0) {
   if (typeof value !== 'object' || isProxy(value)) return '[untrusted value]';
   if (depth >= 3) return '[truncated]';
 
-  if (value instanceof Error) return serializeObservabilityError(value);
+  // isNativeError checks the native error brand without walking attacker-
+  // controlled Proxy prototypes (unlike `instanceof Error`).
+  if (isNativeError(value)) return serializeObservabilityError(value);
 
   if (Array.isArray(value)) {
     const result = [];
@@ -103,7 +105,7 @@ function normalizeSink(input) {
 
 export function serializeObservabilityError(error) {
   if (error && typeof error === 'object' && !isProxy(error) &&
-      error instanceof Error) {
+      isNativeError(error)) {
     const code = errorData(error, 'code');
     return Object.freeze({
       name: truncate(errorData(error, 'name') ?? 'Error', 120),
