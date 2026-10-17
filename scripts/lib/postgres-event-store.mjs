@@ -1,5 +1,6 @@
 import * as z from 'zod/v4';
 import { mcpGapSnapshot } from '../../dist/src/composite/gapFingerprint.js';
+import { safeMcpSourceArguments } from './mcp-safe-arguments.mjs';
 import { randomUUID } from 'node:crypto';
 import {
   AuditChain,
@@ -70,7 +71,7 @@ function canonical(value) {
 
 function mcpStateKey(connectionId, eventName, args = {}) {
   return String(connectionId) + '::' + String(eventName) + '::' +
-    JSON.stringify(canonical(args ?? {}));
+    JSON.stringify(canonical(safeMcpSourceArguments(args)));
 }
 
 function defaultTriggerState(triggerId, version) {
@@ -972,11 +973,7 @@ export class PostgresEventStore {
     if (!connectionId || !eventName) {
       throw new Error('MCP client state requires connectionId and eventName');
     }
-    const args =
-      input.arguments && !Array.isArray(input.arguments) &&
-      typeof input.arguments === 'object'
-        ? input.arguments
-        : {};
+    const args = safeMcpSourceArguments(input.arguments);
     const key = mcpStateKey(connectionId, eventName, args);
     return this.tx(async (client) => {
       // Preserve lock ordering: scope fence, then individual source lock.
