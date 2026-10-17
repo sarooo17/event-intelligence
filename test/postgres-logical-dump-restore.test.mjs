@@ -99,6 +99,45 @@ integrationTest('pg_dump + pg_restore preserves trigger, audit chain, wake recei
       workerId: 'worker-before-snapshot', attemptCount: claimed.attemptCount,
       runtimeReceiptId: 'receipt-original', now: timestamp,
     });
+    // A logical backup must include MCP delivery completeness/cursors as
+    // well as wake receipts. Losing an unresolved gap would make restored
+    // negative CEP incorrectly claim that a forbidden event is absent.
+    const mcpIdentity = {
+      environment:'production',
+      source:{region:{country:'IT',zone:'eu'},tags:['invoices','closed']},
+    };
+    // Simulate reconstruction in an independent recovered worker: source
+    // identity key order differs at the outer and nested object levels.
+    const restoredLookup = {
+      source:{tags:['invoices','closed'],region:{zone:'eu',country:'IT'}},
+      environment:'production',
+    };
+    const unresolvedGap = await source.putMcpClientState({
+      connectionId:'restore-mcp-connection', serverId:'upstream',
+      eventName:'restore.failed', arguments:mcpIdentity,
+      deliveryMode:'poll', cursor:'opaque-cursor-before-restore',
+      truncated:true,
+    });
+    assert.equal(unresolvedGap.gapUnresolved,true);
+    // Same connection + event but DIFFERENT deeply nested arguments must
+    // occupy a distinct persisted source key and independent revision chain.
+    // Without this negative aliasing control the reordered lookup above
+    // could pass even if the store ignored source arguments completely.
+    const alternateIdentity = {
+      source:{region:{country:'FR',zone:'eu'},tags:['invoices','closed']},
+      environment:'production',
+    };
+    const alternateState = await source.putMcpClientState({
+      connectionId:'restore-mcp-connection',serverId:'upstream',
+      eventName:'restore.failed',arguments:alternateIdentity,
+      deliveryMode:'poll',cursor:'other-source-independent-cursor',
+      truncated:false,
+    });
+    assert.equal(alternateState.gapUnresolved,false);
+    assert.equal((await source.listMcpClientStates('restore-mcp-connection')).length,2);
+    assert.deepEqual(await source.getMcpClientState(
+      'restore-mcp-connection','restore.failed',mcpIdentity),unresolvedGap);
+    const originalGapSnapshot = (await source.getMcpGapStateAndSnapshot()).snapshot;
     const originalDefinitions = await source.listTriggers();
     assert.equal(await source.verifyAudit(), true);
 
@@ -120,6 +159,64 @@ integrationTest('pg_dump + pg_restore preserves trigger, audit chain, wake recei
       pool: targetPool, tablePrefix, scopeId: 'tenant-logical',
     });
     await target.init();
+    const restoredGap = await target.getMcpClientState(
+      'restore-mcp-connection','restore.failed',restoredLookup);
+    assert.deepEqual(restoredGap,unresolvedGap,
+      'pg_dump/pg_restore must preserve exact MCP cursor and gap generation');
+    assert.equal(restoredGap.cursor,'opaque-cursor-before-restore');
+    assert.equal(restoredGap.gapUnresolved,true);
+    assert.equal(restoredGap.completenessRevision,unresolvedGap.completenessRevision);
+    const differentLookup = {
+      environment:'production',
+      source:{tags:['invoices','closed'],region:{zone:'eu',country:'FR'}},
+    };
+    assert.deepEqual(await target.getMcpClientState(
+      'restore-mcp-connection','restore.failed',differentLookup),alternateState,
+      'nested alternate identity keeps independent cursor and revision after restore');
+    assert.equal((await target.listMcpClientStates('restore-mcp-connection')).length,2,
+      'restoration must not collapse distinct source-argument identities');
+    assert.equal((await target.getMcpGapStateAndSnapshot()).snapshot,
+      originalGapSnapshot,
+      'restored CEP must retain the unresolved delivery-gap finality fence');
+    assert.equal(await target.forScope('other-tenant').then(scope=>
+      scope.getMcpClientState('restore-mcp-connection','restore.failed',restoredLookup)
+    ),null,'cross-tenant restoration must not expose a source cursor');
+
+    // A host receipt covering a pre-backup gap must not erase a *new* gap
+    // recorded by the restored worker: durable source revision is fenced.
+    const subsequentGap = await target.putMcpClientState({
+      ...restoredGap,arguments:restoredLookup,
+      cursor:'opaque-cursor-after-restore',truncated:true,
+    });
+    assert.equal(subsequentGap.gapUnresolved,true);
+    assert.equal(subsequentGap.completenessRevision,
+      unresolvedGap.completenessRevision+1);
+    const newerSnapshot = (await target.getMcpGapStateAndSnapshot()).snapshot;
+    await assert.rejects(target.putMcpClientState({
+      ...restoredGap,arguments:restoredLookup,
+      truncated:false,gapReconciled:true,
+      reconciliationEvidenceId:'stale-pre-backup-replay',
+      expectedCompletenessRevision:unresolvedGap.completenessRevision,
+    }),error=>error?.code==='MCP_EVENTS_GAP_REVISION_CONFLICT',
+    'old host replay evidence must not erase a newer recovered gap');
+    assert.deepEqual(await target.getMcpClientState(
+      'restore-mcp-connection','restore.failed',restoredLookup),subsequentGap);
+    assert.equal((await target.getMcpGapStateAndSnapshot()).snapshot,newerSnapshot,
+      'stale receipt must not change negative CEP finality evidence');
+    const reconciledGap = await target.putMcpClientState({
+      ...subsequentGap,arguments:restoredLookup,
+      truncated:false,gapReconciled:true,
+      expectedCompletenessRevision:subsequentGap.completenessRevision,
+      reconciliationEvidenceId:'verified-after-backup-and-replay',
+    });
+    assert.equal(reconciledGap.gapUnresolved,false);
+    assert.equal(reconciledGap.completenessRevision,
+      subsequentGap.completenessRevision+1);
+    assert.deepEqual(await target.getMcpClientState(
+      'restore-mcp-connection','restore.failed',differentLookup),alternateState,
+      'repairing the first restored source must never update a second identity');
+    assert.notEqual((await target.getMcpGapStateAndSnapshot()).snapshot,
+      newerSnapshot);
     assert.deepEqual(await target.listTriggers(), originalDefinitions);
     const restoredState = await target.getTriggerState('logical-restore-trigger', '1');
     assert.equal(restoredState.status, 'paused');
