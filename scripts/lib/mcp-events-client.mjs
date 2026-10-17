@@ -565,6 +565,24 @@ export class McpEventsClientManager {
     this.connectionMutations = new Map();
     this.deliverySessions = new Map();
     this.started = false;
+    this.closed = false;
+    this.closePromise = null;
+    // All direct, scoped and registry attach operations share this manager.
+    // A host close must drain them before the owning store is torn down.
+    this.attachInFlight = new Set();
+    // Detach disables durable sources and closes host-owned sessions.
+    // A detach accepted before close must finish before store teardown.
+    this.detachInFlight = new Set();
+    // Host-only reconciliation can read/write durable gap evidence during
+    // close; every accepted operation must settle before store shutdown.
+    this.reconciliationInFlight = new Set();
+    // Detach session teardown needs a cancellable close notification.
+    // A never-settled Promise.then would retain every completed detach on
+    // long-lived hosts until the eventual process shutdown.
+    this.shutdownListeners = new Set();
+    // Push/webhook providers may retain callback references after session
+    // cleanup. Track callbacks accepted before shutdown; reject later ones.
+    this.deliveryCallbackInFlight = new Set();
 
     for (const connection of connections) {
       this.addConnection(connection);
@@ -595,7 +613,16 @@ export class McpEventsClientManager {
     return context;
   }
 
+  assertOpen() {
+    if (this.closed) {
+      const error = new Error('Event Intelligence MCP client manager is closed');
+      error.code = 'EI_HOST_CLOSED';
+      throw error;
+    }
+  }
+
   addConnection(input) {
+    this.assertOpen();
     const connection = normalizeConnection(input);
     if (connection.enabled === false) return connection;
     if (this.connections.has(connection.connectionId)) {
@@ -616,6 +643,8 @@ export class McpEventsClientManager {
   }
 
   assertConnectionAttached(connection) {
+    // Already-accepted poll work is allowed to finish while close() drains
+    // it. New work is denied by add/attach/discover/poll entry guards.
     if (!this.isConnectionAttached(connection)) {
       const error = new Error('Host MCP Events connection is detached');
       error.code = 'MCP_EVENTS_CONNECTION_DETACHED';
@@ -640,17 +669,43 @@ export class McpEventsClientManager {
 
   async attachConnection(input, { discover = true } = {}) {
     const connection = this.addConnection(input);
-    let events = [];
-    if (connection.enabled !== false && discover) {
-      events = await this.discoverConnection(connection.connectionId);
+    const pending = (async () => {
+      let events = [];
+      if (connection.enabled !== false && discover) {
+        events = await this.discoverConnection(connection.connectionId);
+      }
+      this.assertOpen();
+      if (connection.enabled !== false) this.assertConnectionAttached(connection);
+      if (connection.enabled !== false && this.started) {
+        this.scheduleConnection(connection, 0);
+      }
+      return { connectionId: connection.connectionId, events };
+    })();
+    this.attachInFlight.add(pending);
+    try {
+      return await pending;
+    } finally {
+      this.attachInFlight.delete(pending);
     }
-    if (connection.enabled !== false && this.started) {
-      this.scheduleConnection(connection, 0);
+  }
+
+  trackDeliveryCallback(operation) {
+    if (this.closed) return Promise.resolve();
+    // Invoke the accepted ingress synchronously: the onEvent/onActive/onGap
+    // handlers take their own-data snapshots before their first await. A
+    // deferred .then(operation) would let a producer mutate event/cursor
+    // objects after invoking the callback but before we copied them.
+    let task;
+    try {
+      task = Promise.resolve(operation());
+    } catch (error) {
+      task = Promise.reject(error);
     }
-    return {
-      connectionId: connection.connectionId,
-      events,
-    };
+    this.deliveryCallbackInFlight.add(task);
+    void task.finally(() => {
+      this.deliveryCallbackInFlight.delete(task);
+    }).catch(() => {});
+    return task;
   }
 
   async closeSession(subscriptionId, expectedSession = null) {
@@ -666,6 +721,17 @@ export class McpEventsClientManager {
   }
 
   async detachConnection(connectionId) {
+    this.assertOpen();
+    const pending = this.detachConnectionUnchecked(connectionId);
+    this.detachInFlight.add(pending);
+    try {
+      return await pending;
+    } finally {
+      this.detachInFlight.delete(pending);
+    }
+  }
+
+  async detachConnectionUnchecked(connectionId) {
     // Revoke authority synchronously. Reserve cleanup in the *same* durable
     // mutation queue before the first await, so new sessions cannot discover
     // sources or persist cursors ahead of the old disable operation.
@@ -706,9 +772,31 @@ export class McpEventsClientManager {
     const previousSessions = [...this.deliverySessions].filter(
       ([, session]) => session.connection === connection,
     );
-    await Promise.all(previousSessions.map(([id,session]) =>
+    // Register the removable listener BEFORE invoking any host-owned
+    // session hook; that hook can synchronously reenter host.close().
+    let shutdownTimer;
+    let detachSettled = false;
+    let signalShutdown;
+    const shutdownGrace = new Promise(resolve => {
+      signalShutdown = () => {
+        if (detachSettled || shutdownTimer) return;
+        shutdownTimer = setTimeout(resolve, 500);
+      };
+      this.shutdownListeners.add(signalShutdown);
+      if (this.closed) signalShutdown();
+    });
+    const sessionTeardown = Promise.all(previousSessions.map(([id,session]) =>
       this.closeSession(id,session)
     ));
+    // Ordinary detach awaits the provider hook. Only a concurrent global
+    // shutdown makes bounded best-effort teardown eligible.
+    try {
+      await Promise.race([sessionTeardown, shutdownGrace]);
+    } finally {
+      detachSettled = true;
+      this.shutdownListeners.delete(signalShutdown);
+      clearTimeout(shutdownTimer);
+    }
     try {
       await cleanup;
     } finally {
@@ -747,6 +835,7 @@ export class McpEventsClientManager {
   }
 
   async discoverConnection(connectionId) {
+    this.assertOpen();
     const connection = this.connections.get(connectionId);
     if (!connection) {
       throw new Error(
@@ -755,9 +844,11 @@ export class McpEventsClientManager {
     }
 
     const context = await this.scopeContext(connection);
+    this.assertOpen();
     const capabilities = await this.invokeProvider(async () =>
       safeMcpCapabilities(await connection.getCapabilities()),
     );
+    this.assertOpen();
     this.assertConnectionAttached(connection);
     const profile = resolveMcpEventsCompatibilityProfile({
       capabilities,
@@ -788,6 +879,7 @@ export class McpEventsClientManager {
         profile.listMethod,
         cursor ? { cursor } : {},
       );
+      this.assertOpen();
       this.assertConnectionAttached(connection);
       const listed = ownDiscoveryPage(rawPage, connectionId);
       // Validate the *original* cursor shape and cycle before parsing any
@@ -853,7 +945,9 @@ export class McpEventsClientManager {
     } while (cursor);
 
     for (const normalized of descriptors) {
+      this.assertOpen();
       await this.withConnectionMutation(connectionId, async () => {
+        this.assertOpen();
         this.assertConnectionAttached(connection);
         const sourceId =
         `mcp:${connection.connectionId}:${normalized.name}`;
@@ -876,6 +970,7 @@ export class McpEventsClientManager {
         existing.metadata?.extensionId === profile.extensionId;
 
       if (!same) {
+        this.assertOpen();
         this.assertConnectionAttached(connection);
         const register = context.triggerControl?.registerEventSource
           ? (sourceInput, actor) =>
@@ -1294,6 +1389,7 @@ export class McpEventsClientManager {
     subscription,
     delivery,
   ) {
+    this.assertOpen();
     this.assertConnectionAttached(connection);
     const existing = this.deliverySessions.get(subscription.subscriptionId);
     if (existing?.delivery === delivery && existing.connection === connection) {
@@ -1448,11 +1544,15 @@ export class McpEventsClientManager {
         name: subscription.eventName,
         arguments: subscription.arguments,
         cursor: current?.cursor ?? null,
-        onEvent,
-        onActive,
-        onGap,
-        onError,
-        onTerminated,
+        // Never expose raw unguarded callbacks to a provider that can
+        // retain them after the host destroys its sessions.
+        onEvent: value => this.trackDeliveryCallback(() => onEvent(value)),
+        onActive: value => this.trackDeliveryCallback(() => onActive(value)),
+        onGap: value => this.trackDeliveryCallback(() => onGap(value)),
+        onError: value => {
+          if (!this.closed) onError(value);
+        },
+        onTerminated: value => this.trackDeliveryCallback(() => onTerminated(value)),
       })),
     );
     const close = projectedHandle.close;
@@ -1543,7 +1643,18 @@ export class McpEventsClientManager {
    * Never exposed as an MCP tool or callable from a provider notification.
    * An opaque cursor advancing is NOT evidence of replay completeness.
    */
-  async acknowledgeReconciledGap({
+  async acknowledgeReconciledGap(input) {
+    this.assertOpen();
+    const pending = this.acknowledgeReconciledGapUnchecked(input);
+    this.reconciliationInFlight.add(pending);
+    try {
+      return await pending;
+    } finally {
+      this.reconciliationInFlight.delete(pending);
+    }
+  }
+
+  async acknowledgeReconciledGapUnchecked({
     connectionId, eventName, arguments: args = {}, evidenceId,
     expectedCompletenessRevision,
   }) {
@@ -1582,6 +1693,7 @@ export class McpEventsClientManager {
   }
 
   async pollConnection(connectionId, options = {}) {
+    this.assertOpen();
     const existing = this.pollInFlight.get(connectionId);
     if (existing) return existing;
 
@@ -1785,18 +1897,39 @@ export class McpEventsClientManager {
   }
 
   start() {
+    this.assertOpen();
     this.started = true;
     for (const connection of this.connections.values()) {
       this.scheduleConnection(connection, 0);
     }
   }
 
-  async stop() {
+  async stop({ shutdown = false } = {}) {
     this.started = false;
     for (const timer of this.timers.values()) clearTimeout(timer);
     this.timers.clear();
-    for (const subscriptionId of [...this.deliverySessions.keys()]) {
-      await this.closeSession(subscriptionId);
+    // Begin every host-owned teardown promptly. During final close a
+    // provider hook may return/await the host.close() promise itself; an
+    // unbounded await would deadlock the shutdown that the hook is waiting
+    // for. Revoke callbacks before invoking hooks and use bounded best-
+    // effort teardown during final shutdown only.
+    const teardown = Promise.allSettled(
+      [...this.deliverySessions.keys()].map(id => this.closeSession(id)),
+    );
+    if (!shutdown) {
+      await teardown;
+      return;
+    }
+    let timeout;
+    try {
+      await Promise.race([
+        teardown,
+        new Promise(resolve => {
+          timeout = setTimeout(resolve, 500);
+        }),
+      ]);
+    } finally {
+      clearTimeout(timeout);
     }
   }
 
@@ -1806,9 +1939,45 @@ export class McpEventsClientManager {
     }
   }
 
-  async close() {
-    await this.stop();
-    await this.drain();
+  close() {
+    if (this.closePromise) return this.closePromise;
+    // Close the authority boundary synchronously, including callers who
+    // retain host.runtime.mcpEventsClient directly across host shutdown.
+    this.closed = true;
+    for (const listener of this.shutdownListeners) listener();
+    this.shutdownListeners.clear();
+    // Publish the manager close promise BEFORE any provider session hooks
+    // can synchronously call host.close() and reenter manager.close().
+    let resolveClose;
+    let rejectClose;
+    this.closePromise = new Promise((resolve, reject) => {
+      resolveClose = resolve;
+      rejectClose = reject;
+    });
+    Promise.resolve().then(async () => {
+      await this.stop({ shutdown: true });
+      // Already-accepted manual/scoped attachments may be awaiting an
+      // untrusted provider. All must settle (or fail on assertOpen) while
+      // the runtime/store is still available, never after it has closed.
+      while (this.attachInFlight.size > 0) {
+        await Promise.allSettled([...this.attachInFlight]);
+      }
+      // A manually accepted detach can still be writing disabled source
+      // records; release the authoritative store only after it settles.
+      while (this.detachInFlight.size > 0) {
+        await Promise.allSettled([...this.detachInFlight]);
+      }
+      // Gaps acknowledged before the close fence can still have a
+      // pending authoritative store write; finish them before runtime.close.
+      while (this.reconciliationInFlight.size > 0) {
+        await Promise.allSettled([...this.reconciliationInFlight]);
+      }
+      await this.drain();
+      while (this.deliveryCallbackInFlight.size > 0) {
+        await Promise.allSettled([...this.deliveryCallbackInFlight]);
+      }
+    }).then(resolveClose, rejectClose);
+    return this.closePromise;
   }
 
   async status() {

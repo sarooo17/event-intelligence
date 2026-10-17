@@ -125,3 +125,86 @@ recover resources a failing host factory never returned. Tests in
 errors and overlapping host/app shutdown hooks with no external runtime SDK.
 This is **partial #42 acceptance**, not yet third-party independent
 integration or complete three-host lifecycle v3 certification.
+
+### MCP registry shutdown fence
+
+`createEventIntelligenceHost()` now treats registry initialization as part of
+host startup. If the initial discovery or `mcpRegistry.subscribe()` fails
+after the runtime and its store were started, startup rejects **after**
+closing the initialized runtime; cleanup failures never mask the original
+startup failure.
+
+`host.close()` immediately fences new registry refresh requests, late
+registry subscription notifications, and manual connection attachments.
+Already-accepted manual and scoped MCP attachments also drain before store
+shutdown, and a retained `host.runtime.mcpEventsClient` is itself closed/fenced
+against new add, discovery, poll and attach operations. This makes the public
+manager boundary authoritative rather than relying on façade guards alone.
+An already-running registry discovery is drained before runtime shutdown;
+if it resolves after the close fence its entries are discarded. Repeated
+`close()` calls share the same promise and invoke registry unsubscribe once.
+Calls to `refreshMcpRegistry()` / `attachMcpClient()` during shutdown fail
+with stable `EI_HOST_CLOSED`. Host-owned MCP sessions and credentials remain
+outside EI's authority; the host is still responsible for invoking shutdown
+and unsubscribing any connections it owns.
+
+The real-host tests in `test/host-registry-shutdown-contract.test.mjs`
+check failed startup cleanup, late observer callbacks and an in-flight
+asynchronous registry enumeration resolved during host shutdown. This is a
+focused #42 lifecycle slice, not independent third-party conformance.
+
+During final shutdown EI also bounds the wait for **host-owned** push/webhook
+session close hooks to 500 ms. These hooks are best-effort at the EI boundary:
+a provider teardown that itself awaits `host.close()` must not deadlock
+`host.close()`. Already-started callbacks are tracked and drained before
+closing the store, and all new/late callbacks are fenced. The host remains
+responsible for the external transport's ultimate shutdown/release; EI does
+not pretend a timed-out host hook completed successfully.
+
+### Shutdown and detach fence (#42)
+
+A host's `close()` synchronously closes the authority boundary on new MCP
+registry refreshes, direct/scoped attachments **and manual detachment**. Calls
+accepted after that point reject with stable `EI_HOST_CLOSED` rather than
+mutating persisted source enablement while the store is closing. The retained
+`runtime.mcpEventsClient.detachConnection()` entry point has the same guard.
+
+Detach operations accepted *before* the close fence may still be disabling
+durable event sources or closing host-supplied sessions: the MCP client manager
+tracks those operations, and host shutdown drains them before tearing down the
+authoritative runtime/store. This is not a guarantee that a hostile provider
+will ever complete an indefinitely suspended external callback; the host owns
+its external session shutdown policy. Tests reproduce the late-detach fence
+and an accepted detach awaiting an intentionally held durable source query.
+
+### Host gap repair and reentrant session detach during shutdown
+
+A host that directly retains `runtime.mcpEventsClient` must not acknowledge
+unresolved MCP delivery gaps after manager shutdown begins: new calls to
+`acknowledgeReconciledGap()` reject with `EI_HOST_CLOSED`. Calls already
+accepted before the fence are drained, including their revision-checked
+persistent state commit, before the authoritative runtime/store is closed.
+No producer-initiated reconciliation or silent best-effort receipt is added.
+
+When a host-supplied push/webhook session-close hook invoked during a detach
+reenters `host.close()`, the manager releases a **bounded teardown wait only
+after shutdown has started** to avoid the cycle detach → session close →
+root close → detach. Durable source-disable cleanup still drains normally
+before store shutdown. The host owns provider session lifecycle and any
+still-running external callback beyond the shutdown grace; EI fences late
+delivery callbacks and cannot force third-party hooks to terminate.
+Tests exercise both the reentrant promise cycle and an accepted host gap
+repair held across the close fence with physical JSONL reopen.
+
+### Detach shutdown listeners and direct-manager reentrancy
+
+Detaches subscribe to global shutdown with a **removable** listener and drop
+it immediately when their own session teardown settles. A long-lived host can
+attach/detach thousands of connections without accumulating pending
+`Promise.then()` reactions on a never-resolved shutdown promise. The
+notification is registered **before** invoking external session `close()`
+hooks because those hooks may synchronously reenter `host.close()`.
+The retained manager's own `close()` publishes the shared promise before
+invoking teardown so manager-initiated shutdown has the same reentrancy safety
+as root host shutdown. Regression coverage includes connection churn and
+reentrant teardown starting from the retained manager itself.
