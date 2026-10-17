@@ -40,7 +40,8 @@ function configuredDurability({ store, dataDir, env }) {
 }
 
 function configuredSharedStore(store) {
-  if (!store || typeof store.storeCapabilities !== 'function') return false;
+  if (!configuredDurability({ store }) ||
+      typeof store.storeCapabilities !== 'function') return false;
   try {
     return validateSharedStoreCapabilities(store).ok;
   } catch {
