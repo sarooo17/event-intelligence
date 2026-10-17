@@ -195,3 +195,16 @@ still-running external callback beyond the shutdown grace; EI fences late
 delivery callbacks and cannot force third-party hooks to terminate.
 Tests exercise both the reentrant promise cycle and an accepted host gap
 repair held across the close fence with physical JSONL reopen.
+
+### Detach shutdown listeners and direct-manager reentrancy
+
+Detaches subscribe to global shutdown with a **removable** listener and drop
+it immediately when their own session teardown settles. A long-lived host can
+attach/detach thousands of connections without accumulating pending
+`Promise.then()` reactions on a never-resolved shutdown promise. The
+notification is registered **before** invoking external session `close()`
+hooks because those hooks may synchronously reenter `host.close()`.
+The retained manager's own `close()` publishes the shared promise before
+invoking teardown so manager-initiated shutdown has the same reentrancy safety
+as root host shutdown. Regression coverage includes connection churn and
+reentrant teardown starting from the retained manager itself.
