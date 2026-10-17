@@ -136,6 +136,10 @@ startup failure.
 
 `host.close()` immediately fences new registry refresh requests, late
 registry subscription notifications, and manual connection attachments.
+Already-accepted manual and scoped MCP attachments also drain before store
+shutdown, and a retained `host.runtime.mcpEventsClient` is itself closed/fenced
+against new add, discovery, poll and attach operations. This makes the public
+manager boundary authoritative rather than relying on façade guards alone.
 An already-running registry discovery is drained before runtime shutdown;
 if it resolves after the close fence its entries are discarded. Repeated
 `close()` calls share the same promise and invoke registry unsubscribe once.
