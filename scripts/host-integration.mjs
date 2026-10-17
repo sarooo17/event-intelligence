@@ -434,29 +434,35 @@ export async function createEventIntelligenceHost({
     },
     close() {
       if (closePromise) return closePromise;
-      // Synchronously fence BOTH the facade and the publicly retained
-      // runtime manager. Awaiting registry enumeration or observability
-      // before manager.close() would leave a same-turn attach bypass.
+      // Publish a shared promise BEFORE invoking any user-owned provider
+      // hook. A session close callback may synchronously re-enter host.close().
+      let resolveClose;
+      let rejectClose;
+      closePromise = new Promise((resolve, reject) => {
+        resolveClose = resolve;
+        rejectClose = reject;
+      });
       closing = true;
-      const managerShutdown = runtime.mcpEventsClient.close();
-      // Own the rejection immediately, even if registry callbacks are still
-      // draining before we await this promise.
-      void managerShutdown.catch(() => {});
-      closePromise = (async () => {
+      let managerShutdown;
+      try {
+        // Fence the publicly exposed manager now, in the same JS turn,
+        // before even the first async registry/observability boundary.
+        managerShutdown = runtime.mcpEventsClient.close();
+        void managerShutdown.catch(() => {});
+      } catch (error) {
+        rejectClose(error);
+        return closePromise;
+      }
+      Promise.resolve().then(async () => {
         let unsubscribeError;
         try { unsubscribe?.(); } catch (error) {
           unsubscribeError = error;
         }
-        // An in-flight registry refresh must settle before the runtime's
-        // store/client are closed; late registry notifications cannot start
-        // a new refresh after the close fence.
         try { await registryRefreshPromise; } catch {}
-        // The runtime calls its manager.close() again, which must now be
-        // idempotent; retain the first failure if teardown fails.
         await managerShutdown;
         await runtime.close();
         if (unsubscribeError) throw unsubscribeError;
-      })();
+      }).then(resolveClose, rejectClose);
       return closePromise;
     },
   };
