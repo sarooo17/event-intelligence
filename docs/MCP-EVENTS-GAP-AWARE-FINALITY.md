@@ -15,7 +15,18 @@ implicitly clear a historical delivery gap**. Already persisted legacy
 
 A host can explicitly call `McpEventsClientManager.acknowledgeReconciledGap`
 on an attached connection after independently replaying/validating the
-missing history. This is an **embedded, host-only method**, not an MCP
+missing history.
+The call requires `expectedCompletenessRevision`: the exact persisted
+source-state revision against which the host verified replay. The host must
+capture that revision as part of its reconciliation evidence, not simply read
+the newest revision after replay and assume it was covered. Both JSONL and
+PostgreSQL enforce the revision comparison inside the same serialized write
+or locked transaction that clears `gapUnresolved`. A newer poll/push/webhook
+gap (or any intervening state write) causes a fail-closed
+`MCP_EVENTS_GAP_REVISION_CONFLICT`; the host must verify/replay the
+new state before retrying, **not** automatically retry with the latest
+revision. Missing or malformed expected revisions are rejected.
+ This is an **embedded, host-only method**, not an MCP
 tool, provider notification or LLM capability. It requires
 `evidenceId` (a non-secret, bounded reference to the host's verified
 reconciliation receipt), scopes the update to the attached connection
@@ -184,3 +195,28 @@ ABA open/reconcile race with a forbidden replay occurrence, a buffer-only
 concurrent replay without any gap-state change, persisted revision across
 restart, and rejection of caller-forged revisions. These cases must pass
 alongside the existing multi-gap and PostgreSQL CI gates before merge.
+
+## Revision-conditional host acknowledgement
+
+Independent Codex review identified a race between host receipt verification
+and concurrent provider gap reports on another PostgreSQL worker. A local
+`withConnectionMutation` queue only serializes one manager, so it cannot
+replace a durable scope/source compare-and-set.
+
+`acknowledgeReconciledGap({ connectionId, eventName, arguments, evidenceId,
+expectedCompletenessRevision })` forwards the host's verified revision into
+`putMcpClientState`. When `gapReconciled: true`, the store atomically checks
+that the currently persisted source revision is exactly the verified revision
+and that a gap remains unresolved. A stale revision rejects without changing
+the gap, cursor, receipt, revision or audit state. This prevents a late host
+acknowledgement of gap #1 from erasing newly recorded gap #2. A valid
+acknowledgement increments the revision and persists the evidence reference.
+The host owns the semantics and authenticity of the evidence; EI never
+auto-accepts a fresh source revision on a previous receipt.
+
+Regressions:
+- `test/mcp-events-gap-reconciliation-cas.test.mjs` exercises JSONL CAS,
+  physical reopen, required input, and a host manager that reads an older
+  gap before another writer saves a fresh truncated page.
+- `test/postgres-shared-state.test.mjs` runs the same stale
+  acknowledgement scenario against two independent PostgreSQL workers.
