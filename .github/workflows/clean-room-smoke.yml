@@ -7,6 +7,7 @@ on:
       - "README.md"
       - "docs/examples/packed-simple-trigger.mjs"
       - "docs/examples/packed-headless-host.mjs"
+      - "docs/examples/packed-managed-consumer.mjs"
       - "docs/examples/packed-typed-simple-trigger.mts"
       - "docs/SIMPLE-TRIGGER-AUTHORING.md"
       - "package.json"
@@ -184,6 +185,33 @@ jobs:
           "
           node ./node_modules/typescript/bin/tsc --noEmit --strict --skipLibCheck \
             --module NodeNext --moduleResolution NodeNext --target ES2022 ./typed.mts
+      - name: Exercise public management and durable wake restart in a packed Node consumer
+        shell: bash
+        run: |
+          set -euo pipefail
+          WORKDIR="$(mktemp -d)"
+          cd "$WORKDIR"
+          npm init -y >/dev/null
+          npm install --ignore-scripts --no-audit --no-fund "$TARBALL"
+          cp "$GITHUB_WORKSPACE/docs/examples/packed-managed-consumer.mjs" ./managed-consumer.mjs
+          node ./managed-consumer.mjs | tee managed-consumer-report.json
+          node --input-type=module <<'EOF'
+          import assert from 'node:assert/strict';
+          import fs from 'node:fs';
+          const report = JSON.parse(fs.readFileSync('managed-consumer-report.json','utf8'));
+          assert.equal(report.schema, 'event-intelligence.packed-managed-consumer.v1');
+          assert.equal(report.status, 'pass');
+          assert.equal(report.approvalDeniedBeforeWrite, true);
+          assert.equal(report.policyActionsVerified, 10);
+          assert.equal(report.reopenedReceiptVerified, true);
+          assert.equal(report.durableReplayStateUnchanged, true);
+          assert.equal(report.starts, 2);
+          assert.equal(report.deliveries, 2);
+          assert.equal(report.replayRedeliveries, 0);
+          assert.equal(report.management.length, 6);
+          assert.equal(report.independentThirdPartyHost, false);
+          EOF
+
       - name: Confirm candidate MCP stdio entrypoint starts
         shell: bash
         run: |
