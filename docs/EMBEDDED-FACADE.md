@@ -252,11 +252,11 @@ Supported v1 identifiers:
 | Capability | When advertised as available |
 | --- | --- |
 | `mcp.registry` | Host supplies an MCP registry `list()` and optional valid `subscribe()` |
-| `storage.durable` | Host specifies an explicit nonblank JSONL location or a store providing durable trigger/receipt entry points |
+| `storage.durable` | Host specifies a nonblank JSONL location via `dataDir`, merged host environment or `process.env.DATA_DIR`, or a custom store implementing the **complete** runtime-required durable method surface |
 | `storage.shared` | Host supplies an actual store with strong scope/consistency declarations **and** distributed lease/atomic mutation primitives |
 | `wake.receipts` | Host supplies `hasReceipt()` plus deterministic `receiptId()` **or** nonblank `receiptNamespace` |
 | `tooling.owner-scoped` | Host supplies **both** `resolveContext()` and `control()` |
-| `semantic.evaluate` | Host supplies an explicit evaluator with `evaluate()` |
+| `semantic.evaluate` | Host supplies a runtime-supported **object** with callable `evaluate()` (not a bare function) |
 | `observability.sink` | Host supplies a sink function or `{emit()}` |
 
 `hostContract` has only `version:'1'` and `required:[...]`; unknown versions,
@@ -273,7 +273,11 @@ factory is invoked:
 
 The successful `integration.hostContract` contains frozen `required`,
 configuration-derived `available` and
-`readiness:'configuration-validated'`. Its values are not host capability
+`readiness:'configuration-validated'`. Potentially side-effectful custom
+`storeCapabilities()` metadata is **only queried when `storage.shared` is
+required**; unrequested shared readiness is reported `false` (unverified).
+Broken or throwing metadata callbacks produce stable
+`EI_HOST_SHARED_STORE_REQUIRED`, never arbitrary host exception content. Its values are not host capability
 *grants*. For `storage.shared`, EI examines the supplied store's declared
 capabilities and operations; this is still not a live multiworker transaction
 proof. Similarly, declared host receipt wiring does **not** prove that the
