@@ -176,3 +176,22 @@ authoritative runtime/store. This is not a guarantee that a hostile provider
 will ever complete an indefinitely suspended external callback; the host owns
 its external session shutdown policy. Tests reproduce the late-detach fence
 and an accepted detach awaiting an intentionally held durable source query.
+
+### Host gap repair and reentrant session detach during shutdown
+
+A host that directly retains `runtime.mcpEventsClient` must not acknowledge
+unresolved MCP delivery gaps after manager shutdown begins: new calls to
+`acknowledgeReconciledGap()` reject with `EI_HOST_CLOSED`. Calls already
+accepted before the fence are drained, including their revision-checked
+persistent state commit, before the authoritative runtime/store is closed.
+No producer-initiated reconciliation or silent best-effort receipt is added.
+
+When a host-supplied push/webhook session-close hook invoked during a detach
+reenters `host.close()`, the manager releases a **bounded teardown wait only
+after shutdown has started** to avoid the cycle detach → session close →
+root close → detach. Durable source-disable cleanup still drains normally
+before store shutdown. The host owns provider session lifecycle and any
+still-running external callback beyond the shutdown grace; EI fences late
+delivery callbacks and cannot force third-party hooks to terminate.
+Tests exercise both the reentrant promise cycle and an accepted host gap
+repair held across the close fence with physical JSONL reopen.
