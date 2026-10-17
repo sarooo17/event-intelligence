@@ -87,6 +87,10 @@ test('close synchronously fences stale registry notifications and manual attachm
       error?.code === 'EI_HOST_CLOSED');
     await assert.rejects(host.attachMcpClient({ id: 'late', serverId: 'late' }),
       error => error?.code === 'EI_HOST_CLOSED');
+    await assert.rejects(host.detachMcpClient('same-turn-attach'),
+      error => error?.code === 'EI_HOST_CLOSED');
+    await assert.rejects(retained.detachConnection('same-turn-attach'),
+      error => error?.code === 'EI_HOST_CLOSED');
     await assert.rejects(scoped.attachMcpClient({ id: 'late-scoped', serverId: 'late' }),
       error => error?.code === 'EI_HOST_CLOSED',
       'an already acquired tenant view cannot bypass the shutdown fence');
@@ -272,5 +276,59 @@ test('provider close hook awaiting host.close cannot deadlock shutdown', { timeo
   } finally {
     await host?.close();
     await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+
+test('close waits for a pre-accepted manual detach but rejects any new detach', {
+  timeout: 10000,
+}, async () => {
+  const dataDir = await mkdtemp(path.join(os.tmpdir(), 'ei-detach-drain-'));
+  let host;
+  let release;
+  const held=new Promise(resolve=>{release=resolve});
+  let signal;
+  const entered=new Promise(resolve=>{signal=resolve});
+  try {
+    host=await createEventIntelligenceHost({dataDir,env});
+    const manager=host.runtime.mcpEventsClient;
+    manager.addConnection({
+      connectionId:'manual-detach',serverId:'upstream',
+      getCapabilities:()=>({extensions:{'io.modelcontextprotocol/events':{}}}),
+      request:async()=>({events:[]}),
+    });
+    const original=manager.scopeContext.bind(manager);
+    manager.scopeContext=async connection=>{
+      const context=await original(connection);
+      return {
+        ...context,
+        store:{
+          listEventSources:async()=>{
+            signal();
+            return held;
+          },
+        },
+      };
+    };
+    const detach=host.detachMcpClient('manual-detach');
+    await entered;
+    let finished=false;
+    const closing=host.close().then(()=>{finished=true});
+    await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(finished,false,
+      'host cannot tear down storage during an accepted source-disable operation');
+    await assert.rejects(host.detachMcpClient('manual-detach'),
+      error=>error?.code==='EI_HOST_CLOSED');
+    await assert.rejects(manager.detachConnection('manual-detach'),
+      error=>error?.code==='EI_HOST_CLOSED');
+    release([]);
+    await Promise.all([detach,closing]);
+    assert.equal(finished,true);
+    assert.equal(manager.detachInFlight.size,0);
+    assert.equal(manager.connections.has('manual-detach'),false);
+  }finally{
+    release?.([]);
+    await host?.close();
+    await rm(dataDir,{recursive:true,force:true});
   }
 });
