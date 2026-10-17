@@ -6,6 +6,9 @@ import {
   HOST_CONTRACT_VERSION,
   negotiateHostContract,
 } from '../scripts/embedded-host-kit.mjs';
+import {
+  REQUIRED_EVENT_STORE_METHODS,
+} from '../scripts/lib/store-capabilities.mjs';
 
 const deliver = () => ({ runtimeReceiptId: 'host-owned' });
 const runtime = { deliver };
@@ -65,6 +68,7 @@ test('unsupported, malformed, ambiguous and undeclared host requirements fail be
     await assert.rejects(createEventIntelligence({
       runtime,
       hostContract:requested,
+      env:{ DATA_DIR:'' }, // override any injected CI process env
       createHost:async()=>{
         started++;
         throw Error('host must not start');
@@ -95,6 +99,8 @@ test('shared state cannot be negotiated from a claimed flag without atomic primi
   }),error=>error?.code==='EI_HOST_SHARED_STORE_REQUIRED',
   'a host must implement its claimed distributed store operations');
   const fullStore={
+    ...Object.fromEntries(REQUIRED_EVENT_STORE_METHODS.map(name=>
+      [name,async()=>null])),
     ...falselyAdvertised,
     claimPartitionLease:async()=>null,
     renewPartitionLease:async()=>null,
@@ -161,4 +167,93 @@ test('handshake never invokes host authorization, MCP listing or receipt callbac
   assert.equal(readiness.available['wake.receipts'],true);
   assert.equal(readiness.available['tooling.owner-scoped'],true);
   assert.equal(effects,0,'no live transport, auth or persistence callbacks during config negotiation');
+});
+
+
+test('unrelated handshake never invokes throwing store capability metadata',()=>{
+  let calls=0;
+  const malformedStore={
+    storeCapabilities:()=>{calls++;throw new Error('unsafe host callback contents');},
+  };
+  const result=negotiateHostContract(contract(['mcp.registry']),{
+    mcp:{list:()=>[]},
+    runtime,store:malformedStore,
+  });
+  assert.equal(result.available['mcp.registry'],true);
+  assert.equal(result.available['storage.shared'],false,
+    'unrequested shared-mode capability is not probed');
+  assert.equal(calls,0);
+  assert.throws(()=>negotiateHostContract(contract(['storage.shared']),{
+    runtime,store:malformedStore,
+  }),error=>error?.code==='EI_HOST_SHARED_STORE_REQUIRED'&&
+    !error.message.includes('unsafe host callback contents'));
+  assert.equal(calls,0,
+    'a store missing durable methods is rejected before metadata callbacks');
+  const fullShape={...Object.fromEntries(
+    REQUIRED_EVENT_STORE_METHODS.map(name=>[name,async()=>null])),
+    storeCapabilities:malformedStore.storeCapabilities,
+    claimPartitionLease:async()=>null,
+    renewPartitionLease:async()=>null,
+    releasePartitionLease:async()=>null,
+    compareAndAppendTriggerMatch:async()=>null,
+  };
+  assert.throws(()=>negotiateHostContract(contract(['storage.shared']),{
+    runtime,store:fullShape,
+  }),error=>error?.code==='EI_HOST_SHARED_STORE_REQUIRED'&&
+    !error.message.includes('unsafe host callback contents'));
+  assert.equal(calls,1);
+});
+
+test('durable store handshake checks every method before custom init can mutate state',async()=>{
+  let initialized=0;
+  const partial={
+    putTrigger:async()=>{},
+    getWakeDelivery:async()=>null,
+    completeWakeDelivery:async()=>{},
+    init:async()=>{initialized++;throw new Error('unsafe initialization');},
+  };
+  let starts=0;
+  await assert.rejects(createEventIntelligence({
+    runtime,
+    hostContract:contract(['storage.durable']),
+    store:partial,
+    createHost:async()=>{starts++;await partial.init()},
+  }),error=>error?.code==='EI_HOST_STORAGE_REQUIRED');
+  assert.equal(initialized,0);
+  assert.equal(starts,0);
+  const fullStore=Object.fromEntries(REQUIRED_EVENT_STORE_METHODS.map(name=>
+    [name,async()=>null]));
+  assert.equal(negotiateHostContract(contract(['storage.durable']),{
+    runtime,store:fullStore,
+  }).available['storage.durable'],true);
+});
+
+test('semantic capability requires a runtime-supported evaluator object',async()=>{
+  let starts=0;
+  await assert.rejects(createEventIntelligence({
+    runtime,hostContract:contract(['semantic.evaluate']),
+    semanticEvaluator:()=>({matched:true}),
+    createHost:async()=>{starts++},
+  }),error=>error?.code==='EI_HOST_CAPABILITY_UNAVAILABLE');
+  assert.equal(starts,0);
+  assert.equal(negotiateHostContract(contract(['semantic.evaluate']),{
+    runtime,semanticEvaluator:{evaluate:async()=>({matched:true})},
+  }).available['semantic.evaluate'],true);
+});
+
+test('canonical facade handshake recognizes the same process env DATA_DIR as the host',()=>{
+  const previous=process.env.DATA_DIR;
+  try {
+    process.env.DATA_DIR='/tmp/host-state-from-environment';
+    assert.equal(negotiateHostContract(contract(['storage.durable']),{
+      runtime,
+    }).available['storage.durable'],true);
+    assert.throws(()=>negotiateHostContract(contract(['storage.durable']),{
+      runtime,env:{DATA_DIR:''},
+    }),error=>error?.code==='EI_HOST_STORAGE_REQUIRED',
+    'explicit host env override must supersede ambient process env');
+  } finally {
+    if(previous===undefined) delete process.env.DATA_DIR;
+    else process.env.DATA_DIR=previous;
+  }
 });
