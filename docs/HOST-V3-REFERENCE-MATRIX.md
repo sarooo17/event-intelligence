@@ -1,37 +1,46 @@
-# Packed managed Node consumer proof (#42)
+# Host v3 reference matrix — evidence and limitations
 
-The executable file `docs/examples/packed-managed-consumer.mjs` is copied
-into an **empty Node project** by GitHub's Clean-room Smoke workflow. The
-workflow first installs a packed candidate tarball with npm and then executes
-the consumer with only public `mcp-event-intelligence/embedded` imports.
+This matrix is a reproducible **repository-maintained conformance exercise** for
+[issue #42](https://github.com/sarooo17/event-intelligence/issues/42).
+It executes **all seven real host-conformance v3 management scenarios** per
+fixture, including trigger create/list/pause/resume/update/delete, persistent
+wake/receipt replay after restart, maxFirings and observability redaction.
 
-The fixture tests actual runtime-neutral management actions through EI's
-model-facing portable catalog, using explicit host-owned authorization and
-identity, and an ordinary synthetic event source:
+Run after building the package:
 
-1. The host denies creation and proves no durable mutation occurred.
-2. Each of **create/pause/resume/update/delete** runs a host-owned denial first;
-   none may change persisted trigger definitions or lifecycle state. A separate
-   approved call must receive the correct capability/actor/owner/target identity.
-3. Host grants create/list/pause/resume with owner/actor context.
-4. Events cannot deliver while paused; resume permits a durable wake/receipt.
-5. The consumer closes and reopens durable EI state from a new integration,
-   and reads the original authoritative wake receipt from the **reopened** store.
-6. Source event replay must neither redeliver, increment persisted fireCount,
-   append a logical match, nor mutate the previous receipt.
-7. Update changes a trigger condition, proving old threshold no longer fires;
-   the new threshold does, and delete prevents further delivery.
+```bash
+npm run build
+node conformance/host-v3-matrix.mjs
+# Or include it in all CI tests:
+node --test test/host-v3-matrix.test.mjs
+```
 
-The code uses **no EI repository relative import, model SDK, provider secrets
-or network transport**, and emits machine-readable
-`event-intelligence.packed-managed-consumer.v1`. CI asserts the real
-report fields rather than treating example compilation as a conformance pass.
+The JSON report is `event-intelligence.host-v3-matrix.v1`. Each fixture
+includes the actual unmodified `runHostConformance()` v3 report and explicitly
+declares integration style, execution boundary and provenance.
 
-**Limitations:** The consumer fixture was authored inside this repository
-and merely executed in a different filesystem. It is **not an independently
-authored third-party runtime** and is not counted toward that #42 gate. The
-fixture tests a synthetic source and local durable store; it does not certify
-live MCP network transport, cross-worker PostgreSQL failover, host-side
-external checkpoint durability beyond the explicit in-memory receipts,
-or exactly-once external notifications. These remain separate readiness
-conditions. No Artemis/Muffin files are changed or upgraded.
+| Fixture | Host integration | Execution boundary | Authorship |
+| --- | --- | --- | --- |
+| `reference-direct-in-process` | EI reference host, direct engine | In process | EI repository |
+| `reference-neutral-in-process` | `createEventIntelligence()` neutral façade | In process | EI repository |
+| `reference-forked-os-process` | Separate IPC reference host | OS process, SIGKILL/reopen | EI repository |
+
+**What a green report proves:** these *three local host shapes* satisfy the
+current v3 management harness and its deterministic synthetic source/receipt
+contract. The OS-process fixture actually kills and restarts the reference
+worker and reloads its durable EI store. No models or real external MCP
+servers are needed for a reproducible gate.
+
+**What it does not prove:** three independently written host implementations;
+third-party adoption; published npm consumer conformity; network transport
+reconnect to real external services; PostgreSQL multi-worker failover; exactly
+once execution of external host effects; end-to-end approval/interrupt policy
+across arbitrary runtimes. In particular,
+`independentExternalHostVerified: false` remains **false by construction**
+regardless of all local test results. Claiming independence requires a genuinely
+external author and reproducible evidence supplied by that integration.
+
+No compatibility adapters, second scheduler, agent loop or runtime-name
+dispatch are added. Existing public conformance interface remains v3; this
+matrix is a repo-local verification orchestrator, not a replacement for the
+independently authored host requirement in #42.
