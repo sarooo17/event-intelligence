@@ -37,7 +37,10 @@ The test verifies:
   nested source identity and monotonic `completenessRevision`; post-restore
   source lookup, new gap, stale receipt and current receipt use an **independently
   reconstructed, differently ordered but semantically equivalent nested
-  identity**; another tenant cannot inspect that restored cursor;
+  identity**; a second source with the *same* connection and event name
+  but a different nested argument has an independent cursor/revision both
+  before and after restore, and reconciliation of the first never mutates
+  this alternate identity; another tenant cannot inspect either cursor;
 - a post-restore newer gap cannot be erased by stale pre-backup host replay
   evidence: the old revision fails with `MCP_EVENTS_GAP_REVISION_CONFLICT`,
   leaving completeness unchanged, while reconciliation of the **latest**
