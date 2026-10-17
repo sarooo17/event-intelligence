@@ -96,7 +96,6 @@ test('atomic finality fence rejects an MCP gap committed after CEP reads its sna
     await store.putMcpClientState({
       ...gap,gapReconciled:true,
       expectedCompletenessRevision:gap.completenessRevision,
-      expectedCompletenessRevision:gap.completenessRevision,
       reconciliationEvidenceId:'host-verified-replay-atomic-race',
       truncated:false,
     });
@@ -210,6 +209,7 @@ test('two stale MCP gap snapshots retain a due retry through reconciliation', {
     await store.putMcpClientState({
       ...gap,gapReconciled:true,
       reconciliationEvidenceId:'host-verified-replay-double-stale',
+      expectedCompletenessRevision:gap.completenessRevision,
       truncated:false,
     });
     const recovered=await scheduler.runDue();
