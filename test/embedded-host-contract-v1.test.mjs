@@ -257,3 +257,49 @@ test('canonical facade handshake recognizes the same process env DATA_DIR as the
     else process.env.DATA_DIR=previous;
   }
 });
+
+
+test('host store metadata accessors and Proxy traps fail closed without exposing private error',()=>{
+  let invoked=0;
+  const full=Object.fromEntries(REQUIRED_EVENT_STORE_METHODS.map(name=>
+    [name,async()=>null]));
+  const secret='private_metadata_credential_do_not_repeat';
+  Object.defineProperty(full,'storeCapabilities',{
+    get(){invoked++;throw new Error(secret);},
+  });
+  const input={runtime,store:full};
+  assert.throws(()=>negotiateHostContract(contract(['storage.shared']),input),
+    error=>error?.code==='EI_HOST_SHARED_STORE_REQUIRED'&&
+      !error.message.includes(secret));
+  assert.equal(invoked,1);
+  assert.equal(negotiateHostContract(contract(['storage.durable']),input)
+    .available['storage.durable'],true,
+    'unrelated durable shape does not access shared descriptor getter');
+  assert.equal(invoked,1);
+
+  const proxy=new Proxy(Object.fromEntries(REQUIRED_EVENT_STORE_METHODS.map(name=>
+    [name,async()=>null])),{
+    get(target,key,receiver) {
+      if(key==='storeCapabilities'){
+        invoked++;
+        throw new Error(secret);
+      }
+      return Reflect.get(target,key,receiver);
+    },
+  });
+  assert.throws(()=>negotiateHostContract(contract(['storage.shared']),{
+    runtime,store:proxy,
+  }),error=>error?.code==='EI_HOST_SHARED_STORE_REQUIRED'&&
+    !error.message.includes(secret));
+  assert.equal(invoked,2);
+
+  const getterStore=Object.create(null);
+  Object.defineProperty(getterStore,'putTrigger',{
+    get(){invoked++;throw new Error(secret);},
+  });
+  assert.throws(()=>negotiateHostContract(contract(['storage.durable']),{
+    runtime,store:getterStore,
+  }),error=>error?.code==='EI_HOST_STORAGE_REQUIRED'&&
+    !error.message.includes(secret));
+  assert.equal(invoked,3);
+});
