@@ -119,6 +119,24 @@ integrationTest('pg_dump + pg_restore preserves trigger, audit chain, wake recei
       truncated:true,
     });
     assert.equal(unresolvedGap.gapUnresolved,true);
+    // Same connection + event but DIFFERENT deeply nested arguments must
+    // occupy a distinct persisted source key and independent revision chain.
+    // Without this negative aliasing control the reordered lookup above
+    // could pass even if the store ignored source arguments completely.
+    const alternateIdentity = {
+      source:{region:{country:'FR',zone:'eu'},tags:['invoices','closed']},
+      environment:'production',
+    };
+    const alternateState = await source.putMcpClientState({
+      connectionId:'restore-mcp-connection',serverId:'upstream',
+      eventName:'restore.failed',arguments:alternateIdentity,
+      deliveryMode:'poll',cursor:'other-source-independent-cursor',
+      truncated:false,
+    });
+    assert.equal(alternateState.gapUnresolved,false);
+    assert.equal((await source.listMcpClientStates('restore-mcp-connection')).length,2);
+    assert.deepEqual(await source.getMcpClientState(
+      'restore-mcp-connection','restore.failed',mcpIdentity),unresolvedGap);
     const originalGapSnapshot = (await source.getMcpGapStateAndSnapshot()).snapshot;
     const originalDefinitions = await source.listTriggers();
     assert.equal(await source.verifyAudit(), true);
@@ -148,6 +166,15 @@ integrationTest('pg_dump + pg_restore preserves trigger, audit chain, wake recei
     assert.equal(restoredGap.cursor,'opaque-cursor-before-restore');
     assert.equal(restoredGap.gapUnresolved,true);
     assert.equal(restoredGap.completenessRevision,unresolvedGap.completenessRevision);
+    const differentLookup = {
+      environment:'production',
+      source:{tags:['invoices','closed'],region:{zone:'eu',country:'FR'}},
+    };
+    assert.deepEqual(await target.getMcpClientState(
+      'restore-mcp-connection','restore.failed',differentLookup),alternateState,
+      'nested alternate identity keeps independent cursor and revision after restore');
+    assert.equal((await target.listMcpClientStates('restore-mcp-connection')).length,2,
+      'restoration must not collapse distinct source-argument identities');
     assert.equal((await target.getMcpGapStateAndSnapshot()).snapshot,
       originalGapSnapshot,
       'restored CEP must retain the unresolved delivery-gap finality fence');
@@ -185,6 +212,9 @@ integrationTest('pg_dump + pg_restore preserves trigger, audit chain, wake recei
     assert.equal(reconciledGap.gapUnresolved,false);
     assert.equal(reconciledGap.completenessRevision,
       subsequentGap.completenessRevision+1);
+    assert.deepEqual(await target.getMcpClientState(
+      'restore-mcp-connection','restore.failed',differentLookup),alternateState,
+      'repairing the first restored source must never update a second identity');
     assert.notEqual((await target.getMcpGapStateAndSnapshot()).snapshot,
       newerSnapshot);
     assert.deepEqual(await target.listTriggers(), originalDefinitions);
