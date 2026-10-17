@@ -96,7 +96,12 @@ async function main() {
     schema: 'event-intelligence.postgres-durable-scale.v1',
     generatedAt: new Date().toISOString(),
     prefix,
-    runtime: { node: process.version, platform: process.platform },
+    runtime: {
+      node: process.version,
+      platform: process.platform,
+      arch: process.arch,
+      commit: process.env.GITHUB_SHA ?? null,
+    },
     metrics: {},
   };
 
