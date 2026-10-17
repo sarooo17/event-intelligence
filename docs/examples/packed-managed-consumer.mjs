@@ -34,8 +34,10 @@ const options = {
     resolveContext: () => ({ target, owner, actor }),
     control: ({ action, capability, context }) => {
       assert.equal(capability.id, 'event-intelligence.' + action);
-      assert.equal(context.actor.principal_id, actor.principal_id);
-      assert.equal(context.owner.principal_id, owner.principal_id);
+      assert.deepEqual(context.actor, actor,
+        'host policy must receive the full actor identity, including type');
+      assert.deepEqual(context.owner, owner,
+        'host policy must receive the full owner identity, including type');
       assert.deepEqual(context.target, target);
       policyRequests.push({ action, decision: denyAction === action ? 'return' : 'execute' });
       if (denyAction === action) return {
