@@ -220,3 +220,21 @@ Regressions:
   gap before another writer saves a fresh truncated page.
 - `test/postgres-shared-state.test.mjs` runs the same stale
   acknowledgement scenario against two independent PostgreSQL workers.
+
+## JSONL gap-state reference isolation
+
+The reference JSONL store treats each MCP source-state object and nested
+subscription arguments as **private materialized data**. Calls to
+`putMcpClientState`, `getMcpClientState`,
+`listMcpClientStates` and `getMcpGapStateAndSnapshot` must never
+expose a mutable alias of the in-memory record. A deep copy is taken
+when committing input and when returning results; changes made to a
+host-owned input or previously returned objects cannot directly clear
+`gapUnresolved`, falsify `truncated`, edit source identity or overwrite
+`completenessRevision`. The only supported transition is the serialized,
+revision-checked store write.
+
+`test/mcp-events-gap-reconciliation-cas.test.mjs` includes an adversarial
+case mutating all of those returned surfaces (including nested source
+arguments), checking the canonical snapshot remains unchanged across
+physical restart, and then verifying explicit host-receipt reconciliation.
