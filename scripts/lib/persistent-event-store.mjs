@@ -316,6 +316,10 @@ export class PersistentEventStore {
     this.#mcpClientStates = new Map();
     for (const raw of mcpClientStates) {
       if (!raw?.connectionId || !raw?.eventName) continue;
+      const revision = raw.completenessRevision ?? 0;
+      if (!Number.isSafeInteger(revision) || revision < 0) {
+        throw new Error('Invalid persisted MCP completeness revision');
+      }
       const state = {
         connectionId: String(raw.connectionId),
         serverId: String(raw.serverId || raw.connectionId),
@@ -330,6 +334,7 @@ export class PersistentEventStore {
           ? null
           : String(raw.cursor),
         updatedAt: String(raw.updatedAt || new Date(0).toISOString()),
+        completenessRevision: revision,
         ...(raw.nextPollAt ? { nextPollAt: String(raw.nextPollAt) } : {}),
         ...(raw.lastEventAt ? { lastEventAt: String(raw.lastEventAt) } : {}),
         ...(raw.lastError ? { lastError: String(raw.lastError) } : {}),
