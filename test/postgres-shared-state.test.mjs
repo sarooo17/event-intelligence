@@ -1060,3 +1060,37 @@ integrationTest('PostgreSQL two-worker gap acknowledgement CAS cannot erase a ne
     await poolB.end();
   }
 });
+
+
+integrationTest('PostgreSQL rejects shared-memory source identity before durable gap mutation', {
+  timeout: 60000,
+},async()=>{
+  const db=pool();
+  try{
+    const pg=store(db,'mcp-shared-args');
+    await pg.init();
+    const identity={tenant:'acme',filter:{region:'eu'}};
+    const row={connectionId:'upstream',serverId:'server',
+      eventName:'job.failed',arguments:identity,
+      deliveryMode:'poll',truncated:true};
+    const saved=await pg.putMcpClientState(row);
+    const snapshot=(await pg.getMcpGapStateAndSnapshot()).snapshot;
+    const shared=new SharedArrayBuffer(8);
+    const bad={tenant:'acme',filter:{view:new Uint8Array(shared)}};
+    await assert.rejects(pg.putMcpClientState({
+      ...row,arguments:bad,truncated:false,gapReconciled:true,
+      expectedCompletenessRevision:saved.completenessRevision,
+      reconciliationEvidenceId:'forged-older-gap',
+    }),/safe JSON/);
+    new Uint8Array(shared)[0]=99;
+    assert.equal((await pg.getMcpGapStateAndSnapshot()).snapshot,snapshot);
+    const persisted=await pg.getMcpClientState('upstream','job.failed',identity);
+    assert.equal(persisted.gapUnresolved,true);
+    assert.equal(persisted.completenessRevision,saved.completenessRevision);
+    assert.deepEqual(persisted.arguments,identity);
+    assert.equal((await pg.listMcpClientStates()).length,1);
+  }finally{
+    await dropTables(db);
+    await db.end();
+  }
+});
