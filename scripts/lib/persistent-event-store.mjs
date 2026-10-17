@@ -950,16 +950,20 @@ export class PersistentEventStore {
   }
 
   getMcpClientState(connectionId, eventName, args = {}) {
-    return this.#mcpClientStates.get(
+    const state = this.#mcpClientStates.get(
       mcpClientStateKey(connectionId, eventName, args),
-    ) ?? null;
+    );
+    // Never expose the materialized JSONL record: a host must not be able
+    // to clear gapUnresolved or forge its revision without a store write.
+    return state ? structuredClone(state) : null;
   }
 
   listMcpClientStates(connectionId) {
     return [...this.#mcpClientStates.values()]
       .filter((state) =>
         !connectionId || state.connectionId === String(connectionId)
-      );
+      )
+      .map((state) => structuredClone(state));
   }
 
   async putMcpClientState(input) {
@@ -1052,16 +1056,20 @@ export class PersistentEventStore {
             ? { truncated: previous.truncated }
             : {}),
       };
+      // Clone both at the write boundary and at the read boundary.
+      // Nested input arguments and returned records must never alias the
+      // mutable in-memory source used by the gap/revision finality fence.
+      const stored = structuredClone(state);
       this.#mcpClientStates.set(
         mcpClientStateKey(connectionId, eventName, args),
-        state,
+        stored,
       );
       await appendFile(
         this.files.mcpClientStates,
-        `${JSON.stringify(state)}\n`,
+        `${JSON.stringify(stored)}\n`,
         'utf8',
       );
-      return state;
+      return structuredClone(stored);
     });
   }
 
