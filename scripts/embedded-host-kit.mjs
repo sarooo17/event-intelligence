@@ -1496,12 +1496,33 @@ export async function createEmbeddedEventIntelligence({
     wakeHandlers,
   });
 
-  const tools = agentTools
-    ? createEventIntelligenceAgentTools({
-        host,
-        ...agentTools,
-      })
-    : [];
+  if (!host || typeof host !== 'object' ||
+      typeof host.close !== 'function') {
+    throw hostConfigurationError(
+      'Host factory must return an object with close()',
+      'EI_HOST_LIFECYCLE_INVALID',
+    );
+  }
+
+  // Shutdown may be requested both by the host's lifecycle hook and
+  // explicitly by an application. Never shut down the same host twice, and
+  // share the result with all callers even when shutdown rejects.
+  let closePromise;
+  function close() {
+    return closePromise ??= Promise.resolve().then(() => host.close());
+  }
+
+  let tools;
+  try {
+    tools = agentTools
+      ? createEventIntelligenceAgentTools({ host, ...agentTools })
+      : [];
+  } catch (error) {
+    // Tool configuration failed after a durable host was started. Release
+    // subscriptions/timers/storage and preserve the original contract error.
+    try { await close(); } catch {}
+    throw error;
+  }
 
   return {
     host,
@@ -1522,9 +1543,7 @@ export async function createEmbeddedEventIntelligence({
     scope(scopeId) {
       return host.scope(scopeId);
     },
-    close() {
-      return host.close();
-    },
+    close,
   };
 }
 
@@ -1610,20 +1629,28 @@ export async function createEmbeddedRuntimeIntegration({
     createHost,
   });
 
-  const tools = tooling
-    ? createEventIntelligenceAgentTools({
-        host: embedded.host,
-        resolveContext: tooling.resolveContext,
-        control: tooling.control,
-        ...(tooling.projectResult
-          ? { projectResult: tooling.projectResult }
-          : {}),
-        ...(tooling.projectError
-          ? { projectError: tooling.projectError }
-          : {}),
-        names: tooling.names ?? {},
-      })
-    : [];
+  let tools;
+  try {
+    tools = tooling
+      ? createEventIntelligenceAgentTools({
+          host: embedded.host,
+          resolveContext: tooling.resolveContext,
+          control: tooling.control,
+          ...(tooling.projectResult
+            ? { projectResult: tooling.projectResult }
+            : {}),
+          ...(tooling.projectError
+            ? { projectError: tooling.projectError }
+            : {}),
+          names: tooling.names ?? {},
+        })
+      : [];
+  } catch (error) {
+    // Facade validation after createHost() must not leak live host resources.
+    // A cleanup failure must never conceal the actual invalid configuration.
+    try { await embedded.close(); } catch {}
+    throw error;
+  }
   const toolCatalog = createPortableToolCatalog(tools);
 
   return Object.freeze({
