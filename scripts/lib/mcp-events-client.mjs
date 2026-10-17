@@ -573,6 +573,12 @@ export class McpEventsClientManager {
     // Detach disables durable sources and closes host-owned sessions.
     // A detach accepted before close must finish before store teardown.
     this.detachInFlight = new Set();
+    // Host-only reconciliation can read/write durable gap evidence during
+    // close; every accepted operation must settle before store shutdown.
+    this.reconciliationInFlight = new Set();
+    this.shutdownSignal = new Promise(resolve => {
+      this.notifyShutdown = resolve;
+    });
     // Push/webhook providers may retain callback references after session
     // cleanup. Track callbacks accepted before shutdown; reject later ones.
     this.deliveryCallbackInFlight = new Set();
@@ -765,9 +771,27 @@ export class McpEventsClientManager {
     const previousSessions = [...this.deliverySessions].filter(
       ([, session]) => session.connection === connection,
     );
-    await Promise.all(previousSessions.map(([id,session]) =>
+    const sessionTeardown = Promise.all(previousSessions.map(([id,session]) =>
       this.closeSession(id,session)
     ));
+    // A host-owned session.close() may itself await host.close(). Ordinary
+    // detach still waits for teardown; only a concurrent global shutdown
+    // permits a bounded best-effort wait before finishing durable cleanup.
+    // This breaks a detach -> session.close -> host.close -> detach cycle.
+    let shutdownTimer;
+    let detachSettled = false;
+    const shutdownGrace = this.shutdownSignal.then(() => {
+      if (detachSettled) return;
+      return new Promise(resolve => {
+        shutdownTimer = setTimeout(resolve, 500);
+      });
+    });
+    try {
+      await Promise.race([sessionTeardown, shutdownGrace]);
+    } finally {
+      detachSettled = true;
+      clearTimeout(shutdownTimer);
+    }
     try {
       await cleanup;
     } finally {
@@ -1614,7 +1638,18 @@ export class McpEventsClientManager {
    * Never exposed as an MCP tool or callable from a provider notification.
    * An opaque cursor advancing is NOT evidence of replay completeness.
    */
-  async acknowledgeReconciledGap({
+  async acknowledgeReconciledGap(input) {
+    this.assertOpen();
+    const pending = this.acknowledgeReconciledGapUnchecked(input);
+    this.reconciliationInFlight.add(pending);
+    try {
+      return await pending;
+    } finally {
+      this.reconciliationInFlight.delete(pending);
+    }
+  }
+
+  async acknowledgeReconciledGapUnchecked({
     connectionId, eventName, arguments: args = {}, evidenceId,
     expectedCompletenessRevision,
   }) {
@@ -1904,6 +1939,7 @@ export class McpEventsClientManager {
     // Close the authority boundary synchronously, including callers who
     // retain host.runtime.mcpEventsClient directly across host shutdown.
     this.closed = true;
+    this.notifyShutdown();
     this.closePromise = (async () => {
       await this.stop({ shutdown: true });
       // Already-accepted manual/scoped attachments may be awaiting an
@@ -1916,6 +1952,11 @@ export class McpEventsClientManager {
       // records; release the authoritative store only after it settles.
       while (this.detachInFlight.size > 0) {
         await Promise.allSettled([...this.detachInFlight]);
+      }
+      // Gaps acknowledged before the close fence can still have a
+      // pending authoritative store write; finish them before runtime.close.
+      while (this.reconciliationInFlight.size > 0) {
+        await Promise.allSettled([...this.reconciliationInFlight]);
       }
       await this.drain();
       while (this.deliveryCallbackInFlight.size > 0) {
