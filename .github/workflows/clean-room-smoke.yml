@@ -202,6 +202,9 @@ jobs:
           assert.equal(report.schema, 'event-intelligence.packed-managed-consumer.v1');
           assert.equal(report.status, 'pass');
           assert.equal(report.approvalDeniedBeforeWrite, true);
+          assert.equal(report.policyActionsVerified, 10);
+          assert.equal(report.reopenedReceiptVerified, true);
+          assert.equal(report.durableReplayStateUnchanged, true);
           assert.equal(report.starts, 2);
           assert.equal(report.deliveries, 2);
           assert.equal(report.replayRedeliveries, 0);
