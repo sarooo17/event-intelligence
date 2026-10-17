@@ -667,7 +667,17 @@ export class PersistentEventStore {
 
   async putTrigger(definitionInput) {
     return this.#serialized(async () => {
-      const definition = parseCompositeTriggerDefinition(definitionInput);
+      const parsed = parseCompositeTriggerDefinition(definitionInput);
+      // A clause's MCP identity may contain z.unknown() nested values.
+      // Validate them as safe JSON, and sever input/returned references
+      // before the definition can govern negative CEP gap matching.
+      const definition = structuredClone({
+        ...parsed,
+        clauses: parsed.clauses.map((clause) => ({
+          ...clause,
+          arguments: safeMcpSourceArguments(clause.arguments),
+        })),
+      });
       const key = this.#triggerKey(definition);
       if (this.#triggers.has(key)) {
         const error = new Error(
@@ -682,12 +692,13 @@ export class PersistentEventStore {
         `${JSON.stringify(definition)}\n`,
         'utf8',
       );
-      return definition;
+      return structuredClone(definition);
     });
   }
 
   listTriggers() {
-    return [...this.#triggers.values()];
+    return [...this.#triggers.values()].map((definition) =>
+      structuredClone(definition));
   }
 
   getTriggerState(triggerId, version) {
