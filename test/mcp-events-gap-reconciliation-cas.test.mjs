@@ -104,3 +104,65 @@ test('host acknowledgement refuses a second poll gap raced after its read',async
     await rm(dir,{recursive:true,force:true});
   }
 });
+
+
+test('MCP gap snapshots cannot be forged by mutating returned or input JSONL records', async()=>{
+  const dir=await mkdtemp(path.join(os.tmpdir(),'ei-gap-record-isolation-'));
+  let store;
+  try {
+    store=new PersistentEventStore(dir);
+    await store.init();
+    const input={
+      connectionId:'source',serverId:'upstream',eventName:'job.failed',
+      arguments:{environment:'production',nested:{region:'eu'}},
+      cursor:'gap-1',deliveryMode:'poll',truncated:true,
+    };
+    const returned=await store.putMcpClientState(input);
+    const original=store.getMcpClientState('source','job.failed',{
+      environment:'production',nested:{region:'eu'},
+    });
+    assert.equal(original.gapUnresolved,true);
+    const snapshot=store.getMcpGapStateAndSnapshot().snapshot;
+    const fromGet=store.getMcpClientState('source','job.failed',input.arguments);
+    const fromList=store.listMcpClientStates('source')[0];
+    const fromSnapshot=store.getMcpGapStateAndSnapshot().states[0];
+    const returnedRecords=[input,returned,fromGet,fromList,fromSnapshot];
+    for(const copy of returnedRecords){
+      copy.gapUnresolved=false;
+      copy.truncated=false;
+      copy.completenessRevision=200;
+      copy.arguments.environment='forged';
+      copy.arguments.nested.region='forged';
+    }
+    const fresh=store.getMcpClientState('source','job.failed',{
+      environment:'production',nested:{region:'eu'},
+    });
+    assert.ok(fresh,'host mutations must not change the indexed identity');
+    assert.equal(fresh.gapUnresolved,true);
+    assert.equal(fresh.truncated,true);
+    assert.equal(fresh.completenessRevision,original.completenessRevision);
+    assert.deepEqual(fresh.arguments,original.arguments);
+    assert.equal(store.getMcpGapStateAndSnapshot().snapshot,snapshot,
+      'no exposed object may bypass the revision/gap fence');
+    assert.equal(store.listMcpClientStates().length,1);
+
+    await store.close();
+    store=new PersistentEventStore(dir);
+    await store.init();
+    const reopened=store.getMcpClientState('source','job.failed',{
+      environment:'production',nested:{region:'eu'},
+    });
+    assert.equal(reopened.gapUnresolved,true);
+    assert.equal(store.getMcpGapStateAndSnapshot().snapshot,snapshot);
+    const reconciled=await store.putMcpClientState({
+      ...reopened,truncated:false,gapReconciled:true,
+      reconciliationEvidenceId:'host-verified-current-replay',
+      expectedCompletenessRevision:reopened.completenessRevision,
+    });
+    assert.equal(reconciled.gapUnresolved,false);
+    assert.equal(reconciled.completenessRevision,original.completenessRevision+1);
+  } finally {
+    await store?.close();
+    await rm(dir,{recursive:true,force:true});
+  }
+});
