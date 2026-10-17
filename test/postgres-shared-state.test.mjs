@@ -997,6 +997,7 @@ integrationTest('PostgreSQL MCP completeness ABA and replay-buffer fences reject
     await engineB.ingest(event('job.failed','replayed',t0+500));
     const reconciled=await b.putMcpClientState({
       ...gap,truncated:false,gapReconciled:true,
+      expectedCompletenessRevision:gap.completenessRevision,
       reconciliationEvidenceId:'postgres-verified-replay',
     });
     assert.ok(reconciled.completenessRevision>original.completenessRevision);
