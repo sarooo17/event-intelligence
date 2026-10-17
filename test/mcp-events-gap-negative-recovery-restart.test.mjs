@@ -78,6 +78,8 @@ test('all negative deadline variants defer before verified replay and recover af
       const cleared=await manager.acknowledgeReconciledGap({
         connectionId:'source',eventName:'job.failed',
         arguments:{},evidenceId:'host-replay-verified:'+kind,
+        expectedCompletenessRevision:
+          (await store.getMcpClientState('source','job.failed',{})).completenessRevision,
       });
       assert.equal(cleared.gapUnresolved,false,kind);
       assert.equal(cleared.reconciliationEvidenceId,'host-replay-verified:'+kind);
