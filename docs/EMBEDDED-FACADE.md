@@ -160,3 +160,19 @@ a provider teardown that itself awaits `host.close()` must not deadlock
 closing the store, and all new/late callbacks are fenced. The host remains
 responsible for the external transport's ultimate shutdown/release; EI does
 not pretend a timed-out host hook completed successfully.
+
+### Shutdown and detach fence (#42)
+
+A host's `close()` synchronously closes the authority boundary on new MCP
+registry refreshes, direct/scoped attachments **and manual detachment**. Calls
+accepted after that point reject with stable `EI_HOST_CLOSED` rather than
+mutating persisted source enablement while the store is closing. The retained
+`runtime.mcpEventsClient.detachConnection()` entry point has the same guard.
+
+Detach operations accepted *before* the close fence may still be disabling
+durable event sources or closing host-supplied sessions: the MCP client manager
+tracks those operations, and host shutdown drains them before tearing down the
+authoritative runtime/store. This is not a guarantee that a hostile provider
+will ever complete an indefinitely suspended external callback; the host owns
+its external session shutdown policy. Tests reproduce the late-detach fence
+and an accepted detach awaiting an intentionally held durable source query.
