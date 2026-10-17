@@ -102,7 +102,16 @@ integrationTest('pg_dump + pg_restore preserves trigger, audit chain, wake recei
     // A logical backup must include MCP delivery completeness/cursors as
     // well as wake receipts. Losing an unresolved gap would make restored
     // negative CEP incorrectly claim that a forbidden event is absent.
-    const mcpIdentity = {environment:'production',region:'eu'};
+    const mcpIdentity = {
+      environment:'production',
+      source:{region:{country:'IT',zone:'eu'},tags:['invoices','closed']},
+    };
+    // Simulate reconstruction in an independent recovered worker: source
+    // identity key order differs at the outer and nested object levels.
+    const restoredLookup = {
+      source:{tags:['invoices','closed'],region:{zone:'eu',country:'IT'}},
+      environment:'production',
+    };
     const unresolvedGap = await source.putMcpClientState({
       connectionId:'restore-mcp-connection', serverId:'upstream',
       eventName:'restore.failed', arguments:mcpIdentity,
@@ -133,7 +142,7 @@ integrationTest('pg_dump + pg_restore preserves trigger, audit chain, wake recei
     });
     await target.init();
     const restoredGap = await target.getMcpClientState(
-      'restore-mcp-connection','restore.failed',mcpIdentity);
+      'restore-mcp-connection','restore.failed',restoredLookup);
     assert.deepEqual(restoredGap,unresolvedGap,
       'pg_dump/pg_restore must preserve exact MCP cursor and gap generation');
     assert.equal(restoredGap.cursor,'opaque-cursor-before-restore');
@@ -143,31 +152,33 @@ integrationTest('pg_dump + pg_restore preserves trigger, audit chain, wake recei
       originalGapSnapshot,
       'restored CEP must retain the unresolved delivery-gap finality fence');
     assert.equal(await target.forScope('other-tenant').then(scope=>
-      scope.getMcpClientState('restore-mcp-connection','restore.failed',mcpIdentity)
+      scope.getMcpClientState('restore-mcp-connection','restore.failed',restoredLookup)
     ),null,'cross-tenant restoration must not expose a source cursor');
 
     // A host receipt covering a pre-backup gap must not erase a *new* gap
     // recorded by the restored worker: durable source revision is fenced.
     const subsequentGap = await target.putMcpClientState({
-      ...restoredGap,cursor:'opaque-cursor-after-restore',truncated:true,
+      ...restoredGap,arguments:restoredLookup,
+      cursor:'opaque-cursor-after-restore',truncated:true,
     });
     assert.equal(subsequentGap.gapUnresolved,true);
     assert.equal(subsequentGap.completenessRevision,
       unresolvedGap.completenessRevision+1);
     const newerSnapshot = (await target.getMcpGapStateAndSnapshot()).snapshot;
     await assert.rejects(target.putMcpClientState({
-      ...restoredGap,
+      ...restoredGap,arguments:restoredLookup,
       truncated:false,gapReconciled:true,
       reconciliationEvidenceId:'stale-pre-backup-replay',
       expectedCompletenessRevision:unresolvedGap.completenessRevision,
     }),error=>error?.code==='MCP_EVENTS_GAP_REVISION_CONFLICT',
     'old host replay evidence must not erase a newer recovered gap');
     assert.deepEqual(await target.getMcpClientState(
-      'restore-mcp-connection','restore.failed',mcpIdentity),subsequentGap);
+      'restore-mcp-connection','restore.failed',restoredLookup),subsequentGap);
     assert.equal((await target.getMcpGapStateAndSnapshot()).snapshot,newerSnapshot,
       'stale receipt must not change negative CEP finality evidence');
     const reconciledGap = await target.putMcpClientState({
-      ...subsequentGap,truncated:false,gapReconciled:true,
+      ...subsequentGap,arguments:restoredLookup,
+      truncated:false,gapReconciled:true,
       expectedCompletenessRevision:subsequentGap.completenessRevision,
       reconciliationEvidenceId:'verified-after-backup-and-replay',
     });
