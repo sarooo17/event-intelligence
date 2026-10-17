@@ -56,6 +56,25 @@ verified replay defeats its own correctness contract. This code does
 not provide a cryptographic replay attestation or full producer-side
 transport conformance.
 
+## Recovery across all negative forms
+
+A negative anchor observed *while a gap is unresolved* must not be
+discarded permanently. For `notFollowedBy` and `absence`, the evaluator
+retains a bounded, durable `incompletePending` timer at the original
+event-time deadline. For snapshot `notPresent` and `notNext`, it
+persists an already-due retry using the anchor event time, with a
+deterministic deadline identity. These retry hints are **never** matches
+or wake approvals. Every scheduler pass leaves their deadline pending
+until the host reconciles missing upstream history; after explicit
+reconciliation the scheduler re-evaluates the stored source events
+and may emit a valid match exactly once. Positive branches within
+`anyOf` are evaluated normally even if a sibling negative branch
+is gap-blocked.
+
+A provider's own-data `truncated:true` poll marker is durably written
+**before** validation of other page fields and before delivering events
+to the CEP engine; a rejected malformed page does not advance its cursor.
+
 ## Tests and migration
 
 - `test/mcp-events-gap-aware-negative-finality.test.mjs`: real
@@ -67,6 +86,9 @@ transport conformance.
 - `test/mcp-events-sep3415-poll-floor.test.mjs`: real host-owned poll,
   sticky gap despite healthy page, physical reopen, explicit
   host-authoritative evidence acknowledgement.
+- `test/mcp-events-gap-negative-recovery-restart.test.mjs`: all four
+  negative operators complete after verified host repair, one effect,
+  restart persistence and no duplicate deadline.
 - Existing `test/mcp-events-stream-untrusted-bounds.test.mjs`
   covers push/webhook `onGap` callbacks and untrusted ingress
   boundaries; new state flags use the same `saveSubscriptionState` path.
