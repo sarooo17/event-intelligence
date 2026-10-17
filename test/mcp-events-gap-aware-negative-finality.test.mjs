@@ -240,6 +240,7 @@ test('anchor arriving during an unresolved gap has a durable retry deadline',asy
     const previous=store.getMcpClientState('upstream-conn','job.failed');
     await store.putMcpClientState({
       ...previous,gapReconciled:true,
+      expectedCompletenessRevision:previous.completenessRevision,
       reconciliationEvidenceId:'verified-history:gap-before-anchor',
       truncated:false,
     });
