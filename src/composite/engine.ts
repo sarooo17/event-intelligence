@@ -773,32 +773,22 @@ export class CompositeTriggerEngine {
       });
     }
 
-    // Do not cancel a pending negative deadline merely because the
-    // relevant provider stopped giving complete evidence. Timer retries
-    // remain possible after authoritative host replay/reconciliation.
-    if (!incompleteSourceRefs.size) {
-      await this.support.cancelDeadlinesForMatch(buffer.matchId);
-    }
     const pendingForDeadlines=[
       ...evaluation.pending,
       ...(evaluation.incompletePending ?? []),
     ];
-    if (pendingForDeadlines.length) {
-      const deadlines = pendingForDeadlines
-        .filter((candidate) =>
-          candidate.pendingUntil &&
-          this.candidateFitsTriggerWindow(candidate, definition.withinMs)
-        )
-        .map((candidate) => ({
-          conditionId: `pattern-v2:${patternV2CandidateSignature(candidate)}`,
-          dueAt: candidate.pendingUntil!,
-        }));
-      await this.support.scheduleDeadlines(
-        definition,
-        buffer,
-        deadlines,
-      );
-    }
+    const deadlines = pendingForDeadlines
+      .filter((candidate) =>
+        candidate.pendingUntil &&
+        this.candidateFitsTriggerWindow(candidate, definition.withinMs)
+      )
+      .map((candidate) => ({
+        conditionId: `pattern-v2:${patternV2CandidateSignature(candidate)}`,
+        dueAt: candidate.pendingUntil!,
+      }));
+    // Keep gap retries, but cancel stale positive deadlines even while an
+    // unrelated negative branch is missing delivery evidence.
+    await this.support.reconcileDeadlines(definition,buffer,deadlines);
 
     const previouslyEmitted = new Set(
       (await this.store
