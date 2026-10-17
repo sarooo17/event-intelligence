@@ -1545,10 +1545,16 @@ export class McpEventsClientManager {
    */
   async acknowledgeReconciledGap({
     connectionId, eventName, arguments: args = {}, evidenceId,
+    expectedCompletenessRevision,
   }) {
     if(typeof evidenceId !== 'string' || !evidenceId.trim() ||
        evidenceId.length > 256) {
       throw new Error('Host reconciliation requires an evidence ID');
+    }
+    // A host receipt must be tied to the exact gap generation it verified.
+    if (!Number.isSafeInteger(expectedCompletenessRevision) ||
+        expectedCompletenessRevision < 0) {
+      throw new Error('Host reconciliation requires expected completeness revision');
     }
     const connection=this.connections.get(connectionId);
     if(!connection) throw new Error('Unknown host-managed connection');
@@ -1568,6 +1574,7 @@ export class McpEventsClientManager {
       return context.store.putMcpClientState({
         ...previous, connectionId, serverId:connection.serverId,
         eventName,arguments:args,gapReconciled:true,
+        expectedCompletenessRevision,
         reconciliationEvidenceId:evidenceId,
         truncated:false,
       });
