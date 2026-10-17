@@ -2,7 +2,7 @@
 
 `createEventIntelligence()` is a small host-neutral composition layer around the existing embedded engine. It does **not** create MCP connections, model loops, credentials, permissions, database instances, or a second event interpreter.
 
-> This API is proposed in PR #52 (or its final PR number). Use a published version containing this export; `mcp-event-intelligence@0.11.0` does not expose it.
+> This canonical facade is present in the repository's candidate package; check the specific published npm version before relying on it. The pinned `0.11.0` release does not expose every pre-v1 integration change.
 
 ## Integration with an existing host
 
@@ -208,3 +208,85 @@ The retained manager's own `close()` publishes the shared promise before
 invoking teardown so manager-initiated shutdown has the same reentrancy safety
 as root host shutdown. Regression coverage includes connection churn and
 reentrant teardown starting from the retained manager itself.
+
+
+## HostContract v1 — explicit capability handshake (#42)
+
+The canonical facade accepts an **optional pre-v1, strict, versioned**
+`hostContract` requirement list. It checks actual host-supplied callbacks and
+storage capability descriptors **before** creating a host, subscribing to MCP,
+opening storage or dispatching any continuation. Existing embedded integrations
+can adopt the v1 contract explicitly; future breaking releases may make this
+mandatory without runtime-specific compatibility wrappers.
+
+```js
+const integration = await createEventIntelligence({
+  hostContract: {
+    version: '1',
+    required: [
+      'mcp.registry',
+      'storage.durable',
+      'wake.receipts',
+      'tooling.owner-scoped',
+    ],
+  },
+  mcp: {
+    list: () => host.mcp.listConnections(),
+    subscribe: change => host.mcp.onConnectionsChanged(change),
+  },
+  dataDir: host.eiStateDir,
+  runtime: {
+    deliver: input => host.continuations.deliver(input),
+    receiptNamespace: 'acme-host',
+    hasReceipt: id => host.receipts.has(id),
+    resolveContext: input => host.identity.forTool(input),
+    control: input => host.policy.control(input),
+  },
+});
+console.log(integration.hostContract.schema);
+// event-intelligence.host-contract.v1
+```
+
+Supported v1 identifiers:
+
+| Capability | When advertised as available |
+| --- | --- |
+| `mcp.registry` | Host supplies an MCP registry `list()` and optional valid `subscribe()` |
+| `storage.durable` | Host specifies an explicit nonblank JSONL location or a store providing durable trigger/receipt entry points |
+| `storage.shared` | Host supplies an actual store with strong scope/consistency declarations **and** distributed lease/atomic mutation primitives |
+| `wake.receipts` | Host supplies `hasReceipt()` plus deterministic `receiptId()` **or** nonblank `receiptNamespace` |
+| `tooling.owner-scoped` | Host supplies **both** `resolveContext()` and `control()` |
+| `semantic.evaluate` | Host supplies an explicit evaluator with `evaluate()` |
+| `observability.sink` | Host supplies a sink function or `{emit()}` |
+
+`hostContract` has only `version:'1'` and `required:[...]`; unknown versions,
+unknown IDs, duplicates or extra fields fail closed. An unavailable required
+capability throws a `TypeError` with machine-readable code *before* the host
+factory is invoked:
+
+- `EI_HOST_CONTRACT_INVALID`
+- `EI_HOST_CONTRACT_VERSION_UNSUPPORTED`
+- `EI_HOST_CAPABILITY_UNKNOWN`
+- `EI_HOST_CAPABILITY_UNAVAILABLE`
+- `EI_HOST_STORAGE_REQUIRED`
+- `EI_HOST_SHARED_STORE_REQUIRED`
+
+The successful `integration.hostContract` contains frozen `required`,
+configuration-derived `available` and
+`readiness:'configuration-validated'`. Its values are not host capability
+*grants*. For `storage.shared`, EI examines the supplied store's declared
+capabilities and operations; this is still not a live multiworker transaction
+proof. Similarly, declared host receipt wiring does **not** prove that the
+host's external effect or receipt lookup is durably idempotent. The host owns
+transport/OAuth, principal and tenant policy, approvals, continuation,
+external receipts and observability destinations. EI does not call any host
+authorization, registry enumeration or receipt callbacks during the
+handshake. The independent host conformance v3 suite remains mandatory to
+establish actual behavior, and issue #42 stays open until an independently
+authored host is verified.
+
+Run the focused check after building:
+
+```bash
+node --test test/embedded-host-contract-v1.test.mjs
+```
