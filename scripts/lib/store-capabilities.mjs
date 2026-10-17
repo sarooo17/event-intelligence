@@ -1,3 +1,32 @@
+
+/** Canonical minimum event-store surface required before the host can start.
+ * Shared by the runtime initialization guard and the HostContract handshake
+ * to prevent a partial custom store from initializing before rejection. */
+export const REQUIRED_EVENT_STORE_METHODS = Object.freeze([
+  'putTrigger',
+  'listTriggers',
+  'getTriggerState',
+  'setTriggerState',
+  'appendTriggerMatch',
+  'listTriggerMatches',
+  'putEventSource',
+  'listEventSources',
+  'appendWake',
+  'latestWake',
+  'ensureWakeDelivery',
+  'getWakeDelivery',
+  'claimWakeDelivery',
+  'completeWakeDelivery',
+  'failWakeDelivery',
+  'listDueWakeDeliveries',
+  'appendAudit',
+  'auditLength',
+  'getMcpClientState',
+  'listMcpClientStates',
+  'putMcpClientState',
+  'appendMcpOccurrence',
+]);
+
 export const EVENT_INTELLIGENCE_STORE_CAPABILITIES_VERSION = '1';
 
 export const UNDECLARED_STORE_CAPABILITIES = Object.freeze({
