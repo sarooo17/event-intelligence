@@ -207,3 +207,32 @@ test('retained public MCP manager rejects post-close actions and drains pre-clos
     await rm(dataDir, { recursive: true, force: true });
   }
 });
+
+test('registry unsubscribe synchronous reentrancy reuses the already-published close promise', async () => {
+  const dataDir = await mkdtemp(path.join(os.tmpdir(), 'ei-reentrant-close-'));
+  let host;
+  let nested;
+  let unsubscribeCalls = 0;
+  try {
+    host = await createEventIntelligenceHost({
+      dataDir, env,
+      mcpRegistry: {
+        listConnections: () => [],
+        subscribe: () => () => {
+          unsubscribeCalls++;
+          nested = host.close();
+        },
+      },
+    });
+    const outer = host.close();
+    await outer;
+    assert.equal(nested, outer,
+      'reentrant close during an unsubscribe callback must reuse original promise');
+    assert.equal(unsubscribeCalls, 1,
+      'reentrant close must not invoke unsubscribe twice');
+    assert.equal(host.close(), outer);
+  } finally {
+    await host?.close();
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
