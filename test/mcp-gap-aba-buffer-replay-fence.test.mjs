@@ -77,6 +77,7 @@ for (const scenario of ['ABA gap and reconciliation', 'buffer-only replay']) {
             const gap=store.getMcpClientState('source','job.failed',{});
             const repaired=await store.putMcpClientState({
               ...gap,truncated:false,gapReconciled:true,
+              expectedCompletenessRevision:gap.completenessRevision,
               reconciliationEvidenceId:'verified-replay-aba',
             });
             assert.equal(repaired.gapUnresolved,false);
@@ -135,9 +136,10 @@ test('MCP completeness revision survives physical restart and ignores caller for
     const first=await store.putMcpClientState({...row,completenessRevision:9000});
     assert.equal(first.completenessRevision,1);
     const snapshot=store.getMcpGapStateAndSnapshot().snapshot;
-    await store.putMcpClientState({...row,truncated:true});
+    const firstGap=await store.putMcpClientState({...row,truncated:true});
     const reconciled=await store.putMcpClientState({
       ...row,truncated:false,gapReconciled:true,
+      expectedCompletenessRevision:firstGap.completenessRevision,
       reconciliationEvidenceId:'verified-replay',
     });
     assert.equal(reconciled.completenessRevision,3);
