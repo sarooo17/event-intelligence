@@ -99,3 +99,29 @@ These diagnostics add no historical compatibility adapter.
 
 Run the focused probes with `node --test test/host-configuration-errors.test.mjs`
 after `npm run build`.
+
+## Lifecycle ownership: failure-atomic setup (issue #42)
+
+The embedded host is started only after the normal configuration checks. Once
+`createHost()` has succeeded, EI requires a callable `host.close()` (stable
+`EI_HOST_LIFECYCLE_INVALID` failure otherwise). Both
+`createEmbeddedEventIntelligence()` and `createEmbeddedRuntimeIntegration()`
+release that host if construction of a model-facing tool catalog fails after
+host startup, while propagating the original configuration failure rather
+than masking it with any cleanup error.
+
+`integration.close()` returns the same promise on overlapping, repeated, or
+post-settlement calls. This means hosts can safely connect multiple shutdown
+hooks via `integration.bind({ onClose })` and also call `close()` explicitly
+without double-closing storage, timers or MCP subscriptions. If closing fails,
+subsequent calls observe the same rejection; EI does not silently retry an
+ambiguous partial shutdown.
+
+The host still owns process signals, shutdown hook invocation, MCP network
+sessions, policy and continuation side effects. This contract only covers
+host resources returned successfully by `createHost()`; it cannot magically
+recover resources a failing host factory never returned. Tests in
+`test/embedded-lifecycle-ownership.test.mjs` cover failed setup, cleanup
+errors and overlapping host/app shutdown hooks with no external runtime SDK.
+This is **partial #42 acceptance**, not yet third-party independent
+integration or complete three-host lifecycle v3 certification.
