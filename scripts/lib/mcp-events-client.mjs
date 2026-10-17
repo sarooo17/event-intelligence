@@ -576,9 +576,10 @@ export class McpEventsClientManager {
     // Host-only reconciliation can read/write durable gap evidence during
     // close; every accepted operation must settle before store shutdown.
     this.reconciliationInFlight = new Set();
-    this.shutdownSignal = new Promise(resolve => {
-      this.notifyShutdown = resolve;
-    });
+    // Detach session teardown needs a cancellable close notification.
+    // A never-settled Promise.then would retain every completed detach on
+    // long-lived hosts until the eventual process shutdown.
+    this.shutdownListeners = new Set();
     // Push/webhook providers may retain callback references after session
     // cleanup. Track callbacks accepted before shutdown; reject later ones.
     this.deliveryCallbackInFlight = new Set();
@@ -771,25 +772,29 @@ export class McpEventsClientManager {
     const previousSessions = [...this.deliverySessions].filter(
       ([, session]) => session.connection === connection,
     );
+    // Register the removable listener BEFORE invoking any host-owned
+    // session hook; that hook can synchronously reenter host.close().
+    let shutdownTimer;
+    let detachSettled = false;
+    let signalShutdown;
+    const shutdownGrace = new Promise(resolve => {
+      signalShutdown = () => {
+        if (detachSettled || shutdownTimer) return;
+        shutdownTimer = setTimeout(resolve, 500);
+      };
+      this.shutdownListeners.add(signalShutdown);
+      if (this.closed) signalShutdown();
+    });
     const sessionTeardown = Promise.all(previousSessions.map(([id,session]) =>
       this.closeSession(id,session)
     ));
-    // A host-owned session.close() may itself await host.close(). Ordinary
-    // detach still waits for teardown; only a concurrent global shutdown
-    // permits a bounded best-effort wait before finishing durable cleanup.
-    // This breaks a detach -> session.close -> host.close -> detach cycle.
-    let shutdownTimer;
-    let detachSettled = false;
-    const shutdownGrace = this.shutdownSignal.then(() => {
-      if (detachSettled) return;
-      return new Promise(resolve => {
-        shutdownTimer = setTimeout(resolve, 500);
-      });
-    });
+    // Ordinary detach awaits the provider hook. Only a concurrent global
+    // shutdown makes bounded best-effort teardown eligible.
     try {
       await Promise.race([sessionTeardown, shutdownGrace]);
     } finally {
       detachSettled = true;
+      this.shutdownListeners.delete(signalShutdown);
       clearTimeout(shutdownTimer);
     }
     try {
@@ -1939,8 +1944,17 @@ export class McpEventsClientManager {
     // Close the authority boundary synchronously, including callers who
     // retain host.runtime.mcpEventsClient directly across host shutdown.
     this.closed = true;
-    this.notifyShutdown();
-    this.closePromise = (async () => {
+    for (const listener of this.shutdownListeners) listener();
+    this.shutdownListeners.clear();
+    // Publish the manager close promise BEFORE any provider session hooks
+    // can synchronously call host.close() and reenter manager.close().
+    let resolveClose;
+    let rejectClose;
+    this.closePromise = new Promise((resolve, reject) => {
+      resolveClose = resolve;
+      rejectClose = reject;
+    });
+    Promise.resolve().then(async () => {
       await this.stop({ shutdown: true });
       // Already-accepted manual/scoped attachments may be awaiting an
       // untrusted provider. All must settle (or fail on assertOpen) while
@@ -1962,7 +1976,7 @@ export class McpEventsClientManager {
       while (this.deliveryCallbackInFlight.size > 0) {
         await Promise.allSettled([...this.deliveryCallbackInFlight]);
       }
-    })();
+    }).then(resolveClose, rejectClose);
     return this.closePromise;
   }
 
