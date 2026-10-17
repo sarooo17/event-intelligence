@@ -1,4 +1,5 @@
 import * as z from 'zod/v4';
+import { mcpGapSnapshot } from '../../dist/src/composite/gapFingerprint.js';
 import { randomUUID } from 'node:crypto';
 import {
   AuditChain,
@@ -791,6 +792,29 @@ export class PostgresEventStore {
       .filter((source) => !enabledOnly || source.enabled !== false);
   }
 
+  async getMcpGapStateAndSnapshot() {
+    // One SQL SELECT yields a coherent read-committed view of this scope.
+    const states=await this.list('mcp_client_state');
+    return { states, snapshot:mcpGapSnapshot(states) };
+  }
+
+  async appendTriggerMatchIfMcpGapUnchanged(input, expectedSnapshot) {
+    const record=parseTriggerMatchRecord(input);
+    return this.tx(async(client)=>{
+      // Every gap mutation acquires this same scoped advisory lock FIRST.
+      // A timer cannot check the old snapshot then commit across a
+      // concurrently committed provider gap.
+      await this.lock(client,'mcp-gap-fence','scope');
+      const states=await this.list('mcp_client_state',client);
+      if(mcpGapSnapshot(states)!==expectedSnapshot) return false;
+      await this.lock(client,'trigger-match',record.matchId);
+      await this.appendHistory('trigger_match_history',
+        record.matchId,record,client);
+      await this.upsert('trigger_match',record.matchId,record,client);
+      return true;
+    });
+  }
+
   async appendTriggerMatch(input) {
     const record = parseTriggerMatchRecord(input);
     return this.tx(async (client) => {
@@ -948,6 +972,8 @@ export class PostgresEventStore {
         : {};
     const key = mcpStateKey(connectionId, eventName, args);
     return this.tx(async (client) => {
+      // Preserve lock ordering: scope fence, then individual source lock.
+      await this.lock(client, 'mcp-gap-fence', 'scope');
       await this.lock(client, 'mcp-client-state', key);
       const previous = await this.get('mcp_client_state', key, client);
       if (input.gapReconciled === true &&
