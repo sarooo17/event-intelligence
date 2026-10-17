@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import type { McpDeliveryGapState } from './deliveryGap.js';
 
 // A signature of *scope-local committed delivery completeness*, not a
@@ -24,5 +23,6 @@ export function mcpGapSnapshot(states: McpDeliveryGapState[]): string {
     canonical(s.arguments ?? {}),
     s.gapUnresolved === true || s.truncated === true,
   ])).sort();
-  return createHash('sha256').update(JSON.stringify(elements)).digest('hex');
+  // Exact deterministic encoding, no non-cryptographic hash collisions.
+  return JSON.stringify(elements);
 }
