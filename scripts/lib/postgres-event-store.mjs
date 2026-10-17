@@ -798,15 +798,22 @@ export class PostgresEventStore {
     return { states, snapshot:mcpGapSnapshot(states) };
   }
 
-  async appendTriggerMatchIfMcpGapUnchanged(input, expectedSnapshot) {
+  async appendTriggerMatchIfMcpGapUnchanged(input, expectedSnapshot, expectedBuffer) {
     const record=parseTriggerMatchRecord(input);
     return this.tx(async(client)=>{
-      // Every gap mutation acquires this same scoped advisory lock FIRST.
-      // A timer cannot check the old snapshot then commit across a
-      // concurrently committed provider gap.
+      // Acquire completeness fence first; all buffer writes hold their
+      // trigger-match lock. Both checks and the final match insert share
+      // this transaction so neither a gap nor a replay can interleave.
       await this.lock(client,'mcp-gap-fence','scope');
       const states=await this.list('mcp_client_state',client);
       if(mcpGapSnapshot(states)!==expectedSnapshot) return false;
+      await this.lock(client,'trigger-match',expectedBuffer.matchId);
+      const current=await this.get('trigger_match',expectedBuffer.matchId,client);
+      if(!current ||
+          JSON.stringify(parseTriggerMatchRecord(current)) !==
+          JSON.stringify(parseTriggerMatchRecord(expectedBuffer))) {
+        return false;
+      }
       await this.lock(client,'trigger-match',record.matchId);
       await this.appendHistory('trigger_match_history',
         record.matchId,record,client);
@@ -976,6 +983,12 @@ export class PostgresEventStore {
       await this.lock(client, 'mcp-gap-fence', 'scope');
       await this.lock(client, 'mcp-client-state', key);
       const previous = await this.get('mcp_client_state', key, client);
+      const priorRevision = previous?.completenessRevision ?? 0;
+      if (!Number.isSafeInteger(priorRevision) ||
+          priorRevision < 0 ||
+          priorRevision === Number.MAX_SAFE_INTEGER) {
+        throw new Error('Invalid or exhausted MCP completeness revision');
+      }
       if (input.gapReconciled === true &&
           (typeof input.reconciliationEvidenceId !== 'string' ||
             !input.reconciliationEvidenceId.trim())) {
@@ -994,6 +1007,7 @@ export class PostgresEventStore {
         ),
         cursor: input.cursor == null ? null : String(input.cursor),
         updatedAt: new Date().toISOString(),
+        completenessRevision: priorRevision + 1,
         gapUnresolved: input.gapReconciled === true ? false :
           input.truncated === true ||
           input.gapUnresolved === true ||
