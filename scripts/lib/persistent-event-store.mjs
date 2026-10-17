@@ -802,11 +802,17 @@ export class PersistentEventStore {
     return { states, snapshot:mcpGapSnapshot(states) };
   }
 
-  async appendTriggerMatchIfMcpGapUnchanged(recordInput, expectedSnapshot) {
+  async appendTriggerMatchIfMcpGapUnchanged(recordInput, expectedSnapshot, expectedBuffer) {
     return this.#serialized(async()=>{
-      // The same serial queue protects both putMcpClientState and this
-      // finality commit, closing the asynchronous recheck/write race.
+      // A single serialized write fences BOTH delivery completeness and the
+      // exact source-event buffer that the candidate was evaluated against.
       if(mcpGapSnapshot(this.listMcpClientStates())!==expectedSnapshot) {
+        return false;
+      }
+      const current=this.#triggerMatches.get(expectedBuffer.matchId);
+      if(!current ||
+          JSON.stringify(parseTriggerMatchRecord(current)) !==
+          JSON.stringify(parseTriggerMatchRecord(expectedBuffer))) {
         return false;
       }
       const record=parseTriggerMatchRecord(recordInput);
@@ -963,6 +969,12 @@ export class PersistentEventStore {
           ? input.arguments
           : {};
       const previous = this.getMcpClientState(connectionId, eventName, args);
+      const priorRevision = previous?.completenessRevision ?? 0;
+      if (!Number.isSafeInteger(priorRevision) ||
+          priorRevision < 0 ||
+          priorRevision === Number.MAX_SAFE_INTEGER) {
+        throw new Error('Invalid or exhausted MCP completeness revision');
+      }
       if (input.gapReconciled === true &&
           (typeof input.reconciliationEvidenceId !== 'string' ||
             !input.reconciliationEvidenceId.trim())) {
@@ -982,6 +994,9 @@ export class PersistentEventStore {
           ? null
           : String(input.cursor),
         updatedAt: new Date().toISOString(),
+        // Never trust a caller-supplied revision. A -> gap -> reconciled A
+        // must differ even if all boolean completeness fields match again.
+        completenessRevision: priorRevision + 1,
         // A later healthy poll page cannot prove that skipped earlier
         // events were replayed. Retain the gap until an explicit
         // host-owned reconciliation (never an untrusted producer hint).
