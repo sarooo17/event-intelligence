@@ -139,3 +139,62 @@ test('host close drains in-flight registry enumeration but ignores the late resu
     await rm(dataDir, { recursive: true, force: true });
   }
 });
+
+test('retained public MCP manager rejects post-close actions and drains pre-close attachment', async () => {
+  const dataDir = await mkdtemp(path.join(os.tmpdir(), 'ei-manager-close-'));
+  let host;
+  let ready;
+  let releaseCapabilities;
+  const entered = new Promise(resolve => { ready = resolve; });
+  const capabilities = new Promise(resolve => { releaseCapabilities = resolve; });
+  let listRequests = 0;
+  try {
+    host = await createEventIntelligenceHost({ dataDir, env });
+    const retainedManager = host.runtime.mcpEventsClient;
+    const attach = host.attachMcpClient({
+      id: 'accepted-before-close', serverId: 'manual-upstream',
+      getCapabilities() {
+        ready();
+        return capabilities;
+      },
+      async request() {
+        listRequests++;
+        return { events: [], cursor: null };
+      },
+    });
+    await entered;
+    let closed = false;
+    const shutdown = host.close().then(() => { closed = true; });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(closed, false,
+      'accepted asynchronous provider discovery must drain before store close');
+    releaseCapabilities({ extensions: {
+      'io.modelcontextprotocol/events': { listChanged: false },
+    } });
+    await assert.rejects(attach, error => error?.code === 'EI_HOST_CLOSED');
+    await shutdown;
+    assert.equal(closed, true);
+    assert.equal(listRequests, 0,
+      'provider listing must not restart after the manager is closed');
+    const lateConnection = {
+      connectionId: 'late-manager', serverId: 'manual-upstream',
+      getCapabilities: () => ({ extensions: {
+        'io.modelcontextprotocol/events': {},
+      } }),
+      request: async () => { listRequests++; return { events: [] }; },
+    };
+    assert.throws(() => retainedManager.addConnection(lateConnection),
+      error => error?.code === 'EI_HOST_CLOSED');
+    await assert.rejects(retainedManager.attachConnection(lateConnection),
+      error => error?.code === 'EI_HOST_CLOSED');
+    await assert.rejects(retainedManager.pollConnection('accepted-before-close'),
+      error => error?.code === 'EI_HOST_CLOSED');
+    await assert.rejects(retainedManager.discoverConnection('accepted-before-close'),
+      error => error?.code === 'EI_HOST_CLOSED');
+    assert.equal(listRequests, 0);
+  } finally {
+    releaseCapabilities?.({ extensions: {} });
+    await host?.close();
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
