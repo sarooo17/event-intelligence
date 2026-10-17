@@ -150,6 +150,16 @@ export async function createEventIntelligenceHost({
   let unsubscribe = null;
   let registryRefreshPromise = null;
   let registryRefreshRequested = false;
+  let closing = false;
+  let closePromise = null;
+
+  function assertHostOpen() {
+    if (closing) {
+      const error = new Error('Event Intelligence host is closing');
+      error.code = 'EI_HOST_CLOSED';
+      throw error;
+    }
+  }
 
   // detachConnection revokes the old connection synchronously, but its
   // durable cleanup may reject after a host has attached a replacement.
@@ -176,7 +186,11 @@ export async function createEventIntelligenceHost({
   };
 
   const refreshMcpRegistryOnce = async () => {
+    if (closing) return [];
     const entries = await listRegistryConnections(mcpRegistry);
+    // listConnections() can resolve after shutdown starts. Never adopt
+    // connections reported by an obsolete callback after host close.
+    if (closing) return [];
     const desired = new Map();
 
     for (const entry of entries) {
@@ -187,6 +201,7 @@ export async function createEventIntelligenceHost({
     const outcomes = [];
 
     for (const connectionId of [...registryManaged]) {
+      if (closing) break;
       if (!desired.has(connectionId)) {
         const failure = await detachRegistryConnection(connectionId);
         outcomes.push(failure ?? { connectionId, status: 'detached' });
@@ -194,6 +209,7 @@ export async function createEventIntelligenceHost({
     }
 
     for (const [connectionId, connection] of desired) {
+      if (closing) break;
       const existing = runtime.mcpEventsClient.connections.get(connectionId);
       // The host owns explicit and manually attached MCP connections.
       // Only connections *previously attached by this registry* may be
@@ -243,6 +259,7 @@ export async function createEventIntelligenceHost({
         // attachConnection adds the normalized connection before its first
         // asynchronous discovery await. Remember the actual object identity:
         // later host replacement must not be detached by catch cleanup.
+        if (closing) break;
         const attachment = runtime.mcpEventsClient.attachConnection(connection);
         attemptedConnection = runtime.mcpEventsClient.connections.get(connectionId);
         const result = await attachment;
@@ -306,6 +323,9 @@ export async function createEventIntelligenceHost({
   };
 
   const refreshMcpRegistry = () => {
+    try { assertHostOpen(); } catch (error) {
+      return Promise.reject(error);
+    }
     if (registryRefreshPromise) {
       registryRefreshRequested = true;
       return registryRefreshPromise;
@@ -316,7 +336,7 @@ export async function createEventIntelligenceHost({
       do {
         registryRefreshRequested = false;
         outcomes.push(...await refreshMcpRegistryOnce());
-      } while (registryRefreshRequested);
+      } while (registryRefreshRequested && !closing);
       return outcomes;
     })().finally(() => {
       registryRefreshPromise = null;
@@ -326,21 +346,32 @@ export async function createEventIntelligenceHost({
   };
 
   if (mcpRegistry) {
-    await refreshMcpRegistry();
-
-    if (typeof mcpRegistry.subscribe === 'function') {
-      const maybeUnsubscribe = mcpRegistry.subscribe(() => {
-        refreshMcpRegistry().catch(() => {
-          void observer.emit({
-            event: 'ei.source.refresh_failed',
-            level: 'error',
-            error: new Error('MCP registry refresh failed'),
+    try {
+      await refreshMcpRegistry();
+      if (typeof mcpRegistry.subscribe === 'function') {
+        const maybeUnsubscribe = mcpRegistry.subscribe(() => {
+          if (closing) return;
+          refreshMcpRegistry().catch(() => {
+            if (closing) return;
+            void observer.emit({
+              event: 'ei.source.refresh_failed',
+              level: 'error',
+              error: new Error('MCP registry refresh failed'),
+            });
           });
         });
-      });
-      if (typeof maybeUnsubscribe === 'function') {
-        unsubscribe = maybeUnsubscribe;
+        if (typeof maybeUnsubscribe === 'function') {
+          unsubscribe = maybeUnsubscribe;
+        }
       }
+    } catch (error) {
+      // The local engine and durable subscriptions have already started.
+      // Failed registry initialization must not strand timers/connections.
+      closing = true;
+      try { unsubscribe?.(); } catch {}
+      try { await registryRefreshPromise; } catch {}
+      try { await runtime.close(); } catch {}
+      throw error;
     }
   }
 
@@ -379,6 +410,7 @@ export async function createEventIntelligenceHost({
     },
     refreshMcpRegistry,
     async attachMcpClient(connection) {
+      assertHostOpen();
       const normalized = normalizeMcpConnection(connection);
       return runtime.mcpEventsClient.attachConnection(normalized);
     },
@@ -397,9 +429,23 @@ export async function createEventIntelligenceHost({
       const context = await runtime.scope(scopeId);
       return scopedHostView(runtime, context);
     },
-    async close() {
-      unsubscribe?.();
-      await runtime.close();
+    close() {
+      if (closePromise) return closePromise;
+      // Synchronously fence stale registry callbacks and manual attaches.
+      closing = true;
+      closePromise = (async () => {
+        let unsubscribeError;
+        try { unsubscribe?.(); } catch (error) {
+          unsubscribeError = error;
+        }
+        // An in-flight registry refresh must settle before the runtime's
+        // store/client are closed; late registry notifications cannot start
+        // a new refresh after the close fence.
+        try { await registryRefreshPromise; } catch {}
+        await runtime.close();
+        if (unsubscribeError) throw unsubscribeError;
+      })();
+      return closePromise;
     },
   };
 }
