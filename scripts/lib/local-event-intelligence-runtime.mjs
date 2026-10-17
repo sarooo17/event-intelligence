@@ -29,6 +29,8 @@ import {
 import {
   assertSharedStoreCapabilities,
   describeStoreCapabilities,
+  REQUIRED_EVENT_STORE_METHODS,
+  getHostDataMethod,
 } from './store-capabilities.mjs';
 import {
   TriggerInspector,
@@ -52,37 +54,13 @@ import {
   createObservabilityEmitter,
 } from './observability.mjs';
 
-const REQUIRED_STORE_METHODS = [
-  'putTrigger',
-  'listTriggers',
-  'getTriggerState',
-  'setTriggerState',
-  'appendTriggerMatch',
-  'listTriggerMatches',
-  'putEventSource',
-  'listEventSources',
-  'appendWake',
-  'latestWake',
-  'ensureWakeDelivery',
-  'getWakeDelivery',
-  'claimWakeDelivery',
-  'completeWakeDelivery',
-  'failWakeDelivery',
-  'listDueWakeDeliveries',
-  'appendAudit',
-  'auditLength',
-  'getMcpClientState',
-  'listMcpClientStates',
-  'putMcpClientState',
-  'appendMcpOccurrence',
-];
 
 function assertStoreContract(store) {
   if (!store || typeof store !== 'object') {
     throw new Error('Event Intelligence store must be an object');
   }
-  const missing = REQUIRED_STORE_METHODS.filter(
-    (method) => typeof store[method] !== 'function',
+  const missing = REQUIRED_EVENT_STORE_METHODS.filter(
+    (method) => typeof getHostDataMethod(store, method) !== 'function',
   );
   if (missing.length) {
     const error = new Error(
@@ -95,10 +73,18 @@ function assertStoreContract(store) {
 }
 
 async function initializeStore(store) {
-  const restored =
-    typeof store.init === 'function'
-      ? await store.init()
-      : {};
+  // Validate BEFORE invoking any host-controlled init side effect; the
+  // HostContract preflight alone is not a durable snapshot of mutable JS.
+  assertStoreContract(store);
+  const init = getHostDataMethod(store, 'init');
+  if (init === null) {
+    const error = new Error('Event Intelligence store.init must be a data method');
+    error.code = 'EVENT_INTELLIGENCE_STORE_INVALID';
+    throw error;
+  }
+  const restored = typeof init === 'function'
+    ? await init.call(store) : {};
+  // Check again after init: custom hosts may mutate their own store surface.
   assertStoreContract(store);
   return restored;
 }

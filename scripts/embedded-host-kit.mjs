@@ -11,6 +11,12 @@ import {
   createMcpRegistryAdapter,
 } from './host-integration.mjs';
 import { OPERATION_MANIFEST } from './lib/operation-manifest.mjs';
+import { negotiateHostContract } from './lib/embedded-host-contract.mjs';
+export {
+  HOST_CONTRACT_VERSION,
+  HOST_CONTRACT_CAPABILITIES,
+  negotiateHostContract,
+} from './lib/embedded-host-contract.mjs';
 import { outputJsonSchema, validateOperationOutput } from './lib/operation-output-contracts.mjs';
 import {
   TriggerCreateInput,
@@ -1689,6 +1695,7 @@ export async function createEmbeddedRuntimeIntegration({
 export async function createEventIntelligence({
   mcp,
   runtime,
+  hostContract,
   ...options
 } = {}) {
   if (!runtime || typeof runtime !== 'object' ||
@@ -1742,6 +1749,13 @@ export async function createEventIntelligence({
     );
   }
 
+  // Opt-in v1 handshake stays configuration-only and runs BEFORE any
+  // storage initialization, MCP subscription or host continuation activity.
+  // Existing pre-v1 hosts may adopt this deliberately; a later major
+  // contract revision can make the handshake mandatory without aliases.
+  const negotiatedContract = hostContract === undefined ? null :
+    negotiateHostContract(hostContract, { mcp, runtime, ...options });
+
   // Forward through runtime so ordinary object methods keep their receiver.
   const activation = {
     deliver: (...args) => runtime.deliver(...args),
@@ -1772,7 +1786,7 @@ export async function createEventIntelligence({
       }
     : undefined;
 
-  return createEmbeddedRuntimeIntegration({
+  const integration = await createEmbeddedRuntimeIntegration({
     ...options,
     ...(mcp ? {
       eventSources: {
@@ -1785,6 +1799,9 @@ export async function createEventIntelligence({
     activation,
     ...(tooling ? { tooling } : {}),
   });
+  return negotiatedContract
+    ? Object.freeze({ ...integration, hostContract: negotiatedContract })
+    : integration;
 }
 
 /**

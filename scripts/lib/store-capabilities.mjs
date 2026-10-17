@@ -1,3 +1,63 @@
+import { isProxy } from 'node:util/types';
+
+/** Canonical minimum event-store surface required before the host can start.
+ * Shared by the runtime initialization guard and the HostContract handshake
+ * to prevent a partial custom store from initializing before rejection. */
+export const REQUIRED_EVENT_STORE_METHODS = Object.freeze([
+  'putTrigger',
+  'listTriggers',
+  'getTriggerState',
+  'setTriggerState',
+  'appendTriggerMatch',
+  'listTriggerMatches',
+  'putEventSource',
+  'listEventSources',
+  'appendWake',
+  'latestWake',
+  'ensureWakeDelivery',
+  'getWakeDelivery',
+  'claimWakeDelivery',
+  'completeWakeDelivery',
+  'failWakeDelivery',
+  'listDueWakeDeliveries',
+  'appendAudit',
+  'auditLength',
+  'getMcpClientState',
+  'listMcpClientStates',
+  'putMcpClientState',
+  'appendMcpOccurrence',
+]);
+
+
+/**
+ * Read a host-provided method without invoking accessors or Proxy traps.
+ * Resolve ordinary inherited class methods, but never dynamic getters.
+ *
+ * undefined: no method; null: unsafe/noncallable descriptor or Proxy;
+ * function: callable own/prototype DATA method.
+ */
+export function getHostDataMethod(receiver, key) {
+  if (!receiver || typeof receiver !== 'object') return undefined;
+  let current = receiver;
+  for (let depth = 0; depth < 24 && current !== null; depth++) {
+    if (isProxy(current)) return null;
+    const descriptor = Object.getOwnPropertyDescriptor(current, key);
+    if (descriptor) {
+      return Object.hasOwn(descriptor, 'value') &&
+        typeof descriptor.value === 'function'
+        ? descriptor.value : null;
+    }
+    current = Object.getPrototypeOf(current);
+  }
+  return null;
+}
+
+export function hasRequiredStoreMethods(store) {
+  return Boolean(store && typeof store === 'object' &&
+    REQUIRED_EVENT_STORE_METHODS.every(method =>
+      typeof getHostDataMethod(store, method) === 'function'));
+}
+
 export const EVENT_INTELLIGENCE_STORE_CAPABILITIES_VERSION = '1';
 
 export const UNDECLARED_STORE_CAPABILITIES = Object.freeze({
@@ -21,13 +81,11 @@ export const REFERENCE_STORE_CAPABILITIES = Object.freeze({
 });
 
 export function describeStoreCapabilities(store) {
-  if (
-    store &&
-    typeof store.storeCapabilities === 'function'
-  ) {
+  const metadata = getHostDataMethod(store, 'storeCapabilities');
+  if (typeof metadata === 'function') {
     return {
       ...UNDECLARED_STORE_CAPABILITIES,
-      ...store.storeCapabilities(),
+      ...metadata.call(store),
     };
   }
   return { ...UNDECLARED_STORE_CAPABILITIES };
@@ -63,7 +121,7 @@ export function validateSharedStoreCapabilities(store) {
     'releasePartitionLease',
     'compareAndAppendTriggerMatch',
   ]) {
-    if (typeof store?.[method] !== 'function') {
+    if (typeof getHostDataMethod(store, method) !== 'function') {
       errors.push(`shared store is missing ${method}()`);
     }
   }
