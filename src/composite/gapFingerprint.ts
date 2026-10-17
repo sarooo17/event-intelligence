@@ -22,6 +22,7 @@ export function mcpGapSnapshot(states: McpDeliveryGapState[]): string {
     s.connectionId,s.serverId,s.eventName,
     canonical(s.arguments ?? {}),
     s.gapUnresolved === true || s.truncated === true,
+    s.completenessRevision ?? 0,
   ])).sort();
   // Exact deterministic encoding, no non-cryptographic hash collisions.
   return JSON.stringify(elements);
