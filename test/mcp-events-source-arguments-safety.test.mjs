@@ -6,6 +6,7 @@ import test from 'node:test';
 
 import { PersistentEventStore } from '../scripts/lib/persistent-event-store.mjs';
 import { safeMcpSourceArguments } from '../scripts/lib/mcp-safe-arguments.mjs';
+import { incompleteNegativeRefs } from '../dist/src/composite/deliveryGap.js';
 
 test('MCP source argument snapshots reject SharedArrayBuffer views and non-JSON identities',()=>{
   const shared=new SharedArrayBuffer(16);
@@ -75,6 +76,78 @@ test('JSONL rejects shared-memory source arguments without bypassing gap revisio
     assert.equal(store.getMcpClientState('source','job.failed',{
       tenant:'safe',nested:{ids:[1,2]},
     }).gapUnresolved,true);
+  }finally{
+    await store?.close();
+    await rm(dir,{recursive:true,force:true});
+  }
+});
+
+
+test('JSONL trigger definition arguments cannot be mutated to hide an unresolved forbidden-source gap',async()=>{
+  const dir=await mkdtemp(path.join(os.tmpdir(),'ei-gap-trigger-identity-'));
+  let store;
+  try {
+    store=new PersistentEventStore(dir);
+    await store.init();
+    const id={tenant:'acme',nested:{region:'eu'}};
+    const definition={
+      triggerId:'safe-negative-trigger',version:'1',conditionOnly:true,
+      clauses:[
+        {id:'a',event:'job.started',serverId:'upstream',arguments:{},where:[]},
+        {id:'b',event:'job.failed',serverId:'upstream',arguments:id,where:[]},
+      ],
+      pattern:{
+        version:'2',root:{
+          kind:'notFollowedBy',id:'protect-negative',
+          child:{kind:'event',ref:'a'},
+          forbidden:{kind:'event',ref:'b'},withinMs:1000,
+        },
+        partitionBy:[],
+        selection:{overlap:'allow',afterMatch:'keepAll',maxMatchesPerEvent:10},
+        execution:{maxCandidates:16,maxSemanticEvaluations:0,maxBufferedEvents:32},
+      },
+      withinMs:60000,
+    };
+    const returned=await store.putTrigger(definition);
+    await store.putMcpClientState({
+      connectionId:'source',serverId:'upstream',
+      eventName:'job.failed',arguments:{tenant:'acme',nested:{region:'eu'}},
+      deliveryMode:'poll',truncated:true,
+    });
+    const before=store.getMcpGapStateAndSnapshot().snapshot;
+    const listed=store.listTriggers()[0];
+    for (const copy of [definition,returned,listed]) {
+      copy.clauses[1].arguments.tenant='forged';
+      copy.clauses[1].arguments.nested.region='forged';
+      copy.clauses[1].event='unrelated.event';
+    }
+    const stored=store.listTriggers()[0];
+    assert.equal(stored.clauses[1].event,'job.failed');
+    assert.deepEqual(stored.clauses[1].arguments,{
+      tenant:'acme',nested:{region:'eu'},
+    });
+    assert.ok(incompleteNegativeRefs(stored,
+      store.getMcpGapStateAndSnapshot().states,['source']).has('b'),
+    'a host-mutated definition must not mark a missing forbidden event complete');
+    assert.equal(store.getMcpGapStateAndSnapshot().snapshot,before);
+
+    await assert.rejects(store.putTrigger({
+      ...definition, triggerId:'unsafe-negative-trigger',
+      clauses:[
+        definition.clauses[0],
+        {id:'b',event:'job.failed',serverId:'upstream',
+         arguments:{nested:{view:new Uint8Array(new SharedArrayBuffer(8))}},
+         where:[]},
+      ],
+    }),/safe JSON/);
+    assert.equal(store.listTriggers().length,1);
+
+    await store.close();
+    store=new PersistentEventStore(dir);
+    await store.init();
+    assert.ok(incompleteNegativeRefs(store.listTriggers()[0],
+      store.getMcpGapStateAndSnapshot().states,['source']).has('b'));
+    assert.equal(store.getMcpGapStateAndSnapshot().snapshot,before);
   }finally{
     await store?.close();
     await rm(dir,{recursive:true,force:true});
