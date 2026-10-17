@@ -236,3 +236,41 @@ test('registry unsubscribe synchronous reentrancy reuses the already-published c
     await rm(dataDir, { recursive: true, force: true });
   }
 });
+
+test('provider close hook awaiting host.close cannot deadlock shutdown', { timeout: 10000 }, async () => {
+  const dataDir = await mkdtemp(path.join(os.tmpdir(), 'ei-provider-reentrant-close-'));
+  let host;
+  try {
+    host = await createEventIntelligenceHost({ dataDir, env });
+    const manager = host.runtime.mcpEventsClient;
+    let teardownCalls = 0;
+    let nestedClose;
+    // Simulate the close() contract of a push/webhook handle whose host-
+    // owned teardown waits for global host shutdown. The manager's session
+    // registry is the exact list consumed by manager.stop().
+    manager.deliverySessions.set('provider-session', {
+      close() {
+        teardownCalls++;
+        nestedClose = host.close();
+        return nestedClose;
+      },
+    });
+    const closing = host.close();
+    let timer;
+    await Promise.race([
+      closing,
+      new Promise((_, reject) => {
+        timer = setTimeout(() =>
+          reject(new Error('provider teardown created a host.close cycle')), 2500);
+      }),
+    ]).finally(() => clearTimeout(timer));
+    assert.equal(teardownCalls, 1);
+    assert.equal(nestedClose, closing,
+      'provider reentrant close must reuse published host close promise');
+    assert.equal(host.close(), closing);
+    assert.equal(manager.deliverySessions.size, 0);
+  } finally {
+    await host?.close();
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
