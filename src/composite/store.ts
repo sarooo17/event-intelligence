@@ -32,6 +32,7 @@ export interface CompositeTriggerStore {
     truncated?: boolean;
     gapUnresolved?: boolean;
     gapDetectedAt?: string;
+    completenessRevision?: number;
   }>>;
   storeCapabilities?(): {
     partitionLeases?: string;
