@@ -95,6 +95,8 @@ test('atomic finality fence rejects an MCP gap committed after CEP reads its sna
 
     await store.putMcpClientState({
       ...gap,gapReconciled:true,
+      expectedCompletenessRevision:gap.completenessRevision,
+      expectedCompletenessRevision:gap.completenessRevision,
       reconciliationEvidenceId:'host-verified-replay-atomic-race',
       truncated:false,
     });
