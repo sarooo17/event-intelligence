@@ -565,6 +565,11 @@ export class McpEventsClientManager {
     this.connectionMutations = new Map();
     this.deliverySessions = new Map();
     this.started = false;
+    this.closed = false;
+    this.closePromise = null;
+    // All direct, scoped and registry attach operations share this manager.
+    // A host close must drain them before the owning store is torn down.
+    this.attachInFlight = new Set();
 
     for (const connection of connections) {
       this.addConnection(connection);
@@ -595,7 +600,16 @@ export class McpEventsClientManager {
     return context;
   }
 
+  assertOpen() {
+    if (this.closed) {
+      const error = new Error('Event Intelligence MCP client manager is closed');
+      error.code = 'EI_HOST_CLOSED';
+      throw error;
+    }
+  }
+
   addConnection(input) {
+    this.assertOpen();
     const connection = normalizeConnection(input);
     if (connection.enabled === false) return connection;
     if (this.connections.has(connection.connectionId)) {
@@ -616,6 +630,7 @@ export class McpEventsClientManager {
   }
 
   assertConnectionAttached(connection) {
+    this.assertOpen();
     if (!this.isConnectionAttached(connection)) {
       const error = new Error('Host MCP Events connection is detached');
       error.code = 'MCP_EVENTS_CONNECTION_DETACHED';
@@ -640,17 +655,23 @@ export class McpEventsClientManager {
 
   async attachConnection(input, { discover = true } = {}) {
     const connection = this.addConnection(input);
-    let events = [];
-    if (connection.enabled !== false && discover) {
-      events = await this.discoverConnection(connection.connectionId);
+    const pending = (async () => {
+      let events = [];
+      if (connection.enabled !== false && discover) {
+        events = await this.discoverConnection(connection.connectionId);
+      }
+      this.assertConnectionAttached(connection);
+      if (connection.enabled !== false && this.started) {
+        this.scheduleConnection(connection, 0);
+      }
+      return { connectionId: connection.connectionId, events };
+    })();
+    this.attachInFlight.add(pending);
+    try {
+      return await pending;
+    } finally {
+      this.attachInFlight.delete(pending);
     }
-    if (connection.enabled !== false && this.started) {
-      this.scheduleConnection(connection, 0);
-    }
-    return {
-      connectionId: connection.connectionId,
-      events,
-    };
   }
 
   async closeSession(subscriptionId, expectedSession = null) {
@@ -747,6 +768,7 @@ export class McpEventsClientManager {
   }
 
   async discoverConnection(connectionId) {
+    this.assertOpen();
     const connection = this.connections.get(connectionId);
     if (!connection) {
       throw new Error(
@@ -1582,6 +1604,7 @@ export class McpEventsClientManager {
   }
 
   async pollConnection(connectionId, options = {}) {
+    this.assertOpen();
     const existing = this.pollInFlight.get(connectionId);
     if (existing) return existing;
 
@@ -1785,6 +1808,7 @@ export class McpEventsClientManager {
   }
 
   start() {
+    this.assertOpen();
     this.started = true;
     for (const connection of this.connections.values()) {
       this.scheduleConnection(connection, 0);
@@ -1806,9 +1830,22 @@ export class McpEventsClientManager {
     }
   }
 
-  async close() {
-    await this.stop();
-    await this.drain();
+  close() {
+    if (this.closePromise) return this.closePromise;
+    // Close the authority boundary synchronously, including callers who
+    // retain host.runtime.mcpEventsClient directly across host shutdown.
+    this.closed = true;
+    this.closePromise = (async () => {
+      await this.stop();
+      // Already-accepted manual/scoped attachments may be awaiting an
+      // untrusted provider. All must settle (or fail on assertOpen) while
+      // the runtime/store is still available, never after it has closed.
+      while (this.attachInFlight.size > 0) {
+        await Promise.allSettled([...this.attachInFlight]);
+      }
+      await this.drain();
+    })();
+    return this.closePromise;
   }
 
   async status() {
