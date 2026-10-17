@@ -570,6 +570,9 @@ export class McpEventsClientManager {
     // All direct, scoped and registry attach operations share this manager.
     // A host close must drain them before the owning store is torn down.
     this.attachInFlight = new Set();
+    // Push/webhook providers may retain callback references after session
+    // cleanup. Track callbacks accepted before shutdown; reject later ones.
+    this.deliveryCallbackInFlight = new Set();
 
     for (const connection of connections) {
       this.addConnection(connection);
@@ -674,6 +677,19 @@ export class McpEventsClientManager {
     } finally {
       this.attachInFlight.delete(pending);
     }
+  }
+
+  trackDeliveryCallback(operation) {
+    if (this.closed) return Promise.resolve();
+    const task = Promise.resolve().then(() => {
+      if (this.closed) return undefined;
+      return operation();
+    });
+    this.deliveryCallbackInFlight.add(task);
+    void task.finally(() => {
+      this.deliveryCallbackInFlight.delete(task);
+    }).catch(() => {});
+    return task;
   }
 
   async closeSession(subscriptionId, expectedSession = null) {
@@ -1324,6 +1340,7 @@ export class McpEventsClientManager {
     subscription,
     delivery,
   ) {
+    this.assertOpen();
     this.assertConnectionAttached(connection);
     const existing = this.deliverySessions.get(subscription.subscriptionId);
     if (existing?.delivery === delivery && existing.connection === connection) {
@@ -1478,11 +1495,15 @@ export class McpEventsClientManager {
         name: subscription.eventName,
         arguments: subscription.arguments,
         cursor: current?.cursor ?? null,
-        onEvent,
-        onActive,
-        onGap,
-        onError,
-        onTerminated,
+        // Never expose raw unguarded callbacks to a provider that can
+        // retain them after the host destroys its sessions.
+        onEvent: value => this.trackDeliveryCallback(() => onEvent(value)),
+        onActive: value => this.trackDeliveryCallback(() => onActive(value)),
+        onGap: value => this.trackDeliveryCallback(() => onGap(value)),
+        onError: value => {
+          if (!this.closed) onError(value);
+        },
+        onTerminated: value => this.trackDeliveryCallback(() => onTerminated(value)),
       })),
     );
     const close = projectedHandle.close;
@@ -1852,6 +1873,9 @@ export class McpEventsClientManager {
         await Promise.allSettled([...this.attachInFlight]);
       }
       await this.drain();
+      while (this.deliveryCallbackInFlight.size > 0) {
+        await Promise.allSettled([...this.deliveryCallbackInFlight]);
+      }
     })();
     return this.closePromise;
   }
