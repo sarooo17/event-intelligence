@@ -570,6 +570,9 @@ export class McpEventsClientManager {
     // All direct, scoped and registry attach operations share this manager.
     // A host close must drain them before the owning store is torn down.
     this.attachInFlight = new Set();
+    // Detach disables durable sources and closes host-owned sessions.
+    // A detach accepted before close must finish before store teardown.
+    this.detachInFlight = new Set();
     // Push/webhook providers may retain callback references after session
     // cleanup. Track callbacks accepted before shutdown; reject later ones.
     this.deliveryCallbackInFlight = new Set();
@@ -711,6 +714,17 @@ export class McpEventsClientManager {
   }
 
   async detachConnection(connectionId) {
+    this.assertOpen();
+    const pending = this.detachConnectionUnchecked(connectionId);
+    this.detachInFlight.add(pending);
+    try {
+      return await pending;
+    } finally {
+      this.detachInFlight.delete(pending);
+    }
+  }
+
+  async detachConnectionUnchecked(connectionId) {
     // Revoke authority synchronously. Reserve cleanup in the *same* durable
     // mutation queue before the first await, so new sessions cannot discover
     // sources or persist cursors ahead of the old disable operation.
@@ -1897,6 +1911,11 @@ export class McpEventsClientManager {
       // the runtime/store is still available, never after it has closed.
       while (this.attachInFlight.size > 0) {
         await Promise.allSettled([...this.attachInFlight]);
+      }
+      // A manually accepted detach can still be writing disabled source
+      // records; release the authoritative store only after it settles.
+      while (this.detachInFlight.size > 0) {
+        await Promise.allSettled([...this.detachInFlight]);
       }
       await this.drain();
       while (this.deliveryCallbackInFlight.size > 0) {
