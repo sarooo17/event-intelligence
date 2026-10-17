@@ -277,7 +277,14 @@ configuration-derived `available` and
 `storeCapabilities()` metadata is **only queried when `storage.shared` is
 required**; unrequested shared readiness is reported `false` (unverified).
 Broken or throwing metadata callbacks produce stable
-`EI_HOST_SHARED_STORE_REQUIRED`, never arbitrary host exception content. Its values are not host capability
+`EI_HOST_SHARED_STORE_REQUIRED`, never arbitrary host exception content.
+The runtime and the handshake use one descriptor-only required-store-method
+list: getter-backed, stateful and Proxy-backed methods are not proof of a
+working durable store, and runtime initialization checks the full interface
+**before** calling any custom `store.init()`. Custom store subclasses with
+ordinary inherited function methods remain supported. Likewise a semantic
+evaluator must provide a real, data-backed `evaluate()` method; getters and
+Proxy traps are not executed during the pre-start handshake. Its values are not host capability
 *grants*. For `storage.shared`, EI examines the supplied store's declared
 capabilities and operations; this is still not a live multiworker transaction
 proof. Similarly, declared host receipt wiring does **not** prove that the
