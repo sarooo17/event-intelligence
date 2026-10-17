@@ -10,12 +10,17 @@ model-facing portable catalog, using explicit host-owned authorization and
 identity, and an ordinary synthetic event source:
 
 1. The host denies creation and proves no durable mutation occurred.
-2. Host grants create/list/pause/resume with owner/actor context.
-3. Events cannot deliver while paused; resume permits a durable wake/receipt.
-4. The consumer closes and reopens the durable state from a new EI integration.
-5. Source event replay must not redeliver the existing wake.
-6. Update changes a trigger condition, proving old threshold no longer fires;
-   the new threshold does, and a subsequent delete prevents further delivery.
+2. Each of **create/pause/resume/update/delete** runs a host-owned denial first;
+   none may change persisted trigger definitions or lifecycle state. A separate
+   approved call must receive the correct capability/actor/owner/target identity.
+3. Host grants create/list/pause/resume with owner/actor context.
+4. Events cannot deliver while paused; resume permits a durable wake/receipt.
+5. The consumer closes and reopens durable EI state from a new integration,
+   and reads the original authoritative wake receipt from the **reopened** store.
+6. Source event replay must neither redeliver, increment persisted fireCount,
+   append a logical match, nor mutate the previous receipt.
+7. Update changes a trigger condition, proving old threshold no longer fires;
+   the new threshold does, and delete prevents further delivery.
 
 The code uses **no EI repository relative import, model SDK, provider secrets
 or network transport**, and emits machine-readable
