@@ -402,3 +402,22 @@ security issue #45. Deterministic regressions are in
 `test/observability-own-data-security.test.mjs` alongside the existing
 64-case credential-redaction corpus. No external provider OAuth, policy
 engine or user credential management is added to EI.
+
+
+### Decoded telemetry string normalization budget (partial #45)
+
+EI's optional observability sink rejects a **decoded string longer than
+8192 UTF-16 code units** *before* NFKC normalization or credential regex
+matching, emitting a fixed opaque `[oversized value]` marker. This applies
+to named telemetry dimensions, nested metadata scalar strings and Error
+name/message/code. It prevents unbounded per-record Unicode normalization
+and regex matching when an upstream source injects a huge string. Normal
+strings retain the same credentials/bearer redaction and output length caps.
+This is a pre-v1 observable data-contract tightening; hosts should not depend
+on retaining oversized text in telemetry.
+
+This is **not** a network-body budget or a cap on all hostile decoded object
+keys, transport callback frequencies, ingestion per tenant, external side
+effects or model costs. Host/MCP transport owners must still enforce maximum
+RPC/body bytes, timeouts, admission quotas and secret governance. No data or
+host credentials are intentionally persisted by telemetry.

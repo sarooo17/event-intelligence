@@ -36,8 +36,17 @@ function errorData(error, key) {
   return undefined;
 }
 
+// Refuse enormous *decoded* scalar values before any Unicode normalization
+// or credential regex pass. The host must still enforce transport byte/time
+// budgets before decoding, and arbitrary unlabelled secrets remain host-owned.
+export const MAX_OBSERVABILITY_INPUT_CHARS = 8192;
+
 function truncate(value, max = 1000) {
-  const text = safeScalar(value).normalize('NFKC')
+  const scalar = safeScalar(value);
+  if (scalar.length > MAX_OBSERVABILITY_INPUT_CHARS) {
+    return '[oversized value]';
+  }
+  const text = scalar.normalize('NFKC')
     .replace(/Bearer[\s\u0085]+[A-Za-z0-9._~+/=-]+/giu, 'Bearer [redacted]')
     .replace(
       /((?:["']?)(?:api[_-]?key|authorization|password|secret|token)(?:["']?)[\s\u0085]*[=:][\s\u0085]*(?:["']?))[^"'\s\u0085,;}\]]+/giu,
