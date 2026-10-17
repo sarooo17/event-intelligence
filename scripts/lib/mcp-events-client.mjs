@@ -1844,12 +1844,32 @@ export class McpEventsClientManager {
     }
   }
 
-  async stop() {
+  async stop({ shutdown = false } = {}) {
     this.started = false;
     for (const timer of this.timers.values()) clearTimeout(timer);
     this.timers.clear();
-    for (const subscriptionId of [...this.deliverySessions.keys()]) {
-      await this.closeSession(subscriptionId);
+    // Begin every host-owned teardown promptly. During final close a
+    // provider hook may return/await the host.close() promise itself; an
+    // unbounded await would deadlock the shutdown that the hook is waiting
+    // for. Revoke callbacks before invoking hooks and use bounded best-
+    // effort teardown during final shutdown only.
+    const teardown = Promise.allSettled(
+      [...this.deliverySessions.keys()].map(id => this.closeSession(id)),
+    );
+    if (!shutdown) {
+      await teardown;
+      return;
+    }
+    let timeout;
+    try {
+      await Promise.race([
+        teardown,
+        new Promise(resolve => {
+          timeout = setTimeout(resolve, 500);
+        }),
+      ]);
+    } finally {
+      clearTimeout(timeout);
     }
   }
 
@@ -1865,7 +1885,7 @@ export class McpEventsClientManager {
     // retain host.runtime.mcpEventsClient directly across host shutdown.
     this.closed = true;
     this.closePromise = (async () => {
-      await this.stop();
+      await this.stop({ shutdown: true });
       // Already-accepted manual/scoped attachments may be awaiting an
       // untrusted provider. All must settle (or fail on assertOpen) while
       // the runtime/store is still available, never after it has closed.
