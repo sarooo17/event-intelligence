@@ -24,7 +24,7 @@ test('gap retries retain only currently selected positive debounce deadlines',as
       ],
       pattern:{
         version:'2',root:{kind:'anyOf',children:[
-          {kind:'debounce',ref:'a',forMs:5000,child:{kind:'event',ref:'a'}},
+          {kind:'debounce',id:'positive-debounce',ref:'a',forMs:5000,child:{kind:'event',ref:'a'}},
           {kind:'notFollowedBy',id:'quiet',child:{kind:'event',ref:'a'},
             forbidden:{kind:'event',ref:'b'},withinMs:1000},
         ]},partitionBy:[],
