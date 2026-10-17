@@ -943,3 +943,78 @@ integrationTest('pool restart fencing: persisted claimed wakes survive disconnec
     }
   }
 });
+
+
+integrationTest('PostgreSQL MCP completeness ABA and replay-buffer fences reject stale negatives', {
+  timeout: 60000,
+}, async () => {
+  const poolA=pool();
+  const poolB=pool();
+  try {
+    const a=store(poolA,'gap-replay-fence');
+    const b=store(poolB,'gap-replay-fence');
+    await Promise.all([a.init(),b.init()]);
+    const t0=Date.now()+3600000;
+    let now=new Date(t0);
+    const definition={
+      triggerId:'pg-gap-replay',version:'1',conditionOnly:true,
+      clauses:[
+        {id:'anchor',event:'job.started',serverId:'upstream',arguments:{},where:[]},
+        {id:'forbidden',event:'job.failed',serverId:'upstream',arguments:{},where:[]},
+      ],
+      pattern:{
+        version:'2',root:{
+          kind:'notFollowedBy',id:'pg-negative',
+          child:{kind:'event',ref:'anchor'},
+          forbidden:{kind:'event',ref:'forbidden'},withinMs:1000,
+        },
+        partitionBy:[],
+        selection:{overlap:'allow',afterMatch:'keepAll',maxMatchesPerEvent:10},
+        execution:{maxCandidates:32,maxSemanticEvaluations:0,maxBufferedEvents:64},
+      },
+      withinMs:60000,
+    };
+    const engineA=new CompositeTriggerEngine(a,null,()=>now);
+    const engineB=new CompositeTriggerEngine(b,null,()=>now);
+    await engineA.register(definition);
+    const source={
+      connectionId:'source',serverId:'upstream',
+      eventName:'job.failed',arguments:{},deliveryMode:'poll',
+    };
+    const original=await a.putMcpClientState({...source,truncated:false});
+    const event=(name,id,at)=>({
+      traceId:'pg-gap:'+id,sourceEventId:'pg-gap:'+id,
+      name,serverId:'upstream',provider:'mcp',
+      occurredAt:new Date(at).toISOString(),subscriptionArguments:{},data:{},
+    });
+    await engineA.ingest(event('job.started','anchor',t0));
+    const before=(await a.listTriggerMatches(definition.triggerId))
+      .find(x=>x.patternState?.role==='buffer');
+    assert.ok(before);
+    const initial=(await a.getMcpGapStateAndSnapshot()).snapshot;
+    const gap=await b.putMcpClientState({...source,truncated:true});
+    now=new Date(t0+1000);
+    await engineB.ingest(event('job.failed','replayed',t0+500));
+    const reconciled=await b.putMcpClientState({
+      ...gap,truncated:false,gapReconciled:true,
+      reconciliationEvidenceId:'postgres-verified-replay',
+    });
+    assert.ok(reconciled.completenessRevision>original.completenessRevision);
+    assert.notEqual(initial,(await a.getMcpGapStateAndSnapshot()).snapshot);
+    assert.equal(await a.appendTriggerMatchIfMcpGapUnchanged(
+      matchedRecord(definition.triggerId,'pg-stale-aba'),
+      initial,before,
+    ),false,'cross-worker ABA gap evidence must reject stale commit');
+    const current=(await a.getMcpGapStateAndSnapshot()).snapshot;
+    assert.equal(await a.appendTriggerMatchIfMcpGapUnchanged(
+      matchedRecord(definition.triggerId,'pg-stale-buffer'),
+      current,before,
+    ),false,'fresh completeness cannot certify a stale replay buffer');
+    assert.equal((await a.listTriggerMatches(definition.triggerId))
+      .filter(x=>x.status==='matched').length,0);
+  }finally{
+    await dropTables(poolA);
+    await poolA.end();
+    await poolB.end();
+  }
+});
