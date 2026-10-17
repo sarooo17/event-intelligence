@@ -979,19 +979,28 @@ export class CompositeTriggerEngine {
       if (gapEvidence.snapshot !== null &&
           this.store.appendTriggerMatchIfMcpGapUnchanged) {
         const committed = await this.store.appendTriggerMatchIfMcpGapUnchanged(
-          matched,gapEvidence.snapshot,
+          matched,gapEvidence.snapshot,buffer,
         );
         if (!committed) {
           // The provider completeness state changed during asynchronous
           // evaluation. Refresh a bounded SINGLE time so fresh gaps can
           // create retry deadlines, without re-emitting committed matches.
           if (gapRetryBudget > 0) {
-            return [
-              ...results,
-              ...(await this.evaluatePatternBuffer(
-                definition,buffer,evaluationNow,gapRetryBudget-1,
-              )),
-            ];
+            // A host may have replayed a forbidden occurrence into the
+            // durable buffer while our previous evaluation was in flight.
+            // Never evaluate the old in-memory record after a stale fence.
+            const latest = await this.latestMatch(buffer.matchId);
+            if (latest?.status === 'partial' &&
+                latest.patternState?.version === '2' &&
+                latest.patternState.role === 'buffer') {
+              return [
+                ...results,
+                ...(await this.evaluatePatternBuffer(
+                  definition,latest,evaluationNow,gapRetryBudget-1,
+                )),
+              ];
+            }
+            return results;
           }
           // A second concurrent completeness change exhausted our bounded
           // immediate reevaluation. The earlier reconcileDeadlines() may
