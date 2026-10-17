@@ -26,6 +26,7 @@ function errorData(error, key) {
   let current = error;
   // Read inherited plain Error.name without evaluating custom accessors.
   for (let i = 0; i < 4 && current; i++) {
+    if (isProxy(current)) return undefined;
     const property = Object.getOwnPropertyDescriptor(current, key);
     if (property) {
       return Object.hasOwn(property, 'value') ? property.value : undefined;
