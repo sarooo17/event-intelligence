@@ -44,6 +44,11 @@ test('all four negative operators are inconclusive under missing forbidden evide
     assert.equal(incomplete.truncated,true,root.kind);
     assert.equal(incomplete.matches.length,0,root.kind);
     assert.equal(incomplete.pending.length,0,root.kind);
+    assert.equal(incomplete.incompletePending?.length,1,
+      root.kind+' must retain one durable retry hint');
+    const hint=incomplete.incompletePending[0];
+    assert.equal(hint.events[0].sourceEventId,'a:one');
+    assert.ok(Date.parse(hint.pendingUntil)<=time+3000);
   }
 });
 
