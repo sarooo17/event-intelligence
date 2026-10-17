@@ -177,3 +177,94 @@ test('scheduled manager restart uses remaining durable deadline, not another ful
       'must not delay a one-second-away deadline by another five minutes');
   }finally{await x.close();}
 });
+
+test('poll source gap sticks across healthy responses/reopen until host verifies replay',async()=>{
+  const x=await fixture((_params,n)=>({
+    events:[],cursor:'poll:'+n,hasMore:false,
+    nextPollMs:1000,truncated:n===1,
+  }));
+  try{
+    const first=await x.manager.pollConnection('source');
+    assert.equal(first[0].truncated,true);
+    assert.equal(x.state().gapUnresolved,true);
+    assert.ok(x.state().gapDetectedAt);
+    const recorded=x.state().gapDetectedAt;
+    x.now.ms+=1000;
+    const second=await x.manager.pollConnection('source');
+    assert.equal(second[0].truncated,false);
+    assert.equal(x.state().truncated,false,
+      'latest producer page can be individually complete');
+    assert.equal(x.state().gapUnresolved,true,
+      'later healthy page never proves old gap repaired');
+    assert.equal(x.state().gapDetectedAt,recorded);
+
+    const reopened=new PersistentEventStore(x.dir);
+    await reopened.init();
+    assert.equal(reopened.getMcpClientState('source','change.detected').gapUnresolved,true);
+    await reopened.close();
+
+    await assert.rejects(x.manager.acknowledgeReconciledGap({
+      connectionId:'source',eventName:'change.detected',evidenceId:'',
+    }),/evidence ID/);
+    const cleared=await x.manager.acknowledgeReconciledGap({
+      connectionId:'source',eventName:'change.detected',
+      evidenceId:'host-verified-history-replay:fixture-1',
+      expectedCompletenessRevision:x.state().completenessRevision,
+    });
+    assert.equal(cleared.gapUnresolved,false);
+    assert.equal(cleared.truncated,false);
+    assert.equal(cleared.reconciliationEvidenceId,
+      'host-verified-history-replay:fixture-1');
+  }finally{await x.close();}
+});
+
+test('truncated poll page is fenced before first MCP occurrence enters CEP',async()=>{
+  const x=await fixture(()=>({
+    events:[{
+      eventId:'gap:e1',name:'change.detected',
+      timestamp:new Date(t0).toISOString(),data:{},
+    }],cursor:'page:1',hasMore:false,truncated:true,nextPollMs:1500,
+  }));
+  try{
+    let observed=false;
+    const existing=x.manager.compositeEventConsumer.ingestMcpOccurrence.bind(
+      x.manager.compositeEventConsumer);
+    x.manager.compositeEventConsumer.ingestMcpOccurrence=async input=>{
+      const durable=x.state();
+      assert.equal(durable?.gapUnresolved,true,
+        'before first event ingress the durable gap must be visible');
+      assert.equal(durable.cursor,null,
+        'cursor must not advance before event ingestion succeeds');
+      observed=true;
+      return existing(input);
+    };
+    const results=await x.manager.pollConnection('source');
+    assert.equal(observed,true);
+    assert.equal(results[0].status,'ok');
+    assert.equal(x.state().cursor,'page:1');
+    assert.equal(x.state().gapUnresolved,true);
+  }finally{await x.close();}
+});
+
+test('provider-declared truncation is durable even if the rest of the page is malformed',async()=>{
+  for(const bad of [
+    {events:null,cursor:null,hasMore:false,truncated:true},
+    {events:[],cursor:123,hasMore:false,truncated:true},
+    {events:[],cursor:'ok',hasMore:false,nextPollMs:-4,truncated:true},
+  ]){
+    const x=await fixture(()=>bad);
+    try{
+      await assert.rejects(x.manager.pollConnection('source'));
+      assert.equal(x.calls.length,1);
+      assert.equal(x.state().gapUnresolved,true);
+      assert.equal(x.state().truncated,true);
+      assert.equal(x.state().cursor,null,
+        'invalid page must never checkpoint its claimed cursor');
+      const reopened=new PersistentEventStore(x.dir);
+      await reopened.init();
+      assert.equal(reopened.getMcpClientState('source','change.detected')
+        .gapUnresolved,true);
+      await reopened.close();
+    } finally {await x.close();}
+  }
+});

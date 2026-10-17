@@ -10,10 +10,8 @@ import { CompositeEventConsumer } from '../scripts/lib/composite-event-consumer.
 import { PersistentEventStore } from '../scripts/lib/persistent-event-store.mjs';
 import { TemporalDeadlineScheduler } from '../scripts/lib/temporal-deadline-scheduler.mjs';
 
-// This is an intentionally GREEN, pre-fix CHARACTERIZATION test. It does
-// not assert that gap-aware finality is implemented. It proves that current
-// timer-driven negative finality ignores a persisted provider gap.
-// The follow-up safety PR must INVERT the gap-before-finality assertions.
+// Former pre-fix witness inverted: relevant provider gaps must defer
+// negative deadlines, including after durable reopen.
 // Keep the fixture's event-time horizon strictly AFTER the store's real
 // updatedAt clock; otherwise a gap written now looks discovered too late.
 const base = Date.now() + 60 * 60 * 1000;
@@ -126,25 +124,26 @@ test('baseline clean interval finalizes a bounded negative deadline',async()=>{
   assert.equal(result.fired,1);
 });
 
-test('REPRO: poll/push/webhook provider gaps currently do not block negative finality',async()=>{
+test('poll/push/webhook provider gaps block false negative finality',async()=>{
   for(const gap of ['poll','push','webhook']){
     const result=await characterize({gap});
     assert.equal(result.sourceGap,true);
     assert.equal(result.gapSource,'job.failed');
     assert.ok(Date.parse(result.gapUpdatedAt)<Date.parse(result.dueAt),
       'persisted gap discovery must precede the simulated deadline');
-    assert.equal(result.matched,1,
-      'KNOWN UNSAFE BASELINE: a persisted missing-source gap is ignored');
-    assert.equal(result.fired,1);
-    assert.deepEqual(result.due,['fired']);
+    assert.equal(result.matched,0,'missing-source evidence cannot finalize a negative');
+    assert.equal(result.fired,0);
+    assert.equal(result.pending,1);
+    assert.deepEqual(result.due,['deferred']);
   }
 });
 
-test('REPRO: restart preserves the gap record but still finalizes a negative',async()=>{
+test('durable reopened gap continues to defer negative finality',async()=>{
   const result=await characterize({gap:'poll',restart:true});
   assert.equal(result.sourceGap,true);
-  assert.equal(result.matched,1,
-    'KNOWN UNSAFE BASELINE: durable gap and timer finality disagree after restart');
+  assert.equal(result.matched,0,
+    'durable gap and timer finality must agree after restart');
+  assert.equal(result.pending,1);
 });
 
 test('unrelated source identity variants must not cause a global suspension',async()=>{

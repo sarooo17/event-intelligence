@@ -1,4 +1,6 @@
 import * as z from 'zod/v4';
+import { mcpGapSnapshot } from '../../dist/src/composite/gapFingerprint.js';
+import { safeMcpSourceArguments } from './mcp-safe-arguments.mjs';
 import { randomUUID } from 'node:crypto';
 import {
   AuditChain,
@@ -69,7 +71,7 @@ function canonical(value) {
 
 function mcpStateKey(connectionId, eventName, args = {}) {
   return String(connectionId) + '::' + String(eventName) + '::' +
-    JSON.stringify(canonical(args ?? {}));
+    JSON.stringify(canonical(safeMcpSourceArguments(args)));
 }
 
 function defaultTriggerState(triggerId, version) {
@@ -698,7 +700,14 @@ export class PostgresEventStore {
   }
 
   async putTrigger(input) {
-    const definition = parseCompositeTriggerDefinition(input);
+    const parsed = parseCompositeTriggerDefinition(input);
+    const definition = {
+      ...parsed,
+      clauses: parsed.clauses.map((clause) => ({
+        ...clause,
+        arguments: safeMcpSourceArguments(clause.arguments),
+      })),
+    };
     const key = definition.triggerId + '@' + definition.version;
     if (!await this.insert('trigger', key, definition)) {
       const error = new Error('Trigger ' + key + ' already exists');
@@ -789,6 +798,36 @@ export class PostgresEventStore {
     return (await this.list('event_source'))
       .filter((source) => !ids || ids.has(source.connectionId))
       .filter((source) => !enabledOnly || source.enabled !== false);
+  }
+
+  async getMcpGapStateAndSnapshot() {
+    // One SQL SELECT yields a coherent read-committed view of this scope.
+    const states=await this.list('mcp_client_state');
+    return { states, snapshot:mcpGapSnapshot(states) };
+  }
+
+  async appendTriggerMatchIfMcpGapUnchanged(input, expectedSnapshot, expectedBuffer) {
+    const record=parseTriggerMatchRecord(input);
+    return this.tx(async(client)=>{
+      // Acquire completeness fence first; all buffer writes hold their
+      // trigger-match lock. Both checks and the final match insert share
+      // this transaction so neither a gap nor a replay can interleave.
+      await this.lock(client,'mcp-gap-fence','scope');
+      const states=await this.list('mcp_client_state',client);
+      if(mcpGapSnapshot(states)!==expectedSnapshot) return false;
+      await this.lock(client,'trigger-match',expectedBuffer.matchId);
+      const current=await this.get('trigger_match',expectedBuffer.matchId,client);
+      if(!current ||
+          JSON.stringify(parseTriggerMatchRecord(current)) !==
+          JSON.stringify(parseTriggerMatchRecord(expectedBuffer))) {
+        return false;
+      }
+      await this.lock(client,'trigger-match',record.matchId);
+      await this.appendHistory('trigger_match_history',
+        record.matchId,record,client);
+      await this.upsert('trigger_match',record.matchId,record,client);
+      return true;
+    });
   }
 
   async appendTriggerMatch(input) {
@@ -941,15 +980,39 @@ export class PostgresEventStore {
     if (!connectionId || !eventName) {
       throw new Error('MCP client state requires connectionId and eventName');
     }
-    const args =
-      input.arguments && !Array.isArray(input.arguments) &&
-      typeof input.arguments === 'object'
-        ? input.arguments
-        : {};
+    const args = safeMcpSourceArguments(input.arguments);
     const key = mcpStateKey(connectionId, eventName, args);
     return this.tx(async (client) => {
+      // Preserve lock ordering: scope fence, then individual source lock.
+      await this.lock(client, 'mcp-gap-fence', 'scope');
       await this.lock(client, 'mcp-client-state', key);
       const previous = await this.get('mcp_client_state', key, client);
+      const priorRevision = previous?.completenessRevision ?? 0;
+      if (!Number.isSafeInteger(priorRevision) ||
+          priorRevision < 0 ||
+          priorRevision === Number.MAX_SAFE_INTEGER) {
+        throw new Error('Invalid or exhausted MCP completeness revision');
+      }
+      if (input.gapReconciled === true) {
+        if (typeof input.reconciliationEvidenceId !== 'string' ||
+            !input.reconciliationEvidenceId.trim()) {
+          throw new Error('Gap reconciliation requires host evidence ID');
+        }
+        if (!Number.isSafeInteger(input.expectedCompletenessRevision) ||
+            input.expectedCompletenessRevision < 0) {
+          throw new Error('Gap reconciliation requires expected completeness revision');
+        }
+        // The source lock and scope fence guarantee inter-worker CAS.
+        if (input.expectedCompletenessRevision !== priorRevision) {
+          const error = new Error('Gap reconciliation completeness revision conflict');
+          error.code = 'MCP_EVENTS_GAP_REVISION_CONFLICT';
+          throw error;
+        }
+        if (previous?.gapUnresolved !== true &&
+            previous?.truncated !== true) {
+          throw new Error('Gap reconciliation requires an unresolved gap');
+        }
+      }
       const state = {
         connectionId,
         serverId: String(input.serverId || previous?.serverId || connectionId),
@@ -963,6 +1026,22 @@ export class PostgresEventStore {
         ),
         cursor: input.cursor == null ? null : String(input.cursor),
         updatedAt: new Date().toISOString(),
+        completenessRevision: priorRevision + 1,
+        gapUnresolved: input.gapReconciled === true ? false :
+          input.truncated === true ||
+          input.gapUnresolved === true ||
+          previous?.gapUnresolved === true ||
+          previous?.truncated === true,
+        ...(input.gapReconciled === true
+          ? { reconciliationEvidenceId: input.reconciliationEvidenceId,
+              reconciledAt: new Date().toISOString() }
+          : {}),
+        ...((input.truncated === true || input.gapUnresolved === true ||
+          previous?.gapUnresolved === true || previous?.truncated === true)
+          ? { gapDetectedAt: previous?.gapDetectedAt ??
+              (typeof input.gapDetectedAt === 'string'
+                ? input.gapDetectedAt : new Date().toISOString()) }
+          : {}),
         ...(input.nextPollAt || previous?.nextPollAt
           ? { nextPollAt: String(input.nextPollAt || previous.nextPollAt) }
           : {}),
@@ -970,8 +1049,10 @@ export class PostgresEventStore {
           ? { lastEventAt: String(input.lastEventAt || previous.lastEventAt) }
           : {}),
         ...(input.lastError ? { lastError: String(input.lastError) } : {}),
-        ...(typeof input.truncated === 'boolean'
-          ? { truncated: input.truncated }
+        ...(input.gapReconciled === true
+          ? { truncated: false }
+          : typeof input.truncated === 'boolean'
+            ? { truncated: input.truncated }
           : typeof previous?.truncated === 'boolean'
             ? { truncated: previous.truncated }
             : {}),

@@ -943,3 +943,154 @@ integrationTest('pool restart fencing: persisted claimed wakes survive disconnec
     }
   }
 });
+
+
+integrationTest('PostgreSQL MCP completeness ABA and replay-buffer fences reject stale negatives', {
+  timeout: 60000,
+}, async () => {
+  const poolA=pool();
+  const poolB=pool();
+  try {
+    const a=store(poolA,'gap-replay-fence');
+    const b=store(poolB,'gap-replay-fence');
+    await Promise.all([a.init(),b.init()]);
+    const t0=Date.now()+3600000;
+    let now=new Date(t0);
+    const definition={
+      triggerId:'pg-gap-replay',version:'1',conditionOnly:true,
+      clauses:[
+        {id:'anchor',event:'job.started',serverId:'upstream',arguments:{},where:[]},
+        {id:'forbidden',event:'job.failed',serverId:'upstream',arguments:{},where:[]},
+      ],
+      pattern:{
+        version:'2',root:{
+          kind:'notFollowedBy',id:'pg-negative',
+          child:{kind:'event',ref:'anchor'},
+          forbidden:{kind:'event',ref:'forbidden'},withinMs:1000,
+        },
+        partitionBy:[],
+        selection:{overlap:'allow',afterMatch:'keepAll',maxMatchesPerEvent:10},
+        execution:{maxCandidates:32,maxSemanticEvaluations:0,maxBufferedEvents:64},
+      },
+      withinMs:60000,
+    };
+    const engineA=new CompositeTriggerEngine(a,null,()=>now);
+    const engineB=new CompositeTriggerEngine(b,null,()=>now);
+    await engineA.register(definition);
+    const source={
+      connectionId:'source',serverId:'upstream',
+      eventName:'job.failed',arguments:{},deliveryMode:'poll',
+    };
+    const original=await a.putMcpClientState({...source,truncated:false});
+    const event=(name,id,at)=>({
+      traceId:'pg-gap:'+id,sourceEventId:'pg-gap:'+id,
+      name,serverId:'upstream',provider:'mcp',
+      occurredAt:new Date(at).toISOString(),subscriptionArguments:{},data:{},
+    });
+    await engineA.ingest(event('job.started','anchor',t0));
+    const before=(await a.listTriggerMatches(definition.triggerId))
+      .find(x=>x.patternState?.role==='buffer');
+    assert.ok(before);
+    const initial=(await a.getMcpGapStateAndSnapshot()).snapshot;
+    const gap=await b.putMcpClientState({...source,truncated:true});
+    now=new Date(t0+1000);
+    await engineB.ingest(event('job.failed','replayed',t0+500));
+    const reconciled=await b.putMcpClientState({
+      ...gap,truncated:false,gapReconciled:true,
+      expectedCompletenessRevision:gap.completenessRevision,
+      reconciliationEvidenceId:'postgres-verified-replay',
+    });
+    assert.ok(reconciled.completenessRevision>original.completenessRevision);
+    assert.notEqual(initial,(await a.getMcpGapStateAndSnapshot()).snapshot);
+    assert.equal(await a.appendTriggerMatchIfMcpGapUnchanged(
+      matchedRecord(definition.triggerId,'pg-stale-aba'),
+      initial,before,
+    ),false,'cross-worker ABA gap evidence must reject stale commit');
+    const current=(await a.getMcpGapStateAndSnapshot()).snapshot;
+    assert.equal(await a.appendTriggerMatchIfMcpGapUnchanged(
+      matchedRecord(definition.triggerId,'pg-stale-buffer'),
+      current,before,
+    ),false,'fresh completeness cannot certify a stale replay buffer');
+    assert.equal((await a.listTriggerMatches(definition.triggerId))
+      .filter(x=>x.status==='matched').length,0);
+  }finally{
+    await dropTables(poolA);
+    await poolA.end();
+    await poolB.end();
+  }
+});
+
+
+integrationTest('PostgreSQL two-worker gap acknowledgement CAS cannot erase a newer source gap', {
+  timeout: 60000,
+}, async()=>{
+  const poolA=pool();
+  const poolB=pool();
+  try{
+    const a=store(poolA,'gap-ack-cas');
+    const b=store(poolB,'gap-ack-cas');
+    await Promise.all([a.init(),b.init()]);
+    const source={connectionId:'same-source',serverId:'upstream',
+      eventName:'job.failed',arguments:{env:'prod'},
+      deliveryMode:'poll',truncated:true};
+    const first=await a.putMcpClientState({...source,cursor:'gap-old'});
+    // Simulate a second worker recording another truncated page after the
+    // host verified "first", but before its acknowledgement transaction.
+    const second=await b.putMcpClientState({...source,cursor:'gap-new'});
+    assert.ok(second.completenessRevision>first.completenessRevision);
+    await assert.rejects(a.putMcpClientState({
+      ...first, truncated:false,gapReconciled:true,
+      reconciliationEvidenceId:'verified-only-old-gap',
+      expectedCompletenessRevision:first.completenessRevision,
+    }),error=>error?.code==='MCP_EVENTS_GAP_REVISION_CONFLICT');
+    const latest=await b.getMcpClientState('same-source','job.failed',{env:'prod'});
+    assert.equal(latest.gapUnresolved,true);
+    assert.equal(latest.completenessRevision,second.completenessRevision);
+    assert.notEqual(latest.reconciliationEvidenceId,'verified-only-old-gap');
+    const repaired=await a.putMcpClientState({
+      ...latest,truncated:false,gapReconciled:true,
+      reconciliationEvidenceId:'verified-after-second-replay',
+      expectedCompletenessRevision:latest.completenessRevision,
+    });
+    assert.equal(repaired.gapUnresolved,false);
+    assert.equal(repaired.completenessRevision,second.completenessRevision+1);
+  }finally{
+    await dropTables(poolA);
+    await poolA.end();
+    await poolB.end();
+  }
+});
+
+
+integrationTest('PostgreSQL rejects shared-memory source identity before durable gap mutation', {
+  timeout: 60000,
+},async()=>{
+  const db=pool();
+  try{
+    const pg=store(db,'mcp-shared-args');
+    await pg.init();
+    const identity={tenant:'acme',filter:{region:'eu'}};
+    const row={connectionId:'upstream',serverId:'server',
+      eventName:'job.failed',arguments:identity,
+      deliveryMode:'poll',truncated:true};
+    const saved=await pg.putMcpClientState(row);
+    const snapshot=(await pg.getMcpGapStateAndSnapshot()).snapshot;
+    const shared=new SharedArrayBuffer(8);
+    const bad={tenant:'acme',filter:{view:new Uint8Array(shared)}};
+    await assert.rejects(pg.putMcpClientState({
+      ...row,arguments:bad,truncated:false,gapReconciled:true,
+      expectedCompletenessRevision:saved.completenessRevision,
+      reconciliationEvidenceId:'forged-older-gap',
+    }),/safe JSON/);
+    new Uint8Array(shared)[0]=99;
+    assert.equal((await pg.getMcpGapStateAndSnapshot()).snapshot,snapshot);
+    const persisted=await pg.getMcpClientState('upstream','job.failed',identity);
+    assert.equal(persisted.gapUnresolved,true);
+    assert.equal(persisted.completenessRevision,saved.completenessRevision);
+    assert.deepEqual(persisted.arguments,identity);
+    assert.equal((await pg.listMcpClientStates()).length,1);
+  }finally{
+    await dropTables(db);
+    await db.end();
+  }
+});

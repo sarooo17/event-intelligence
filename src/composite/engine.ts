@@ -1,4 +1,5 @@
 import { readOwnEventPath } from '../protocol/ownPath.js';
+import { incompleteNegativeRefs, negativeForbiddenSourceRefs } from './deliveryGap.js';
 import {
   evaluatePatternV2,
   patternV2CandidateSignature,
@@ -351,6 +352,9 @@ export class CompositeTriggerEngine {
       match.patternState?.version === '2' &&
       match.patternState.role === 'buffer'
     ) {
+      // Evaluate the whole AST even under a source gap: independent
+      // positive branches (e.g. debounce in anyOf) must still progress.
+      // The evaluator blocks only negative branches with missing evidence.
       return this.evaluatePatternBuffer(
         definition,
         match,
@@ -685,10 +689,35 @@ export class CompositeTriggerEngine {
     return Math.max(...times) - Math.min(...times) <= withinMs;
   }
 
+  private async gapEvaluationEvidence(
+    definition: CompositeTriggerDefinition,
+  ): Promise<{ incompleteRefs: Set<string>; snapshot: string | null }> {
+    if (!this.store.listMcpClientStates ||
+        !negativeForbiddenSourceRefs(definition.pattern.root).size) {
+      return { incompleteRefs: new Set(), snapshot: null };
+    }
+    const [source, triggerState] = await Promise.all([
+      this.store.getMcpGapStateAndSnapshot
+        ? this.store.getMcpGapStateAndSnapshot()
+        : Promise.resolve(this.store.listMcpClientStates()).then(states=>({
+            states, snapshot: null,
+          })),
+      this.store.getTriggerState?.(definition.triggerId, definition.version),
+    ]);
+    return {
+      incompleteRefs: incompleteNegativeRefs(
+        definition, source.states,
+        triggerState?.connectionIds ?? [],
+      ),
+      snapshot: source.snapshot,
+    };
+  }
+
   private async evaluatePatternBuffer(
     definition: CompositeTriggerDefinition,
     buffer: TriggerMatchRecord,
     evaluationNow: Date,
+    gapRetryBudget = 1,
   ): Promise<CompositeIngestResult[]> {
     const pattern = definition.pattern;
     if (!pattern) return [];
@@ -719,8 +748,11 @@ export class CompositeTriggerEngine {
             )
         : [];
 
+    const gapEvidence = await this.gapEvaluationEvidence(definition);
+    const incompleteSourceRefs = gapEvidence.incompleteRefs;
     const evaluation = await evaluatePatternV2({
       definition: pattern,
+      incompleteSourceRefs,
       events: buffer.sourceEvents,
       evaluator: this.evaluator,
       now: evaluationNow,
@@ -750,23 +782,22 @@ export class CompositeTriggerEngine {
       });
     }
 
-    await this.support.cancelDeadlinesForMatch(buffer.matchId);
-    if (evaluation.pending.length) {
-      const deadlines = evaluation.pending
-        .filter((candidate) =>
-          candidate.pendingUntil &&
-          this.candidateFitsTriggerWindow(candidate, definition.withinMs)
-        )
-        .map((candidate) => ({
-          conditionId: `pattern-v2:${patternV2CandidateSignature(candidate)}`,
-          dueAt: candidate.pendingUntil!,
-        }));
-      await this.support.scheduleDeadlines(
-        definition,
-        buffer,
-        deadlines,
-      );
-    }
+    const pendingForDeadlines=[
+      ...evaluation.pending,
+      ...(evaluation.incompletePending ?? []),
+    ];
+    const deadlines = pendingForDeadlines
+      .filter((candidate) =>
+        candidate.pendingUntil &&
+        this.candidateFitsTriggerWindow(candidate, definition.withinMs)
+      )
+      .map((candidate) => ({
+        conditionId: `pattern-v2:${patternV2CandidateSignature(candidate)}`,
+        dueAt: candidate.pendingUntil!,
+      }));
+    // Keep gap retries, but cancel stale positive deadlines even while an
+    // unrelated negative branch is missing delivery evidence.
+    await this.support.reconcileDeadlines(definition,buffer,deadlines);
 
     const previouslyEmitted = new Set(
       (await this.store
@@ -945,7 +976,48 @@ export class CompositeTriggerEngine {
         derivedEventIds: [],
       });
 
-      await this.store.appendTriggerMatch(matched);
+      if (gapEvidence.snapshot !== null &&
+          this.store.appendTriggerMatchIfMcpGapUnchanged) {
+        const committed = await this.store.appendTriggerMatchIfMcpGapUnchanged(
+          matched,gapEvidence.snapshot,buffer,
+        );
+        if (!committed) {
+          // The provider completeness state changed during asynchronous
+          // evaluation. Refresh a bounded SINGLE time so fresh gaps can
+          // create retry deadlines, without re-emitting committed matches.
+          if (gapRetryBudget > 0) {
+            // A host may have replayed a forbidden occurrence into the
+            // durable buffer while our previous evaluation was in flight.
+            // Never evaluate the old in-memory record after a stale fence.
+            const latest = await this.latestMatch(buffer.matchId);
+            if (latest?.status === 'partial' &&
+                latest.patternState?.version === '2' &&
+                latest.patternState.role === 'buffer') {
+              return [
+                ...results,
+                ...(await this.evaluatePatternBuffer(
+                  definition,latest,evaluationNow,gapRetryBudget-1,
+                )),
+              ];
+            }
+            return results;
+          }
+          // A second concurrent completeness change exhausted our bounded
+          // immediate reevaluation. The earlier reconcileDeadlines() may
+          // have cancelled the only negative retry while this evaluation
+          // still saw complete evidence. Keep a durable, due-now retry
+          // for this candidate; the next scheduler pass will read fresh gap
+          // evidence and remain fail-closed until host reconciliation.
+          // Never append or deliver the stale candidate as a match.
+          await this.support.scheduleDeadlines(definition,buffer,[{
+            conditionId: `pattern-v2:${signature}`,
+            dueAt: nowIso,
+          }]);
+          return results;
+        }
+      } else {
+        await this.store.appendTriggerMatch(matched);
+      }
       await this.support.auditMatch(matched, 'trigger.matched', {
         patternVersion: '2',
         signature,

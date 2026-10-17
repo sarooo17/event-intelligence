@@ -7,6 +7,8 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import path from 'node:path';
+import { mcpGapSnapshot } from '../../dist/src/composite/gapFingerprint.js';
+import { safeMcpSourceArguments } from './mcp-safe-arguments.mjs';
 import { validateHistoryWindowLimit } from './history-window.mjs';
 import { assertWakeClaimGeneration } from './wake-claim-generation.mjs';
 import {
@@ -57,7 +59,7 @@ function canonicalStateValue(value) {
 }
 
 function mcpClientStateKey(connectionId, eventName, args = {}) {
-  return `${String(connectionId)}::${String(eventName)}::${JSON.stringify(canonicalStateValue(args ?? {}))}`;
+  return `${String(connectionId)}::${String(eventName)}::${JSON.stringify(canonicalStateValue(safeMcpSourceArguments(args)))}`;
 }
 
 async function readJsonLines(filePath) {
@@ -315,6 +317,10 @@ export class PersistentEventStore {
     this.#mcpClientStates = new Map();
     for (const raw of mcpClientStates) {
       if (!raw?.connectionId || !raw?.eventName) continue;
+      const revision = raw.completenessRevision ?? 0;
+      if (!Number.isSafeInteger(revision) || revision < 0) {
+        throw new Error('Invalid persisted MCP completeness revision');
+      }
       const state = {
         connectionId: String(raw.connectionId),
         serverId: String(raw.serverId || raw.connectionId),
@@ -329,10 +335,19 @@ export class PersistentEventStore {
           ? null
           : String(raw.cursor),
         updatedAt: String(raw.updatedAt || new Date(0).toISOString()),
+        completenessRevision: revision,
         ...(raw.nextPollAt ? { nextPollAt: String(raw.nextPollAt) } : {}),
         ...(raw.lastEventAt ? { lastEventAt: String(raw.lastEventAt) } : {}),
         ...(raw.lastError ? { lastError: String(raw.lastError) } : {}),
         ...(typeof raw.truncated === 'boolean' ? { truncated: raw.truncated } : {}),
+        gapUnresolved: raw.gapUnresolved === true ||
+          (raw.gapUnresolved === undefined && raw.truncated === true),
+        ...(typeof raw.gapDetectedAt === 'string'
+          ? { gapDetectedAt: raw.gapDetectedAt } : {}),
+        ...(typeof raw.reconciliationEvidenceId === 'string'
+          ? { reconciliationEvidenceId: raw.reconciliationEvidenceId } : {}),
+        ...(typeof raw.reconciledAt === 'string'
+          ? { reconciledAt: raw.reconciledAt } : {}),
       };
       this.#mcpClientStates.set(
         mcpClientStateKey(
@@ -652,7 +667,17 @@ export class PersistentEventStore {
 
   async putTrigger(definitionInput) {
     return this.#serialized(async () => {
-      const definition = parseCompositeTriggerDefinition(definitionInput);
+      const parsed = parseCompositeTriggerDefinition(definitionInput);
+      // A clause's MCP identity may contain z.unknown() nested values.
+      // Validate them as safe JSON, and sever input/returned references
+      // before the definition can govern negative CEP gap matching.
+      const definition = structuredClone({
+        ...parsed,
+        clauses: parsed.clauses.map((clause) => ({
+          ...clause,
+          arguments: safeMcpSourceArguments(clause.arguments),
+        })),
+      });
       const key = this.#triggerKey(definition);
       if (this.#triggers.has(key)) {
         const error = new Error(
@@ -667,12 +692,13 @@ export class PersistentEventStore {
         `${JSON.stringify(definition)}\n`,
         'utf8',
       );
-      return definition;
+      return structuredClone(definition);
     });
   }
 
   listTriggers() {
-    return [...this.#triggers.values()];
+    return [...this.#triggers.values()].map((definition) =>
+      structuredClone(definition));
   }
 
   getTriggerState(triggerId, version) {
@@ -786,6 +812,33 @@ export class PersistentEventStore {
     return [...this.#eventSources.values()]
       .filter((source) => !ids || ids.has(source.connectionId))
       .filter((source) => !enabledOnly || source.enabled !== false);
+  }
+
+  getMcpGapStateAndSnapshot() {
+    const states=this.listMcpClientStates();
+    return { states, snapshot:mcpGapSnapshot(states) };
+  }
+
+  async appendTriggerMatchIfMcpGapUnchanged(recordInput, expectedSnapshot, expectedBuffer) {
+    return this.#serialized(async()=>{
+      // A single serialized write fences BOTH delivery completeness and the
+      // exact source-event buffer that the candidate was evaluated against.
+      if(mcpGapSnapshot(this.listMcpClientStates())!==expectedSnapshot) {
+        return false;
+      }
+      const current=this.#triggerMatches.get(expectedBuffer.matchId);
+      if(!current ||
+          JSON.stringify(parseTriggerMatchRecord(current)) !==
+          JSON.stringify(parseTriggerMatchRecord(expectedBuffer))) {
+        return false;
+      }
+      const record=parseTriggerMatchRecord(recordInput);
+      this.#triggerMatchHistory.push(record);
+      this.#triggerMatches.set(record.matchId,record);
+      await appendFile(this.files.triggerMatches,
+        `${JSON.stringify(record)}\n`,'utf8');
+      return true;
+    });
   }
 
   async appendTriggerMatch(recordInput) {
@@ -909,16 +962,20 @@ export class PersistentEventStore {
   }
 
   getMcpClientState(connectionId, eventName, args = {}) {
-    return this.#mcpClientStates.get(
+    const state = this.#mcpClientStates.get(
       mcpClientStateKey(connectionId, eventName, args),
-    ) ?? null;
+    );
+    // Never expose the materialized JSONL record: a host must not be able
+    // to clear gapUnresolved or forge its revision without a store write.
+    return state ? structuredClone(state) : null;
   }
 
   listMcpClientStates(connectionId) {
     return [...this.#mcpClientStates.values()]
       .filter((state) =>
         !connectionId || state.connectionId === String(connectionId)
-      );
+      )
+      .map((state) => structuredClone(state));
   }
 
   async putMcpClientState(input) {
@@ -928,11 +985,37 @@ export class PersistentEventStore {
       if (!connectionId || !eventName) {
         throw new Error('MCP client state requires connectionId and eventName');
       }
-      const args =
-        input.arguments && !Array.isArray(input.arguments) && typeof input.arguments === 'object'
-          ? input.arguments
-          : {};
+      // Snapshot identity before looking up or writing any gap state.
+      // Proxies, typed arrays, SharedArrayBuffer and non-JSON values are
+      // rejected rather than aliased into the in-memory completeness index.
+      const args = safeMcpSourceArguments(input.arguments);
       const previous = this.getMcpClientState(connectionId, eventName, args);
+      const priorRevision = previous?.completenessRevision ?? 0;
+      if (!Number.isSafeInteger(priorRevision) ||
+          priorRevision < 0 ||
+          priorRevision === Number.MAX_SAFE_INTEGER) {
+        throw new Error('Invalid or exhausted MCP completeness revision');
+      }
+      if (input.gapReconciled === true) {
+        if (typeof input.reconciliationEvidenceId !== 'string' ||
+            !input.reconciliationEvidenceId.trim()) {
+          throw new Error('Gap reconciliation requires host evidence ID');
+        }
+        if (!Number.isSafeInteger(input.expectedCompletenessRevision) ||
+            input.expectedCompletenessRevision < 0) {
+          throw new Error('Gap reconciliation requires expected completeness revision');
+        }
+        // The serialized queue guarantees CAS even during concurrent polls.
+        if (input.expectedCompletenessRevision !== priorRevision) {
+          const error = new Error('Gap reconciliation completeness revision conflict');
+          error.code = 'MCP_EVENTS_GAP_REVISION_CONFLICT';
+          throw error;
+        }
+        if (previous?.gapUnresolved !== true &&
+            previous?.truncated !== true) {
+          throw new Error('Gap reconciliation requires an unresolved gap');
+        }
+      }
       const state = {
         connectionId,
         serverId: String(input.serverId || previous?.serverId || connectionId),
@@ -947,6 +1030,27 @@ export class PersistentEventStore {
           ? null
           : String(input.cursor),
         updatedAt: new Date().toISOString(),
+        // Never trust a caller-supplied revision. A -> gap -> reconciled A
+        // must differ even if all boolean completeness fields match again.
+        completenessRevision: priorRevision + 1,
+        // A later healthy poll page cannot prove that skipped earlier
+        // events were replayed. Retain the gap until an explicit
+        // host-owned reconciliation (never an untrusted producer hint).
+        gapUnresolved: input.gapReconciled === true ? false :
+          input.truncated === true ||
+          input.gapUnresolved === true ||
+          previous?.gapUnresolved === true ||
+          previous?.truncated === true,
+        ...(input.gapReconciled === true
+          ? { reconciliationEvidenceId: input.reconciliationEvidenceId,
+              reconciledAt: new Date().toISOString() }
+          : {}),
+        ...((input.truncated === true || input.gapUnresolved === true ||
+          previous?.gapUnresolved === true || previous?.truncated === true)
+          ? { gapDetectedAt: previous?.gapDetectedAt ??
+              (typeof input.gapDetectedAt === 'string'
+                ? input.gapDetectedAt : new Date().toISOString()) }
+          : {}),
         ...(input.nextPollAt || previous?.nextPollAt
           ? { nextPollAt: String(input.nextPollAt || previous.nextPollAt) }
           : {}),
@@ -956,22 +1060,28 @@ export class PersistentEventStore {
         ...(input.lastError
           ? { lastError: String(input.lastError) }
           : {}),
-        ...(typeof input.truncated === 'boolean'
-          ? { truncated: input.truncated }
+        ...(input.gapReconciled === true
+          ? { truncated: false }
+          : typeof input.truncated === 'boolean'
+            ? { truncated: input.truncated }
           : typeof previous?.truncated === 'boolean'
             ? { truncated: previous.truncated }
             : {}),
       };
+      // Clone both at the write boundary and at the read boundary.
+      // Nested input arguments and returned records must never alias the
+      // mutable in-memory source used by the gap/revision finality fence.
+      const stored = structuredClone(state);
       this.#mcpClientStates.set(
         mcpClientStateKey(connectionId, eventName, args),
-        state,
+        stored,
       );
       await appendFile(
         this.files.mcpClientStates,
-        `${JSON.stringify(state)}\n`,
+        `${JSON.stringify(stored)}\n`,
         'utf8',
       );
-      return state;
+      return structuredClone(stored);
     });
   }
 

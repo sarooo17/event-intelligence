@@ -1167,6 +1167,24 @@ export class McpEventsClientManager {
       // Do not process an RPC response which completed after detach or after
       // another session replaced this connectionId.
       this.assertConnectionAttached(connection);
+      // The producer has already declared missing history. Persist that
+      // fact BEFORE ANY subsequent page validation: bad event arrays,
+      // cursors or scheduling hints cannot silently erase a reported gap.
+      // Read only a non-Proxy own DATA property (never invoke getters).
+      if (rawResult && typeof rawResult === 'object' &&
+          !isProxy(rawResult)) {
+        const reportedGap=Object.getOwnPropertyDescriptor(
+          rawResult,'truncated',
+        );
+        if (reportedGap && Object.hasOwn(reportedGap,'value') &&
+            reportedGap.value === true) {
+          await this.saveSubscriptionState(connection,context,subscription,{
+            deliveryMode:'poll',
+            truncated:true,
+            gapDetectedAt:this.now().toISOString(),
+          });
+        }
+      }
       const result = ownPollPage(rawResult);
       const remoteEvents = result.events;
       // A producer adapter can return a Proxy, accessor-backed array or a
@@ -1244,6 +1262,7 @@ export class McpEventsClientManager {
           deliveryMode: 'poll',
           cursor,
           truncated,
+          ...(truncated ? { gapDetectedAt: this.now().toISOString() } : {}),
           nextPollAt,
           ...(lastEventAt ? { lastEventAt } : {}),
         },
@@ -1366,7 +1385,9 @@ export class McpEventsClientManager {
             }
           : {}),
         ...(typeof update.truncated === 'boolean'
-          ? { truncated: update.truncated }
+          ? { truncated: update.truncated,
+              ...(update.truncated
+                ? { gapDetectedAt: this.now().toISOString() } : {}) }
           : {}),
       };
       await this.saveSubscriptionState(
@@ -1515,6 +1536,49 @@ export class McpEventsClientManager {
         await this.closeSession(subscriptionId, session);
       }
     }
+  }
+
+  /**
+   * Host-only explicit reconciliation after independently verified replay.
+   * Never exposed as an MCP tool or callable from a provider notification.
+   * An opaque cursor advancing is NOT evidence of replay completeness.
+   */
+  async acknowledgeReconciledGap({
+    connectionId, eventName, arguments: args = {}, evidenceId,
+    expectedCompletenessRevision,
+  }) {
+    if(typeof evidenceId !== 'string' || !evidenceId.trim() ||
+       evidenceId.length > 256) {
+      throw new Error('Host reconciliation requires an evidence ID');
+    }
+    // A host receipt must be tied to the exact gap generation it verified.
+    if (!Number.isSafeInteger(expectedCompletenessRevision) ||
+        expectedCompletenessRevision < 0) {
+      throw new Error('Host reconciliation requires expected completeness revision');
+    }
+    const connection=this.connections.get(connectionId);
+    if(!connection) throw new Error('Unknown host-managed connection');
+    this.assertConnectionAttached(connection);
+    const context=await this.scopeContext(connection);
+    this.assertConnectionAttached(connection);
+    return this.withConnectionMutation(connectionId,async()=>{
+      this.assertConnectionAttached(connection);
+      const previous=await context.store.getMcpClientState(
+        connectionId,eventName,args,
+      );
+      if(!previous || previous.serverId!==connection.serverId ||
+         !(previous.gapUnresolved===true || previous.truncated===true)) {
+        throw new Error('No unresolved gap for the attached source');
+      }
+      this.assertConnectionAttached(connection);
+      return context.store.putMcpClientState({
+        ...previous, connectionId, serverId:connection.serverId,
+        eventName,arguments:args,gapReconciled:true,
+        expectedCompletenessRevision,
+        reconciliationEvidenceId:evidenceId,
+        truncated:false,
+      });
+    });
   }
 
   async pollConnection(connectionId, options = {}) {

@@ -1,3 +1,5 @@
+> **Historical finding resolved in PR #180**: the original text below describes the known unsafe behavior on the pre-fix baseline. The runnable diagnostic test is now inverted and must fail if negative finality occurs with a relevant delivery gap. See `docs/MCP-EVENTS-GAP-AWARE-FINALITY.md` for the host-only replay acknowledgment contract.
+
 # #166 C — source gap versus negative CEP finality: reproducible failure
 
 Status: **diagnostic witness / known unsafe behavior**, not an accepted

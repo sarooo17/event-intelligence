@@ -60,6 +60,44 @@ export class CompositeTriggerRuntimeSupport {
     }
   }
 
+  /**
+   * Retain ONLY deadlines still produced by the latest evaluation.
+   * A gap-blocked negative may keep its own retry, but must not keep
+   * superseded positive/debounce deadlines around indefinitely.
+   */
+  async reconcileDeadlines(
+    definition: CompositeTriggerDefinition,
+    record: TriggerMatchRecord,
+    deadlines: Array<{ conditionId: string; dueAt: string }>,
+  ): Promise<void> {
+    if (this.store.listTemporalDeadlines &&
+        this.store.setTemporalDeadlineStatus) {
+      const expected = new Set<string>();
+      for (const deadline of deadlines) {
+        expected.add('td_' + (
+          await sha256Hex([
+            definition.triggerId,
+            definition.version,
+            record.matchId,
+            deadline.conditionId,
+            deadline.dueAt,
+          ].join(':'))
+        ).slice(0, 24));
+      }
+      const pending = await this.store.listTemporalDeadlines({
+        matchId: record.matchId, status: 'pending',
+      });
+      for (const item of pending) {
+        if (!expected.has(item.deadlineId)) {
+          await this.store.setTemporalDeadlineStatus(
+            item.deadlineId, 'cancelled',
+          );
+        }
+      }
+    }
+    await this.scheduleDeadlines(definition, record, deadlines);
+  }
+
   async cancelDeadlinesForMatch(matchId: string): Promise<void> {
     if (
       !this.store.listTemporalDeadlines ||

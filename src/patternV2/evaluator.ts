@@ -52,6 +52,8 @@ export interface PatternV2SemanticCache {
 export interface PatternV2Evaluation {
   matches: PatternV2Candidate[];
   pending: PatternV2Candidate[];
+  // Source-gap deferred deadlines, never independently valid matches.
+  incompletePending?: PatternV2Candidate[];
   semanticEvaluations: number;
   semanticCacheHits: number;
   semanticCacheMisses: number;
@@ -62,6 +64,8 @@ export interface PatternV2Evaluation {
 interface EvaluationContext {
   events: TriggerSourceEvent[];
   eventsByRef: Map<string, TriggerSourceEvent[]>;
+  incompleteSourceRefs: ReadonlySet<string>;
+  incompletePending: PatternV2Candidate[];
   evaluator: SemanticEvaluator | null;
   now: Date;
   maxCandidates: number;
@@ -929,6 +933,27 @@ async function withTimeout<T>(
   }
 }
 
+// A missing source on any forbidden predicate branch prevents a negative
+// proof. Inspect only bounded/schema-validated Pattern AST descendants.
+function forbiddenNeedsIncompleteSource(
+  root: PatternNodeV2,
+  context: EvaluationContext,
+): boolean {
+  if (!context.incompleteSourceRefs.size) return false;
+  const nodes: PatternNodeV2[] = [root];
+  while (nodes.length) {
+    const node = nodes.pop()!;
+    if ('ref' in node && typeof node.ref === 'string' &&
+      context.incompleteSourceRefs.has(node.ref)) return true;
+    if ('child' in node && node.child) nodes.push(node.child);
+    if ('children' in node && Array.isArray(node.children)) {
+      nodes.push(...node.children);
+    }
+    if ('forbidden' in node && node.forbidden) nodes.push(node.forbidden);
+  }
+  return false;
+}
+
 async function evaluateNode(
   node: PatternNodeV2,
   context: EvaluationContext,
@@ -1241,6 +1266,25 @@ async function evaluateNode(
   }
 
   if (node.kind === 'notPresent') {
+    if (context.incompleteSourceRefs.has(node.ref)) {
+      const bases = await evaluateNode(node.child, context);
+      if (context.truncated) return [];
+      for (const base of bases) {
+        if (!base.events.length || !consumeWork(context)) break;
+        if (context.incompletePending.length >= context.maxCandidates) {
+          context.truncated = true;
+          break;
+        }
+        // Snapshot negation has no future finality interval. Retain a
+        // stable *already due* retry, keyed by source-event time, which
+        // remains pending while the transport gap is unresolved.
+        context.incompletePending.push({
+          ...base, pendingUntil: base.events.at(-1)!.occurredAt,
+        });
+      }
+      context.truncated = true;
+      return [];
+    }
     const forbidden = eventsForRef(context, node.ref);
     const children = await evaluateNode(node.child, context);
     if (context.truncated) return [];
@@ -1354,6 +1398,28 @@ async function evaluateNode(
   }
 
   if (node.kind === 'absence') {
+    if (context.incompleteSourceRefs.has(node.ref)) {
+      const bases = await evaluateNode(node.child, context);
+      if (context.truncated) return [];
+      for (const base of bases) {
+        if (!consumeWork(context)) break;
+        if (context.incompletePending.length >= context.maxCandidates) {
+          context.truncated = true;
+          break;
+        }
+        const anchor = latestBoundEvent(base, node.afterRef);
+        if (!anchor) continue;
+        const due = absenceNodeDueAt(node, anchor);
+        context.incompletePending.push({
+          ...base,
+          pendingUntil: new Date(
+            due.getTime()+context.allowedLatenessMs,
+          ).toISOString(),
+        });
+      }
+      context.truncated = true;
+      return [];
+    }
     const bases = await evaluateNode(node.child, context);
     const forbidden = eventsForRef(context, node.ref);
     const output: PatternV2Candidate[] = [];
@@ -1388,6 +1454,22 @@ async function evaluateNode(
   }
 
   if (node.kind === 'notNext') {
+    if (forbiddenNeedsIncompleteSource(node.forbidden, context)) {
+      const bases = await evaluateNode(node.child, context);
+      if (context.truncated) return [];
+      for (const base of bases) {
+        if (!base.events.length || !consumeWork(context)) break;
+        if (context.incompletePending.length >= context.maxCandidates) {
+          context.truncated = true;
+          break;
+        }
+        context.incompletePending.push({
+          ...base, pendingUntil: base.events.at(-1)!.occurredAt,
+        });
+      }
+      context.truncated = true;
+      return [];
+    }
     const bases = await evaluateNode(node.child, context);
     const forbidden = await evaluateNode(node.forbidden, context);
     // A capped forbidden branch may omit the exact event that blocks a
@@ -1413,6 +1495,27 @@ async function evaluateNode(
   }
 
   if (node.kind === 'notFollowedBy') {
+    if (forbiddenNeedsIncompleteSource(node.forbidden, context)) {
+      const bases = await evaluateNode(node.child, context);
+      if (context.truncated) return [];
+      // Preserve an actual durable timer for an anchor created DURING
+      // a delivery gap. It is only a reevaluation hint, NEVER a match.
+      for (const base of bases) {
+        if (!base.events.length) continue;
+        if (!consumeWork(context)) break;
+        if (context.incompletePending.length >= context.maxCandidates) {
+          context.truncated = true;
+          break;
+        }
+        const anchor = Date.parse(base.events.at(-1)!.occurredAt);
+        const deadline = anchor + node.withinMs + context.allowedLatenessMs;
+        context.incompletePending.push({
+          ...base, pendingUntil: new Date(deadline).toISOString(),
+        });
+      }
+      context.truncated = true;
+      return [];
+    }
     const bases = await evaluateNode(node.child, context);
     const forbidden = await evaluateNode(node.forbidden, context);
     // Never finalize or expose a negative result if the full set of
@@ -1611,6 +1714,7 @@ export async function evaluatePatternV2({
   allowedLatenessMs = 0,
   semanticCache = null,
   semanticCacheNamespace = '',
+  incompleteSourceRefs = new Set<string>(),
 }: {
   definition: PatternAstV2Definition;
   events: TriggerSourceEvent[];
@@ -1619,6 +1723,7 @@ export async function evaluatePatternV2({
   allowedLatenessMs?: number;
   semanticCache?: PatternV2SemanticCache | null;
   semanticCacheNamespace?: string;
+  incompleteSourceRefs?: ReadonlySet<string>;
 }): Promise<PatternV2Evaluation> {
   // Bounded preflight before input cloning/sort or AST recursion.
   if (events.length > MAX_EVALUATION_INPUT_EVENTS ||
@@ -1639,6 +1744,8 @@ export async function evaluatePatternV2({
   const context: EvaluationContext = {
     events: ordered,
     eventsByRef,
+    incompleteSourceRefs,
+    incompletePending: [],
     evaluator,
     now,
     maxCandidates: definition.execution.maxCandidates,
@@ -1676,6 +1783,8 @@ export async function evaluatePatternV2({
   return {
     matches,
     pending,
+    ...(context.incompletePending.length
+      ? { incompletePending: context.incompletePending } : {}),
     semanticEvaluations: context.semanticEvaluations,
     semanticCacheHits: context.semanticCacheHits,
     semanticCacheMisses: context.semanticCacheMisses,
