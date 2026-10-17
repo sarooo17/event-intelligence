@@ -660,7 +660,10 @@ export class McpEventsClientManager {
       if (connection.enabled !== false && discover) {
         events = await this.discoverConnection(connection.connectionId);
       }
-      this.assertConnectionAttached(connection);
+      // Disabled connections retain their existing no-discovery contract,
+      // but no connection (enabled or not) can finish after manager close.
+      if (connection.enabled === false) this.assertOpen();
+      else this.assertConnectionAttached(connection);
       if (connection.enabled !== false && this.started) {
         this.scheduleConnection(connection, 0);
       }
