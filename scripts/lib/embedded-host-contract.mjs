@@ -28,9 +28,15 @@ function contractError(code, message) {
 
 function configuredDurability({ store, dataDir, env }) {
   if (store !== undefined) {
-    return store !== null && typeof store === 'object' &&
-      REQUIRED_EVENT_STORE_METHODS.every(method =>
-        typeof store[method] === 'function');
+    try {
+      return store !== null && typeof store === 'object' &&
+        REQUIRED_EVENT_STORE_METHODS.every(method =>
+          typeof store[method] === 'function');
+    } catch {
+      // Host getters/Proxy traps are not configuration evidence. They may
+      // contain private error messages; reject as a stable failed capability.
+      return false;
+    }
   }
   // Match the actual host env merge: process.env, overridden by caller env,
   // then by explicit dataDir when nonblank. This is a non-I/O shape check.
@@ -40,13 +46,15 @@ function configuredDurability({ store, dataDir, env }) {
 }
 
 function configuredSharedStore(store) {
-  if (!configuredDurability({ store }) ||
-      typeof store.storeCapabilities !== 'function') return false;
   try {
+    // Accessing storeCapabilities may itself run an accessor or Proxy trap:
+    // both lookup and invocation must stay behind the same fail-closed guard.
+    if (!configuredDurability({ store }) ||
+        typeof store.storeCapabilities !== 'function') return false;
     return validateSharedStoreCapabilities(store).ok;
   } catch {
-    // A misbehaving host capability-descriptor callback cannot escape with
-    // arbitrary user errors or credential-bearing exception messages.
+    // Never leak private metadata callback failures into a public setup
+    // error, including failures during the property read itself.
     return false;
   }
 }
