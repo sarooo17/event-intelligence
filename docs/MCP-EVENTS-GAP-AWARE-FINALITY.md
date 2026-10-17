@@ -238,3 +238,25 @@ revision-checked store write.
 case mutating all of those returned surfaces (including nested source
 arguments), checking the canonical snapshot remains unchanged across
 physical restart, and then verifying explicit host-receipt reconciliation.
+
+## Safe JSON source identity (shared-memory alias prevention)
+
+The scope-local MCP completeness and negative-CEP fences rely on source
+subscription `arguments` being immutable *data*, not a JavaScript view
+whose backing memory can mutate without a store revision. `structuredClone`
+alone is not a sufficient ownership boundary for typed views of
+`SharedArrayBuffer`. Both JSONL and PostgreSQL now use the same bounded
+`safeMcpSourceArguments` validator/snapshot on source lookup and write.
+Only ordinary JSON objects/arrays/primitives are accepted. Typed arrays,
+`DataView`, `SharedArrayBuffer`, `ArrayBuffer`, exotic objects, proxies,
+accessor properties, cycles and non-JSON primitives are rejected without
+executing input-controlled getters/proxy traps. Nested identity data is
+deep-copied before indexing or persisting, so host mutation cannot change
+the revision-checked identity or clear a gap without a serialized write.
+JSONL continues to return independent records. Identity arguments that
+were never valid JSON are intentionally rejected as a contract tightening;
+ordinary JSON producer arguments are unaffected.
+
+Dedicated deterministic JSONL/adversarial regressions run in
+`test/mcp-events-source-arguments-safety.test.mjs`, with an independent
+real PostgreSQL HA store regression in `test/postgres-shared-state.test.mjs`.
