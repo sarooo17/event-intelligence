@@ -135,15 +135,13 @@ try {
     enabled: true,
   }, { type: 'system', principal_id: 'consumer-registration' });
 
-  const denied = await integration.toolCatalog.get('trigger_create').execute(
-    input(1000, { trigger_id: 'consumer-trigger' }), {},
-  );
-  assert.equal(denied.ok, false);
-  assert.equal(denied.error.code, 'HOST_APPROVAL_REQUIRED');
+  // Apply the exact same definition + lifecycle state check to creation,
+  // not just the existing pause/resume/update/delete denial probes.
+  await assertDeniedMutation('trigger.create', 'trigger_create',
+    input(1000, { trigger_id: 'consumer-trigger' }));
   assert.deepEqual(await integration.host.store.listTriggers(), [],
     'host approval/interrupt response must precede durable mutation');
 
-  denyAction = null;
   const created = await call('trigger_create', input(1000, {
     trigger_id: 'consumer-trigger',
   }));
@@ -178,7 +176,8 @@ try {
   const persisted = await call('trigger_list', { trigger_id: 'consumer-trigger' });
   assert.equal(persisted.total, 1);
   // This read intentionally uses the NEW EI instance, not the old one.
-  const reopenedReceipt = await integration.host.store.getWakeDelivery(originalDelivery.wakeId);
+  const reopenedReceipt = structuredClone(
+    await integration.host.store.getWakeDelivery(originalDelivery.wakeId));
   assert.equal(reopenedReceipt?.status, 'delivered',
     'fresh store must hydrate a durable wake receipt');
   assert.equal(reopenedReceipt?.runtimeReceiptId, originalDelivery.receiptId);
