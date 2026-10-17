@@ -406,6 +406,47 @@ export interface EventIntelligenceRuntimeBindings<
  * Simplified embedded entry point. Agent-facing tools are available only when
  * both runtime.resolveContext and runtime.control are supplied.
  */
+/** Version 1 of the explicit, host-owned embedded capability handshake. */
+export type HostContractCapability =
+  | 'mcp.registry'
+  | 'storage.durable'
+  | 'storage.shared'
+  | 'wake.receipts'
+  | 'tooling.owner-scoped'
+  | 'semantic.evaluate'
+  | 'observability.sink';
+
+export interface HostContractV1 {
+  version: '1';
+  /** Unsupported/absent capabilities reject before host startup. */
+  required: readonly HostContractCapability[];
+}
+
+export interface HostContractNegotiationV1 {
+  readonly schema: 'event-intelligence.host-contract.v1';
+  readonly version: '1';
+  readonly required: readonly HostContractCapability[];
+  /** Configuration presence only, NOT authorization or actual durability. */
+  readonly available: Readonly<Record<HostContractCapability, boolean>>;
+  readonly readiness: 'configuration-validated';
+}
+
+export const HOST_CONTRACT_VERSION: '1';
+export const HOST_CONTRACT_CAPABILITIES: readonly HostContractCapability[];
+
+export function negotiateHostContract(
+  contract: HostContractV1,
+  options?: {
+    mcp?: EventSourceRegistryOptions;
+    runtime?: EventIntelligenceRuntimeBindings;
+    store?: EventIntelligenceHostOptions['store'];
+    dataDir?: string;
+    env?: Record<string, string | undefined>;
+    semanticEvaluator?: unknown;
+    observability?: EventIntelligenceHostOptions['observability'];
+  },
+): HostContractNegotiationV1;
+
 export interface EventIntelligenceOptions<
   RuntimeContext = unknown,
   Target = RuntimeTarget,
@@ -416,6 +457,8 @@ export interface EventIntelligenceOptions<
   > {
   mcp?: EventSourceRegistryOptions;
   runtime: EventIntelligenceRuntimeBindings<RuntimeContext, Target>;
+  /** Opt-in pre-v1; no callback/credential/policy ownership transfers to EI. */
+  hostContract?: HostContractV1;
 }
 
 export function createEventIntelligence<
