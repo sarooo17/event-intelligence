@@ -209,6 +209,7 @@ test('poll source gap sticks across healthy responses/reopen until host verifies
     const cleared=await x.manager.acknowledgeReconciledGap({
       connectionId:'source',eventName:'change.detected',
       evidenceId:'host-verified-history-replay:fixture-1',
+      expectedCompletenessRevision:x.state().completenessRevision,
     });
     assert.equal(cleared.gapUnresolved,false);
     assert.equal(cleared.truncated,false);
