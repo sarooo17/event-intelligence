@@ -69,7 +69,16 @@ test('close synchronously fences stale registry notifications and manual attachm
     // A host can retain tenant views before root shutdown. Those views
     // must not retain authority to reattach after the root is closing.
     const scoped = await host.scope('tenant-a');
+    const retained = host.runtime.mcpEventsClient;
     const first = host.close();
+    // No microtask/yield between root host close and raw manager access.
+    // This is precisely the previously identified retained-runtime bypass.
+    assert.throws(() => retained.addConnection({
+      connectionId: 'same-turn-attach', serverId: 'upstream',
+    }), error => error?.code === 'EI_HOST_CLOSED');
+    await assert.rejects(retained.attachConnection({
+      connectionId: 'same-turn-attach', serverId: 'upstream',
+    }), error => error?.code === 'EI_HOST_CLOSED');
     const second = host.close();
     assert.equal(first, second, 'concurrent closing shares the same promise');
     onChange();
