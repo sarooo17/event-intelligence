@@ -125,3 +125,26 @@ recover resources a failing host factory never returned. Tests in
 errors and overlapping host/app shutdown hooks with no external runtime SDK.
 This is **partial #42 acceptance**, not yet third-party independent
 integration or complete three-host lifecycle v3 certification.
+
+### MCP registry shutdown fence
+
+`createEventIntelligenceHost()` now treats registry initialization as part of
+host startup. If the initial discovery or `mcpRegistry.subscribe()` fails
+after the runtime and its store were started, startup rejects **after**
+closing the initialized runtime; cleanup failures never mask the original
+startup failure.
+
+`host.close()` immediately fences new registry refresh requests, late
+registry subscription notifications, and manual connection attachments.
+An already-running registry discovery is drained before runtime shutdown;
+if it resolves after the close fence its entries are discarded. Repeated
+`close()` calls share the same promise and invoke registry unsubscribe once.
+Calls to `refreshMcpRegistry()` / `attachMcpClient()` during shutdown fail
+with stable `EI_HOST_CLOSED`. Host-owned MCP sessions and credentials remain
+outside EI's authority; the host is still responsible for invoking shutdown
+and unsubscribing any connections it owns.
+
+The real-host tests in `test/host-registry-shutdown-contract.test.mjs`
+check failed startup cleanup, late observer callbacks and an in-flight
+asynchronous registry enumeration resolved during host shutdown. This is a
+focused #42 lifecycle slice, not independent third-party conformance.
