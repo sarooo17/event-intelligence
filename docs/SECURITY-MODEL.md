@@ -386,7 +386,10 @@ objects and arrays. Non-data getters are skipped; Proxy wrappers and exotic
 nested objects become a fixed `[untrusted value]` marker. Primitive telemetry
 dimensions no longer invoke custom `toString()` or `valueOf()`. Error.name,
 message and code are obtained without executing accessor-backed Error
-properties or Proxy prototypes. Credential-bearing ordinary string values
+properties or Proxy prototypes. Error identity is determined by the native
+`isNativeError` brand check, never by JavaScript `instanceof Error`, because
+an otherwise ordinary object can have an attacker-controlled Proxy in its
+prototype chain. Credential-bearing ordinary string values
 still go through existing redaction and length bounds before host sinks.
 
 This is an intentional pre-v1 **fail-closed telemetry contract tightening**:
