@@ -1019,3 +1019,44 @@ integrationTest('PostgreSQL MCP completeness ABA and replay-buffer fences reject
     await poolB.end();
   }
 });
+
+
+integrationTest('PostgreSQL two-worker gap acknowledgement CAS cannot erase a newer source gap', {
+  timeout: 60000,
+}, async()=>{
+  const poolA=pool();
+  const poolB=pool();
+  try{
+    const a=store(poolA,'gap-ack-cas');
+    const b=store(poolB,'gap-ack-cas');
+    await Promise.all([a.init(),b.init()]);
+    const source={connectionId:'same-source',serverId:'upstream',
+      eventName:'job.failed',arguments:{env:'prod'},
+      deliveryMode:'poll',truncated:true};
+    const first=await a.putMcpClientState({...source,cursor:'gap-old'});
+    // Simulate a second worker recording another truncated page after the
+    // host verified "first", but before its acknowledgement transaction.
+    const second=await b.putMcpClientState({...source,cursor:'gap-new'});
+    assert.ok(second.completenessRevision>first.completenessRevision);
+    await assert.rejects(a.putMcpClientState({
+      ...first, truncated:false,gapReconciled:true,
+      reconciliationEvidenceId:'verified-only-old-gap',
+      expectedCompletenessRevision:first.completenessRevision,
+    }),error=>error?.code==='MCP_EVENTS_GAP_REVISION_CONFLICT');
+    const latest=await b.getMcpClientState('same-source','job.failed',{env:'prod'});
+    assert.equal(latest.gapUnresolved,true);
+    assert.equal(latest.completenessRevision,second.completenessRevision);
+    assert.notEqual(latest.reconciliationEvidenceId,'verified-only-old-gap');
+    const repaired=await a.putMcpClientState({
+      ...latest,truncated:false,gapReconciled:true,
+      reconciliationEvidenceId:'verified-after-second-replay',
+      expectedCompletenessRevision:latest.completenessRevision,
+    });
+    assert.equal(repaired.gapUnresolved,false);
+    assert.equal(repaired.completenessRevision,second.completenessRevision+1);
+  }finally{
+    await dropTables(poolA);
+    await poolA.end();
+    await poolB.end();
+  }
+});
