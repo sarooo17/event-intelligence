@@ -29,6 +29,7 @@ import {
 import {
   assertSharedStoreCapabilities,
   describeStoreCapabilities,
+  REQUIRED_EVENT_STORE_METHODS,
 } from './store-capabilities.mjs';
 import {
   TriggerInspector,
@@ -52,36 +53,12 @@ import {
   createObservabilityEmitter,
 } from './observability.mjs';
 
-const REQUIRED_STORE_METHODS = [
-  'putTrigger',
-  'listTriggers',
-  'getTriggerState',
-  'setTriggerState',
-  'appendTriggerMatch',
-  'listTriggerMatches',
-  'putEventSource',
-  'listEventSources',
-  'appendWake',
-  'latestWake',
-  'ensureWakeDelivery',
-  'getWakeDelivery',
-  'claimWakeDelivery',
-  'completeWakeDelivery',
-  'failWakeDelivery',
-  'listDueWakeDeliveries',
-  'appendAudit',
-  'auditLength',
-  'getMcpClientState',
-  'listMcpClientStates',
-  'putMcpClientState',
-  'appendMcpOccurrence',
-];
 
 function assertStoreContract(store) {
   if (!store || typeof store !== 'object') {
     throw new Error('Event Intelligence store must be an object');
   }
-  const missing = REQUIRED_STORE_METHODS.filter(
+  const missing = REQUIRED_EVENT_STORE_METHODS.filter(
     (method) => typeof store[method] !== 'function',
   );
   if (missing.length) {
