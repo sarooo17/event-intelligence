@@ -318,6 +318,8 @@ export interface EmbeddedRuntimeIntegrationOptions<RuntimeContext = unknown>
 
 export interface EmbeddedRuntimeIntegration<RuntimeContext = unknown>
   extends Omit<EmbeddedEventIntelligence<RuntimeContext>, 'tools'> {
+  /** Present only when the canonical facade negotiated hostContract v1. */
+  readonly hostContract?: HostContractNegotiationV1;
   readonly tools: readonly PortableAgentTool<RuntimeContext>[];
   readonly toolCatalog: PortableToolCatalog<RuntimeContext>;
   readonly capabilities: readonly EventIntelligenceCapabilityMetadata[];
