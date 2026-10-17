@@ -128,3 +128,42 @@ test('dangerous metadata field names are data and cannot alter object prototype'
     {malicious:true});
   assert.equal(rows[0].metadata.safe,'ok');
 });
+
+
+test('Proxy in object prototype chain cannot run traps through Error checks',async()=>{
+  let invoked=0;
+  const maliciousProto=new Proxy({},{
+    getPrototypeOf(){invoked++;throw new Error('prototype getter trap');},
+    get(){invoked++;throw new Error('prototype property trap');},
+    getOwnPropertyDescriptor(){invoked++;throw new Error('prototype descriptor trap');},
+  });
+  const inheritedProxy=Object.create(maliciousProto);
+  Object.defineProperty(inheritedProxy,'safe',{
+    enumerable:true, value:'hello',
+  });
+  assert.deepEqual(serializeObservabilityError(inheritedProxy),{
+    message:'[untrusted value]',
+  });
+  const rows=[];
+  const emitter=createObservabilityEmitter(row=>rows.push(row));
+  assert.equal(await emitter.emit({
+    event:'ei.security.prototype',
+    metadata:{value:inheritedProxy,nested:[inheritedProxy]},
+    error:inheritedProxy,
+  }),true);
+  assert.equal(invoked,0,'no prototype Proxy trap should run');
+  assert.equal(rows[0].error.message,'[untrusted value]');
+  assert.equal(rows[0].metadata.value,'[untrusted value]');
+  assert.deepEqual(rows[0].metadata.nested,['[untrusted value]']);
+  const branded=new Error('Bearer fakeCredential');
+  Object.setPrototypeOf(branded,maliciousProto);
+  assert.equal(await emitter.emit({
+    event:'ei.security.error',
+    error:branded,
+    metadata:{error:branded},
+  }),true);
+  assert.equal(invoked,0,
+    'even native Error with a Proxy prototype must avoid calling it');
+  assert.equal(rows[1].error.name,'Error');
+  assert.equal(rows[1].error.message,'Bearer [redacted]');
+});
