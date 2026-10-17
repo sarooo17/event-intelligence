@@ -19,8 +19,9 @@ const actor = { type: 'agent', principal_id: 'external-agent' };
 const target = { runtime: 'consumer-host', kind: 'task', id: 'durable-1' };
 const hostReceipts = new Set();
 const deliveries = [];
-let allowed = false;
+let denyAction = 'trigger.create';
 let grants = 0;
+const policyRequests = [];
 let starts = 0;
 let integration;
 
@@ -31,8 +32,13 @@ const options = {
     receiptNamespace: 'packed-consumer',
     hasReceipt: id => hostReceipts.has(id),
     resolveContext: () => ({ target, owner, actor }),
-    control: ({ action }) => {
-      if (!allowed) return {
+    control: ({ action, capability, context }) => {
+      assert.equal(capability.id, 'event-intelligence.' + action);
+      assert.equal(context.actor.principal_id, actor.principal_id);
+      assert.equal(context.owner.principal_id, owner.principal_id);
+      assert.deepEqual(context.target, target);
+      policyRequests.push({ action, decision: denyAction === action ? 'return' : 'execute' });
+      if (denyAction === action) return {
         action: 'return',
         result: { ok: false, error: { code: 'HOST_APPROVAL_REQUIRED' } },
       };
@@ -75,6 +81,24 @@ const event = async (id, value) => integration.host.runtime.compositeEventConsum
     occurredAt: new Date().toISOString(),
     data: { value },
   });
+
+// Every mutation denial must leave both the trigger definitions and durable
+// lifecycle states unchanged, not merely avoid sending an external wake.
+const assertDeniedMutation = async (action, tool, args) => {
+  const before = JSON.stringify([
+    await integration.host.store.listTriggers(),
+    await integration.host.store.listTriggerStates(),
+  ]);
+  denyAction = action;
+  const result = await integration.toolCatalog.get(tool).execute(args, {});
+  assert.equal(result.ok, false, action);
+  assert.equal(result.error.code, 'HOST_APPROVAL_REQUIRED');
+  assert.equal(JSON.stringify([
+    await integration.host.store.listTriggers(),
+    await integration.host.store.listTriggerStates(),
+  ]), before, 'denied mutation wrote durable trigger or lifecycle state');
+  denyAction = null;
+};
 
 const input = (threshold, extra = {}) => ({
   events: [{
@@ -119,7 +143,7 @@ try {
   assert.deepEqual(await integration.host.store.listTriggers(), [],
     'host approval/interrupt response must precede durable mutation');
 
-  allowed = true;
+  denyAction = null;
   const created = await call('trigger_create', input(1000, {
     trigger_id: 'consumer-trigger',
   }));
@@ -128,10 +152,16 @@ try {
   const listed = await call('trigger_list', {});
   assert.equal(listed.total, 1);
   assert.equal(listed.triggers[0].triggerId, 'consumer-trigger');
+  await assertDeniedMutation('trigger.pause', 'trigger_pause', {
+    trigger_id: 'consumer-trigger',
+  });
   const paused = await call('trigger_pause', { trigger_id: 'consumer-trigger' });
   assert.equal(paused.state.status, 'paused');
   await event('paused', 1500);
   assert.equal(deliveries.length, 0);
+  await assertDeniedMutation('trigger.resume', 'trigger_resume', {
+    trigger_id: 'consumer-trigger',
+  });
   const resumed = await call('trigger_resume', { trigger_id: 'consumer-trigger' });
   assert.equal(resumed.state.status, 'active');
   await event('first-wake', 1500);
@@ -140,15 +170,34 @@ try {
   assert.equal(receipt.status, 'delivered');
   assert.equal(receipt.runtimeReceiptId, deliveries[0].receiptId);
 
+  const originalDelivery = { ...deliveries[0] };
   await integration.close();
   integration = null;
   await start();
 
   const persisted = await call('trigger_list', { trigger_id: 'consumer-trigger' });
   assert.equal(persisted.total, 1);
+  // This read intentionally uses the NEW EI instance, not the old one.
+  const reopenedReceipt = await integration.host.store.getWakeDelivery(originalDelivery.wakeId);
+  assert.equal(reopenedReceipt?.status, 'delivered',
+    'fresh store must hydrate a durable wake receipt');
+  assert.equal(reopenedReceipt?.runtimeReceiptId, originalDelivery.receiptId);
+  const beforeReplayState = JSON.stringify(
+    await integration.host.store.listTriggerStates());
+  const beforeReplayMatches = JSON.stringify(
+    await integration.host.store.listTriggerMatches('consumer-trigger'));
   await event('first-wake', 1500);
   assert.equal(deliveries.length, 1, 'durable source replay cannot redeliver wake');
+  assert.equal(JSON.stringify(await integration.host.store.listTriggerStates()),
+    beforeReplayState, 'replay cannot increase durable fireCount');
+  assert.equal(JSON.stringify(await integration.host.store.listTriggerMatches('consumer-trigger')),
+    beforeReplayMatches, 'replay cannot append a duplicate logical match');
+  assert.deepEqual(await integration.host.store.getWakeDelivery(originalDelivery.wakeId),
+    reopenedReceipt, 'replay cannot rewrite the original persisted receipt');
 
+  await assertDeniedMutation('trigger.update', 'trigger_update', input(2000, {
+    trigger_id: 'consumer-trigger', expected_version: '1', version: '2',
+  }));
   const updated = await call('trigger_update', input(2000, {
     trigger_id: 'consumer-trigger', expected_version: '1', version: '2',
   }));
@@ -159,6 +208,9 @@ try {
   await event('second-wake', 2100);
   assert.equal(deliveries.length, 2);
 
+  await assertDeniedMutation('trigger.delete', 'trigger_delete', {
+    trigger_id: 'consumer-trigger', version: '2',
+  });
   const deleted = await call('trigger_delete', {
     trigger_id: 'consumer-trigger', version: '2',
   });
@@ -166,10 +218,22 @@ try {
   await event('deleted-no-wake', 2500);
   assert.equal(deliveries.length, 2);
 
+  for (const action of [
+    'trigger.create', 'trigger.pause', 'trigger.resume',
+    'trigger.update', 'trigger.delete',
+  ]) {
+    assert.deepEqual(policyRequests.filter(item => item.action === action)
+      .map(item => item.decision), ['return', 'execute'],
+    'missing per-action deny/execute authorization proof: ' + action);
+  }
+
   console.log(JSON.stringify({
     schema: 'event-intelligence.packed-managed-consumer.v1',
     status: 'pass',
     approvalDeniedBeforeWrite: true,
+    policyActionsVerified: policyRequests.length,
+    reopenedReceiptVerified: true,
+    durableReplayStateUnchanged: true,
     management: ['create', 'list', 'pause', 'resume', 'update', 'delete'],
     starts,
     deliveries: deliveries.length,
