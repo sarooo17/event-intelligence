@@ -271,11 +271,12 @@ test('host store metadata accessors and Proxy traps fail closed without exposing
   assert.throws(()=>negotiateHostContract(contract(['storage.shared']),input),
     error=>error?.code==='EI_HOST_SHARED_STORE_REQUIRED'&&
       !error.message.includes(secret));
-  assert.equal(invoked,1);
+  assert.equal(invoked,0,
+    'native descriptor inspection must not execute getter');
   assert.equal(negotiateHostContract(contract(['storage.durable']),input)
     .available['storage.durable'],true,
     'unrelated durable shape does not access shared descriptor getter');
-  assert.equal(invoked,1);
+  assert.equal(invoked,0);
 
   const proxy=new Proxy(Object.fromEntries(REQUIRED_EVENT_STORE_METHODS.map(name=>
     [name,async()=>null])),{
@@ -291,7 +292,8 @@ test('host store metadata accessors and Proxy traps fail closed without exposing
     runtime,store:proxy,
   }),error=>error?.code==='EI_HOST_SHARED_STORE_REQUIRED'&&
     !error.message.includes(secret));
-  assert.equal(invoked,2);
+  assert.equal(invoked,0,
+    'host proxy is rejected without calling its property traps');
 
   const getterStore=Object.create(null);
   Object.defineProperty(getterStore,'putTrigger',{
@@ -301,5 +303,70 @@ test('host store metadata accessors and Proxy traps fail closed without exposing
     runtime,store:getterStore,
   }),error=>error?.code==='EI_HOST_STORAGE_REQUIRED'&&
     !error.message.includes(secret));
-  assert.equal(invoked,3);
+  assert.equal(invoked,0,
+    'dynamic custom-store method getter must not be evaluated');
+});
+
+
+test('stateful store method accessors cannot initialize before runtime rejection',async()=>{
+  let getterCalls=0;
+  let initCalls=0;
+  const methods=Object.fromEntries(REQUIRED_EVENT_STORE_METHODS.map(name=>
+    [name,async()=>null]));
+  const volatile={...methods,
+    async init(){initCalls++},
+  };
+  Object.defineProperty(volatile,'putTrigger',{
+    enumerable:true,
+    configurable:true,
+    get(){
+      getterCalls++;
+      return getterCalls===1 ? async()=>{} : undefined;
+    },
+  });
+  await assert.rejects(createEventIntelligence({
+    runtime,hostContract:contract(['storage.durable']),
+    store:volatile,
+    createHost:async()=>{throw new Error('factory unexpectedly called')},
+  }),e=>e.code==='EI_HOST_STORAGE_REQUIRED');
+  assert.equal(getterCalls,0,
+    'stateful getter must never satisfy durable method preflight');
+  assert.equal(initCalls,0,
+    'configuration rejected before custom storage initialization');
+
+  const { createEventIntelligenceHost } =
+    await import('../scripts/host-integration.mjs');
+  await assert.rejects(createEventIntelligenceHost({
+    store:volatile,
+    env:{TYPESAFE_API_KEY:'',RUNTIME_WAKE_TARGETS_JSON:'{}'},
+  }),e=>e.code==='EVENT_INTELLIGENCE_STORE_INVALID');
+  assert.equal(getterCalls,0);
+  assert.equal(initCalls,0,
+    'the runtime must assert methods before calling store.init() directly');
+});
+
+test('semantic evaluator accessors and proxies are not inspected outside requirements',()=>{
+  let invoked=0;
+  const evaluator=Object.create(null);
+  Object.defineProperty(evaluator,'evaluate',{
+    get(){invoked++;throw new Error('semantic-private-credential');},
+  });
+  assert.equal(negotiateHostContract(contract(['mcp.registry']),{
+    runtime,mcp:{list:()=>[]},semanticEvaluator:evaluator,
+  }).available['semantic.evaluate'],false);
+  assert.equal(invoked,0,'unrequested semantic descriptor is not inspected');
+  assert.throws(()=>negotiateHostContract(contract(['semantic.evaluate']),{
+    runtime,semanticEvaluator:evaluator,
+  }),e=>e.code==='EI_HOST_CAPABILITY_UNAVAILABLE'&&
+    !e.message.includes('semantic-private-credential'));
+  assert.equal(invoked,0,'getter is not executed even when semantic is required');
+
+  const proxy=new Proxy({evaluate:async()=>true},{
+    get(){invoked++;throw new Error('proxy semantic trap')},
+    getOwnPropertyDescriptor(){invoked++;throw new Error('proxy reflection')},
+  });
+  assert.throws(()=>negotiateHostContract(contract(['semantic.evaluate']),{
+    runtime,semanticEvaluator:proxy,
+  }),e=>e.code==='EI_HOST_CAPABILITY_UNAVAILABLE');
+  assert.equal(invoked,0,'Proxy-backed evaluator cannot attest capability');
 });
