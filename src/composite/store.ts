@@ -1,9 +1,17 @@
+import type { McpDeliveryGapState } from './deliveryGap.js';
 import type {
   CompositeTriggerDefinition,
   TriggerMatchRecord,
 } from '../intelligenceProtocol/triggerSchemas.js';
 
 export interface CompositeTriggerStore {
+  getMcpGapStateAndSnapshot?():
+    | { states: McpDeliveryGapState[]; snapshot: string }
+    | Promise<{ states: McpDeliveryGapState[]; snapshot: string }>;
+  appendTriggerMatchIfMcpGapUnchanged?(
+    record: TriggerMatchRecord,
+    expectedSnapshot: string,
+  ): Promise<boolean>;
   // The host selects the tenant/scope store before constructing the engine.
   // This is a scope-local, read-only projection of durable transport evidence.
   listMcpClientStates?(connectionId?: string): Array<{
