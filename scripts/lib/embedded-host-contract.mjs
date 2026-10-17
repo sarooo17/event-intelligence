@@ -1,5 +1,6 @@
 import {
-  REQUIRED_EVENT_STORE_METHODS,
+  getHostDataMethod,
+  hasRequiredStoreMethods,
   validateSharedStoreCapabilities,
 } from './store-capabilities.mjs';
 
@@ -29,9 +30,7 @@ function contractError(code, message) {
 function configuredDurability({ store, dataDir, env }) {
   if (store !== undefined) {
     try {
-      return store !== null && typeof store === 'object' &&
-        REQUIRED_EVENT_STORE_METHODS.every(method =>
-          typeof store[method] === 'function');
+      return hasRequiredStoreMethods(store);
     } catch {
       // Host getters/Proxy traps are not configuration evidence. They may
       // contain private error messages; reject as a stable failed capability.
@@ -50,7 +49,8 @@ function configuredSharedStore(store) {
     // Accessing storeCapabilities may itself run an accessor or Proxy trap:
     // both lookup and invocation must stay behind the same fail-closed guard.
     if (!configuredDurability({ store }) ||
-        typeof store.storeCapabilities !== 'function') return false;
+        typeof getHostDataMethod(store, 'storeCapabilities') !== 'function')
+      return false;
     return validateSharedStoreCapabilities(store).ok;
   } catch {
     // Never leak private metadata callback failures into a public setup
@@ -117,9 +117,8 @@ export function negotiateHostContract(contract, {
     'tooling.owner-scoped': typeof runtime?.resolveContext === 'function' &&
       typeof runtime?.control === 'function',
     // This is wiring readiness only; it does not execute an evaluator.
-    'semantic.evaluate': Boolean(semanticEvaluator &&
-      typeof semanticEvaluator === 'object' &&
-      typeof semanticEvaluator.evaluate === 'function'),
+    'semantic.evaluate': contract.required.includes('semantic.evaluate') &&
+      typeof getHostDataMethod(semanticEvaluator, 'evaluate') === 'function',
     'observability.sink': typeof observability === 'function' ||
       Boolean(observability && typeof observability === 'object' &&
         typeof observability.emit === 'function'),
