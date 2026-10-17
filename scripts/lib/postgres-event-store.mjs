@@ -700,7 +700,14 @@ export class PostgresEventStore {
   }
 
   async putTrigger(input) {
-    const definition = parseCompositeTriggerDefinition(input);
+    const parsed = parseCompositeTriggerDefinition(input);
+    const definition = {
+      ...parsed,
+      clauses: parsed.clauses.map((clause) => ({
+        ...clause,
+        arguments: safeMcpSourceArguments(clause.arguments),
+      })),
+    };
     const key = definition.triggerId + '@' + definition.version;
     if (!await this.insert('trigger', key, definition)) {
       const error = new Error('Trigger ' + key + ' already exists');
