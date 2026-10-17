@@ -689,27 +689,35 @@ export class CompositeTriggerEngine {
     return Math.max(...times) - Math.min(...times) <= withinMs;
   }
 
-  private async incompleteSourceRefs(
+  private async gapEvaluationEvidence(
     definition: CompositeTriggerDefinition,
-  ): Promise<Set<string>> {
+  ): Promise<{ incompleteRefs: Set<string>; snapshot: string | null }> {
     if (!this.store.listMcpClientStates ||
         !negativeForbiddenSourceRefs(definition.pattern.root).size) {
-      return new Set();
+      return { incompleteRefs: new Set(), snapshot: null };
     }
-    const [states, triggerState] = await Promise.all([
-      this.store.listMcpClientStates(),
+    const [source, triggerState] = await Promise.all([
+      this.store.getMcpGapStateAndSnapshot
+        ? this.store.getMcpGapStateAndSnapshot()
+        : Promise.resolve(this.store.listMcpClientStates()).then(states=>({
+            states, snapshot: null,
+          })),
       this.store.getTriggerState?.(definition.triggerId, definition.version),
     ]);
-    return incompleteNegativeRefs(
-      definition, states,
-      triggerState?.connectionIds ?? [],
-    );
+    return {
+      incompleteRefs: incompleteNegativeRefs(
+        definition, source.states,
+        triggerState?.connectionIds ?? [],
+      ),
+      snapshot: source.snapshot,
+    };
   }
 
   private async evaluatePatternBuffer(
     definition: CompositeTriggerDefinition,
     buffer: TriggerMatchRecord,
     evaluationNow: Date,
+    gapRetryBudget = 1,
   ): Promise<CompositeIngestResult[]> {
     const pattern = definition.pattern;
     if (!pattern) return [];
@@ -740,7 +748,8 @@ export class CompositeTriggerEngine {
             )
         : [];
 
-    const incompleteSourceRefs = await this.incompleteSourceRefs(definition);
+    const gapEvidence = await this.gapEvaluationEvidence(definition);
+    const incompleteSourceRefs = gapEvidence.incompleteRefs;
     const evaluation = await evaluatePatternV2({
       definition: pattern,
       incompleteSourceRefs,
@@ -967,7 +976,28 @@ export class CompositeTriggerEngine {
         derivedEventIds: [],
       });
 
-      await this.store.appendTriggerMatch(matched);
+      if (gapEvidence.snapshot !== null &&
+          this.store.appendTriggerMatchIfMcpGapUnchanged) {
+        const committed = await this.store.appendTriggerMatchIfMcpGapUnchanged(
+          matched,gapEvidence.snapshot,
+        );
+        if (!committed) {
+          // The provider completeness state changed during asynchronous
+          // evaluation. Refresh a bounded SINGLE time so fresh gaps can
+          // create retry deadlines, without re-emitting committed matches.
+          if (gapRetryBudget > 0) {
+            return [
+              ...results,
+              ...(await this.evaluatePatternBuffer(
+                definition,buffer,evaluationNow,gapRetryBudget-1,
+              )),
+            ];
+          }
+          return results;
+        }
+      } else {
+        await this.store.appendTriggerMatch(matched);
+      }
       await this.support.auditMatch(matched, 'trigger.matched', {
         patternVersion: '2',
         signature,
