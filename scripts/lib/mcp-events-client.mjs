@@ -630,7 +630,8 @@ export class McpEventsClientManager {
   }
 
   assertConnectionAttached(connection) {
-    this.assertOpen();
+    // Already-accepted poll work is allowed to finish while close() drains
+    // it. New work is denied by add/attach/discover/poll entry guards.
     if (!this.isConnectionAttached(connection)) {
       const error = new Error('Host MCP Events connection is detached');
       error.code = 'MCP_EVENTS_CONNECTION_DETACHED';
@@ -660,10 +661,8 @@ export class McpEventsClientManager {
       if (connection.enabled !== false && discover) {
         events = await this.discoverConnection(connection.connectionId);
       }
-      // Disabled connections retain their existing no-discovery contract,
-      // but no connection (enabled or not) can finish after manager close.
-      if (connection.enabled === false) this.assertOpen();
-      else this.assertConnectionAttached(connection);
+      this.assertOpen();
+      if (connection.enabled !== false) this.assertConnectionAttached(connection);
       if (connection.enabled !== false && this.started) {
         this.scheduleConnection(connection, 0);
       }
@@ -780,9 +779,11 @@ export class McpEventsClientManager {
     }
 
     const context = await this.scopeContext(connection);
+    this.assertOpen();
     const capabilities = await this.invokeProvider(async () =>
       safeMcpCapabilities(await connection.getCapabilities()),
     );
+    this.assertOpen();
     this.assertConnectionAttached(connection);
     const profile = resolveMcpEventsCompatibilityProfile({
       capabilities,
@@ -813,6 +814,7 @@ export class McpEventsClientManager {
         profile.listMethod,
         cursor ? { cursor } : {},
       );
+      this.assertOpen();
       this.assertConnectionAttached(connection);
       const listed = ownDiscoveryPage(rawPage, connectionId);
       // Validate the *original* cursor shape and cycle before parsing any
@@ -878,7 +880,9 @@ export class McpEventsClientManager {
     } while (cursor);
 
     for (const normalized of descriptors) {
+      this.assertOpen();
       await this.withConnectionMutation(connectionId, async () => {
+        this.assertOpen();
         this.assertConnectionAttached(connection);
         const sourceId =
         `mcp:${connection.connectionId}:${normalized.name}`;
@@ -901,6 +905,7 @@ export class McpEventsClientManager {
         existing.metadata?.extensionId === profile.extensionId;
 
       if (!same) {
+        this.assertOpen();
         this.assertConnectionAttached(connection);
         const register = context.triggerControl?.registerEventSource
           ? (sourceInput, actor) =>
