@@ -34,8 +34,10 @@ The test verifies:
   audit entries remain valid (including restored sequence behavior).
 - an unresolved MCP Events source delivery gap survives a real logical
   backup/restore with its exact cursor, scope-local completeness snapshot,
-  nested source identity and monotonic `completenessRevision`; another tenant
-  cannot inspect that restored cursor;
+  nested source identity and monotonic `completenessRevision`; post-restore
+  source lookup, new gap, stale receipt and current receipt use an **independently
+  reconstructed, differently ordered but semantically equivalent nested
+  identity**; another tenant cannot inspect that restored cursor;
 - a post-restore newer gap cannot be erased by stale pre-backup host replay
   evidence: the old revision fails with `MCP_EVENTS_GAP_REVISION_CONFLICT`,
   leaving completeness unchanged, while reconciliation of the **latest**
