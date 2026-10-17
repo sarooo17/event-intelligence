@@ -75,7 +75,7 @@ export function createMcpRegistryAdapter({
   };
 }
 
-function scopedHostView(runtime, context) {
+function scopedHostView(runtime, context, assertHostOpen) {
   const scopeId = context.scopeId;
   return {
     scopeId,
@@ -99,6 +99,7 @@ function scopedHostView(runtime, context) {
       return context.triggerControl.listEventSources();
     },
     async attachMcpClient(connection) {
+      assertHostOpen();
       const normalized = normalizeMcpConnection({
         ...connection,
         scopeId,
@@ -425,9 +426,11 @@ export async function createEventIntelligenceHost({
       return runtime.loadedScopes();
     },
     async scope(scopeIdInput = DEFAULT_EVENT_SCOPE_ID) {
+      assertHostOpen();
       const scopeId = normalizeEventScopeId(scopeIdInput);
       const context = await runtime.scope(scopeId);
-      return scopedHostView(runtime, context);
+      assertHostOpen();
+      return scopedHostView(runtime, context, assertHostOpen);
     },
     close() {
       if (closePromise) return closePromise;
