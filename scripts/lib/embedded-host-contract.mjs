@@ -1,4 +1,7 @@
-import { validateSharedStoreCapabilities } from './store-capabilities.mjs';
+import {
+  REQUIRED_EVENT_STORE_METHODS,
+  validateSharedStoreCapabilities,
+} from './store-capabilities.mjs';
 
 /**
  * Minimum versioned *declarative* host integration contract. Requirements
@@ -26,14 +29,25 @@ function contractError(code, message) {
 function configuredDurability({ store, dataDir, env }) {
   if (store !== undefined) {
     return store !== null && typeof store === 'object' &&
-      typeof store.putTrigger === 'function' &&
-      typeof store.getWakeDelivery === 'function' &&
-      typeof store.completeWakeDelivery === 'function';
+      REQUIRED_EVENT_STORE_METHODS.every(method =>
+        typeof store[method] === 'function');
   }
-  // The default JSONL store is durable when a location is configured; this
-  // handshake cannot assert filesystem write permissions or crash recovery.
-  return typeof dataDir === 'string' && Boolean(dataDir.trim()) ||
-    typeof env?.DATA_DIR === 'string' && Boolean(env.DATA_DIR.trim());
+  // Match the actual host env merge: process.env, overridden by caller env,
+  // then by explicit dataDir when nonblank. This is a non-I/O shape check.
+  const effectiveDir = dataDir ||
+    (env && Object.hasOwn(env, 'DATA_DIR') ? env.DATA_DIR : process.env.DATA_DIR);
+  return typeof effectiveDir === 'string' && Boolean(effectiveDir.trim());
+}
+
+function configuredSharedStore(store) {
+  if (!store || typeof store.storeCapabilities !== 'function') return false;
+  try {
+    return validateSharedStoreCapabilities(store).ok;
+  } catch {
+    // A misbehaving host capability-descriptor callback cannot escape with
+    // arbitrary user errors or credential-bearing exception messages.
+    return false;
+  }
 }
 
 /**
@@ -76,15 +90,17 @@ export function negotiateHostContract(contract, {
     }
   }
 
+  // Store capability metadata is a host callback. Do NOT invoke it during
+  // unrelated negotiations. This readiness report only verifies shared
+  // storage when the host explicitly requires it.
+  const sharedRequested = contract.required.includes('storage.shared');
   const available = Object.freeze({
     'mcp.registry': typeof mcp?.list === 'function' &&
       (mcp.subscribe === undefined || typeof mcp.subscribe === 'function'),
     'storage.durable': configuredDurability({ store, dataDir, env }),
     // A declared "shared" flag is never enough: check actual store
     // capability metadata AND its required distributed primitives.
-    'storage.shared': Boolean(store) &&
-      typeof store.storeCapabilities === 'function' &&
-      validateSharedStoreCapabilities(store).ok,
+    'storage.shared': sharedRequested && configuredSharedStore(store),
     'wake.receipts': typeof runtime?.hasReceipt === 'function' &&
       (typeof runtime?.receiptId === 'function' ||
         typeof runtime?.receiptNamespace === 'string' &&
@@ -92,9 +108,9 @@ export function negotiateHostContract(contract, {
     'tooling.owner-scoped': typeof runtime?.resolveContext === 'function' &&
       typeof runtime?.control === 'function',
     // This is wiring readiness only; it does not execute an evaluator.
-    'semantic.evaluate': typeof semanticEvaluator === 'function' ||
-      Boolean(semanticEvaluator && typeof semanticEvaluator === 'object' &&
-        typeof semanticEvaluator.evaluate === 'function'),
+    'semantic.evaluate': Boolean(semanticEvaluator &&
+      typeof semanticEvaluator === 'object' &&
+      typeof semanticEvaluator.evaluate === 'function'),
     'observability.sink': typeof observability === 'function' ||
       Boolean(observability && typeof observability === 'object' &&
         typeof observability.emit === 'function'),
