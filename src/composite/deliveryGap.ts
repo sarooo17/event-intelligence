@@ -11,6 +11,7 @@ export interface McpDeliveryGapState {
   truncated?: boolean;
   gapUnresolved?: boolean;
   gapDetectedAt?: string;
+  completenessRevision?: number;
 }
 
 // All source identities in the same scope use identical canonical JSON
