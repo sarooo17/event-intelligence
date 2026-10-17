@@ -373,3 +373,29 @@ reflection or traversal can trigger attacker-defined proxy traps. This is a
 Node-specific security boundary; other JS runtimes need their own equivalent
 intrinsic or a wire-JSON-only ingress contract. The event payload remains
 untrusted even after normalization.
+
+### Non-executing telemetry input projection (#45, partial)
+
+Observability records may include host-supplied fields influenced by an
+untrusted MCP provider. A regex that redacts secrets **after** coercion or
+property enumeration is insufficient: an attacker-controlled `toString()`,
+getter or JavaScript Proxy trap could execute before the sink receives the
+record. The EI emitter now projects the top-level allowlist using own **data
+descriptors**, and recursively projects only own data from ordinary metadata
+objects and arrays. Non-data getters are skipped; Proxy wrappers and exotic
+nested objects become a fixed `[untrusted value]` marker. Primitive telemetry
+dimensions no longer invoke custom `toString()` or `valueOf()`. Error.name,
+message and code are obtained without executing accessor-backed Error
+properties or Proxy prototypes. Credential-bearing ordinary string values
+still go through existing redaction and length bounds before host sinks.
+
+This is an intentional pre-v1 **fail-closed telemetry contract tightening**:
+metadata accessors, exotic objects and implicit object string coercion are no
+longer supported as observability data. Host sinks and storage remain host
+owned; this boundary does not decode or limit raw transport bytes, prevent
+arbitrary secrets placed in otherwise innocent plain text, implement ingress
+rate quotas or authorize wake side effects. It does not certify the complete
+security issue #45. Deterministic regressions are in
+`test/observability-own-data-security.test.mjs` alongside the existing
+64-case credential-redaction corpus. No external provider OAuth, policy
+engine or user credential management is added to EI.
