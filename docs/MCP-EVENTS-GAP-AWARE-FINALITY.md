@@ -155,3 +155,32 @@ Pattern v2 deadline fired only when a resulting matched signature equals
 that deadline's condition ID. A positive timer does not consume an
 independent gapped negative timer. Dedicated tests exercise all three
 review failures, real JSONL persistence and host replay recovery.
+
+## Concurrent replay / ABA safety
+
+The source-local JSONL/PostgreSQL state now persists a `completenessRevision`
+monotonic safe-integer counter (per source record), assigned by the store on
+**every** state write rather than accepted from provider/host input. The
+scope-local fenced snapshot includes that revision, so `complete → gap →
+reconciled complete` is not mistaken for unchanged completeness. Previously
+stored records without the new field start at revision 0; their next write
+persists revision 1. Overflow or malformed revision is rejected rather than
+silently resetting the fence.
+
+The transactional negative-match commit also compares the *exact latest
+persisted trigger buffer* against the event buffer used for evaluation. The
+JSONL implementation performs both comparisons and the append in one mutation
+queue operation; PostgreSQL uses the same scope gap advisory lock as the MCP
+state writer, then locks/reads the relevant trigger buffer before appending
+the match. On a stale completeness or buffer fence, the engine reloads the
+latest durable buffer and performs at most one immediate re-evaluation. If the
+second evaluation is also stale, it retains an exact-candidate due-now durable
+retry, never committing from an obsolete buffer. This is a fail-closed release
+contract; it does not promise cancellation of effects already committed before
+a producer reported the gap.
+
+`test/mcp-gap-aba-buffer-replay-fence.test.mjs` deterministically covers the
+ABA open/reconcile race with a forbidden replay occurrence, a buffer-only
+concurrent replay without any gap-state change, persisted revision across
+restart, and rejection of caller-forged revisions. These cases must pass
+alongside the existing multi-gap and PostgreSQL CI gates before merge.
