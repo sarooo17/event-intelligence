@@ -1,16 +1,48 @@
+import { isProxy } from 'node:util/types';
+
 const LEVELS = new Set(['debug', 'info', 'warn', 'error']);
 const SENSITIVE_KEY = /(authorization|cookie|credential|password|secret|token|payload|instruction|context|evidence|body|content|data)/i;
 
 export const EI_OBSERVABILITY_SCHEMA_VERSION = '1';
 
+// Call only scalar conversion: executing custom toString during telemetry
+// redaction can have side effects and leak secrets before reaching the sink.
+function safeScalar(value) {
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  return '[untrusted value]';
+}
+
+function ownData(input, key) {
+  if (!input || typeof input !== 'object' || isProxy(input)) return undefined;
+  const property = Object.getOwnPropertyDescriptor(input, key);
+  return property && Object.hasOwn(property, 'value')
+    ? property.value
+    : undefined;
+}
+
+function errorData(error, key) {
+  if (!error || typeof error !== 'object' || isProxy(error)) return undefined;
+  let current = error;
+  // Read inherited plain Error.name without evaluating custom accessors.
+  for (let i = 0; i < 4 && current; i++) {
+    const property = Object.getOwnPropertyDescriptor(current, key);
+    if (property) {
+      return Object.hasOwn(property, 'value') ? property.value : undefined;
+    }
+    current = Object.getPrototypeOf(current);
+  }
+  return undefined;
+}
+
 function truncate(value, max = 1000) {
-  const text = String(value ?? '').normalize('NFKC')
+  const text = safeScalar(value).normalize('NFKC')
     .replace(/Bearer[\s\u0085]+[A-Za-z0-9._~+/=-]+/giu, 'Bearer [redacted]')
     .replace(
       /((?:["']?)(?:api[_-]?key|authorization|password|secret|token)(?:["']?)[\s\u0085]*[=:][\s\u0085]*(?:["']?))[^"'\s\u0085,;}\]]+/giu,
       '$1[redacted]',
     );
-  return text.length > max ? `${text.slice(0, max)}…` : text;
+  return text.length > max ? text.slice(0, max) + '…' : text;
 }
 
 /**
@@ -23,31 +55,40 @@ function dimension(value, max = 200) {
 }
 
 function sanitize(value, depth = 0) {
-  if (value == null || typeof value === 'boolean' || typeof value === 'number') {
-    return value;
-  }
+  if (value == null || typeof value === 'boolean' ||
+      (typeof value === 'number' && Number.isFinite(value))) return value;
   if (typeof value === 'string') return truncate(value);
+  if (typeof value !== 'object' || isProxy(value)) return '[untrusted value]';
   if (depth >= 3) return '[truncated]';
+
+  if (value instanceof Error) return serializeObservabilityError(value);
+
   if (Array.isArray(value)) {
-    return value.slice(0, 20).map((item) => sanitize(item, depth + 1));
-  }
-  if (value instanceof Error) {
-    return {
-      name: truncate(value.name, 120),
-      message: truncate(value.message),
-      ...(value.code == null ? {} : { code: truncate(value.code, 200) }),
-    };
-  }
-  if (typeof value === 'object') {
-    const result = {};
-    for (const [key, item] of Object.entries(value).slice(0, 40)) {
-      if (SENSITIVE_KEY.test(key)) continue;
-      const sanitized = sanitize(item, depth + 1);
-      if (sanitized !== undefined) result[key] = sanitized;
+    const result = [];
+    for (let i = 0; i < Math.min(value.length, 20); i++) {
+      const slot = Object.getOwnPropertyDescriptor(value, String(i));
+      result.push(slot && Object.hasOwn(slot, 'value')
+        ? sanitize(slot.value, depth + 1)
+        : '[untrusted value]');
     }
     return result;
   }
-  return undefined;
+
+  const proto = Object.getPrototypeOf(value);
+  if (proto !== null && proto !== Object.prototype) return '[untrusted value]';
+  const result = {};
+  for (const key of Reflect.ownKeys(value).slice(0, 40)) {
+    if (typeof key !== 'string' || SENSITIVE_KEY.test(key)) continue;
+    const slot = Object.getOwnPropertyDescriptor(value, key);
+    if (!slot || !slot.enumerable || !Object.hasOwn(slot, 'value')) continue;
+    const sanitized = sanitize(slot.value, depth + 1);
+    if (sanitized !== undefined) {
+      Object.defineProperty(result, key, {
+        value: sanitized, enumerable: true, writable: true, configurable: true,
+      });
+    }
+  }
+  return result;
 }
 
 function normalizeSink(input) {
@@ -60,11 +101,13 @@ function normalizeSink(input) {
 }
 
 export function serializeObservabilityError(error) {
-  if (error instanceof Error) {
+  if (error && typeof error === 'object' && !isProxy(error) &&
+      error instanceof Error) {
+    const code = errorData(error, 'code');
     return Object.freeze({
-      name: truncate(error.name, 120),
-      message: truncate(error.message),
-      ...(error.code == null ? {} : { code: truncate(error.code, 200) }),
+      name: truncate(errorData(error, 'name') ?? 'Error', 120),
+      message: truncate(errorData(error, 'message') ?? '[untrusted error]'),
+      ...(code == null ? {} : { code: truncate(code, 200) }),
     });
   }
   return Object.freeze({ message: truncate(error) });
@@ -89,43 +132,52 @@ export function createObservabilityEmitter(
     enabled: Boolean(sink),
     async emit(input = {}) {
       if (!sink) return false;
-
-      const event = String(input.event ?? '').trim();
+      // Only own data descriptors are allowed. Top-level getters and Proxy
+      // traps must never run as part of observability or redaction.
+      const field = name => ownData(input, name);
+      const rawEvent = field('event');
+      const event = typeof rawEvent === 'string' ? rawEvent.trim() : '';
       if (!event.startsWith('ei.')) {
         throw new Error('observability event must use the ei.* namespace');
       }
 
-      const level = String(input.level ?? 'info').toLowerCase();
+      const rawLevel = field('level');
+      const level = rawLevel == null ? 'info'
+        : typeof rawLevel === 'string' ? rawLevel.toLowerCase() : '';
       if (!LEVELS.has(level)) {
-        throw new Error(`unsupported observability level: ${level}`);
+        throw new Error('unsupported observability level');
       }
 
+      const attempt = field('attempt');
+      const numericAttempt = typeof attempt === 'number' ? attempt
+        : typeof attempt === 'string' && attempt.trim() ? Number(attempt) : null;
+      const metadata = field('metadata');
+      const timestamp = field('timestamp');
       const record = {
-        schema: `event-intelligence.observability.v${EI_OBSERVABILITY_SCHEMA_VERSION}`,
-        timestamp: input.timestamp
-          ? dimension(input.timestamp)
-          : now().toISOString(),
+        schema: 'event-intelligence.observability.v' + EI_OBSERVABILITY_SCHEMA_VERSION,
+        timestamp: timestamp ? dimension(timestamp) : now().toISOString(),
         level,
         event: dimension(event),
-        component: dimension(input.component ?? component),
-        ...(input.traceId ? { traceId: dimension(input.traceId) } : {}),
-        ...(input.scopeId ? { scopeId: dimension(input.scopeId) } : {}),
-        ...(input.triggerId ? { triggerId: dimension(input.triggerId) } : {}),
-        ...(input.matchId ? { matchId: dimension(input.matchId) } : {}),
-        ...(input.wakeId ? { wakeId: dimension(input.wakeId) } : {}),
-        ...(input.connectionId ? { connectionId: dimension(input.connectionId) } : {}),
-        ...(input.serverId ? { serverId: dimension(input.serverId) } : {}),
-        ...(input.eventName ? { eventName: dimension(input.eventName) } : {}),
-        ...(input.status ? { status: dimension(input.status) } : {}),
-        ...(input.attempt != null ? { attempt: Number(input.attempt) } : {}),
-        ...(input.nextAttemptAt
-          ? { nextAttemptAt: dimension(input.nextAttemptAt) }
+        component: dimension(field('component') ?? component),
+        ...(field('traceId') ? { traceId: dimension(field('traceId')) } : {}),
+        ...(field('scopeId') ? { scopeId: dimension(field('scopeId')) } : {}),
+        ...(field('triggerId') ? { triggerId: dimension(field('triggerId')) } : {}),
+        ...(field('matchId') ? { matchId: dimension(field('matchId')) } : {}),
+        ...(field('wakeId') ? { wakeId: dimension(field('wakeId')) } : {}),
+        ...(field('connectionId') ? { connectionId: dimension(field('connectionId')) } : {}),
+        ...(field('serverId') ? { serverId: dimension(field('serverId')) } : {}),
+        ...(field('eventName') ? { eventName: dimension(field('eventName')) } : {}),
+        ...(field('status') ? { status: dimension(field('status')) } : {}),
+        ...(numericAttempt !== null && Number.isFinite(numericAttempt)
+          ? { attempt: numericAttempt } : {}),
+        ...(field('nextAttemptAt')
+          ? { nextAttemptAt: dimension(field('nextAttemptAt')) }
           : {}),
-        ...(input.error
-          ? { error: serializeObservabilityError(input.error) }
+        ...(field('error')
+          ? { error: serializeObservabilityError(field('error')) }
           : {}),
-        ...(input.metadata && typeof input.metadata === 'object'
-          ? { metadata: sanitize(input.metadata) }
+        ...(metadata && typeof metadata === 'object'
+          ? { metadata: sanitize(metadata) }
           : {}),
       };
 
