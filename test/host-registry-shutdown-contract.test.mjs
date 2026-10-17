@@ -66,6 +66,9 @@ test('close synchronously fences stale registry notifications and manual attachm
     });
     assert.equal(listCalls, 1);
     assert.equal(typeof onChange, 'function');
+    // A host can retain tenant views before root shutdown. Those views
+    // must not retain authority to reattach after the root is closing.
+    const scoped = await host.scope('tenant-a');
     const first = host.close();
     const second = host.close();
     assert.equal(first, second, 'concurrent closing shares the same promise');
@@ -74,6 +77,11 @@ test('close synchronously fences stale registry notifications and manual attachm
     await assert.rejects(host.refreshMcpRegistry(), error =>
       error?.code === 'EI_HOST_CLOSED');
     await assert.rejects(host.attachMcpClient({ id: 'late', serverId: 'late' }),
+      error => error?.code === 'EI_HOST_CLOSED');
+    await assert.rejects(scoped.attachMcpClient({ id: 'late-scoped', serverId: 'late' }),
+      error => error?.code === 'EI_HOST_CLOSED',
+      'an already acquired tenant view cannot bypass the shutdown fence');
+    await assert.rejects(host.scope('new-tenant'),
       error => error?.code === 'EI_HOST_CLOSED');
     await Promise.all([first, second, host.close()]);
     assert.equal(unsubscribed, 1);
