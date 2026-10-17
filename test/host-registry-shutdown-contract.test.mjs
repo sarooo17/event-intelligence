@@ -332,3 +332,122 @@ test('close waits for a pre-accepted manual detach but rejects any new detach', 
     await rm(dataDir,{recursive:true,force:true});
   }
 });
+
+
+test('reentrant detach session cannot hold host shutdown in a promise cycle', {
+  timeout: 10000,
+}, async()=>{
+  const dataDir=await mkdtemp(path.join(os.tmpdir(),'ei-detach-reentrant-'));
+  let host;
+  try {
+    host=await createEventIntelligenceHost({dataDir,env});
+    const manager=host.runtime.mcpEventsClient;
+    manager.addConnection({
+      connectionId:'detach-with-session',serverId:'upstream',
+      getCapabilities:()=>({extensions:{'io.modelcontextprotocol/events':{}}}),
+      request:async()=>({events:[]}),
+    });
+    const connection=manager.connections.get('detach-with-session');
+    let reentrant;
+    let teardownCalls=0;
+    manager.deliverySessions.set('reentrant-detach-session',{
+      connection,
+      close() {
+        teardownCalls++;
+        reentrant=host.close();
+        return reentrant;
+      },
+    });
+    const detaching=host.detachMcpClient('detach-with-session');
+    const closing=host.close();
+    let timer;
+    await Promise.race([
+      Promise.all([detaching,closing]),
+      new Promise((_,reject)=>{
+        timer=setTimeout(()=>reject(new Error('detach/provider close cycle')),3000);
+      }),
+    ]).finally(()=>clearTimeout(timer));
+    assert.equal(reentrant,closing);
+    assert.equal(teardownCalls,1);
+    assert.equal(manager.detachInFlight.size,0);
+    assert.equal(manager.deliverySessions.size,0);
+    assert.equal(manager.connections.has('detach-with-session'),false);
+  } finally {
+    await host?.close();
+    await rm(dataDir,{recursive:true,force:true});
+  }
+});
+
+test('shutdown rejects new gap reconciliation and drains a previously accepted durable repair', {
+  timeout: 10000,
+}, async()=>{
+  const dataDir=await mkdtemp(path.join(os.tmpdir(),'ei-gap-ack-close-'));
+  let host;
+  let releaseRead;
+  const held=new Promise(resolve=>{releaseRead=resolve});
+  let signalEntered;
+  const entered=new Promise(resolve=>{signalEntered=resolve});
+  try {
+    host=await createEventIntelligenceHost({dataDir,env});
+    const manager=host.runtime.mcpEventsClient;
+    manager.addConnection({
+      connectionId:'repair-source',serverId:'upstream',
+      getCapabilities:()=>({extensions:{'io.modelcontextprotocol/events':{}}}),
+      request:async()=>({events:[]}),
+    });
+    const recorded=await host.store.putMcpClientState({
+      connectionId:'repair-source',serverId:'upstream',
+      eventName:'job.failed',arguments:{},deliveryMode:'poll',truncated:true,
+    });
+    const rawScopeContext=manager.scopeContext.bind(manager);
+    manager.scopeContext=async connection=>{
+      const context=await rawScopeContext(connection);
+      return {
+        ...context,
+        store:{
+          getMcpClientState:async(...args)=>{
+            signalEntered();
+            await held;
+            return context.store.getMcpClientState(...args);
+          },
+          putMcpClientState:(...args)=>context.store.putMcpClientState(...args),
+        },
+      };
+    };
+    const params={
+      connectionId:'repair-source',eventName:'job.failed',arguments:{},
+      evidenceId:'host-proved-current-gap-replay',
+      expectedCompletenessRevision:recorded.completenessRevision,
+    };
+    const accepted=manager.acknowledgeReconciledGap(params);
+    await entered;
+    let closed=false;
+    const closing=host.close().then(()=>{closed=true});
+    await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(closed,false,
+      'store teardown must wait for accepted host gap-reconciliation writes');
+    await assert.rejects(manager.acknowledgeReconciledGap(params),
+      error=>error?.code==='EI_HOST_CLOSED',
+      'a late host gap receipt must not mutate already closing state');
+    releaseRead();
+    const repaired=await accepted;
+    assert.equal(repaired.gapUnresolved,false);
+    await closing;
+    assert.equal(closed,true);
+    assert.equal(manager.reconciliationInFlight.size,0);
+    const reopened=new PersistentEventStore(dataDir);
+    try {
+      await reopened.init();
+      const durable=reopened.getMcpClientState('repair-source','job.failed',{});
+      assert.equal(durable.gapUnresolved,false);
+      assert.equal(durable.reconciliationEvidenceId,'host-proved-current-gap-replay');
+      assert.equal(durable.completenessRevision,recorded.completenessRevision+1);
+    }finally{
+      await reopened.close();
+    }
+  }finally{
+    releaseRead?.();
+    await host?.close();
+    await rm(dataDir,{recursive:true,force:true});
+  }
+});
