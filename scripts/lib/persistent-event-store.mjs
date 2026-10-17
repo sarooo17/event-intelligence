@@ -7,6 +7,7 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import path from 'node:path';
+import { mcpGapSnapshot } from '../../dist/src/composite/gapFingerprint.js';
 import { validateHistoryWindowLimit } from './history-window.mjs';
 import { assertWakeClaimGeneration } from './wake-claim-generation.mjs';
 import {
@@ -794,6 +795,27 @@ export class PersistentEventStore {
     return [...this.#eventSources.values()]
       .filter((source) => !ids || ids.has(source.connectionId))
       .filter((source) => !enabledOnly || source.enabled !== false);
+  }
+
+  getMcpGapStateAndSnapshot() {
+    const states=this.listMcpClientStates();
+    return { states, snapshot:mcpGapSnapshot(states) };
+  }
+
+  async appendTriggerMatchIfMcpGapUnchanged(recordInput, expectedSnapshot) {
+    return this.#serialized(async()=>{
+      // The same serial queue protects both putMcpClientState and this
+      // finality commit, closing the asynchronous recheck/write race.
+      if(mcpGapSnapshot(this.listMcpClientStates())!==expectedSnapshot) {
+        return false;
+      }
+      const record=parseTriggerMatchRecord(recordInput);
+      this.#triggerMatchHistory.push(record);
+      this.#triggerMatches.set(record.matchId,record);
+      await appendFile(this.files.triggerMatches,
+        `${JSON.stringify(record)}\n`,'utf8');
+      return true;
+    });
   }
 
   async appendTriggerMatch(recordInput) {
