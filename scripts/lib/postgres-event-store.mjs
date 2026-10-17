@@ -989,10 +989,25 @@ export class PostgresEventStore {
           priorRevision === Number.MAX_SAFE_INTEGER) {
         throw new Error('Invalid or exhausted MCP completeness revision');
       }
-      if (input.gapReconciled === true &&
-          (typeof input.reconciliationEvidenceId !== 'string' ||
-            !input.reconciliationEvidenceId.trim())) {
-        throw new Error('Gap reconciliation requires host evidence ID');
+      if (input.gapReconciled === true) {
+        if (typeof input.reconciliationEvidenceId !== 'string' ||
+            !input.reconciliationEvidenceId.trim()) {
+          throw new Error('Gap reconciliation requires host evidence ID');
+        }
+        if (!Number.isSafeInteger(input.expectedCompletenessRevision) ||
+            input.expectedCompletenessRevision < 0) {
+          throw new Error('Gap reconciliation requires expected completeness revision');
+        }
+        // The source lock and scope fence guarantee inter-worker CAS.
+        if (input.expectedCompletenessRevision !== priorRevision) {
+          const error = new Error('Gap reconciliation completeness revision conflict');
+          error.code = 'MCP_EVENTS_GAP_REVISION_CONFLICT';
+          throw error;
+        }
+        if (previous?.gapUnresolved !== true &&
+            previous?.truncated !== true) {
+          throw new Error('Gap reconciliation requires an unresolved gap');
+        }
       }
       const state = {
         connectionId,
