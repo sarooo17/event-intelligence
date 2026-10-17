@@ -993,6 +993,17 @@ export class CompositeTriggerEngine {
               )),
             ];
           }
+          // A second concurrent completeness change exhausted our bounded
+          // immediate reevaluation. The earlier reconcileDeadlines() may
+          // have cancelled the only negative retry while this evaluation
+          // still saw complete evidence. Keep a durable, due-now retry
+          // for this candidate; the next scheduler pass will read fresh gap
+          // evidence and remain fail-closed until host reconciliation.
+          // Never append or deliver the stale candidate as a match.
+          await this.support.scheduleDeadlines(definition,buffer,[{
+            conditionId: `pattern-v2:${signature}`,
+            dueAt: nowIso,
+          }]);
           return results;
         }
       } else {
