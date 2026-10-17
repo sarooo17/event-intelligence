@@ -2,8 +2,10 @@
 
 This document describes a **real PostgreSQL 16 logical pg_dump/pg_restore** test,
 not a physical base-backup/WAL test or a promise of a production RPO/RTO or continuous-recovery guarantee.
-Issue #47 and #21 remain open until the broader fault-injection, retention
-and measured 1k/10k/100k workload requirements have evidence.
+Issue #47 remains open until broader fault-injection, retention and
+measured 1k/10k/100k workload requirements have evidence. Core shared-store
+issue #21 is closed; its unresolved production validation was transferred
+explicitly to #47.
 
 ## Isolation and authority
 
@@ -30,6 +32,16 @@ The test verifies:
   claimed/delivered a second time after recovery;
 - tamper-evident audit history verifies before and after, and newly appended
   audit entries remain valid (including restored sequence behavior).
+- an unresolved MCP Events source delivery gap survives a real logical
+  backup/restore with its exact cursor, scope-local completeness snapshot,
+  nested source identity and monotonic `completenessRevision`; another tenant
+  cannot inspect that restored cursor;
+- a post-restore newer gap cannot be erased by stale pre-backup host replay
+  evidence: the old revision fails with `MCP_EVENTS_GAP_REVISION_CONFLICT`,
+  leaving completeness unchanged, while reconciliation of the **latest**
+  independently verified generation succeeds. This protects fail-closed
+  negative CEP finality on restored state; it does not replay external
+  provider data or verify the host's real gap reconciliation claim.
 
 The restore test stops writes before `pg_dump`. It does **not** simulate
 an independent host side effect during a crash, live PITR/WAL restore,
