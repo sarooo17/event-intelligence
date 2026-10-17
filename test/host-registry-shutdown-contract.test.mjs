@@ -451,3 +451,65 @@ test('shutdown rejects new gap reconciliation and drains a previously accepted d
     await rm(dataDir,{recursive:true,force:true});
   }
 });
+
+
+test('retained manager publishes close promise before reentrant provider teardown', {
+  timeout: 10000,
+}, async () => {
+  const dataDir=await mkdtemp(path.join(os.tmpdir(),'ei-manager-direct-reentrant-'));
+  let host;
+  try {
+    host=await createEventIntelligenceHost({dataDir,env});
+    const manager=host.runtime.mcpEventsClient;
+    let nested;
+    let calls=0;
+    manager.deliverySessions.set('manager-direct-close',{
+      close(){
+        calls++;
+        nested=host.close();
+        return nested;
+      },
+    });
+    const direct=manager.close();
+    assert.equal(manager.close(),direct,
+      'manager publishes one close promise before provider hooks');
+    let timer;
+    await Promise.race([
+      Promise.all([direct,host.close()]),
+      new Promise((_,reject)=>{
+        timer=setTimeout(()=>reject(new Error('manager reentrant teardown cycle')),3000);
+      }),
+    ]).finally(()=>clearTimeout(timer));
+    await nested;
+    assert.equal(calls,1);
+    assert.equal(manager.close(),direct);
+  }finally{
+    await host?.close();
+    await rm(dataDir,{recursive:true,force:true});
+  }
+});
+
+test('completed ordinary detach unregisters shutdown notifications during connection churn', {
+  timeout: 12000,
+}, async () => {
+  const dataDir=await mkdtemp(path.join(os.tmpdir(),'ei-detach-listener-churn-'));
+  let host;
+  try {
+    host=await createEventIntelligenceHost({dataDir,env});
+    const manager=host.runtime.mcpEventsClient;
+    for(let i=0;i<40;i++){
+      const connectionId='churn-'+i;
+      manager.addConnection({connectionId,serverId:'upstream',
+        getCapabilities:()=>({extensions:{'io.modelcontextprotocol/events':{}}}),
+        request:async()=>({events:[]})});
+      await manager.detachConnection(connectionId);
+      assert.equal(manager.shutdownListeners.size,0,
+        'completed detaches must release shutdown closure even before close');
+      assert.equal(manager.detachInFlight.size,0);
+    }
+    assert.equal(manager.closed,false);
+  }finally{
+    await host?.close();
+    await rm(dataDir,{recursive:true,force:true});
+  }
+});
