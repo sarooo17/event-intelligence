@@ -55,6 +55,14 @@ for (const delivery of ['push', 'webhook']) {
         connection,context,subscription,delivery);
       assert.equal(opened.status,'active');
       assert.ok(callbacks,'provider must receive callbacks');
+      // An accepted active-page callback must snapshot the producer's
+      // cursor synchronously, before the caller can rewrite its object.
+      const producerUpdate = { cursor:'accepted-cursor', truncated:false };
+      const accepted = callbacks.onActive(producerUpdate);
+      producerUpdate.cursor = 'forged-later';
+      await accepted;
+      assert.equal(store.getMcpClientState('source','work.changed',{}).cursor,
+        'accepted-cursor', 'callback must snapshot own input before yielding');
       const sourceBefore = store.getMcpClientState('source','work.changed',{});
       assert.ok(sourceBefore);
       const before = JSON.stringify(sourceBefore);
