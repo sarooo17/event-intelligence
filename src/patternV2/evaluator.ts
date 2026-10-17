@@ -1267,6 +1267,21 @@ async function evaluateNode(
 
   if (node.kind === 'notPresent') {
     if (context.incompleteSourceRefs.has(node.ref)) {
+      const bases = await evaluateNode(node.child, context);
+      if (context.truncated) return [];
+      for (const base of bases) {
+        if (!base.events.length || !consumeWork(context)) break;
+        if (context.incompletePending.length >= context.maxCandidates) {
+          context.truncated = true;
+          break;
+        }
+        // Snapshot negation has no future finality interval. Retain a
+        // stable *already due* retry, keyed by source-event time, which
+        // remains pending while the transport gap is unresolved.
+        context.incompletePending.push({
+          ...base, pendingUntil: base.events.at(-1)!.occurredAt,
+        });
+      }
       context.truncated = true;
       return [];
     }
@@ -1440,6 +1455,18 @@ async function evaluateNode(
 
   if (node.kind === 'notNext') {
     if (forbiddenNeedsIncompleteSource(node.forbidden, context)) {
+      const bases = await evaluateNode(node.child, context);
+      if (context.truncated) return [];
+      for (const base of bases) {
+        if (!base.events.length || !consumeWork(context)) break;
+        if (context.incompletePending.length >= context.maxCandidates) {
+          context.truncated = true;
+          break;
+        }
+        context.incompletePending.push({
+          ...base, pendingUntil: base.events.at(-1)!.occurredAt,
+        });
+      }
       context.truncated = true;
       return [];
     }
