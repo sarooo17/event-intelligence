@@ -681,10 +681,16 @@ export class McpEventsClientManager {
 
   trackDeliveryCallback(operation) {
     if (this.closed) return Promise.resolve();
-    const task = Promise.resolve().then(() => {
-      if (this.closed) return undefined;
-      return operation();
-    });
+    // Invoke the accepted ingress synchronously: the onEvent/onActive/onGap
+    // handlers take their own-data snapshots before their first await. A
+    // deferred .then(operation) would let a producer mutate event/cursor
+    // objects after invoking the callback but before we copied them.
+    let task;
+    try {
+      task = Promise.resolve(operation());
+    } catch (error) {
+      task = Promise.reject(error);
+    }
     this.deliveryCallbackInFlight.add(task);
     void task.finally(() => {
       this.deliveryCallbackInFlight.delete(task);
