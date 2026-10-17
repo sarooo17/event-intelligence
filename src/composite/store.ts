@@ -11,6 +11,7 @@ export interface CompositeTriggerStore {
   appendTriggerMatchIfMcpGapUnchanged?(
     record: TriggerMatchRecord,
     expectedSnapshot: string,
+    expectedBuffer: TriggerMatchRecord,
   ): Promise<boolean>;
   // The host selects the tenant/scope store before constructing the engine.
   // This is a scope-local, read-only projection of durable transport evidence.
@@ -22,6 +23,7 @@ export interface CompositeTriggerStore {
     truncated?: boolean;
     gapUnresolved?: boolean;
     gapDetectedAt?: string;
+    completenessRevision?: number;
   }> | Promise<Array<{
     connectionId: string;
     serverId: string;
