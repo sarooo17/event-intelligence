@@ -1,0 +1,131 @@
+{
+  "schema": "event-intelligence.security-threat-model.v1",
+  "scope": "experimental-pre-v1",
+  "securitySignoff": "pending-independent-review",
+  "boundaries": [
+    {
+      "id": "transport-auth",
+      "authorityOwner": "host",
+      "status": "host-enforced",
+      "threat": "MCP credential confusion, oversized or unverified provider body",
+      "evidence": [
+        "test/mcp-occurrence-ingress-security.test.mjs"
+      ],
+      "residual": "Raw RPC response size/time and OAuth controls belong to the embedding host; EI does not validate them."
+    },
+    {
+      "id": "registry-rebind",
+      "authorityOwner": "host+ei",
+      "status": "partial",
+      "threat": "Reused connection ID or stale callback writes after revoke/rebind",
+      "evidence": [
+        "test/mcp-revoked-session-fencing.test.mjs",
+        "test/host-registry-shutdown-contract.test.mjs"
+      ],
+      "residual": "Already accepted appends and queued external wake side effects may persist after revoke; cross-worker atomic cancellation unproven."
+    },
+    {
+      "id": "principal-authorization",
+      "authorityOwner": "host",
+      "status": "host-enforced",
+      "threat": "Agent tool bypasses principal policy or trigger approval",
+      "evidence": [
+        "test/host-configuration-errors.test.mjs"
+      ],
+      "residual": "Host must enforce permission on every action including resumed work; EI tool exposure metadata does not grant authority."
+    },
+    {
+      "id": "tenant-scope",
+      "authorityOwner": "host+ei",
+      "status": "partial",
+      "threat": "Foreign owner or tenant discovers trigger/match/receipt",
+      "evidence": [
+        "test/postgres-inspector-restart.test.mjs"
+      ],
+      "residual": "Low-level inspector requires prior host policy; complete surface-wide adversarial multi-tenant audit is pending."
+    },
+    {
+      "id": "event-json-ingress",
+      "authorityOwner": "ei",
+      "status": "partial",
+      "threat": "Getters, Proxies, cyclic data and mutable event payloads execute code or alter hashes",
+      "evidence": [
+        "test/untrusted-event-own-path-security.test.mjs",
+        "test/mcp-occurrence-ingress-security.test.mjs"
+      ],
+      "residual": "Transport bytes, webhook body admission and overall tenant rate quotas are not enforced by the JSON snapshot."
+    },
+    {
+      "id": "source-gaps",
+      "authorityOwner": "ei+host",
+      "status": "partial",
+      "threat": "Negative CEP finality claimed despite missing provider events or stale cursor",
+      "evidence": [
+        "test/mcp-gap-atomic-finality-race.test.mjs"
+      ],
+      "residual": "Host must independently verify external replay completeness; multiple-worker disconnection races require soak."
+    },
+    {
+      "id": "derived-lineage",
+      "authorityOwner": "ei",
+      "status": "partial",
+      "threat": "Derived records masquerade as trusted instructions or exfiltrate payloads",
+      "evidence": [
+        "test/activation-provenance-security.test.mjs"
+      ],
+      "residual": "Downstream host must continue treating all event text as untrusted; refs are not authorization."
+    },
+    {
+      "id": "semantic-evaluation",
+      "authorityOwner": "host",
+      "status": "host-enforced",
+      "threat": "Semantic model prompt contains secrets or evaluator spends unbounded vendor budget",
+      "evidence": [
+        "test/semantic-scope-budget-conformance.test.mjs"
+      ],
+      "residual": "A per-evaluation call cap is not a cross-batch token/USD budget; provider privacy and credentials belong to host."
+    },
+    {
+      "id": "wake-receipts",
+      "authorityOwner": "host+ei",
+      "status": "partial",
+      "threat": "Duplicate external effect after retry, worker crash or stale receipt",
+      "evidence": [
+        "test/activation-provenance-security.test.mjs",
+        "test/postgres-logical-dump-restore.test.mjs"
+      ],
+      "residual": "Store dedup does not equal distributed exactly-once external effects; host must provide durable idempotent receipt behavior."
+    },
+    {
+      "id": "operational-telemetry",
+      "authorityOwner": "ei+host",
+      "status": "partial",
+      "threat": "Credential-bearing event fields or JavaScript property traps leak through logs",
+      "evidence": [
+        "test/observability-redaction-adversarial.test.mjs",
+        "test/observability-own-data-security.test.mjs"
+      ],
+      "residual": "Unlabelled secrets, sink retention and external log exports remain host responsibility."
+    },
+    {
+      "id": "audit-and-retention",
+      "authorityOwner": "operator",
+      "status": "partial",
+      "threat": "Audit deletion/compaction corrupts lineage or makes tampering undetectable",
+      "evidence": [
+        "test/postgres-logical-dump-restore.test.mjs"
+      ],
+      "residual": "Hash links are tamper-evident only; compaction policy, deletion and independent signing remain unfinished."
+    },
+    {
+      "id": "release-publish",
+      "authorityOwner": "operator",
+      "status": "partial",
+      "threat": "Unreviewed version/manifest published or consumer auto-upgraded",
+      "evidence": [
+        "test/release-manifest-parity.test.mjs"
+      ],
+      "residual": "Independent security signoff, v1 readiness evidence and pinned-consumer upgrade decisions are separate manual gates."
+    }
+  ]
+}
