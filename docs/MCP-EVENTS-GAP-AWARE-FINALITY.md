@@ -260,3 +260,22 @@ ordinary JSON producer arguments are unaffected.
 Dedicated deterministic JSONL/adversarial regressions run in
 `test/mcp-events-source-arguments-safety.test.mjs`, with an independent
 real PostgreSQL HA store regression in `test/postgres-shared-state.test.mjs`.
+
+## Trigger-definition source identity ownership
+
+The JSONL store used to return mutable references to its materialized trigger
+definitions. Because negative CEP source matching reads
+`definition.clauses[].arguments`, a host mutation after registration could
+silently change that source identity and hide an otherwise unresolved delivery
+gap. `putTrigger` now validates all clause arguments through the same bounded,
+safe-JSON snapshot boundary as MCP client state, stores its own complete cloned
+definition, and returns a separate clone. `listTriggers` also returns clones,
+including nested patterns and clause identities. The PostgreSQL trigger writer
+validates safe-JSON clause arguments for the same host contract; its database
+round-trip already isolates returned records.
+
+`test/mcp-events-source-arguments-safety.test.mjs` covers mutation of the
+original input, writer return, and list return, then verifies that the
+negative forbidden ref remains incomplete under the actual durable gap and
+across a physical restart. Typed views backed by shared memory in a trigger
+clause are rejected before persistence.
