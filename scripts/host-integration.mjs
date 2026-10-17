@@ -434,8 +434,14 @@ export async function createEventIntelligenceHost({
     },
     close() {
       if (closePromise) return closePromise;
-      // Synchronously fence stale registry callbacks and manual attaches.
+      // Synchronously fence BOTH the facade and the publicly retained
+      // runtime manager. Awaiting registry enumeration or observability
+      // before manager.close() would leave a same-turn attach bypass.
       closing = true;
+      const managerShutdown = runtime.mcpEventsClient.close();
+      // Own the rejection immediately, even if registry callbacks are still
+      // draining before we await this promise.
+      void managerShutdown.catch(() => {});
       closePromise = (async () => {
         let unsubscribeError;
         try { unsubscribe?.(); } catch (error) {
@@ -445,6 +451,9 @@ export async function createEventIntelligenceHost({
         // store/client are closed; late registry notifications cannot start
         // a new refresh after the close fence.
         try { await registryRefreshPromise; } catch {}
+        // The runtime calls its manager.close() again, which must now be
+        // idempotent; retain the first failure if teardown fails.
+        await managerShutdown;
         await runtime.close();
         if (unsubscribeError) throw unsubscribeError;
       })();
