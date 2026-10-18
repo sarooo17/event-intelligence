@@ -129,6 +129,19 @@ try {
   const engine = new CompositeTriggerEngine(store);
   for (let i = 0; i < triggers; i++) await engine.register(definition(i, sourceCount));
 
+  // Record how many *actual* definitions the live PG candidate projection
+  // returned for each measured MCP event. Total eligible population is NOT
+  // the same as candidates returned after filtering by source/event name.
+  const observedCandidateCounts = [];
+  const originalCandidates = store.listTriggerCandidatesForEvent.bind(store);
+  store.listTriggerCandidatesForEvent = async (event) => {
+    const candidates = await originalCandidates(event);
+    if (stage === 'measured-ingest-match-wake') {
+      observedCandidateCounts.push(candidates.length);
+    }
+    return candidates;
+  };
+
   const measurements = { ingestToMatch: [], matchToWake: [], ingestToWake: [] };
   const hostReceipts = new Map();
   let hostCalls = 0;
@@ -203,6 +216,9 @@ try {
     measurements.matchToWake.push(end - matchedAt);
     measurements.ingestToWake.push(end - begin);
   }
+  assert.equal(observedCandidateCounts.length, events,
+    'one scoped candidate query must be measured for each accepted event');
+  const measuredCandidateCounts = [...observedCandidateCounts];
   const measuredWall = performance.now() - started;
   const measuredCpu = process.cpuUsage(baselineCpu);
   const measuredMemory = process.memoryUsage();
@@ -290,7 +306,14 @@ try {
     },
     evidence: {
       persistedReceiptsCheckedAfterPoolReopen: expectedReceipts.size,
-      activeDefinitionsEnumeratedPerEvent: triggers,
+      totalRegisteredActiveDefinitions: triggers,
+      candidateDefinitionsPerMeasuredEvent: {
+        samples: measuredCandidateCounts.length,
+        min: Math.min(...measuredCandidateCounts),
+        max: Math.max(...measuredCandidateCounts),
+        average: measuredCandidateCounts.reduce((a, b) => a + b, 0) /
+          measuredCandidateCounts.length,
+      },
       measuredDistinctMatches: events,
       transportLatencyIncluded: false, hostExecutionLatencyIncluded: false,
       productionSloCertified: false,
