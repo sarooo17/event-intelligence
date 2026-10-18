@@ -37,7 +37,7 @@ test('canonical v1 public exports and declarations exist in packed package manif
     '--noEmit', '--strict', '--skipLibCheck',
     '--module', 'NodeNext', '--moduleResolution', 'NodeNext',
     '--target', 'ES2022', 'test/fixtures/host-contract-v1-public-types.mts',
-  ], { cwd: root, stdio: 'pipe', timeout: 30000 });
+  ], { cwd: root, stdio: 'inherit', timeout: 30000 });
   const runtime = read('scripts/embedded-host-kit.mjs');
   // The advanced low-level path is separate functionality, not a hidden
   // vendor-shaped wrapper around the canonical facade.
