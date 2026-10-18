@@ -13,6 +13,14 @@ processing execute in production EI code with real PostgreSQL IO.
 
 ## Workload and invariants
 
+The benchmark CI jobs also trigger on production implementation changes
+to Pattern v2, MCP event conversion, the composite consumer/wake
+coordinator, and PostgreSQL storage. They are therefore a **small
+correctness-regression gate** for changed measured code, not just a
+manually requested report. This adds bounded CI cost (two isolated
+PostgreSQL 16 jobs) to relevant source PRs; it still does not certify
+production throughput or full host effects.
+
 The GitHub Actions workflow
 `.github/workflows/postgres-mcp-pipeline-evidence.yml` performs **two
 separate isolated jobs**, currently 8 and 16 active durable triggers,
