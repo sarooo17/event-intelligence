@@ -76,25 +76,29 @@ readiness merely because the harness accepts a `100k` flag.
 
 The **PostgreSQL Scale Evidence** workflow offers explicit 1k, 10k
 and 100k manual inputs. A PR which changes the benchmark workflow itself
-also launches the **real 1k profile** with 32 wake operations and
-concurrency=4, against its own isolated PostgreSQL 16 CI database. Its
-hardware and raw JSON result are uploaded as a 90-day artifact. This is a
-bounded evidence-gathering run, *not* a fake JSON parser test or a claim that
-10k/100k have run.
+also launches a **real three-job matrix** of the 1k, 10k and 100k
+profiles. Each has 32 wake operations, concurrency=4 and a **separately
+isolated PostgreSQL 16 service/database**. Hardware and raw JSON results
+from each profile are uploaded as independent 90-day artifacts, including
+stderr and failure records. A profile whose job fails or never completes
+is **not** counted as measured capacity. Only the actual run IDs and
+artifacts establish whether this exercise really happened.
 
-The new PR trigger deliberately watches only the benchmark workflow YAML.
-Ordinary application PRs do not pay for the 1k profile, and neither 10k nor
-100k is scheduled automatically. A PR check that never ran or failed must be
-reported as such; use the exact run ID and downloaded raw artifact before
-making a measurement claim. The benchmark may succeed even while full CEP
-ingest-to-wake SLO or production capacity remains unproven. It creates a fresh PostgreSQL 16 service, records hardware
+The PR trigger deliberately watches **only benchmark workflow YAML**.
+Ordinary application PRs do not pay for this matrix. For a manual dispatch,
+the owner still chooses **one** explicit profile. A PR check that never
+ran or failed must be reported as such; use exact run IDs and artifacts
+before claiming any measurement. A successful 100k durable registration
+profile is **not** a claim of production 100k event throughput, CEP
+ingest-to-match SLO, host delivery or resilience. It creates a fresh PostgreSQL 16 service, records hardware
 characteristics, runs the same isolated benchmark, and uploads JSON results,
 stderr failures and host specifications as a 90-day artifact.
 
-100k remains **manual opt-in only**. Merely configuring this PR trigger
-does not constitute a measurement: cite completed CI run artifacts, disclose
-runner/PG version and include failures. Save artifacts externally before their
-retention expires if they are used as release acceptance evidence.
+The 100k profile is automatically evaluated **only** in a PR editing
+this explicit benchmark-workflow file. On other commits it still requires
+manual opt-in. Merely configuring the matrix does not prove success:
+cite each completed CI job/artifact, disclose runner/PG version and include
+failures. Save artifacts externally before expiry.
 
 
 ## Actual-profile evidence aggregation (issue #47, partial)

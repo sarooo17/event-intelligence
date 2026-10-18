@@ -1,8 +1,9 @@
-name: PostgreSQL Scale Evidence (1k PR smoke / manual 10k/100k)
+name: PostgreSQL Scale Evidence (isolated 1k/10k/100k)
 
 on:
-  # A narrowly scoped, reproducible real 1k workload on PRs changing this
-  # workflow. Larger 10k/100k workloads remain explicit manual dispatches.
+  # Reproducibly measure all three real store workloads only when this
+  # benchmark workflow itself is reviewed. Ordinary PRs do not run the
+  # expensive matrix; manual dispatch still selects a single profile.
   pull_request:
     paths:
       - ".github/workflows/postgres-scale-evidence.yml"
@@ -27,6 +28,13 @@ permissions:
 
 jobs:
   benchmark:
+    name: isolated-${{ matrix.profile }}
+    strategy:
+      # An out-of-memory or timeout at 100k is a measured failure, not
+      # permission to cancel 1k/10k and lose their actual artifacts.
+      fail-fast: false
+      matrix:
+        profile: ${{ fromJSON(github.event_name == 'pull_request' && '["1k","10k","100k"]' || format('["{0}"]', inputs.profile)) }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
     services:
@@ -45,7 +53,7 @@ jobs:
     env:
       POSTGRES_URL: postgresql://postgres:postgres@127.0.0.1:5432/event_intelligence
       EI_PG_BENCHMARK_CONFIRM: YES_ISOLATED
-      PROFILE: ${{ github.event_name == 'pull_request' && '1k' || inputs.profile }}
+      PROFILE: ${{ matrix.profile }}
       WAKES: ${{ github.event_name == 'pull_request' && '32' || inputs.wakes }}
     steps:
       - uses: actions/checkout@v4
