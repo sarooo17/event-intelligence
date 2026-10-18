@@ -26,6 +26,13 @@ export const REQUIRED_EVENT_STORE_METHODS = Object.freeze([
   'listMcpClientStates',
   'putMcpClientState',
   'appendMcpOccurrence',
+  // The temporal scheduler starts with the host; these are not optional
+  // merely because a custom store offers durable wake methods.
+  'putTemporalDeadline',
+  'getTemporalDeadline',
+  'listTemporalDeadlines',
+  'listDueTemporalDeadlines',
+  'setTemporalDeadlineStatus',
 ]);
 
 
