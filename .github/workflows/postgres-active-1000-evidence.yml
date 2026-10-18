@@ -6,6 +6,9 @@ on:
       - ".github/workflows/postgres-active-1000-evidence.yml"
       - "scripts/evidence/postgres-mcp-ingest-wake.mjs"
       - "docs/POSTGRES-ACTIVE-1000-EVIDENCE.md"
+      - "src/composite/engine.ts"
+      - "src/composite/runtimeSupport.ts"
+      - "test/composite-unmatched-lifecycle-prefilter.test.mjs"
   workflow_dispatch:
 
 permissions:
