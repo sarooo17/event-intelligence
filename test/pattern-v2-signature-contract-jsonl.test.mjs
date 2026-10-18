@@ -78,7 +78,7 @@ test('JSONL orphan wake record cannot be silently adopted', async () => {
         wakeId: 'legacy-orphan', triggerId: 'deleted',
         matchId: 'old-match', runtime: 'host',
         status: 'delivered', runtimeReceiptId: 'old-receipt',
-      }) + '\\n');
+      }) + '\n');
     await assert.rejects(new PersistentEventStore(dir).init(), incompatible);
     await assert.rejects(readFile(path.join(dir, PATTERN_V2_SIGNATURE_FILE)),
       { code: 'ENOENT' });
