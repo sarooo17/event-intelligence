@@ -234,13 +234,20 @@ integration('actual SIGKILL AFTER durable host effect BEFORE EI receipt reconcil
     // before starting cleanup. On timeout, fail closed: leave isolated
     // tables instead of racing an active worker's transactions.
     for (const child of children) child.kill('SIGKILL');
-    await Promise.race([
-      Promise.allSettled([...childExits]),
-      new Promise((_, reject) => setTimeout(
-        () => reject(new Error('SIGKILL worker exits not reaped before cleanup')),
-        7000,
-      )),
-    ]);
+    let reapTimer;
+    try {
+      await Promise.race([
+        Promise.allSettled([...childExits]),
+        new Promise((_, reject) => {
+          reapTimer = setTimeout(
+            () => reject(new Error('SIGKILL worker exits not reaped before cleanup')),
+            7000,
+          );
+        }),
+      ]);
+    } finally {
+      clearTimeout(reapTimer);
+    }
     const cleanup = new Pool({ connectionString: url, max: 2 });
     try {
       for (const table of [attemptsTable, effectsTable]) {
