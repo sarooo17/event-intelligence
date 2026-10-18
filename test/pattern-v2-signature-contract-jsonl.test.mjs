@@ -40,6 +40,20 @@ test('JSONL empty state is marked and compatible trigger survives a restart', as
   }
 });
 
+test('concurrent fresh JSONL initializers never observe a partial signature marker', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'ei-v2-contract-concurrent-'));
+  try {
+    const stores = Array.from({ length: 12 }, () => new PersistentEventStore(dir));
+    await Promise.all(stores.map(store => store.init()));
+    const manifest = JSON.parse(await readFile(
+      path.join(dir, PATTERN_V2_SIGNATURE_FILE), 'utf8'));
+    assert.equal(manifest.version, PATTERN_V2_SIGNATURE_CONTRACT_VERSION);
+    await Promise.all(stores.map(store => store.close()));
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('JSONL unmarked/unknown signature refuses existing Pattern v2 data without reset', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'ei-v2-contract-legacy-'));
   try {
