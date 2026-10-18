@@ -34,23 +34,37 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     env:
+      # Actions pull_request defaults to a synthetic merge commit. Pin checkout
+      # and reported provenance to the exact code under Codex review.
+      BENCH_SOURCE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
       POSTGRES_URL: postgresql://postgres:postgres@127.0.0.1:5432/event_intelligence
       EI_PG_PIPELINE_CONFIRM: YES_ISOLATED
       TRIGGERS: ${{ matrix.triggers }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
       - name: Install and build
         run: |
           npm ci --ignore-scripts --no-audit --no-fund
-          npm install --no-save --ignore-scripts --no-audit --no-fund pg@8
+          npm install --no-save --ignore-scripts --no-audit --no-fund pg@8.16.3
           npm run build
       - name: Capture benchmark host
         shell: bash
         run: |
-          { uname -a; node --version; npm --version; lscpu; free -m; } > pipeline-host.txt
+          {
+            echo "reviewed-code=$BENCH_SOURCE_COMMIT"
+            echo "github-sha=$GITHUB_SHA"
+            node -p "'pg-driver=' + require('pg/package.json').version"
+            uname -a
+            node --version
+            npm --version
+            lscpu
+            free -m
+          } > pipeline-host.txt
       - name: Run real MCP occurrence through durable match and host receipt
         shell: bash
         run: |
@@ -63,7 +77,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ei-pg-mcp-pipeline-${{ matrix.triggers }}-${{ github.run_id }}
+          name: ei-pg-mcp-pipeline-${{ matrix.triggers }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             pipeline-result.json
             pipeline-errors.jsonl
