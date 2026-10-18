@@ -65,7 +65,10 @@ export function getHostDataMethod(receiver, key) {
     }
     current = Object.getPrototypeOf(current);
   }
-  return null;
+  // A property absent from a normal receiver/prototype chain is different
+  // from an unsafe accessor or Proxy. This distinction matters for optional
+  // callback surfaces such as mcp.subscribe.
+  return current === null ? undefined : null;
 }
 
 export function hasRequiredStoreMethods(store) {
