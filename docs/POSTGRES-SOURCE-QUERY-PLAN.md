@@ -40,6 +40,42 @@ benchmark table**, not as part of EI database startup and not in any
 customer database. No durable schema version change, online migration,
 concurrent installation or rollback is implied.
 
+## Measured results (2026-10-18; not a production SLO)
+
+Latest exact-head real-PG16 [Actions run #39163197667](https://github.com/sarooo17/event-intelligence/actions/runs/39163197667)
+executed source commit `a54e1e29b2ca19712e9d7729b4225e377444dfa2`.
+Three serial query observations per variant, with `EXPLAIN ANALYZE`
+planner evidence, pinned driver. Every variant returned the **same exact**
+candidate key set before/after the disposable index, excluding foreign
+tenant/foreign server records.
+
+| Profile | All tenant triggers | Candidate set | Original OR query GIN? | Split UNION GIN? |
+| --- | ---: | ---: | --- | --- |
+| 1k / 20 names | 1,005 | 54 | **No** (sequential scan) | **Yes**, bitmap index scan in source branch |
+| 10k / 20 names | 10,005 | 504 | **No** (PK index scan) | **Yes**, bitmap index scan in source branch |
+
+Observed wall time per SELECT (milliseconds; these are *samples*, not
+quantiles or a certified speedup):
+
+| Profile | Original OR before GIN | Original OR after GIN | UNION after GIN |
+| --- | --- | --- | --- |
+| 1k | 3.601 / 3.039 / 2.274 | 2.667 / 2.172 / 2.165 | 2.646 / 2.458 / 2.522 |
+| 10k | 11.760 / 11.875 / 10.485 | 13.132 / 10.515 / 10.212 | 10.632 / 13.980 / 10.323 |
+
+The real SQL OR selector **did not use the GIN index** despite the
+migration-like DDL being applied to the temporary fixture. The experimental
+`UNION` *did* permit GIN access for the event-name branch, but still scanned
+the table for unrelated lifecycle transitions and needed UNION
+deduplication. Timings do not establish a meaningful, stable win over
+the original selector. **Decision: do not add a physical GIN index or
+rewrite the production query on this evidence alone.**
+
+Any follow-up must first profile mixed lifecycle distributions, different
+tenant sizes, and realistic write/update churn on *the same comparable
+runner/database conditions*. It must preserve exact scope/owner, no missed
+deadline/completion transitions, concurrency correctness, and deploy an
+index using an explicitly reviewed populated-store migration path.
+
 ## Boundaries
 
 This is a **query-plan and candidate-correctness investigation**, not a
