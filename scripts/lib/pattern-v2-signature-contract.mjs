@@ -1,4 +1,5 @@
-import { open, readFile } from 'node:fs/promises';
+import { open, readFile, link, unlink } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 
 // This is NOT the Pattern AST wire version (which remains 2) or the
@@ -51,25 +52,39 @@ export async function assertJsonlPatternV2SignatureContract(dataDir, hasLegacyPa
     throw patternV2SignatureError('unmarked pre-existing Pattern v2 state');
   }
 
-  // wx is intentionally atomic; do not overwrite a concurrent worker's
-  // marker, and do not remove a failed/ambiguous marker automatically.
+  // A direct open(file, 'wx') exposes a zero-byte file while writeFile is
+  // pending. Even two concurrent in-process forScope() constructors could
+  // misread it as an invalid manifest. Create/sync a unique temporary file,
+  // then publish its *complete contents* using an atomic hard link. link()
+  // fails with EEXIST instead of overwriting another writer's decision.
+  const temporary = path.join(
+    dataDir, '.' + PATTERN_V2_SIGNATURE_FILE + '.' + randomUUID() + '.tmp',
+  );
   let handle;
   try {
-    handle = await open(file, 'wx', 0o600);
-  } catch (error) {
-    if (error?.code === 'EEXIST' && await verify()) return;
-    throw error;
-  }
-  try {
-    await handle.writeFile(
-      JSON.stringify({
-        component: PATTERN_V2_SIGNATURE_COMPONENT,
-        version: PATTERN_V2_SIGNATURE_CONTRACT_VERSION,
-      }) + '\n',
-      'utf8',
-    );
-    await handle.sync();
+    handle = await open(temporary, 'wx', 0o600);
+    try {
+      await handle.writeFile(
+        JSON.stringify({
+          component: PATTERN_V2_SIGNATURE_COMPONENT,
+          version: PATTERN_V2_SIGNATURE_CONTRACT_VERSION,
+        }) + '\n',
+        'utf8',
+      );
+      await handle.sync();
+    } finally {
+      await handle.close();
+      handle = undefined;
+    }
+    try {
+      await link(temporary, file);
+    } catch (error) {
+      if (error?.code !== 'EEXIST' || !await verify()) throw error;
+    }
   } finally {
-    await handle.close();
+    if (handle) await handle.close();
+    await unlink(temporary).catch(error => {
+      if (error?.code !== 'ENOENT') throw error;
+    });
   }
 }
