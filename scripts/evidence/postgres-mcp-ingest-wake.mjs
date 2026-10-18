@@ -96,9 +96,13 @@ try {
     fail('set EI_PG_PIPELINE_CONFIRM=YES_ISOLATED for disposable PostgreSQL tables');
   }
   if (!process.env.POSTGRES_URL) fail('POSTGRES_URL is required');
-  const triggers = numberArg('triggers', 8, 64);
+  const triggers = numberArg('triggers', 8, 1000);
+  // Distinguish eligible active trigger population from sampled events.
+  // 1000 eligible definitions scanning 16 events does NOT mean 1000 matches.
+  const events = numberArg('events', triggers, triggers);
   const noise = numberArg('noise', 4, 64);
-  const replays = numberArg('replays', 2, triggers);
+  const replays = numberArg('replays', 2, events);
+  const slotFor = index => Math.floor(index * triggers / events);
   const { Pool } = await import('pg');
   const driverVersion = createRequire(import.meta.url)('pg/package.json').version;
   if (typeof Pool !== 'function') fail('pg Pool driver unavailable');
@@ -153,11 +157,11 @@ try {
   const expectedReceipts = new Map();
   stage = 'measured-ingest-match-wake';
   const started = performance.now();
-  for (let i = 0; i < triggers; i++) {
+  for (let i = 0; i < events; i++) {
     const begin = performance.now();
     matchedAt = null;
     const result = await consumer.ingestMcpOccurrence({
-      event: occurrence(i, i, baseEpoch),
+      event: occurrence(i, slotFor(i), baseEpoch),
       serverId: 'synthetic-mcp-source',
       provider: 'benchmark-fixture',
       traceId: 'pipeline-trace-' + i,
@@ -168,7 +172,7 @@ try {
     assert.equal(result.deliveries.length, 1);
     assert.equal(result.deliveries[0].status, 'wake_delivered');
     const match = result.results.find(row => row.matched).match;
-    assert.equal(match.triggerId, 'pipeline-slot-' + i);
+    assert.equal(match.triggerId, 'pipeline-slot-' + slotFor(i));
     assert.ok(!matched.has(match.matchId), 'duplicate logical match ID');
     matched.add(match.matchId);
     assert.ok(result.deliveries[0].wakeId);
@@ -182,9 +186,9 @@ try {
     measurements.ingestToWake.push(end - begin);
   }
   const measuredWall = performance.now() - started;
-  assert.equal(hostCalls, triggers);
-  assert.equal(matched.size, triggers);
-  assert.equal(wakeIds.size, triggers);
+  assert.equal(hostCalls, events);
+  assert.equal(matched.size, events);
+  assert.equal(wakeIds.size, events);
 
   stage = 'noise-and-replay';
   for (let i = 0; i < noise; i++) {
@@ -198,14 +202,14 @@ try {
   }
   for (let i = 0; i < replays; i++) {
     const result = await consumer.ingestMcpOccurrence({
-      event: occurrence(i, i, baseEpoch),
+      event: occurrence(i, slotFor(i), baseEpoch),
       serverId: 'synthetic-mcp-source',
       provider: 'benchmark-fixture', traceId: 'pipeline-trace-' + i,
     });
     assert.equal(result.deliveries.length, 1);
     assert.equal(result.deliveries[0].status, 'already_fired');
   }
-  assert.equal(hostCalls, triggers, 'event replay or noise generated host side effect');
+  assert.equal(hostCalls, events, 'event replay or noise generated host side effect');
   stage = 'independent-pool-reopen';
   await pool.end();
   pool = null;
@@ -233,7 +237,11 @@ try {
       pgDriverVersion: driverVersion,
     },
     workload: {
-      triggers, matchingMcpOccurrences: triggers, noiseMcpOccurrences: noise,
+      triggers, activeEligibleTriggerDefinitions: triggers,
+      matchingMcpOccurrences: events,
+      distinctMatchedTriggerDefinitions: matched.size,
+      selection: 'evenly-spaced unique slots across entire registered population',
+      noiseMcpOccurrences: noise,
       replayedMcpOccurrences: replays, scopeCount: 1, concurrency: 1,
       source: 'in-process synthetic MCP occurrence',
       host: 'in-process counted callback with durable PG receipt',
@@ -246,13 +254,15 @@ try {
       hostSideEffects: hostCalls, duplicateHostSideEffects: hostCalls - matched.size,
       falsePositiveWakeCount: 0,
       measuredWallMs: measuredWall,
-      measuredMatchingEventsPerSecond: triggers * 1000 / measuredWall,
+      measuredMatchingEventsPerSecond: events * 1000 / measuredWall,
       cpuMs: (() => { const delta = process.cpuUsage(baselineCpu);
         return { user: delta.user / 1000, system: delta.system / 1000 }; })(),
       rssBefore: baselineMemory.rss, rssAfter: process.memoryUsage().rss,
     },
     evidence: {
       persistedReceiptsCheckedAfterPoolReopen: expectedReceipts.size,
+      activeDefinitionsEnumeratedPerEvent: triggers,
+      measuredDistinctMatches: events,
       transportLatencyIncluded: false, hostExecutionLatencyIncluded: false,
       productionSloCertified: false,
     },
