@@ -68,6 +68,17 @@ jobs:
             --triggers 1000 --events 16 --noise 4 --replays 2 \
             > active-1000-result.json 2> active-1000-errors.jsonl
           cat active-1000-result.json
+      - name: Print sanitized structured error if benchmark fails
+        if: failure()
+        shell: bash
+        run: |
+          if [ -f active-1000-errors.jsonl ]; then
+            # The harness emits bounded error codes/messages without DSNs.
+            head -c 3500 active-1000-errors.jsonl
+            echo
+          else
+            echo "Benchmark failed before creating structured stderr evidence"
+          fi
       - name: Archive raw success or failure evidence
         if: always()
         uses: actions/upload-artifact@v4
