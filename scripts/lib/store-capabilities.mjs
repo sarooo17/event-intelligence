@@ -1,3 +1,90 @@
+import { isProxy } from 'node:util/types';
+
+/** Canonical minimum event-store surface required before the host can start.
+ * Shared by the runtime initialization guard and the HostContract handshake
+ * to prevent a partial custom store from initializing before rejection. */
+export const REQUIRED_EVENT_STORE_METHODS = Object.freeze([
+  'putTrigger',
+  'listTriggers',
+  'getTriggerState',
+  'setTriggerState',
+  'appendTriggerMatch',
+  'listTriggerMatches',
+  'putEventSource',
+  'listEventSources',
+  'appendWake',
+  'latestWake',
+  'ensureWakeDelivery',
+  'getWakeDelivery',
+  'claimWakeDelivery',
+  'completeWakeDelivery',
+  'failWakeDelivery',
+  'listDueWakeDeliveries',
+  'appendAudit',
+  'auditLength',
+  'getMcpClientState',
+  'listMcpClientStates',
+  'putMcpClientState',
+  'appendMcpOccurrence',
+  // The temporal scheduler starts with the host; these are not optional
+  // merely because a custom store offers durable wake methods.
+  'putTemporalDeadline',
+  'getTemporalDeadline',
+  'listTemporalDeadlines',
+  'listDueTemporalDeadlines',
+  'setTemporalDeadlineStatus',
+  // Canonical trigger contracts can emit derived events; these operations
+  // must be present before any host is initialized even if no derived
+  // trigger has been registered yet.
+  'listDerivedContracts',
+  'getDerivedContract',
+  'putDerivedContract',
+  'getDerivedEvent',
+  'appendDerivedEvent',
+  'listDerivedEvents',
+]);
+
+
+/**
+ * Read a host-provided method without invoking accessors or Proxy traps.
+ * Resolve ordinary inherited class methods, but never dynamic getters.
+ *
+ * undefined: no method; null: unsafe/noncallable descriptor or Proxy;
+ * function: callable own/prototype DATA method.
+ */
+/** Return a data-only descriptor, without executing host getters or Proxy
+ * traps. undefined denotes absent, null denotes unsafe, otherwise the data
+ * descriptor (whose value may legitimately be undefined). */
+export function getHostDataDescriptor(receiver, key, ownOnly = false) {
+  if (!receiver || typeof receiver !== 'object') return undefined;
+  let current = receiver;
+  for (let depth = 0; depth < 24 && current !== null; depth++) {
+    if (isProxy(current)) return null;
+    const descriptor = Object.getOwnPropertyDescriptor(current, key);
+    if (descriptor) {
+      return Object.hasOwn(descriptor, 'value') ? descriptor : null;
+    }
+    if (ownOnly) return undefined;
+    current = Object.getPrototypeOf(current);
+  }
+  return current === null ? undefined : null;
+}
+
+export function getHostDataMethod(receiver, key) {
+  const descriptor = getHostDataDescriptor(receiver, key);
+  if (descriptor === null || descriptor === undefined) return descriptor;
+  // Explicit undefined is a valid absent *optional* callback; an accessor,
+  // Proxy or non-undefined noncallable value is not.
+  if (descriptor.value === undefined) return undefined;
+  return typeof descriptor.value === 'function' ? descriptor.value : null;
+}
+
+export function hasRequiredStoreMethods(store) {
+  return Boolean(store && typeof store === 'object' &&
+    REQUIRED_EVENT_STORE_METHODS.every(method =>
+      typeof getHostDataMethod(store, method) === 'function'));
+}
+
 export const EVENT_INTELLIGENCE_STORE_CAPABILITIES_VERSION = '1';
 
 export const UNDECLARED_STORE_CAPABILITIES = Object.freeze({
@@ -21,13 +108,11 @@ export const REFERENCE_STORE_CAPABILITIES = Object.freeze({
 });
 
 export function describeStoreCapabilities(store) {
-  if (
-    store &&
-    typeof store.storeCapabilities === 'function'
-  ) {
+  const metadata = getHostDataMethod(store, 'storeCapabilities');
+  if (typeof metadata === 'function') {
     return {
       ...UNDECLARED_STORE_CAPABILITIES,
-      ...store.storeCapabilities(),
+      ...metadata.call(store),
     };
   }
   return { ...UNDECLARED_STORE_CAPABILITIES };
@@ -63,7 +148,7 @@ export function validateSharedStoreCapabilities(store) {
     'releasePartitionLease',
     'compareAndAppendTriggerMatch',
   ]) {
-    if (typeof store?.[method] !== 'function') {
+    if (typeof getHostDataMethod(store, method) !== 'function') {
       errors.push(`shared store is missing ${method}()`);
     }
   }
