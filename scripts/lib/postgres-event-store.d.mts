@@ -82,6 +82,11 @@ export declare class PostgresEventStore {
 
   putTrigger(definition: any): Promise<any>;
   listTriggers(): Promise<any[]>;
+  /** Current scope-local conservative source/event candidate superset. */
+  listTriggerCandidatesForEvent(event: {
+    name: string;
+    serverId?: string | null;
+  }): Promise<any[]>;
   getTriggerState(triggerId: string, version: string): Promise<any>;
   setTriggerState(
     triggerId: string,
