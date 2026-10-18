@@ -33,6 +33,15 @@ export const REQUIRED_EVENT_STORE_METHODS = Object.freeze([
   'listTemporalDeadlines',
   'listDueTemporalDeadlines',
   'setTemporalDeadlineStatus',
+  // Canonical trigger contracts can emit derived events; these operations
+  // must be present before any host is initialized even if no derived
+  // trigger has been registered yet.
+  'listDerivedContracts',
+  'getDerivedContract',
+  'putDerivedContract',
+  'getDerivedEvent',
+  'appendDerivedEvent',
+  'listDerivedEvents',
 ]);
 
 
