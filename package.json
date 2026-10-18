@@ -86,7 +86,7 @@
     "evidence:pattern-v2": "npm run conformance:pattern-v2 && node scripts/evidence/pattern-v2-benchmark.mjs --profile quick",
     "prepare": "npm run build",
     "conformance:host": "npm run build && node conformance/reference-host.mjs",
-    "test:postgres": "npm run build && node --test test/postgres-shared-state.test.mjs test/postgres-restore-evidence.test.mjs test/postgres-logical-dump-restore.test.mjs test/postgres-semantic-cache-retention.test.mjs test/postgres-inspector-restart.test.mjs test/postgres-rebalance-reconnect.test.mjs test/postgres-pattern-v2-signature-contract.test.mjs"
+    "test:postgres": "npm run build && node --test test/postgres-shared-state.test.mjs test/postgres-restore-evidence.test.mjs test/postgres-logical-dump-restore.test.mjs test/postgres-semantic-cache-retention.test.mjs test/postgres-inspector-restart.test.mjs test/postgres-rebalance-reconnect.test.mjs test/postgres-pattern-v2-signature-contract.test.mjs test/postgres-preclaim-crash-recovery.test.mjs"
   },
   "keywords": [
     "mcp",
