@@ -421,3 +421,27 @@ keys, transport callback frequencies, ingestion per tenant, external side
 effects or model costs. Host/MCP transport owners must still enforce maximum
 RPC/body bytes, timeouts, admission quotas and secret governance. No data or
 host credentials are intentionally persisted by telemetry.
+
+## 2026-10-18 — Bounded decoded JSON evidence snapshot (#45)
+
+Untrusted JSON-shaped event values entering the canonical own-data snapshot now
+have a **4 MiB per snapshot approximate UTF-8 byte budget**, in addition to
+the pre-existing 50,000-node and 64-level limits. The snapshot counts string
+contents, object keys, numeric text, structural delimiters and array
+separators before accepting data into event parsing, hashing or the CEP
+matcher. Oversized inputs reject with `EVENT_UNTRUSTED_DATA_INVALID` and
+are not truncated, normalized into a false negative or passed to models.
+
+The cap applies to each call of `snapshotUntrustedEventData` and is not a
+wire-accurate JSON byte counter. It is **not** an HTTP response-body limit,
+MCP transport timeout, provider quota, global event-rate limit or per-tenant
+aggregate cost budget. Those require host/transport enforcement in addition to
+EI's post-decode snapshot. The existing own-descriptor, no-getter/no-proxy
+checks still apply; this change intentionally avoids hardcoded vendors,
+credentials, model runtime or policy handling.
+
+Regression: `test/untrusted-event-utf8-budget.test.mjs`, including a direct
+MCP event conversion that must reject oversized input **before hashing**,
+multibyte aggregate overflow, semantic preservation of valid own keys, and
+non-execution of malicious getters/Proxy traps. This is a partial #45
+resource-exhaustion defense, not independent security certification.
