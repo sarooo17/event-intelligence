@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
+import { createRequire } from 'node:module';
 import { performance } from 'node:perf_hooks';
 import { PostgresEventStore } from '../lib/postgres-event-store.mjs';
 import { CompositeEventConsumer } from '../lib/composite-event-consumer.mjs';
@@ -99,6 +100,7 @@ try {
   const noise = numberArg('noise', 4, 64);
   const replays = numberArg('replays', 2, triggers);
   const { Pool } = await import('pg');
+  const driverVersion = createRequire(import.meta.url)('pg/package.json').version;
   if (typeof Pool !== 'function') fail('pg Pool driver unavailable');
   pool = new Pool({
     connectionString: process.env.POSTGRES_URL,
@@ -225,7 +227,9 @@ try {
     runtime: {
       node: process.version, platform: process.platform, arch: process.arch,
       postgresVersion: (await recoveredPool.query('SHOW server_version')).rows[0].server_version,
-      commit: process.env.GITHUB_SHA ?? null,
+      commit: process.env.BENCH_SOURCE_COMMIT ?? process.env.GITHUB_SHA ?? null,
+      workflowTestMergeSha: process.env.GITHUB_SHA ?? null,
+      pgDriverVersion: driverVersion,
     },
     workload: {
       triggers, matchingMcpOccurrences: triggers, noiseMcpOccurrences: noise,
