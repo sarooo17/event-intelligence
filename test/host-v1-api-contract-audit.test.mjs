@@ -127,7 +127,7 @@ function rejectVendorDispatch(code) {
     /\b['"`](?:muffin|artemis|openai)['"`]\s*={2,3}\s*(?:runtime|host)(?:\.(?:name|type|runtime|kind))?/i,
     /\bswitch\s*\(\s*(?:runtime|host)(?:\.(?:name|type|runtime|kind))?\s*\)/i,
     /\b(?:adapters|dispatch|vendorAdapters)\s*\[\s*(?:runtime|host)(?:\.(?:name|type|runtime|kind))?\s*\]/i,
-    /\b(?:authorize|authorizationFallback)\s*:\s*(?:\(|function)\s*/i,
+    /\b(?:authorize|authorizationFallback)\s*(?::\s*(?:async\s*)?(?:\(|function\b)|\s*\()/i,
   ];
   for (const pattern of patterns) {
     assert.doesNotMatch(code, pattern, 'found vendor dispatcher or legacy authorization shim');
@@ -141,6 +141,9 @@ test('runtime name dispatch regression guard handles dotted equality, switch, an
     "switch (runtime.type) {}",
     "const adapter = adapters[runtime.name]",
     "toOpenAI(input)",
+    "authorize: async () => true",
+    "authorize() { return true }",
+    "authorizationFallback: async function() { return true }",
   ]) {
     assert.throws(() => rejectVendorDispatch(snippet), undefined,
       'guard missed vendor-shaped dispatch: ' + snippet);
