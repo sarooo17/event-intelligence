@@ -96,9 +96,19 @@ try {
     fail('set EI_PG_PIPELINE_CONFIRM=YES_ISOLATED for disposable PostgreSQL tables');
   }
   if (!process.env.POSTGRES_URL) fail('POSTGRES_URL is required');
-  const triggers = numberArg('triggers', 8, 64);
+  const triggers = numberArg('triggers', 8, 1000);
+  // Distinguish eligible active trigger population from sampled events.
+  // 1000 eligible definitions scanning 16 events does NOT mean 1000 matches.
+  const events = numberArg('events', triggers, triggers);
   const noise = numberArg('noise', 4, 64);
-  const replays = numberArg('replays', 2, triggers);
+  const replays = numberArg('replays', 2, events);
+  // A 1000x1000 event/trigger accidental run is materially different
+  // from our approved 1000x16 fixture. Large populations require explicit
+  // bounded sampling, rather than silently defaulting to 1000 events.
+  if (triggers > 64 && (
+    process.argv.indexOf('--events') === -1 || events > 64
+  )) fail('more than 64 triggers requires explicit --events <= 64');
+  const slotFor = index => Math.floor(index * triggers / events);
   const { Pool } = await import('pg');
   const driverVersion = createRequire(import.meta.url)('pg/package.json').version;
   if (typeof Pool !== 'function') fail('pg Pool driver unavailable');
@@ -151,13 +161,14 @@ try {
   const matched = new Set();
   const wakeIds = new Set();
   const expectedReceipts = new Map();
+  const originalDeliveriesByIndex = new Map();
   stage = 'measured-ingest-match-wake';
   const started = performance.now();
-  for (let i = 0; i < triggers; i++) {
+  for (let i = 0; i < events; i++) {
     const begin = performance.now();
     matchedAt = null;
     const result = await consumer.ingestMcpOccurrence({
-      event: occurrence(i, i, baseEpoch),
+      event: occurrence(i, slotFor(i), baseEpoch),
       serverId: 'synthetic-mcp-source',
       provider: 'benchmark-fixture',
       traceId: 'pipeline-trace-' + i,
@@ -168,7 +179,7 @@ try {
     assert.equal(result.deliveries.length, 1);
     assert.equal(result.deliveries[0].status, 'wake_delivered');
     const match = result.results.find(row => row.matched).match;
-    assert.equal(match.triggerId, 'pipeline-slot-' + i);
+    assert.equal(match.triggerId, 'pipeline-slot-' + slotFor(i));
     assert.ok(!matched.has(match.matchId), 'duplicate logical match ID');
     matched.add(match.matchId);
     assert.ok(result.deliveries[0].wakeId);
@@ -177,14 +188,21 @@ try {
       hostReceipts.get(match.matchId));
     expectedReceipts.set(result.deliveries[0].wakeId,
       result.deliveries[0].runtimeReceiptId);
+    originalDeliveriesByIndex.set(i, {
+      matchId: match.matchId,
+      wakeId: result.deliveries[0].wakeId,
+      receiptId: result.deliveries[0].runtimeReceiptId,
+    });
     measurements.ingestToMatch.push(matchedAt - begin);
     measurements.matchToWake.push(end - matchedAt);
     measurements.ingestToWake.push(end - begin);
   }
   const measuredWall = performance.now() - started;
-  assert.equal(hostCalls, triggers);
-  assert.equal(matched.size, triggers);
-  assert.equal(wakeIds.size, triggers);
+  const measuredCpu = process.cpuUsage(baselineCpu);
+  const measuredMemory = process.memoryUsage();
+  assert.equal(hostCalls, events);
+  assert.equal(matched.size, events);
+  assert.equal(wakeIds.size, events);
 
   stage = 'noise-and-replay';
   for (let i = 0; i < noise; i++) {
@@ -198,14 +216,22 @@ try {
   }
   for (let i = 0; i < replays; i++) {
     const result = await consumer.ingestMcpOccurrence({
-      event: occurrence(i, i, baseEpoch),
+      event: occurrence(i, slotFor(i), baseEpoch),
       serverId: 'synthetic-mcp-source',
       provider: 'benchmark-fixture', traceId: 'pipeline-trace-' + i,
     });
     assert.equal(result.deliveries.length, 1);
     assert.equal(result.deliveries[0].status, 'already_fired');
+    const original = originalDeliveriesByIndex.get(i);
+    assert.ok(original, 'missing original delivery evidence');
+    assert.equal(result.results.filter(row => row.matched).length, 1);
+    assert.equal(result.results[0].match.matchId, original.matchId);
+    assert.equal(result.deliveries[0].wakeId, original.wakeId,
+      'replay must reuse original EI wake identity');
+    assert.equal(result.deliveries[0].runtimeReceiptId, original.receiptId,
+      'replay must reuse original host receipt identity');
   }
-  assert.equal(hostCalls, triggers, 'event replay or noise generated host side effect');
+  assert.equal(hostCalls, events, 'event replay or noise generated host side effect');
   stage = 'independent-pool-reopen';
   await pool.end();
   pool = null;
@@ -221,7 +247,7 @@ try {
     assert.equal(saved.runtimeReceiptId, receiptId);
     assert.equal(saved.attemptCount, 1);
   }
-  assert.equal(hostCalls, triggers);
+  assert.equal(hostCalls, events);
   record = {
     schema: SCHEMA, status: 'completed', measuredAt: new Date().toISOString(),
     runtime: {
@@ -233,7 +259,11 @@ try {
       pgDriverVersion: driverVersion,
     },
     workload: {
-      triggers, matchingMcpOccurrences: triggers, noiseMcpOccurrences: noise,
+      triggers, activeEligibleTriggerDefinitions: triggers,
+      matchingMcpOccurrences: events,
+      distinctMatchedTriggerDefinitions: matched.size,
+      selection: 'evenly-spaced unique slots across entire registered population',
+      noiseMcpOccurrences: noise,
       replayedMcpOccurrences: replays, scopeCount: 1, concurrency: 1,
       source: 'in-process synthetic MCP occurrence',
       host: 'in-process counted callback with durable PG receipt',
@@ -246,13 +276,15 @@ try {
       hostSideEffects: hostCalls, duplicateHostSideEffects: hostCalls - matched.size,
       falsePositiveWakeCount: 0,
       measuredWallMs: measuredWall,
-      measuredMatchingEventsPerSecond: triggers * 1000 / measuredWall,
-      cpuMs: (() => { const delta = process.cpuUsage(baselineCpu);
-        return { user: delta.user / 1000, system: delta.system / 1000 }; })(),
-      rssBefore: baselineMemory.rss, rssAfter: process.memoryUsage().rss,
+      measuredMatchingEventsPerSecond: events * 1000 / measuredWall,
+      cpuMs: { user: measuredCpu.user / 1000, system: measuredCpu.system / 1000 },
+      rssBefore: baselineMemory.rss, rssAfter: measuredMemory.rss,
+      cpuAndRssScope: 'Node.js benchmark process only; excludes PostgreSQL service CPU/RSS',
     },
     evidence: {
       persistedReceiptsCheckedAfterPoolReopen: expectedReceipts.size,
+      activeDefinitionsEnumeratedPerEvent: triggers,
+      measuredDistinctMatches: events,
       transportLatencyIncluded: false, hostExecutionLatencyIncluded: false,
       productionSloCertified: false,
     },

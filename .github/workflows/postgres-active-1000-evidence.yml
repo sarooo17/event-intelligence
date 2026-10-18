@@ -1,0 +1,92 @@
+name: PostgreSQL Active 1000 Trigger Matching Evidence
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/postgres-active-1000-evidence.yml"
+      - "scripts/evidence/postgres-mcp-ingest-wake.mjs"
+      - "docs/POSTGRES-ACTIVE-1000-EVIDENCE.md"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  active-trigger-benchmark:
+    name: active-1000-patterns-16-events
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: event_intelligence
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d event_intelligence"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      POSTGRES_URL: postgresql://postgres:postgres@127.0.0.1:5432/event_intelligence
+      EI_PG_PIPELINE_CONFIRM: YES_ISOLATED
+      BENCH_SOURCE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+      BENCH_IS_PULL_REQUEST: ${{ github.event_name == 'pull_request' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install pinned PG driver and compile canonical matching engine
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm install --no-save --ignore-scripts --no-audit --no-fund pg@8.16.3
+          npm run build
+      - name: Capture measured environment
+        shell: bash
+        run: |
+          {
+            echo "source-head-sha=$BENCH_SOURCE_COMMIT"
+            echo "github-event-sha=$GITHUB_SHA"
+            echo "run-attempt=$GITHUB_RUN_ATTEMPT"
+            node -p "'pg-driver=' + require('pg/package.json').version"
+            uname -a
+            node --version
+            npm --version
+            lscpu
+            free -m
+          } > active-1000-host.txt
+      - name: Measure 1000 eligible active definitions across 16 MCP events
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/evidence/postgres-mcp-ingest-wake.mjs \
+            --triggers 1000 --events 16 --noise 4 --replays 2 \
+            > active-1000-result.json 2> active-1000-errors.jsonl
+          cat active-1000-result.json
+      - name: Print sanitized structured error if benchmark fails
+        if: failure()
+        shell: bash
+        run: |
+          if [ -f active-1000-errors.jsonl ]; then
+            # The harness emits bounded error codes/messages without DSNs.
+            head -c 3500 active-1000-errors.jsonl
+            echo
+          else
+            echo "Benchmark failed before creating structured stderr evidence"
+          fi
+      - name: Archive raw success or failure evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ei-pg-active-1000-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            active-1000-result.json
+            active-1000-errors.jsonl
+            active-1000-host.txt
+          retention-days: 90
+          if-no-files-found: warn
