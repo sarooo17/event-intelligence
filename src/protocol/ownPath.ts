@@ -1,3 +1,4 @@
+import { Buffer } from 'node:buffer';
 import { isProxy } from 'node:util/types';
 
 /**
