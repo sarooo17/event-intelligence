@@ -1,0 +1,103 @@
+{
+  "schema": "event-intelligence.v1-readiness.v1",
+  "targetVersion": "1.0.0",
+  "policy": "fail-closed-no-automatic-merge-or-publish",
+  "criteria": [
+    {
+      "id": "embedded-host-independent",
+      "issue": 42,
+      "required": true,
+      "status": "blocked",
+      "evidence": [],
+      "note": "Three repo-authored host fixtures are not an independently authored external host; #188/#189 await reviews."
+    },
+    {
+      "id": "host-contract-and-package",
+      "issue": 42,
+      "required": true,
+      "status": "blocked",
+      "evidence": [],
+      "note": "Canonical HostContract and packed conformance changes are candidate PRs; need reviewed merge and live host proof."
+    },
+    {
+      "id": "security-independent-review",
+      "issue": 45,
+      "required": true,
+      "status": "blocked",
+      "evidence": [],
+      "note": "A broad independent security signoff and threat-model verification remain."
+    },
+    {
+      "id": "security-revocation-and-tenant",
+      "issue": 45,
+      "required": true,
+      "status": "blocked",
+      "evidence": [],
+      "note": "Cross-worker revocation, queued wake cancellation, multi-tenant adversarial evaluation not fully certified."
+    },
+    {
+      "id": "pg-retention-audit",
+      "issue": 47,
+      "required": true,
+      "status": "blocked",
+      "evidence": [],
+      "note": "Append-only retention/compaction preserving dedup and audit lineage remains unproven."
+    },
+    {
+      "id": "pg-chaos-recovery",
+      "issue": 47,
+      "required": true,
+      "status": "blocked",
+      "evidence": [],
+      "note": "Repeated independent-process fault-soak and specified crash boundaries unverified."
+    },
+    {
+      "id": "pg-scale-measured",
+      "issue": 47,
+      "required": true,
+      "status": "blocked",
+      "evidence": [],
+      "note": "Actual measured 1k/10k/100k workloads and SLO evidence unavailable; 16-trigger CI smoke not enough."
+    },
+    {
+      "id": "stored-state-upgrade",
+      "issue": 50,
+      "required": true,
+      "status": "blocked",
+      "evidence": [],
+      "note": "Intentional snapshot/reset/restore operator proof or migration needs v1 contract signoff."
+    },
+    {
+      "id": "packed-v1-and-breaking-notes",
+      "issue": 50,
+      "required": true,
+      "status": "blocked",
+      "evidence": [],
+      "note": "v1 types/API, clean-room independent consumer, release notes, and incompatibility matrix not finalized."
+    },
+    {
+      "id": "downstream-pin-policy",
+      "issue": 50,
+      "required": true,
+      "status": "blocked",
+      "evidence": [],
+      "note": "No EI publish should touch exactly pinned Muffin/Artemis consumers; final release policy evidence needed."
+    },
+    {
+      "id": "full-explainability",
+      "issue": 48,
+      "required": false,
+      "status": "blocked",
+      "evidence": [],
+      "note": "P1 taxonomy, causal trace, tenant read access and bounded metrics remain separate from P0 release gates."
+    },
+    {
+      "id": "semantic-triage",
+      "issue": 49,
+      "required": false,
+      "status": "blocked",
+      "evidence": [],
+      "note": "P2 labeled real data, budgets and costs may ship separately; synthetic corpus is not real quality."
+    }
+  ]
+}
