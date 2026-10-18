@@ -6,7 +6,7 @@
     {
       "id": "transport-auth",
       "authorityOwner": "host",
-      "status": "host-enforced",
+      "status": "partial",
       "threat": "MCP credential confusion, oversized or unverified provider body",
       "evidence": [
         "test/mcp-occurrence-ingress-security.test.mjs"
@@ -27,7 +27,7 @@
     {
       "id": "principal-authorization",
       "authorityOwner": "host",
-      "status": "host-enforced",
+      "status": "partial",
       "threat": "Agent tool bypasses principal policy or trigger approval",
       "evidence": [
         "test/neutral-facade-conformance.test.mjs"
@@ -71,14 +71,15 @@
       "status": "partial",
       "threat": "Derived records masquerade as trusted instructions or exfiltrate payloads",
       "evidence": [
-        "test/activation-provenance-security.test.mjs"
+        "test/derived-events.test.mjs",
+        "test/trigger-explain-bounds.test.mjs"
       ],
       "residual": "Downstream host must continue treating all event text as untrusted; refs are not authorization."
     },
     {
       "id": "semantic-evaluation",
       "authorityOwner": "host",
-      "status": "host-enforced",
+      "status": "partial",
       "threat": "Semantic model prompt contains secrets or evaluator spends unbounded vendor budget",
       "evidence": [
         "test/semantic-scope-budget-conformance.test.mjs"
