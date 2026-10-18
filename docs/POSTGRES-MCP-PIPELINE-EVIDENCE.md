@@ -58,8 +58,16 @@ EI_PG_PIPELINE_CONFIRM=YES_ISOLATED POSTGRES_URL='postgresql://...' \
   --triggers 8 --noise 4 --replays 2 > pipeline-result.json
 ```
 
-Raw artifacts include the completed or failed JSON record, recorded CI
-machine/Node/Postgres environment and stderr. Failures in setup,
+Raw artifacts include the completed or failed JSON record, the **actual
+checked-out PR head SHA** (not merely GitHub's synthetic test merge SHA),
+a separately recorded GitHub test-merge SHA, Node/Postgres versions, the
+**exact pinned `pg@8.16.3` driver**, machine specifications and stderr.
+Artifact names contain run ID **and run attempt** to permit actual reruns.
+The chosen driver version is pinned at this benchmark workflow level;
+the project's default npm manifest is not modified and transitive
+dependency versions remain subject to the current npm installation graph.
+Always compare hardware/PG/Node/driver information before drawing
+cross-run performance conclusions. Failures in setup,
 normalization, matching, delivery, independent-pool receipt re-read or
 cleanup never report `status:completed`.
 
