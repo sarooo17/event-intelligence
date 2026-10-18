@@ -14,7 +14,7 @@ const origin = Date.parse('2026-10-18T14:00:00.000Z');
 const rounds = 3;
 function iso(ms) { return new Date(ms).toISOString(); }
 
-function launch(env, children) {
+function launch(env, children, childExits) {
   const child = fork(fixture, [], {
     env: { ...process.env, ...env },
     stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
@@ -26,6 +26,8 @@ function launch(env, children) {
       resolve({ code, signal });
     });
   });
+  childExits.add(exited);
+  void exited.then(() => childExits.delete(exited));
   const message = new Promise((resolve, reject) => {
     const timeout = setTimeout(
       () => finish(new Error('effect-worker IPC timeout')), 9000,
@@ -100,6 +102,7 @@ integration('actual SIGKILL AFTER durable host effect BEFORE EI receipt reconcil
   const pool = new Pool({ connectionString: url, max: 3 });
   const host = new Pool({ connectionString: url, max: 3 });
   const children = new Set();
+  const childExits = new Set();
   const reported = [];
   try {
     const store = new PostgresEventStore({
@@ -133,7 +136,7 @@ integration('actual SIGKILL AFTER durable host effect BEFORE EI receipt reconcil
       const victim = launch({
         ...common, EI_EFFECT_MODE: 'post-effect-hold',
         EI_EFFECT_WORKER: 'victim-' + round, EI_EFFECT_NOW: iso(t0),
-      }, children);
+      }, children, childExits);
       const committed = await victim.message;
       assert.equal(committed.type, 'host-effect-committed');
       assert.equal(committed.matchId, matchId);
@@ -165,7 +168,7 @@ integration('actual SIGKILL AFTER durable host effect BEFORE EI receipt reconcil
         ...common, EI_EFFECT_MODE: 'reconcile',
         EI_EFFECT_WORKER: 'successor-' + round,
         EI_EFFECT_NOW: iso(t0 + 1000),
-      }, children);
+      }, children, childExits);
       const reconciled = await replacement.message;
       assert.equal((await replacement.exited).code, 0);
       assert.equal(reconciled.type, 'reconciled');
@@ -225,7 +228,19 @@ integration('actual SIGKILL AFTER durable host effect BEFORE EI receipt reconcil
       await verifierPool.end();
     }
   } finally {
+    // SIGKILL only *requests* termination. Do not DROP fixture tables
+    // while a child backend may still be running CREATE/claim writes.
+    // Await actual child process exit (and PostgreSQL socket teardown)
+    // before starting cleanup. On timeout, fail closed: leave isolated
+    // tables instead of racing an active worker's transactions.
     for (const child of children) child.kill('SIGKILL');
+    await Promise.race([
+      Promise.allSettled([...childExits]),
+      new Promise((_, reject) => setTimeout(
+        () => reject(new Error('SIGKILL worker exits not reaped before cleanup')),
+        7000,
+      )),
+    ]);
     const cleanup = new Pool({ connectionString: url, max: 2 });
     try {
       for (const table of [attemptsTable, effectsTable]) {
