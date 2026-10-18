@@ -3,12 +3,21 @@ import test from 'node:test';
 import { readFileSync, existsSync } from 'node:fs';
 const matrix=JSON.parse(readFileSync(new URL('../docs/security-threat-model-v1.json',import.meta.url)));
 const root=new URL('../',import.meta.url);
-const required=[
-  'transport-auth','registry-rebind','principal-authorization',
-  'tenant-scope','event-json-ingress','source-gaps','derived-lineage',
-  'semantic-evaluation','wake-receipts','operational-telemetry',
-  'audit-and-retention','release-publish',
-];
+const ownerByBoundary=Object.freeze({
+  'transport-auth':'host',
+  'registry-rebind':'host+ei',
+  'principal-authorization':'host',
+  'tenant-scope':'host+ei',
+  'event-json-ingress':'ei',
+  'source-gaps':'ei+host',
+  'derived-lineage':'ei+host',
+  'semantic-evaluation':'host',
+  'wake-receipts':'host+ei',
+  'operational-telemetry':'ei+host',
+  'audit-and-retention':'operator',
+  'release-publish':'operator',
+});
+const required=Object.keys(ownerByBoundary);
 
 test('threat model documents all P0 authority boundaries and referenced existing evidence',()=>{
   assert.equal(matrix.schema,'event-intelligence.security-threat-model.v1');
@@ -16,8 +25,8 @@ test('threat model documents all P0 authority boundaries and referenced existing
   assert.deepEqual(matrix.boundaries.map(x=>x.id).sort(),[...required].sort());
   assert.equal(new Set(matrix.boundaries.map(x=>x.id)).size,required.length);
   for(const boundary of matrix.boundaries){
-    assert.ok(['host','ei','host+ei','ei+host','operator'].includes(boundary.authorityOwner),
-      boundary.id);
+    assert.equal(boundary.authorityOwner,ownerByBoundary[boundary.id],
+      'privileged responsibility must not drift across EI/host/operator');
     assert.ok(['partial','host-enforced'].includes(boundary.status),boundary.id);
     assert.ok(boundary.threat.length>=20,boundary.id);
     assert.ok(boundary.residual.length>=30,boundary.id);
@@ -40,4 +49,16 @@ test('high-risk external authority and known residuals cannot be presented as ce
   }
   assert.ok(map['registry-rebind'].residual.includes('queued'));
   assert.ok(map['wake-receipts'].residual.includes('exactly-once'));
+});
+
+
+test('all twelve authority owners are fixed, including derived provenance and publication',()=>{
+  const actual=Object.fromEntries(matrix.boundaries.map(x=>
+    [x.id,x.authorityOwner]));
+  assert.deepEqual(actual,ownerByBoundary);
+  assert.equal(actual['derived-lineage'],'ei+host');
+  assert.equal(actual['release-publish'],'operator');
+  const controls=matrix.boundaries.find(x=>x.id==='principal-authorization');
+  assert.ok(controls.evidence.includes('test/neutral-facade-conformance.test.mjs'),
+    'the authority matrix must cite a real exercised control-denial test');
 });
