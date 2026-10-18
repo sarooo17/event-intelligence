@@ -1,13 +1,12 @@
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import test from 'node:test';
 
-import {
-  createEventIntelligence,
-  HOST_CONTRACT_CAPABILITIES,
-} from '../scripts/embedded-host-kit.mjs';
+import * as embeddedPublic from '../scripts/embedded-host-kit.mjs';
+const { createEventIntelligence, HOST_CONTRACT_CAPABILITIES } = embeddedPublic;
 
 const root = path.dirname(fileURLToPath(new URL('../package.json', import.meta.url)));
 const read = file => readFileSync(path.join(root, file), 'utf8');
@@ -25,15 +24,21 @@ test('canonical v1 public exports and declarations exist in packed package manif
         subpath + ' has nonexistent ' + role + ' target');
     }
   }
-  const types = read('scripts/embedded-host-kit.d.mts');
-  const runtime = read('scripts/embedded-host-kit.mjs');
-  for (const surface of [
-    'createEventIntelligence', 'hostContract', 'negotiateHostContract',
-  ]) {
-    assert.match(types, new RegExp('\\b' + surface + '\\b'),
-      surface + ' is not part of the declared public contract');
-    assert.match(runtime, new RegExp('\\b' + surface + '\\b'));
+  // Probe actual entrypoint bindings; textual substring matches can stay
+  // green even if a public re-export or an ambient type is removed.
+  for (const surface of ['createEventIntelligence', 'negotiateHostContract']) {
+    assert.equal(typeof embeddedPublic[surface], 'function',
+      surface + ' must remain an actual public callable export');
   }
+  assert.equal(embeddedPublic.HOST_CONTRACT_VERSION, '1');
+  assert.ok(embeddedPublic.HOST_CONTRACT_CAPABILITIES.includes('wake.receipts'));
+  execFileSync(process.execPath, [
+    'node_modules/typescript/bin/tsc',
+    '--noEmit', '--strict', '--skipLibCheck',
+    '--module', 'NodeNext', '--moduleResolution', 'NodeNext',
+    '--target', 'ES2022', 'test/fixtures/host-contract-v1-public-types.mts',
+  ], { cwd: root, stdio: 'pipe', timeout: 30000 });
+  const runtime = read('scripts/embedded-host-kit.mjs');
   // The advanced low-level path is separate functionality, not a hidden
   // vendor-shaped wrapper around the canonical facade.
   assert.match(runtime, /export async function createEmbeddedRuntimeIntegration/);
@@ -115,20 +120,41 @@ test('invalid host boundaries fail closed with stable public EI_HOST codes befor
   }
 });
 
+function rejectVendorDispatch(code) {
+  const patterns = [
+    /\\bto(?:Muffin|OpenAI|Artemis)\\s*\\(/i,
+    /\\b(?:runtime|host)(?:\\.(?:name|type|runtime|kind))?\\s*={2,3}\\s*['"`](?:muffin|artemis|openai)['"`]/i,
+    /\\b['"`](?:muffin|artemis|openai)['"`]\\s*={2,3}\\s*(?:runtime|host)(?:\\.(?:name|type|runtime|kind))?/i,
+    /\\bswitch\\s*\\(\\s*(?:runtime|host)(?:\\.(?:name|type|runtime|kind))?\\s*\\)/i,
+    /\\b(?:adapters|dispatch|vendorAdapters)\\s*\\[\\s*(?:runtime|host)(?:\\.(?:name|type|runtime|kind))?\\s*\\]/i,
+    /\\b(?:authorize|authorizationFallback)\\s*:\\s*(?:\\(|function)\\s*/i,
+  ];
+  for (const pattern of patterns) {
+    assert.doesNotMatch(code, pattern, 'found vendor dispatcher or legacy authorization shim');
+  }
+}
+
+test('runtime name dispatch regression guard handles dotted equality, switch, and adapter index', () => {
+  for (const snippet of [
+    "if (runtime.name === 'muffin') {}",
+    "if (host.type === 'artemis') {}",
+    "switch (runtime.type) {}",
+    "const adapter = adapters[runtime.name]",
+    "toOpenAI(input)",
+  ]) {
+    assert.throws(() => rejectVendorDispatch(snippet), undefined,
+      'guard missed vendor-shaped dispatch: ' + snippet);
+  }
+  assert.doesNotThrow(() => rejectVendorDispatch(
+    "const callback = runtime.deliver; const source = host.mcpStatus();",
+  ));
+});
+
 test('core contract has no vendor runtime dispatch or authorization shim', () => {
   const paths = [
     'scripts/embedded-host-kit.mjs',
     'scripts/host-integration.mjs',
     'scripts/lib/embedded-host-contract.mjs',
   ];
-  for (const file of paths) {
-    const code = read(file);
-    assert.doesNotMatch(code, /\bto(?:Muffin|OpenAI|Artemis)\s*\(/i, file);
-    assert.doesNotMatch(code,
-      /\b(?:runtime|host)(?:Name|Type)?\s*===?\s*['"`](?:muffin|artemis|openai)['"`]/i,
-      file);
-    assert.doesNotMatch(code,
-      /\b(?:authorize|authorizationFallback)\s*:\s*(?:\(|function)\s*/i,
-      file + ' appears to restore legacy authorization fallback');
-  }
+  for (const file of paths) rejectVendorDispatch(read(file));
 });
