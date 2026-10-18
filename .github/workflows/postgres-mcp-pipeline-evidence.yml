@@ -37,6 +37,7 @@ jobs:
       # Actions pull_request defaults to a synthetic merge commit. Pin checkout
       # and reported provenance to the exact code under Codex review.
       BENCH_SOURCE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+      BENCH_IS_PULL_REQUEST: ${{ github.event_name == 'pull_request' }}
       POSTGRES_URL: postgresql://postgres:postgres@127.0.0.1:5432/event_intelligence
       EI_PG_PIPELINE_CONFIRM: YES_ISOLATED
       TRIGGERS: ${{ matrix.triggers }}
