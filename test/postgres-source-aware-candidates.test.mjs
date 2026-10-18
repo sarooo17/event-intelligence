@@ -13,7 +13,8 @@ const now = '2026-10-18T12:00:00.000Z';
 
 function definition(id, event, serverId, lifecycle = {}) {
   return {
-    triggerId: id, version: '1', conditionOnly: true,
+    triggerId: id, version: '1', conditionOnly: false,
+    target: { runtime: 'fixture-host', kind: 'task', id },
     clauses: [
       { id: 'a', event,
         ...(serverId ? { serverId } : {}),
