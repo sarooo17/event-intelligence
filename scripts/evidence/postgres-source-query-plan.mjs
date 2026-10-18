@@ -227,11 +227,24 @@ try {
   assert.equal(all.returned, triggers + exceptionalDefs.length + 1);
   assert.equal(before.returned, expectedCandidates,
     'candidate query must include matching/wildcard + expiry/completion only');
+  // Assert the COMPLETE key set, not just counts: simultaneous omission of
+  // one valid record and inclusion of a forbidden server/tenant record
+  // must never be mistaken for a passing source-selection test.
+  const expectedKeys = [
+    ...Array.from({ length: triggers }, (_, i) =>
+      i % sources === 0 ? trigger(i, sources).triggerId + '@1' : null,
+    ).filter(Boolean),
+    ...exceptionalDefs.map(def => def.triggerId + '@' + def.version),
+  ].sort();
+  assert.deepEqual(before.keys, expectedKeys,
+    'candidate IDs must equal precisely the matching source + lifecycle exception IDs');
   assert.ok(before.keys.every(k => all.keys.includes(k)));
   assert.deepEqual(unionBefore.keys, before.keys,
     'separate source+lifecycle UNION must be semantically equal');
-  assert.ok(!before.keys.some(k => k.endsWith('020001')),
+  assert.ok(!before.keys.includes('source-plan-020001@1'),
     'wrong-server trigger cannot enter candidate superset');
+  assert.ok(!before.keys.includes('source-plan-020000@1'),
+    'other tenant trigger cannot enter candidate superset');
 
   stage = 'isolated-index';
   const indexName = PREFIX + '_clauses_gin';
