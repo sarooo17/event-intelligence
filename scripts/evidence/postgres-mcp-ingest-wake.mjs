@@ -228,7 +228,8 @@ try {
       node: process.version, platform: process.platform, arch: process.arch,
       postgresVersion: (await recoveredPool.query('SHOW server_version')).rows[0].server_version,
       commit: process.env.BENCH_SOURCE_COMMIT ?? process.env.GITHUB_SHA ?? null,
-      workflowTestMergeSha: process.env.GITHUB_SHA ?? null,
+      workflowTestMergeSha: process.env.BENCH_IS_PULL_REQUEST === 'true'
+        ? process.env.GITHUB_SHA ?? null : null,
       pgDriverVersion: driverVersion,
     },
     workload: {
