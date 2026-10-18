@@ -1,4 +1,3 @@
-import { Buffer } from 'node:buffer';
 import { isProxy } from 'node:util/types';
 
 /**
@@ -33,6 +32,30 @@ export function snapshotUntrustedEventData(source: unknown): unknown {
     }
   }
 
+  // A bounded, allocation-free UTF-8 count. Avoid Node Buffer globals
+  // (this protocol module intentionally has no Node type dependency) and
+  // avoid TextEncoder.encode() allocating an unbounded input-sized buffer.
+  function accountUtf8(value: string, punctuationBytes = 0): void {
+    account(punctuationBytes);
+    for (let i = 0; i < value.length; i++) {
+      const unit = value.charCodeAt(i);
+      if (unit < 0x80) {
+        account(1);
+      } else if (unit < 0x800) {
+        account(2);
+      } else if (unit >= 0xd800 && unit <= 0xdbff &&
+          i + 1 < value.length &&
+          value.charCodeAt(i + 1) >= 0xdc00 &&
+          value.charCodeAt(i + 1) <= 0xdfff) {
+        account(4);
+        i++;
+      } else {
+        // Normal BMP code point, or replacement of an unpaired surrogate.
+        account(3);
+      }
+    }
+  }
+
   function copy(value: unknown, depth: number): unknown {
     if (++visited > 50000 || depth > 64) invalid('resource limit exceeded');
     if (value === null) {
@@ -40,7 +63,7 @@ export function snapshotUntrustedEventData(source: unknown): unknown {
       return value;
     }
     if (typeof value === 'string') {
-      account(Buffer.byteLength(value, 'utf8') + 2);
+      accountUtf8(value, 2);
       return value;
     }
     if (typeof value === 'boolean') {
@@ -82,7 +105,7 @@ export function snapshotUntrustedEventData(source: unknown): unknown {
       for (const [key, property] of Object.entries(descriptors)) {
         if (!property.enumerable) continue;
         if (!Object.hasOwn(property, 'value')) invalid('accessor property');
-        account(Buffer.byteLength(key, 'utf8') + 4); // key quotes, colon, comma
+        accountUtf8(key, 4); // key quotes, colon, comma
         // defineProperty cannot accidentally invoke inherited __proto__ or
         // custom setters on Object.prototype.
         Object.defineProperty(result, key, {
