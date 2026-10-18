@@ -1,5 +1,6 @@
 import {
   getHostDataMethod,
+  getHostDataDescriptor,
   hasRequiredStoreMethods,
   validateSharedStoreCapabilities,
 } from './store-capabilities.mjs';
@@ -37,11 +38,20 @@ function configuredDurability({ store, dataDir, env }) {
       return false;
     }
   }
-  // Match the actual host env merge: process.env, overridden by caller env,
-  // then by explicit dataDir when nonblank. This is a non-I/O shape check.
-  const effectiveDir = dataDir ||
-    (env && Object.hasOwn(env, 'DATA_DIR') ? env.DATA_DIR : process.env.DATA_DIR);
-  return typeof effectiveDir === 'string' && Boolean(effectiveDir.trim());
+  // The caller's own DATA_DIR data property overrides process.env. Never
+  // run getters or Proxy traps merely to validate a storage path.
+  try {
+    let effectiveDir = dataDir;
+    if (!effectiveDir) {
+      const envValue = getHostDataDescriptor(env, 'DATA_DIR', true);
+      if (envValue === null) return false;
+      effectiveDir = envValue === undefined
+        ? process.env.DATA_DIR : envValue.value;
+    }
+    return typeof effectiveDir === 'string' && Boolean(effectiveDir.trim());
+  } catch {
+    return false;
+  }
 }
 
 function configuredMcpRegistry(mcp) {
@@ -55,6 +65,29 @@ function configuredMcpRegistry(mcp) {
   } catch {
     // Host metadata must never leak arbitrary exception text as a setup
     // error or execute untrusted getters during pre-start negotiation.
+    return false;
+  }
+}
+
+function configuredWakeReceipts(runtime) {
+  try {
+    const hasReceipt = getHostDataMethod(runtime, 'hasReceipt');
+    if (typeof hasReceipt !== 'function') return false;
+    const receiptId = getHostDataMethod(runtime, 'receiptId');
+    if (typeof receiptId === 'function') return true;
+    const namespace = getHostDataDescriptor(runtime, 'receiptNamespace');
+    return Boolean(namespace && typeof namespace.value === 'string' &&
+      namespace.value.trim());
+  } catch {
+    return false;
+  }
+}
+
+function configuredOwnerScopedTooling(runtime) {
+  try {
+    return typeof getHostDataMethod(runtime, 'resolveContext') === 'function' &&
+      typeof getHostDataMethod(runtime, 'control') === 'function';
+  } catch {
     return false;
   }
 }
@@ -119,18 +152,18 @@ export function negotiateHostContract(contract, {
   // storage when the host explicitly requires it.
   const sharedRequested = contract.required.includes('storage.shared');
   const registryRequested = contract.required.includes('mcp.registry');
+  const durableRequested = sharedRequested ||
+    contract.required.includes('storage.durable');
+  const receiptsRequested = contract.required.includes('wake.receipts');
+  const toolingRequested = contract.required.includes('tooling.owner-scoped');
   const available = Object.freeze({
     'mcp.registry': registryRequested && configuredMcpRegistry(mcp),
-    'storage.durable': configuredDurability({ store, dataDir, env }),
+    'storage.durable': durableRequested && configuredDurability({ store, dataDir, env }),
     // A declared "shared" flag is never enough: check actual store
     // capability metadata AND its required distributed primitives.
     'storage.shared': sharedRequested && configuredSharedStore(store),
-    'wake.receipts': typeof runtime?.hasReceipt === 'function' &&
-      (typeof runtime?.receiptId === 'function' ||
-        typeof runtime?.receiptNamespace === 'string' &&
-        Boolean(runtime.receiptNamespace.trim())),
-    'tooling.owner-scoped': typeof runtime?.resolveContext === 'function' &&
-      typeof runtime?.control === 'function',
+    'wake.receipts': receiptsRequested && configuredWakeReceipts(runtime),
+    'tooling.owner-scoped': toolingRequested && configuredOwnerScopedTooling(runtime),
     // This is wiring readiness only; it does not execute an evaluator.
     'semantic.evaluate': contract.required.includes('semantic.evaluate') &&
       typeof getHostDataMethod(semanticEvaluator, 'evaluate') === 'function',
