@@ -102,6 +102,12 @@ try {
   const events = numberArg('events', triggers, triggers);
   const noise = numberArg('noise', 4, 64);
   const replays = numberArg('replays', 2, events);
+  // A 1000x1000 event/trigger accidental run is materially different
+  // from our approved 1000x16 fixture. Large populations require explicit
+  // bounded sampling, rather than silently defaulting to 1000 events.
+  if (triggers > 64 && (
+    process.argv.indexOf('--events') === -1 || events > 64
+  )) fail('more than 64 triggers requires explicit --events <= 64');
   const slotFor = index => Math.floor(index * triggers / events);
   const { Pool } = await import('pg');
   const driverVersion = createRequire(import.meta.url)('pg/package.json').version;
@@ -273,6 +279,7 @@ try {
       measuredMatchingEventsPerSecond: events * 1000 / measuredWall,
       cpuMs: { user: measuredCpu.user / 1000, system: measuredCpu.system / 1000 },
       rssBefore: baselineMemory.rss, rssAfter: measuredMemory.rss,
+      cpuAndRssScope: 'Node.js benchmark process only; excludes PostgreSQL service CPU/RSS',
     },
     evidence: {
       persistedReceiptsCheckedAfterPoolReopen: expectedReceipts.size,
