@@ -228,38 +228,41 @@ integration('actual SIGKILL AFTER durable host effect BEFORE EI receipt reconcil
       await verifierPool.end();
     }
   } finally {
-    // SIGKILL only *requests* termination. Do not DROP fixture tables
-    // while a child backend may still be running CREATE/claim writes.
-    // Await actual child process exit (and PostgreSQL socket teardown)
-    // before starting cleanup. On timeout, fail closed: leave isolated
-    // tables instead of racing an active worker's transactions.
-    for (const child of children) child.kill('SIGKILL');
-    let reapTimer;
     try {
-      await Promise.race([
-        Promise.allSettled([...childExits]),
-        new Promise((_, reject) => {
-          reapTimer = setTimeout(
-            () => reject(new Error('SIGKILL worker exits not reaped before cleanup')),
-            7000,
-          );
-        }),
-      ]);
-    } finally {
-      clearTimeout(reapTimer);
-    }
-    const cleanup = new Pool({ connectionString: url, max: 2 });
-    try {
-      for (const table of [attemptsTable, effectsTable]) {
-        await cleanup.query('DROP TABLE IF EXISTS ' + table);
+      // SIGKILL only requests termination. The independent child backends
+      // can still be writing after that call. Wait for actual OS exit before
+      // any DROP; on reap timeout leave isolated tables in place.
+      for (const child of children) child.kill('SIGKILL');
+      let reapTimer;
+      try {
+        await Promise.race([
+          Promise.allSettled([...childExits]),
+          new Promise((_, reject) => {
+            reapTimer = setTimeout(
+              () => reject(new Error('SIGKILL workers not reaped before cleanup')),
+              7000,
+            );
+          }),
+        ]);
+      } finally {
+        clearTimeout(reapTimer);
       }
-      for (const kind of ['metadata','leases','history','records','counters']) {
-        await cleanup.query('DROP TABLE IF EXISTS "' +
-          prefix + '_' + kind + '" CASCADE');
+      const cleanup = new Pool({ connectionString: url, max: 2 });
+      try {
+        for (const table of [attemptsTable, effectsTable]) {
+          await cleanup.query('DROP TABLE IF EXISTS ' + table);
+        }
+        for (const kind of ['metadata','leases','history','records','counters']) {
+          await cleanup.query('DROP TABLE IF EXISTS "' +
+            prefix + '_' + kind + '" CASCADE');
+        }
+      } finally {
+        await cleanup.end();
       }
     } finally {
-      await cleanup.end();
-      await Promise.all([pool.end(), host.end()]);
+      // Even if the reap deadline fails closed before the DROP operations,
+      // always close the parent PG sockets so node --test can terminate.
+      await Promise.allSettled([pool.end(), host.end()]);
     }
   }
 });
