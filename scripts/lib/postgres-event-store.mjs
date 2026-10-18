@@ -264,9 +264,9 @@ export class PostgresEventStore {
             'SELECT (' +
             'EXISTS(SELECT 1 FROM ' + this.records +
             " WHERE kind IN ('trigger', 'trigger_state', 'trigger_match', " +
-            "'temporal_deadline', 'semantic_cache') LIMIT 1) OR " +
+            "'temporal_deadline', 'semantic_cache', 'wake_delivery', 'derived_event') LIMIT 1) OR " +
             'EXISTS(SELECT 1 FROM ' + this.history +
-            " WHERE kind = 'trigger_match_history' LIMIT 1)" +
+            " WHERE kind IN ('trigger_match_history', 'wake') LIMIT 1)" +
             ') AS present',
           );
           if (legacy.rows[0]?.present === true) {
