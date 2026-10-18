@@ -10,10 +10,12 @@ function measured(profile) {
   return {
     schema:'event-intelligence.postgres-durable-scale.v1',
     status:'completed',profile,triggerCount:triggers,wakes:128,
-    runtime:{node:'v22.0.0',postgresVersion:'16.6',commit:sha},
+    runtime:{node:'v22.0.0',postgresVersion:'16.6',platform:'linux',arch:'x64',commit:sha},
+    concurrency:4,
     metrics:{
       register:{latency,triggersPerSecond:100},
-      listAll:{durableRowsVerified:triggers},
+      listAll:{durableRowsVerified:triggers,latency:{...latency,samples:3}},
+      wakeEnsure:{...latency,samples:128},
       wakeClaim:{...latency,samples:128},
       wakeComplete:{...latency,samples:128},
       storageTotalBytes:4096*triggers,
@@ -50,6 +52,10 @@ test('missing real measurements, failed workloads, duplicates and fake counts ar
     x=>x.metrics.storageTotalBytes=0,
     x=>x.metrics.listAll.durableRowsVerified=9,
     x=>delete x.metrics.wakeComplete,
+    x=>x.metrics.register.latency.samples=1,
+    x=>x.metrics.wakeClaim.samples=1,
+    x=>x.metrics.wakeEnsure.samples=1,
+    x=>x.metrics.listAll.latency.samples=1,
   ]) {
     const x=measured('1k');
     modify(x);
@@ -72,4 +78,20 @@ test('incompatible environment or missing commit means incomplete provenance',()
   report=summarizeScaleEvidence([a,b,c]);
   assert.equal(report.status,'incomplete-provenance');
   assert.equal(report.environmentsComparable,false);
+});
+
+
+test('different platforms, architectures or concurrency never certify comparable workloads',()=>{
+  for(const alter of [
+    row=>row.runtime.platform='darwin',
+    row=>row.runtime.arch='arm64',
+    row=>row.concurrency=12,
+  ]) {
+    const results=['1k','10k','100k'].map(measured);
+    alter(results[2]);
+    const report=summarizeScaleEvidence(results);
+    assert.equal(report.status,'incomplete-provenance');
+    assert.equal(report.environmentsComparable,false);
+    assert.equal(report.productionSloCertified,false);
+  }
 });
