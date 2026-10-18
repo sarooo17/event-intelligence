@@ -443,3 +443,58 @@ test('derived-event contract storage is mandatory before starting an embedded ho
   }
   assert.equal(initialized,0);
 });
+
+
+test('MCP registry negotiation is lazy and never evaluates getters or Proxy traps', async()=>{
+  let getterCalls=0;
+  let starts=0;
+  const secret='private-registry-credential';
+  const hostMcp={};
+  Object.defineProperty(hostMcp,'list',{
+    get(){getterCalls++;throw new Error(secret);},
+  });
+  assert.equal(negotiateHostContract(contract(['storage.durable']),{
+    mcp:hostMcp,dataDir:'/host-storage',runtime,
+  }).available['mcp.registry'],false);
+  assert.equal(getterCalls,0,'an unrelated requirement must not probe the MCP registry');
+  await assert.rejects(createEventIntelligence({
+    runtime,mcp:hostMcp,hostContract:contract(['mcp.registry']),
+    createHost:async()=>{starts++},
+  }),error=>error?.code==='EI_HOST_CAPABILITY_UNAVAILABLE'&&
+    !error.message.includes(secret));
+  assert.equal(starts,0);
+  assert.equal(getterCalls,0,'mcp.list getter cannot execute during negotiation');
+
+  const subscribed={list:()=>[]};
+  Object.defineProperty(subscribed,'subscribe',{
+    get(){getterCalls++;throw new Error(secret);},
+  });
+  assert.throws(()=>negotiateHostContract(contract(['mcp.registry']),{
+    runtime,mcp:subscribed,
+  }),error=>error?.code==='EI_HOST_CAPABILITY_UNAVAILABLE'&&
+    !error.message.includes(secret));
+  assert.equal(getterCalls,0,'mcp.subscribe getter cannot execute during negotiation');
+
+  const registryProxy=new Proxy({list:()=>[],subscribe:()=>{}},{
+    get(){getterCalls++;throw new Error(secret)},
+    getOwnPropertyDescriptor(){getterCalls++;throw new Error(secret)},
+    getPrototypeOf(){getterCalls++;throw new Error(secret)},
+  });
+  assert.throws(()=>negotiateHostContract(contract(['mcp.registry']),{
+    runtime,mcp:registryProxy,
+  }),error=>error?.code==='EI_HOST_CAPABILITY_UNAVAILABLE'&&
+    !error.message.includes(secret));
+  assert.equal(getterCalls,0,'Proxy traps are not preflight evidence');
+
+  const valid=negotiateHostContract(contract(['mcp.registry']),{
+    runtime,mcp:{list:()=>[]},
+  });
+  assert.equal(valid.available['mcp.registry'],true,
+    'a normal registry without the optional subscribe callback is supported');
+  assert.equal(negotiateHostContract(contract(['mcp.registry']),{
+    runtime,mcp:{list:()=>[],subscribe:()=>{}},
+  }).available['mcp.registry'],true);
+  assert.throws(()=>negotiateHostContract(contract(['mcp.registry']),{
+    runtime,mcp:{list:()=>[],subscribe:'not callable'},
+  }),error=>error?.code==='EI_HOST_CAPABILITY_UNAVAILABLE');
+});
