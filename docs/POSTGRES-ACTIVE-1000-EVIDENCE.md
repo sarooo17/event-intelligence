@@ -66,8 +66,8 @@ throughput result.
 The script measures actual serial in-process normalization→Pattern match,
 match→durable wake and total accepted MCP event→wake p50/p95/p99;
 matching-events/sec, CPU delta, RSS and exact-match/noise/replay correctness.
-The measured interval excludes registration, negative events, replays,
-database reopen/receipt audit and cleanup. All 16 events sample the same
+The measured interval **and sampled CPU/RSS end snapshot** exclude registration, negative events, replays,
+database reopen/receipt audit and cleanup. CPU/RSS start samples are taken immediately after registration, and end samples immediately after the 16 matching events. All 16 events sample the same
 registered population. No SLO thresholds are inferred before reviewing raw
 runner measurements, and quantiles over 16 events are **small samples**.
 
@@ -76,3 +76,13 @@ This does **not** prove 1,000 simultaneously fired events, 1,000 matches,
 multi-worker scaling, production provider→host end-to-end latency, no
 external duplicates after an ambiguous host crash, or production-ready v1.
 #47 remains OPEN for these separate acceptance requirements.
+
+## CI issue discovered during first scale run
+
+The first 1,000-trigger attempt ended with a **failed assertion** in the
+benchmark itself: its final post-reopen host-effect count still compared
+against registered trigger population (1,000), although only 16 events were
+intentionally sampled. The logic is now corrected to compare against the
+actual number of matching events; a failed first attempt is retained as an
+artifact, **not** reported as a performance measurement. Later successes
+must be justified by exact-HEAD CI artifacts, not inferred from this fix.
