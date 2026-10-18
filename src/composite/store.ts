@@ -1,6 +1,7 @@
 import type { McpDeliveryGapState } from './deliveryGap.js';
 import type {
   CompositeTriggerDefinition,
+  CorrelatableEvent,
   TriggerMatchRecord,
 } from '../intelligenceProtocol/triggerSchemas.js';
 
@@ -63,6 +64,19 @@ export interface CompositeTriggerStore {
   ): Promise<boolean>;
   putTrigger(definition: CompositeTriggerDefinition): Promise<void>;
   listTriggers():
+    | CompositeTriggerDefinition[]
+    | Promise<CompositeTriggerDefinition[]>;
+  /**
+   * Optional fresh, scope-local *superset* of possible candidate definitions
+   * for a normal event. Include every clause with the matching event name and
+   * optional serverId wildcard, plus every definition whose lifecycle can
+   * expire/complete on an unrelated event. Must not cache stale definitions,
+   * filter by current state/owner, or omit side-effect-capable definitions.
+   * Called only for non-timer events; older stores use listTriggers().
+   */
+  listTriggerCandidatesForEvent?(
+    event: Pick<CorrelatableEvent, 'name' | 'serverId'>,
+  ):
     | CompositeTriggerDefinition[]
     | Promise<CompositeTriggerDefinition[]>;
   getTriggerState?(
