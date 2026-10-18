@@ -14,6 +14,11 @@ import { validateHistoryWindowLimit } from './history-window.mjs';
 import { assertWakeClaimGeneration } from './wake-claim-generation.mjs';
 import { assertPostgresSchemaShape } from './postgres-schema-shape.mjs';
 import {
+  PATTERN_V2_SIGNATURE_CONTRACT_VERSION,
+  PATTERN_V2_SIGNATURE_COMPONENT,
+  patternV2SignatureError,
+} from './pattern-v2-signature-contract.mjs';
+import {
   DEFAULT_EVENT_SCOPE_ID,
   normalizeEventScopeId,
 } from './persistent-event-store.mjs';
@@ -237,6 +242,40 @@ export class PostgresEventStore {
               POSTGRES_PERSISTED_SCHEMA_VERSION,
               hasLegacyState ? 'unversioned-explicit' : null,
             ],
+          );
+        }
+        // Semantic identity is versioned separately from the unchanged
+        // PostgreSQL physical layout. Old trigger, match, timer and semantic
+        // cache records cannot be reinterpreted with the new candidate
+        // signature; this decision is guarded by the SAME schema advisory
+        // transaction lock, across all scopes and workers.
+        const signature = await client.query(
+          'SELECT version FROM ' + this.metadata +
+          ' WHERE component = $1 FOR UPDATE',
+          [PATTERN_V2_SIGNATURE_COMPONENT],
+        );
+        if (signature.rows.length) {
+          if (Number(signature.rows[0].version) !==
+              PATTERN_V2_SIGNATURE_CONTRACT_VERSION) {
+            throw patternV2SignatureError('unknown persisted PostgreSQL signature version');
+          }
+        } else {
+          const legacy = await client.query(
+            'SELECT (' +
+            'EXISTS(SELECT 1 FROM ' + this.records +
+            " WHERE kind IN ('trigger', 'trigger_state', 'trigger_match', " +
+            "'temporal_deadline', 'semantic_cache') LIMIT 1) OR " +
+            'EXISTS(SELECT 1 FROM ' + this.history +
+            " WHERE kind = 'trigger_match_history' LIMIT 1)" +
+            ') AS present',
+          );
+          if (legacy.rows[0]?.present === true) {
+            throw patternV2SignatureError('unmarked pre-existing PostgreSQL Pattern v2 state');
+          }
+          await client.query(
+            'INSERT INTO ' + this.metadata +
+            ' (component, version) VALUES ($1, $2)',
+            [PATTERN_V2_SIGNATURE_COMPONENT, PATTERN_V2_SIGNATURE_CONTRACT_VERSION],
           );
         }
         if (freshRecords) {
