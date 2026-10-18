@@ -1,0 +1,99 @@
+name: PostgreSQL Source Candidate Query Plan Evidence
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/postgres-source-query-plan.yml"
+      - "scripts/evidence/postgres-source-query-plan.mjs"
+      - "docs/POSTGRES-SOURCE-QUERY-PLAN.md"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    name: source-plan-${{ matrix.profile }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - profile: 1k-20
+            triggers: 1000
+            sources: 20
+          - profile: 10k-20
+            triggers: 10000
+            sources: 20
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: event_intelligence
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d event_intelligence"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      POSTGRES_URL: postgresql://postgres:postgres@127.0.0.1:5432/event_intelligence
+      EI_PG_QUERY_PLAN_CONFIRM: YES_ISOLATED
+      BENCH_SOURCE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install dependencies and exact pinned PostgreSQL driver
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm install --no-save --ignore-scripts --no-audit --no-fund pg@8.16.3
+          npm run build
+      - name: Capture exact environment
+        shell: bash
+        run: |
+          {
+            echo "source-head=$BENCH_SOURCE_COMMIT"
+            echo "github-event-sha=$GITHUB_SHA"
+            echo "github-run-attempt=$GITHUB_RUN_ATTEMPT"
+            node --version
+            node -p "'pg=' + require('pg/package.json').version"
+            uname -a
+            lscpu
+            free -m
+          } > query-plan-host.txt
+      - name: Analyze scoped source selector before and after disposable GIN
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/evidence/postgres-source-query-plan.mjs \
+            --triggers ${{ matrix.triggers }} \
+            --sources ${{ matrix.sources }} \
+            --samples 3 \
+            > query-plan-report.json 2> query-plan-errors.jsonl
+          cat query-plan-report.json
+      - name: Expose bounded structured failure
+        if: failure()
+        shell: bash
+        run: |
+          if [ -f query-plan-errors.jsonl ]; then
+            head -c 3500 query-plan-errors.jsonl
+            echo
+          fi
+      - name: Archive exact attempt results including failed runs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ei-pg-query-plan-${{ matrix.profile }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            query-plan-report.json
+            query-plan-errors.jsonl
+            query-plan-host.txt
+          retention-days: 30
+          if-no-files-found: warn
