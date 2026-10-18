@@ -370,3 +370,131 @@ test('semantic evaluator accessors and proxies are not inspected outside require
   }),e=>e.code==='EI_HOST_CAPABILITY_UNAVAILABLE');
   assert.equal(invoked,0,'Proxy-backed evaluator cannot attest capability');
 });
+
+
+test('temporal scheduler methods are required for durable store before init',async()=>{
+  let initCalls=0;
+  const complete=Object.fromEntries(REQUIRED_EVENT_STORE_METHODS.map(name=>
+    [name,async()=>null]));
+  const incomplete={...complete,
+    init:async()=>{initCalls++;},
+  };
+  delete incomplete.listDueTemporalDeadlines;
+  let factoryCalls=0;
+  await assert.rejects(createEventIntelligence({
+    runtime,store:incomplete,
+    hostContract:contract(['storage.durable']),
+    createHost:async()=>{factoryCalls++;await incomplete.init();},
+  }),error=>error?.code==='EI_HOST_STORAGE_REQUIRED');
+  assert.equal(factoryCalls,0);
+  assert.equal(initCalls,0);
+  assert.ok(REQUIRED_EVENT_STORE_METHODS.includes('getTemporalDeadline'));
+  assert.ok(REQUIRED_EVENT_STORE_METHODS.includes('setTemporalDeadlineStatus'));
+  assert.ok(REQUIRED_EVENT_STORE_METHODS.includes('listDueTemporalDeadlines'));
+});
+
+test('observability sink readiness never evaluates getters and is lazy',()=>{
+  let getterCalls=0;
+  const sink={};
+  Object.defineProperty(sink,'emit',{
+    get(){getterCalls++;throw Error('host-private-observability-secret');},
+  });
+  const ready=negotiateHostContract(contract(['mcp.registry']),{
+    mcp:{list:()=>[]},runtime,observability:sink,
+  });
+  assert.equal(ready.available['mcp.registry'],true);
+  assert.equal(ready.available['observability.sink'],false);
+  assert.equal(getterCalls,0);
+  assert.throws(()=>negotiateHostContract(contract(['observability.sink']),{
+    runtime,observability:sink,
+  }),error=>error.code==='EI_HOST_CAPABILITY_UNAVAILABLE' &&
+    !error.message.includes('host-private-observability-secret'));
+  assert.equal(getterCalls,0);
+  const proxy=new Proxy({emit:()=>{}},{
+    get(){getterCalls++;throw Error('host-private-observability-secret');},
+    getOwnPropertyDescriptor(){getterCalls++;throw Error('host-private-observability-secret');},
+  });
+  assert.throws(()=>negotiateHostContract(contract(['observability.sink']),{
+    runtime,observability:proxy,
+  }),error=>error.code==='EI_HOST_CAPABILITY_UNAVAILABLE');
+  assert.equal(getterCalls,0);
+  const valid={emit(){}};
+  assert.equal(negotiateHostContract(contract(['observability.sink']),{
+    runtime,observability:valid,
+  }).available['observability.sink'],true);
+});
+
+
+test('derived-event contract storage is mandatory before starting an embedded host',async()=>{
+  const store=Object.fromEntries(REQUIRED_EVENT_STORE_METHODS.map(name=>
+    [name,async()=>null]));
+  let initialized=0;
+  store.init=async()=>{initialized++};
+  for(const required of [
+    'listDerivedContracts','getDerivedContract','putDerivedContract',
+    'getDerivedEvent','appendDerivedEvent','listDerivedEvents',
+  ]) {
+    const broken={...store};
+    delete broken[required];
+    await assert.rejects(createEventIntelligence({
+      runtime,store:broken,hostContract:contract(['storage.durable']),
+      createHost:async()=>{await broken.init()},
+    }),error=>error.code==='EI_HOST_STORAGE_REQUIRED',required);
+  }
+  assert.equal(initialized,0);
+});
+
+
+test('MCP registry negotiation is lazy and never evaluates getters or Proxy traps', async()=>{
+  let getterCalls=0;
+  let starts=0;
+  const secret='private-registry-credential';
+  const hostMcp={};
+  Object.defineProperty(hostMcp,'list',{
+    get(){getterCalls++;throw new Error(secret);},
+  });
+  assert.equal(negotiateHostContract(contract(['storage.durable']),{
+    mcp:hostMcp,dataDir:'/host-storage',runtime,
+  }).available['mcp.registry'],false);
+  assert.equal(getterCalls,0,'an unrelated requirement must not probe the MCP registry');
+  await assert.rejects(createEventIntelligence({
+    runtime,mcp:hostMcp,hostContract:contract(['mcp.registry']),
+    createHost:async()=>{starts++},
+  }),error=>error?.code==='EI_HOST_CAPABILITY_UNAVAILABLE'&&
+    !error.message.includes(secret));
+  assert.equal(starts,0);
+  assert.equal(getterCalls,0,'mcp.list getter cannot execute during negotiation');
+
+  const subscribed={list:()=>[]};
+  Object.defineProperty(subscribed,'subscribe',{
+    get(){getterCalls++;throw new Error(secret);},
+  });
+  assert.throws(()=>negotiateHostContract(contract(['mcp.registry']),{
+    runtime,mcp:subscribed,
+  }),error=>error?.code==='EI_HOST_CAPABILITY_UNAVAILABLE'&&
+    !error.message.includes(secret));
+  assert.equal(getterCalls,0,'mcp.subscribe getter cannot execute during negotiation');
+
+  const registryProxy=new Proxy({list:()=>[],subscribe:()=>{}},{
+    get(){getterCalls++;throw new Error(secret)},
+    getOwnPropertyDescriptor(){getterCalls++;throw new Error(secret)},
+    getPrototypeOf(){getterCalls++;throw new Error(secret)},
+  });
+  assert.throws(()=>negotiateHostContract(contract(['mcp.registry']),{
+    runtime,mcp:registryProxy,
+  }),error=>error?.code==='EI_HOST_CAPABILITY_UNAVAILABLE'&&
+    !error.message.includes(secret));
+  assert.equal(getterCalls,0,'Proxy traps are not preflight evidence');
+
+  const valid=negotiateHostContract(contract(['mcp.registry']),{
+    runtime,mcp:{list:()=>[]},
+  });
+  assert.equal(valid.available['mcp.registry'],true,
+    'a normal registry without the optional subscribe callback is supported');
+  assert.equal(negotiateHostContract(contract(['mcp.registry']),{
+    runtime,mcp:{list:()=>[],subscribe:()=>{}},
+  }).available['mcp.registry'],true);
+  assert.throws(()=>negotiateHostContract(contract(['mcp.registry']),{
+    runtime,mcp:{list:()=>[],subscribe:'not callable'},
+  }),error=>error?.code==='EI_HOST_CAPABILITY_UNAVAILABLE');
+});

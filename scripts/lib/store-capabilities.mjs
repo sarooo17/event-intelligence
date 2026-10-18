@@ -26,6 +26,22 @@ export const REQUIRED_EVENT_STORE_METHODS = Object.freeze([
   'listMcpClientStates',
   'putMcpClientState',
   'appendMcpOccurrence',
+  // The temporal scheduler starts with the host; these are not optional
+  // merely because a custom store offers durable wake methods.
+  'putTemporalDeadline',
+  'getTemporalDeadline',
+  'listTemporalDeadlines',
+  'listDueTemporalDeadlines',
+  'setTemporalDeadlineStatus',
+  // Canonical trigger contracts can emit derived events; these operations
+  // must be present before any host is initialized even if no derived
+  // trigger has been registered yet.
+  'listDerivedContracts',
+  'getDerivedContract',
+  'putDerivedContract',
+  'getDerivedEvent',
+  'appendDerivedEvent',
+  'listDerivedEvents',
 ]);
 
 
@@ -49,7 +65,10 @@ export function getHostDataMethod(receiver, key) {
     }
     current = Object.getPrototypeOf(current);
   }
-  return null;
+  // A property absent from a normal receiver/prototype chain is different
+  // from an unsafe accessor or Proxy. This distinction matters for optional
+  // callback surfaces such as mcp.subscribe.
+  return current === null ? undefined : null;
 }
 
 export function hasRequiredStoreMethods(store) {

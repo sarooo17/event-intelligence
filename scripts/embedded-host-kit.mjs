@@ -12,6 +12,7 @@ import {
 } from './host-integration.mjs';
 import { OPERATION_MANIFEST } from './lib/operation-manifest.mjs';
 import { negotiateHostContract } from './lib/embedded-host-contract.mjs';
+import { getHostDataMethod } from './lib/store-capabilities.mjs';
 export {
   HOST_CONTRACT_VERSION,
   HOST_CONTRACT_CAPABILITIES,
@@ -1706,13 +1707,28 @@ export async function createEventIntelligence({
     );
   }
 
-  if (mcp !== undefined &&
-      (!mcp || typeof mcp.list !== 'function' ||
-        (mcp.subscribe !== undefined && typeof mcp.subscribe !== 'function'))) {
-    throw hostConfigurationError(
-      'createEventIntelligence mcp must provide list() and optional subscribe()',
-      'EI_HOST_MCP_REGISTRY_INVALID',
-    );
+  // Negotiate the explicitly required capabilities before any legacy facade
+  // shape validation reads host-supplied registry properties. Otherwise
+  // accessor/Proxy traps could bypass the stable negotiation error.
+  const negotiatedContract = hostContract === undefined ? null :
+    negotiateHostContract(hostContract, { mcp, runtime, ...options });
+
+  if (mcp !== undefined) {
+    let validRegistry = false;
+    try {
+      const list = getHostDataMethod(mcp, 'list');
+      const subscribe = getHostDataMethod(mcp, 'subscribe');
+      validRegistry = typeof list === 'function' &&
+        (subscribe === undefined || typeof subscribe === 'function');
+    } catch {
+      // Never propagate arbitrary host introspection errors.
+    }
+    if (!validRegistry) {
+      throw hostConfigurationError(
+        'createEventIntelligence mcp must provide list() and optional subscribe()',
+        'EI_HOST_MCP_REGISTRY_INVALID',
+      );
+    }
   }
 
   const wantsTools = runtime.resolveContext !== undefined ||
@@ -1749,12 +1765,8 @@ export async function createEventIntelligence({
     );
   }
 
-  // Opt-in v1 handshake stays configuration-only and runs BEFORE any
-  // storage initialization, MCP subscription or host continuation activity.
-  // Existing pre-v1 hosts may adopt this deliberately; a later major
-  // contract revision can make the handshake mandatory without aliases.
-  const negotiatedContract = hostContract === undefined ? null :
-    negotiateHostContract(hostContract, { mcp, runtime, ...options });
+  // Opt-in HostContract is now already negotiated above. A later major
+  // revision can make it mandatory without introducing legacy aliases.
 
   // Forward through runtime so ordinary object methods keep their receiver.
   const activation = {

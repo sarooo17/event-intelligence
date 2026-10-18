@@ -44,6 +44,21 @@ function configuredDurability({ store, dataDir, env }) {
   return typeof effectiveDir === 'string' && Boolean(effectiveDir.trim());
 }
 
+function configuredMcpRegistry(mcp) {
+  try {
+    // MCP registry methods must be actual data descriptors, not accessors
+    // or Proxy traps. subscribe is optional; an unsafe descriptor is not.
+    const list = getHostDataMethod(mcp, 'list');
+    if (typeof list !== 'function') return false;
+    const subscribe = getHostDataMethod(mcp, 'subscribe');
+    return subscribe === undefined || typeof subscribe === 'function';
+  } catch {
+    // Host metadata must never leak arbitrary exception text as a setup
+    // error or execute untrusted getters during pre-start negotiation.
+    return false;
+  }
+}
+
 function configuredSharedStore(store) {
   try {
     // Accessing storeCapabilities may itself run an accessor or Proxy trap:
@@ -103,9 +118,9 @@ export function negotiateHostContract(contract, {
   // unrelated negotiations. This readiness report only verifies shared
   // storage when the host explicitly requires it.
   const sharedRequested = contract.required.includes('storage.shared');
+  const registryRequested = contract.required.includes('mcp.registry');
   const available = Object.freeze({
-    'mcp.registry': typeof mcp?.list === 'function' &&
-      (mcp.subscribe === undefined || typeof mcp.subscribe === 'function'),
+    'mcp.registry': registryRequested && configuredMcpRegistry(mcp),
     'storage.durable': configuredDurability({ store, dataDir, env }),
     // A declared "shared" flag is never enough: check actual store
     // capability metadata AND its required distributed primitives.
@@ -119,9 +134,9 @@ export function negotiateHostContract(contract, {
     // This is wiring readiness only; it does not execute an evaluator.
     'semantic.evaluate': contract.required.includes('semantic.evaluate') &&
       typeof getHostDataMethod(semanticEvaluator, 'evaluate') === 'function',
-    'observability.sink': typeof observability === 'function' ||
-      Boolean(observability && typeof observability === 'object' &&
-        typeof observability.emit === 'function'),
+    'observability.sink': contract.required.includes('observability.sink') &&
+      (typeof observability === 'function' ||
+        typeof getHostDataMethod(observability, 'emit') === 'function'),
   });
 
   for (const id of contract.required) {
