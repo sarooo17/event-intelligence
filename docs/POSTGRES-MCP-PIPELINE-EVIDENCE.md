@@ -51,7 +51,7 @@ Run on a disposable PG database:
 
 ```sh
 npm ci
-npm install --no-save pg@8
+npm install --no-save pg@8.16.3
 npm run build
 EI_PG_PIPELINE_CONFIRM=YES_ISOLATED POSTGRES_URL='postgresql://...' \
   node scripts/evidence/postgres-mcp-ingest-wake.mjs \
@@ -60,7 +60,7 @@ EI_PG_PIPELINE_CONFIRM=YES_ISOLATED POSTGRES_URL='postgresql://...' \
 
 Raw artifacts include the completed or failed JSON record, the **actual
 checked-out PR head SHA** (not merely GitHub's synthetic test merge SHA),
-a separately recorded GitHub test-merge SHA, Node/Postgres versions, the
+a GitHub test-merge SHA **only when triggered by a pull request** (null for manual dispatch), Node/Postgres versions, the
 **exact pinned `pg@8.16.3` driver**, machine specifications and stderr.
 Artifact names contain run ID **and run attempt** to permit actual reruns.
 The chosen driver version is pinned at this benchmark workflow level;
