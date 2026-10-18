@@ -122,12 +122,12 @@ test('invalid host boundaries fail closed with stable public EI_HOST codes befor
 
 function rejectVendorDispatch(code) {
   const patterns = [
-    /\\bto(?:Muffin|OpenAI|Artemis)\\s*\\(/i,
-    /\\b(?:runtime|host)(?:\\.(?:name|type|runtime|kind))?\\s*={2,3}\\s*['"`](?:muffin|artemis|openai)['"`]/i,
-    /\\b['"`](?:muffin|artemis|openai)['"`]\\s*={2,3}\\s*(?:runtime|host)(?:\\.(?:name|type|runtime|kind))?/i,
-    /\\bswitch\\s*\\(\\s*(?:runtime|host)(?:\\.(?:name|type|runtime|kind))?\\s*\\)/i,
-    /\\b(?:adapters|dispatch|vendorAdapters)\\s*\\[\\s*(?:runtime|host)(?:\\.(?:name|type|runtime|kind))?\\s*\\]/i,
-    /\\b(?:authorize|authorizationFallback)\\s*:\\s*(?:\\(|function)\\s*/i,
+    /\bto(?:Muffin|OpenAI|Artemis)\s*\(/i,
+    /\b(?:runtime|host)(?:\.(?:name|type|runtime|kind))?\s*={2,3}\s*['"`](?:muffin|artemis|openai)['"`]/i,
+    /\b['"`](?:muffin|artemis|openai)['"`]\s*={2,3}\s*(?:runtime|host)(?:\.(?:name|type|runtime|kind))?/i,
+    /\bswitch\s*\(\s*(?:runtime|host)(?:\.(?:name|type|runtime|kind))?\s*\)/i,
+    /\b(?:adapters|dispatch|vendorAdapters)\s*\[\s*(?:runtime|host)(?:\.(?:name|type|runtime|kind))?\s*\]/i,
+    /\b(?:authorize|authorizationFallback)\s*:\s*(?:\(|function)\s*/i,
   ];
   for (const pattern of patterns) {
     assert.doesNotMatch(code, pattern, 'found vendor dispatcher or legacy authorization shim');
