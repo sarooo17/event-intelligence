@@ -498,3 +498,109 @@ test('MCP registry negotiation is lazy and never evaluates getters or Proxy trap
     runtime,mcp:{list:()=>[],subscribe:'not callable'},
   }),error=>error?.code==='EI_HOST_CAPABILITY_UNAVAILABLE');
 });
+
+
+test('HostContract runtime callback inspection is lazy, descriptor-only, and fail-closed',async()=>{
+  const secret='private-runtime-credential';
+  let traps=0;
+  const goodMcp={list:()=>[]};
+  for(const [name,requires,base] of [
+    ['hasReceipt','wake.receipts',{}],
+    ['receiptId','wake.receipts',{hasReceipt:()=>false}],
+    ['receiptNamespace','wake.receipts',{hasReceipt:()=>false}],
+    ['resolveContext','tooling.owner-scoped',{control:()=>{}}],
+    ['control','tooling.owner-scoped',{resolveContext:()=>{}}],
+  ]) {
+    const unsafe={deliver,...base};
+    Object.defineProperty(unsafe,name,{
+      get(){traps++;throw new Error(secret);},
+    });
+    assert.equal(negotiateHostContract(contract(['mcp.registry']),{
+      runtime:unsafe,mcp:goodMcp,
+    }).available['mcp.registry'],true,name);
+    assert.throws(()=>negotiateHostContract(contract([requires]),{
+      runtime:unsafe,mcp:goodMcp,
+    }),error=>error?.code==='EI_HOST_CAPABILITY_UNAVAILABLE' &&
+      !error.message.includes(secret),name);
+    assert.equal(traps,0,name+' getter must not execute');
+  }
+  let starts=0;
+  const facadeRuntime={deliver};
+  Object.defineProperty(facadeRuntime,'hasReceipt',{
+    get(){traps++;throw new Error(secret);},
+  });
+  await assert.rejects(createEventIntelligence({
+    runtime:facadeRuntime,mcp:goodMcp,
+    hostContract:contract(['mcp.registry']),
+    createHost:async()=>{starts++;},
+  }),error=>error?.code==='EI_HOST_CALLBACK_INVALID' &&
+    !error.message.includes(secret));
+  assert.equal(traps,0);
+  assert.equal(starts,0);
+
+  const runtimeProxy=new Proxy({deliver,hasReceipt:()=>false},{
+    get(){traps++;throw new Error(secret)},
+    getOwnPropertyDescriptor(){traps++;throw new Error(secret)},
+    getPrototypeOf(){traps++;throw new Error(secret)},
+  });
+  assert.equal(negotiateHostContract(contract(['mcp.registry']),{
+    runtime:runtimeProxy,mcp:goodMcp,
+  }).available['mcp.registry'],true);
+  assert.throws(()=>negotiateHostContract(contract(['wake.receipts']),{
+    runtime:runtimeProxy,mcp:goodMcp,
+  }),error=>error?.code==='EI_HOST_CAPABILITY_UNAVAILABLE');
+  assert.equal(traps,0,'Proxy traps cannot supply runtime readiness');
+});
+
+test('durability handshake defers hostile env reads and uses only own data descriptors',()=>{
+  const secret='private-environment-credential';
+  let traps=0;
+  const evilEnv={};
+  Object.defineProperty(evilEnv,'DATA_DIR',{
+    get(){traps++;throw new Error(secret);},
+  });
+  const goodMcp={list:()=>[]};
+  assert.equal(negotiateHostContract(contract(['mcp.registry']),{
+    mcp:goodMcp,runtime,env:evilEnv,
+  }).available['storage.durable'],false);
+  assert.throws(()=>negotiateHostContract(contract(['storage.durable']),{
+    runtime,env:evilEnv,
+  }),error=>error?.code==='EI_HOST_STORAGE_REQUIRED' &&
+    !error.message.includes(secret));
+  assert.equal(traps,0,'env getter must never run');
+  const evilProxy=new Proxy({DATA_DIR:'/private/path'},{
+    get(){traps++;throw new Error(secret)},
+    getOwnPropertyDescriptor(){traps++;throw new Error(secret)},
+    getPrototypeOf(){traps++;throw new Error(secret)},
+  });
+  assert.throws(()=>negotiateHostContract(contract(['storage.durable']),{
+    runtime,env:evilProxy,
+  }),error=>error?.code==='EI_HOST_STORAGE_REQUIRED');
+  assert.equal(traps,0,'env Proxy traps must never run');
+  assert.equal(negotiateHostContract(contract(['storage.durable']),{
+    runtime,env:{DATA_DIR:'/host-data'},
+  }).available['storage.durable'],true);
+});
+
+test('an explicitly undefined optional MCP subscribe callback remains supported',async()=>{
+  const mcp={list:()=>[],subscribe:undefined};
+  assert.equal(negotiateHostContract(contract(['mcp.registry']),{
+    runtime,mcp,
+  }).available['mcp.registry'],true);
+  let created=0;
+  const integration=await createEventIntelligence({
+    runtime,mcp,hostContract:contract(['mcp.registry']),
+    createHost:async()=>{
+      created++;
+      return {
+        eventSources:[],runtime:{},
+        async refreshMcpRegistry(){return []},
+        async mcpStatus(){return []},
+        async close(){},
+      };
+    },
+  });
+  assert.equal(created,1);
+  assert.equal(integration.hostContract.available['mcp.registry'],true);
+  await integration.close();
+});
