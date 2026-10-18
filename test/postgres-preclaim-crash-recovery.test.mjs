@@ -58,6 +58,7 @@ integrationTest('independent PG pools recover persisted match from worker loss B
   let poolB;
   let poolC;
   let continueDelivery;
+  let firstRun;
   try {
     const original = new PostgresEventStore({ pool: poolA, scopeId, tablePrefix: prefix });
     await original.init();
@@ -102,8 +103,23 @@ integrationTest('independent PG pools recover persisted match from worker loss B
       workerId: 'post-crash-worker-c', deliverer,
     });
 
-    const firstRun = coordinatorB.deliverMatched(recovered);
-    await started;
+    firstRun = coordinatorB.deliverMatched(recovered);
+    // Distinguish a failed/preempted claim from a slow deliverer immediately.
+    // The original test waited forever if no deliverer invocation occurred.
+    await Promise.race([
+      started,
+      firstRun.then(
+        result => { throw new Error('winner settled before reaching host delivery: ' + result.status); },
+        error => { throw error; },
+      ),
+      new Promise((_, reject) => {
+        const timer = setTimeout(
+          () => reject(new Error('winner did not enter host deliverer within 5 seconds')),
+          5000,
+        );
+        timer.unref?.();
+      }),
+    ]);
     const peerRecord = (await right.listTriggerMatches('preclaim-crash-trigger'))
       .find(record => record.matchId === 'durable-preclaim-match');
     const loser = await coordinatorC.deliverMatched(peerRecord);
@@ -132,6 +148,10 @@ integrationTest('independent PG pools recover persisted match from worker loss B
     }), null);
   } finally {
     continueDelivery?.();
+    // Settle the original winner before dropping live PostgreSQL tables.
+    // Prevent orphan writes/unhandled rejections from masking a failed
+    // arbitration assertion above.
+    if (firstRun) await Promise.allSettled([firstRun]);
     const cleanup = poolC ?? poolB ?? new Pool({ connectionString: url, max: 2 });
     try {
       for (const suffix of ['metadata', 'leases', 'history', 'records', 'counters']) {
