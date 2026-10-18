@@ -423,3 +423,23 @@ test('observability sink readiness never evaluates getters and is lazy',()=>{
     runtime,observability:valid,
   }).available['observability.sink'],true);
 });
+
+
+test('derived-event contract storage is mandatory before starting an embedded host',async()=>{
+  const store=Object.fromEntries(REQUIRED_EVENT_STORE_METHODS.map(name=>
+    [name,async()=>null]));
+  let initialized=0;
+  store.init=async()=>{initialized++};
+  for(const required of [
+    'listDerivedContracts','getDerivedContract','putDerivedContract',
+    'getDerivedEvent','appendDerivedEvent','listDerivedEvents',
+  ]) {
+    const broken={...store};
+    delete broken[required];
+    await assert.rejects(createEventIntelligence({
+      runtime,store:broken,hostContract:contract(['storage.durable']),
+      createHost:async()=>{await broken.init()},
+    }),error=>error.code==='EI_HOST_STORAGE_REQUIRED',required);
+  }
+  assert.equal(initialized,0);
+});
