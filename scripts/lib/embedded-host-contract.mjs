@@ -119,9 +119,9 @@ export function negotiateHostContract(contract, {
     // This is wiring readiness only; it does not execute an evaluator.
     'semantic.evaluate': contract.required.includes('semantic.evaluate') &&
       typeof getHostDataMethod(semanticEvaluator, 'evaluate') === 'function',
-    'observability.sink': typeof observability === 'function' ||
-      Boolean(observability && typeof observability === 'object' &&
-        typeof observability.emit === 'function'),
+    'observability.sink': contract.required.includes('observability.sink') &&
+      (typeof observability === 'function' ||
+        typeof getHostDataMethod(observability, 'emit') === 'function'),
   });
 
   for (const id of contract.required) {
