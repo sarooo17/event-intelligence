@@ -54,3 +54,34 @@ test('async host sink failure remains isolated despite oversized source fields',
     eventName:'M'.repeat(MAX_OBSERVABILITY_INPUT_CHARS+1),
   }),true);
 });
+
+
+test('raw control fields are bounded before trim/lowercase/number parsing',async()=>{
+  const oversized=' '.repeat(MAX_OBSERVABILITY_INPUT_CHARS+1);
+  const events=[];
+  const emit=createObservabilityEmitter(row=>events.push(row));
+  await assert.rejects(emit.emit({
+    event:'ei.good.event'+oversized,
+    attempt:1,
+  }),/input size limit/);
+  await assert.rejects(emit.emit({
+    event:'ei.good.event',
+    level:'INFO'+oversized,
+  }),/unsupported observability level/);
+  assert.equal(events.length,0,'invalid giant control strings cannot reach sink');
+  assert.equal(await emit.emit({
+    event:'ei.test.attempt-oversize',
+    level:'INFO',
+    attempt:oversized+'100000',
+  }),true);
+  assert.equal(events[0].attempt,undefined,
+    'huge numeric-looking attempts must not be trimmed/parsed');
+  assert.equal(events[0].level,'info');
+  assert.equal(await emit.emit({
+    event:'ei.test.valid',
+    level:'WARN',
+    attempt:'  9  ',
+  }),true);
+  assert.equal(events[1].attempt,9);
+  assert.equal(events[1].level,'warn');
+});
