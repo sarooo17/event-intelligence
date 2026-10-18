@@ -14,7 +14,8 @@ microsecond in the prior benchmark was spent inside PostgreSQL.
 ## Conservative optimization
 
 Only definitions that **cannot transition lifecycle on a nonmatching
-event** are prefiltered by `clauseMatches()` before the lifecycle read.
+event** and do **not** use regex predicates are prefiltered by
+`clauseMatches()` before the lifecycle read.
 For a negative clause match, we skip the useless read; for a positive
 clause match, we still read the **current** authoritative lifecycle
 state and run the **original** `lifecycleAllows()` policy before
@@ -25,8 +26,11 @@ completion or maxFirings completion** retain the **original ordering**
 even when the event cannot match: state read, lifecycle check and its
 possible persisted transition/audit run before clause filtering.
 Cooldown-only definitions have no lifecycle mutation from unrelated
-events, so they can be skipped. Paused/deleted/completed matching
-definitions are still stopped by the exact same authoritative state gate.
+events, so they can be skipped **unless they use regex**. Regex predicates
+retain the original **state-first** ordering even for unrelated events:
+paused/deleted/completed definitions may contain costly user-supplied
+regexes, which must not execute before the authoritative state gate.
+Matching definitions are still stopped by the same authoritative check.
 
 This is a **control-flow optimization only**: no new caching of mutable
 owner/state, no tenant/global cross-scope lookup, no runtime-name
@@ -48,6 +52,9 @@ to EI. Source/argument/predicate matching remains the canonical
 - `oneShot` and `maxFirings` states already above their limits still
   transition to `completed` even when clauses do not match.
 - A cooldown-only unrelated definition requires no lifecycle read.
+- Paused regex definitions do **not** evaluate their potentially
+  catastrophic regular expression; reactivating the same definition
+  preserves expected matching semantics.
 
 The changed `src/composite/engine.ts` path also triggers the isolated
 1,000-eligible-definition/16-serial-event PostgreSQL Actions benchmark,
