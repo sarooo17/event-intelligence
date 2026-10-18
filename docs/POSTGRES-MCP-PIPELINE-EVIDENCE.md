@@ -33,7 +33,7 @@ respectively. In each job:
 - The callback is an in-process **fake host** that returns a stable receipt;
   the persisted PostgreSQL status is verified through a *fresh, independent
   connection pool* after the measured phase.
-- Strict per-run upper bounds: 1–64 triggers, 1–64 noise events and 1–N
+- Standard CI profile upper bound: 1–64 triggers. The opt-in scale profile allows up to **1,000 active definitions only with explicit `--events` of 1–64**, preventing accidental 1,000-event quadratic scans. Noise is capped at 64 events and replays at 1–N
   replays, configured only with explicit `EI_PG_PIPELINE_CONFIRM=YES_ISOLATED`.
   Tables are isolated with a random prefix and deleted even on failure.
 
