@@ -8,9 +8,12 @@ import { isProxy } from 'node:util/types';
  * obtain inherited elements. A bounded walk rejects cycles and oversized
  * synthetic input. Normal network JSON passes unchanged semantically.
  */
+const MAX_UNTRUSTED_EVENT_SNAPSHOT_BYTES = 4 * 1024 * 1024;
+
 export function snapshotUntrustedEventData(source: unknown): unknown {
   const seen = new WeakSet<object>();
   let visited = 0;
+  let accountedBytes = 0;
 
   function invalid(reason: string): never {
     const error = new TypeError('Untrusted event data is not safe JSON: ' + reason);
@@ -18,12 +21,58 @@ export function snapshotUntrustedEventData(source: unknown): unknown {
     throw error;
   }
 
+  // Count the UTF-8 size of primitive/key bytes BEFORE copying or hashing.
+  // Brackets, quotes, punctuation are included as a conservative overhead.
+  // This is a post-decode JavaScript snapshot cap, NOT an HTTP/MCP transport
+  // response-size limit or a comprehensive per-tenant ingress rate limit.
+  function account(bytes: number): void {
+    accountedBytes += bytes;
+    if (accountedBytes > MAX_UNTRUSTED_EVENT_SNAPSHOT_BYTES) {
+      invalid('UTF-8 snapshot byte budget exceeded');
+    }
+  }
+
+  // A bounded, allocation-free UTF-8 count. Avoid Node Buffer globals
+  // (this protocol module intentionally has no Node type dependency) and
+  // avoid TextEncoder.encode() allocating an unbounded input-sized buffer.
+  function accountUtf8(value: string, punctuationBytes = 0): void {
+    account(punctuationBytes);
+    for (let i = 0; i < value.length; i++) {
+      const unit = value.charCodeAt(i);
+      if (unit < 0x80) {
+        account(1);
+      } else if (unit < 0x800) {
+        account(2);
+      } else if (unit >= 0xd800 && unit <= 0xdbff &&
+          i + 1 < value.length &&
+          value.charCodeAt(i + 1) >= 0xdc00 &&
+          value.charCodeAt(i + 1) <= 0xdfff) {
+        account(4);
+        i++;
+      } else {
+        // Normal BMP code point, or replacement of an unpaired surrogate.
+        account(3);
+      }
+    }
+  }
+
   function copy(value: unknown, depth: number): unknown {
     if (++visited > 50000 || depth > 64) invalid('resource limit exceeded');
-    if (value === null || typeof value === 'string' ||
-        typeof value === 'boolean') return value;
+    if (value === null) {
+      account(4);
+      return value;
+    }
+    if (typeof value === 'string') {
+      accountUtf8(value, 2);
+      return value;
+    }
+    if (typeof value === 'boolean') {
+      account(value ? 4 : 5);
+      return value;
+    }
     if (typeof value === 'number') {
       if (!Number.isFinite(value)) invalid('non-finite numeric value');
+      account(String(value).length);
       return value;
     }
     if (typeof value !== 'object') invalid('non-JSON value');
@@ -35,6 +84,7 @@ export function snapshotUntrustedEventData(source: unknown): unknown {
     try {
       if (Array.isArray(value)) {
         if (value.length > 50000) invalid('array too large');
+        account(value.length + 2); // separators and brackets
         const result: unknown[] = [];
         // Only indexed entries are semantically part of a JSON array.
         // Reflecting every own property first (getOwnPropertyDescriptors)
@@ -49,11 +99,13 @@ export function snapshotUntrustedEventData(source: unknown): unknown {
         }
         return result;
       }
+      account(2); // object braces
       const result: Record<string, unknown> = {};
       const descriptors = Object.getOwnPropertyDescriptors(value);
       for (const [key, property] of Object.entries(descriptors)) {
         if (!property.enumerable) continue;
         if (!Object.hasOwn(property, 'value')) invalid('accessor property');
+        accountUtf8(key, 4); // key quotes, colon, comma
         // defineProperty cannot accidentally invoke inherited __proto__ or
         // custom setters on Object.prototype.
         Object.defineProperty(result, key, {
