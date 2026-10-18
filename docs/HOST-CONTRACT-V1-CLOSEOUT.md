@@ -26,10 +26,12 @@ capability is rejected before host startup. No implicit permission grants.
 
 ## Stable configuration error matrix
 
-The regression test calls the public facade with invalid configurations and
-checks **both** its stable `EI_HOST_*` code and that the host factory never
-starts. The following are actual configuration checks, not runtime/transport
-health guarantees:
+The new regression matrix checks **pre-start** configuration rejections with
+stable `EI_HOST_*` codes and proves that the injected host factory is **never
+called** for those invalid setups. Other listed codes below are independently
+covered by separate post-start/lifecycle tests; the matrix does **not** claim
+to exercise every row. These are configuration or lifecycle boundaries, not
+remote transport health guarantees:
 
 | Code | Fail-closed condition |
 | --- | --- |
@@ -44,8 +46,14 @@ health guarantees:
 | `EI_HOST_STORAGE_REQUIRED` | Required durable store not configured |
 | `EI_HOST_SHARED_STORE_REQUIRED` | Shared store does not meet the distributed-store capability contract |
 | `EI_HOST_CALLBACK_INVALID` | Invalid optional runtime callback |
-| `EI_HOST_LIFECYCLE_INVALID` | Host startup returns no safe close surface |
-| `EI_HOST_CLOSED` | Lifecycle/registry operation attempted after close fence |
+| `EI_HOST_LIFECYCLE_INVALID` | Host startup returns no safe close surface — **post-creation validation**, not a preflight error |
+| `EI_HOST_CLOSED` | Lifecycle/registry operation attempted after close fence — **post-start shutdown error**, not a preflight error |
+
+The two lifecycle errors are validated in
+`test/embedded-lifecycle-ownership.test.mjs` and
+`test/host-registry-shutdown-contract.test.mjs`, **not** the new no-start
+configuration matrix. An invalid `createHost()` result necessarily means the
+factory was invoked, while `EI_HOST_CLOSED` requires an already-started host.
 
 Source of truth for error behavior: `scripts/embedded-host-kit.mjs`,
 `scripts/lib/embedded-host-contract.mjs`,
