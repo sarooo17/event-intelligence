@@ -72,17 +72,29 @@ end-to-end delivery at several event rates. Attach generated JSON, failures,
 CI artifacts and workload-specific SLO criteria. There is no claim of 100k
 readiness merely because the harness accepts a `100k` flag.
 
-## Manual raw-evidence GitHub Actions runs
+## Explicit real PostgreSQL scale-evidence runs
 
-The **PostgreSQL Scale Evidence (manual)** workflow offers explicit 1k, 10k
-and 100k inputs. It creates a fresh PostgreSQL 16 service, records hardware
+The **PostgreSQL Scale Evidence** workflow offers explicit 1k, 10k
+and 100k manual inputs. A PR which changes the benchmark workflow itself
+also launches the **real 1k profile** with 32 wake operations and
+concurrency=4, against its own isolated PostgreSQL 16 CI database. Its
+hardware and raw JSON result are uploaded as a 90-day artifact. This is a
+bounded evidence-gathering run, *not* a fake JSON parser test or a claim that
+10k/100k have run.
+
+The new PR trigger deliberately watches only the benchmark workflow YAML.
+Ordinary application PRs do not pay for the 1k profile, and neither 10k nor
+100k is scheduled automatically. A PR check that never ran or failed must be
+reported as such; use the exact run ID and downloaded raw artifact before
+making a measurement claim. The benchmark may succeed even while full CEP
+ingest-to-wake SLO or production capacity remains unproven. It creates a fresh PostgreSQL 16 service, records hardware
 characteristics, runs the same isolated benchmark, and uploads JSON results,
 stderr failures and host specifications as a 90-day artifact.
 
-The workflow is `workflow_dispatch` only: it does not run 100k workloads
-automatically on every PR, and its presence does not mean any large profile
-has been executed. Save artifacts externally before their retention expires
-if they are used as release acceptance evidence.
+100k remains **manual opt-in only**. Merely configuring this PR trigger
+does not constitute a measurement: cite completed CI run artifacts, disclose
+runner/PG version and include failures. Save artifacts externally before their
+retention expires if they are used as release acceptance evidence.
 
 
 ## Actual-profile evidence aggregation (issue #47, partial)
