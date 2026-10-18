@@ -83,3 +83,34 @@ The workflow is `workflow_dispatch` only: it does not run 100k workloads
 automatically on every PR, and its presence does not mean any large profile
 has been executed. Save artifacts externally before their retention expires
 if they are used as release acceptance evidence.
+
+
+## Actual-profile evidence aggregation (issue #47, partial)
+
+After completing *real* isolated 1k, 10k and 100k runs, retain all three
+raw `benchmark-result.json` files and `benchmark-host.txt` hardware reports.
+The additive tool consumes only actual completed outputs:
+
+```sh
+node scripts/evidence/postgres-scale-matrix.mjs \
+  1k-benchmark-result.json 10k-benchmark-result.json 100k-benchmark-result.json \
+  > postgres-scale-matrix.json
+```
+
+The script validates exact reported trigger counts, durable list counts,
+nonnegative p50/p95/p99/max metrics, actual wake samples and storage usage.
+Duplicate/malformed or failed runs are rejected, not used as successful
+evidence. Results from different commits or different reported Node/PostgreSQL
+versions are marked `incomplete-provenance`. A missing profile is listed
+explicitly as `incomplete-profiles`. The manual GitHub benchmark workflow
+now captures a **one-profile** report along with each raw result; it cannot
+report the other two profiles as measured merely because its own run passed.
+
+Even `profiles-observed` is **not** production certification:
+`productionSloCertified` remains false. This benchmark measures durable
+registration/list/wake operations, not full provider-to-match latency,
+physical host equivalence, high-cardinality pipeline throughput,
+multiworker chaos, RPO/RTO or production readiness. Hardware logs and
+full raw artifacts must be reviewed separately against agreed SLOs.
+CI unit tests use explicitly synthetic shapes and never substitute for
+running 1k/10k/100k PostgreSQL workloads.

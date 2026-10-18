@@ -1,0 +1,139 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+export const REQUIRED_SCALE_PROFILES = Object.freeze({
+  '1k':1000,'10k':10000,'100k':100000,
+});
+
+function validLatency(value) {
+  return value && Number.isInteger(value.samples) && value.samples>0 &&
+    ['p50Ms','p95Ms','p99Ms','maxMs','meanMs'].every(field=>
+      typeof value[field]==='number' &&
+      Number.isFinite(value[field]) && value[field]>=0) &&
+    value.p50Ms<=value.p95Ms && value.p95Ms<=value.p99Ms &&
+    value.p99Ms<=value.maxMs;
+}
+
+const EXPECTED_RELATIONS = Object.freeze([
+  'metadata','leases','history','records','counters',
+]);
+function validDerivedMetrics(metrics,triggerCount) {
+  const wall=metrics?.register?.wallMs;
+  const throughput=metrics?.register?.triggersPerSecond;
+  const sizes=metrics?.storageBytes;
+  if(!Number.isFinite(wall) || wall<=0 ||
+     !Number.isFinite(throughput) || throughput<=0 ||
+     !sizes || typeof sizes!=='object') return false;
+  const actualRate=triggerCount*1000/wall;
+  if(Math.abs(throughput-actualRate)>1e-8*Math.max(1,actualRate))return false;
+  if(!EXPECTED_RELATIONS.every(key=>
+      Number.isSafeInteger(sizes[key]) && sizes[key]>=0))return false;
+  const sum=EXPECTED_RELATIONS.reduce((total,key)=>total+sizes[key],0);
+  return Number.isSafeInteger(metrics.storageTotalBytes) &&
+    metrics.storageTotalBytes>0 && sum===metrics.storageTotalBytes;
+}
+
+function validateRun(record){
+  if(!record || record.schema!=='event-intelligence.postgres-durable-scale.v1' ||
+     record.status!=='completed' || !Object.hasOwn(REQUIRED_SCALE_PROFILES,record.profile) ||
+     record.triggerCount!==REQUIRED_SCALE_PROFILES[record.profile] ||
+     record.metrics?.listAll?.durableRowsVerified!==record.triggerCount ||
+     !Number.isInteger(record.wakes) || record.wakes<1 ||
+     !validLatency(record.metrics?.register?.latency) ||
+     record.metrics.register.latency.samples!==record.triggerCount ||
+     !validLatency(record.metrics?.listAll?.latency) ||
+     record.metrics.listAll.latency.samples!==3 ||
+     !validLatency(record.metrics?.wakeEnsure) ||
+     record.metrics.wakeEnsure.samples!==record.wakes ||
+     !validLatency(record.metrics?.wakeClaim) ||
+     record.metrics.wakeClaim.samples!==record.wakes ||
+     !validLatency(record.metrics?.wakeComplete) ||
+     record.metrics.wakeComplete.samples!==record.wakes ||
+     !validDerivedMetrics(record.metrics,record.triggerCount) ||
+     typeof record.runtime?.postgresVersion!=='string' ||
+     !record.runtime.postgresVersion.trim() ||
+     typeof record.runtime?.node!=='string' ||
+     !record.runtime.node.trim() ||
+     typeof record.runtime?.platform!=='string' ||
+     !record.runtime.platform.trim() ||
+     typeof record.runtime?.arch!=='string' ||
+     !record.runtime.arch.trim() ||
+     !Number.isInteger(record.concurrency) ||
+     record.concurrency<1 || record.concurrency>16) {
+    const error=new Error('Invalid or incomplete actual PostgreSQL benchmark result');
+    error.code='EI_PG_SCALE_EVIDENCE_INVALID';
+    throw error;
+  }
+  return record;
+}
+
+/**
+ * Aggregates only *actual* successful PG benchmark outputs. It cannot
+ * fabricate missing 1k/10k/100k profiles or infer any production SLO.
+ */
+export function summarizeScaleEvidence(records){
+  if(!Array.isArray(records))throw new TypeError('records must be an array');
+  const observed={};
+  const commits=new Set();
+  for(const raw of records){
+    const row=validateRun(raw);
+    if(observed[row.profile]){
+      const error=new Error('Duplicate profile '+row.profile);
+      error.code='EI_PG_SCALE_EVIDENCE_DUPLICATE';
+      throw error;
+    }
+    observed[row.profile]={
+      triggers:row.triggerCount,
+      wakeCycles:row.wakes,
+      registerP95Ms:row.metrics.register.latency.p95Ms,
+      registerThroughputPerSecond:row.metrics.register.triggersPerSecond,
+      wakeClaimP95Ms:row.metrics.wakeClaim.p95Ms,
+      wakeCompleteP95Ms:row.metrics.wakeComplete.p95Ms,
+      storageTotalBytes:row.metrics.storageTotalBytes,
+      node:row.runtime.node,
+      postgresVersion:row.runtime.postgresVersion,
+      platform:row.runtime.platform,
+      arch:row.runtime.arch,
+      concurrency:row.concurrency,
+      commit:row.runtime.commit??null,
+    };
+    if(row.runtime.commit) commits.add(row.runtime.commit);
+  }
+  const missing=Object.keys(REQUIRED_SCALE_PROFILES)
+    .filter(profile=>!observed[profile]);
+  const provenanceComplete=Object.values(observed).length>0 &&
+    Object.values(observed).every(row=>typeof row.commit==='string' &&
+      /^[0-9a-f]{40}$/.test(row.commit)) && commits.size===1;
+  const environmentsComparable=Object.values(observed).length>0 &&
+    new Set(Object.values(observed).map(row=>
+      [row.node,row.postgresVersion,row.platform,row.arch,
+        row.concurrency].join('|'))).size===1;
+  return Object.freeze({
+    schema:'event-intelligence.postgres-scale-matrix.v1',
+    status:missing.length?'incomplete-profiles':
+      !provenanceComplete || !environmentsComparable
+        ? 'incomplete-provenance':'profiles-observed',
+    observed,missing,
+    provenanceComplete,environmentsComparable,
+    productionSloCertified:false,
+    caveat:'Only durable register/list/wake operations measured; no E2E provider-to-match latency, network chaos, physical CPU/RAM equivalence or automatically inferred production capacity. Hardware logs must be retained alongside raw results.',
+  });
+}
+
+if(process.argv[1] && resolve(process.argv[1])===fileURLToPath(import.meta.url)) {
+  const args=process.argv.slice(2);
+  if(!args.length || args.some(arg=>arg.startsWith('--'))) {
+    console.error('Usage: node scripts/evidence/postgres-scale-matrix.mjs <one or more actual benchmark-result.json files>');
+    process.exitCode=2;
+  } else {
+    try{
+      const data=args.map(file=>JSON.parse(readFileSync(file,'utf8')));
+      process.stdout.write(JSON.stringify(summarizeScaleEvidence(data),null,2)+'\n');
+    }catch(error){
+      // Never render arbitrary DB credentials from untrusted benchmark errors.
+      console.error(error.code??'EI_PG_SCALE_EVIDENCE_INVALID');
+      process.exitCode=1;
+    }
+  }
+}
