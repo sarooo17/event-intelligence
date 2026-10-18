@@ -141,8 +141,8 @@ during initial store setup:
 
 - **JSONL:** per-scope `pattern-v2-signature-contract.json` containing
   `{"component":"pattern_v2_candidate_signature","version":2}`.
-  Empty stores create it with exclusive-create + durable sync. Unmarked
-  existing triggers, match-history, temporal deadlines or semantic-cache state
+  Empty stores prepare a unique fully fsynced temporary file and atomically publish it through exclusive hard-link creation, so concurrent initializers cannot read a partial marker. Unmarked
+  existing triggers, lifecycle state, wake receipts, derived lineage, match-history, temporal deadlines or semantic-cache state
   **fail closed** without modifying original JSONL history.
 - **PostgreSQL:** `<prefix>_metadata` row
   `component='pattern_v2_candidate_signature', version=2` committed under
