@@ -103,6 +103,9 @@ try {
   if (!process.env.POSTGRES_URL) fail('POSTGRES_URL is required');
   const triggers = numberArg('triggers', 8, 1000);
   const sourceCount = numberArg('sources', 1, 32);
+  if (sourceCount > triggers) {
+    fail('--sources cannot exceed --triggers: each named source must have at least one registered definition');
+  }
   // Distinguish eligible active trigger population from sampled events.
   // 1000 eligible definitions scanning 16 events does NOT mean 1000 matches.
   const events = numberArg('events', triggers, triggers);
