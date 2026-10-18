@@ -112,6 +112,30 @@ const querySql = (table) =>
   ' )' +
   ') ORDER BY record_key';
 
+// Investigate whether splitting source and lifecycle branches makes GIN
+// eligible for the source branch. This is *experimental* SQL, not a
+// production implementation proposal; UNION deduplicates the same record.
+const splitUnionSql = (table) =>
+  'SELECT record_key, payload FROM (' +
+  'SELECT record_key, payload FROM ' + table +
+  " WHERE scope_id=$1 AND kind=$2 AND payload->'clauses' @> $3::jsonb" +
+  ' AND EXISTS (' +
+  " SELECT 1 FROM jsonb_array_elements(payload->'clauses') AS clause" +
+  " WHERE clause->>'event' = $4" +
+  " AND (NOT clause ? 'serverId'" +
+  " OR COALESCE(clause->>'serverId', '') = ''" +
+  " OR clause->>'serverId' = $5)" +
+  ' )' +
+  ' UNION ' +
+  'SELECT record_key, payload FROM ' + table +
+  ' WHERE scope_id=$1 AND kind=$2 AND (' +
+  " (payload->'lifecycle'->>'expiresAt' IS NOT NULL)" +
+  " OR (payload->'lifecycle'->>'leaseUntil' IS NOT NULL)" +
+  " OR (payload->'lifecycle'->>'oneShot' = 'true')" +
+  " OR (payload->'lifecycle' ? 'maxFirings')" +
+  ' )' +
+  ') AS candidates ORDER BY record_key';
+
 async function measure(sql, args, iterations) {
   const times = [];
   let lastPlan = null;
@@ -189,6 +213,7 @@ try {
   const baselineSql = 'SELECT record_key, payload FROM ' + store.records +
     ' WHERE scope_id = $1 AND kind = $2 ORDER BY record_key';
   const sql = querySql(store.records);
+  const unionSql = splitUnionSql(store.records);
   const args = [scopeId, 'trigger',
     JSON.stringify([{ event: 'fixture.source.0.changed' }]),
     'fixture.source.0.changed', 'fixture-mcp'];
@@ -198,10 +223,13 @@ try {
   stage = 'before-gin';
   const all = await measure(baselineSql, args.slice(0, 2), samples);
   const before = await measure(sql, args, samples);
+  const unionBefore = await measure(unionSql, args, samples);
   assert.equal(all.returned, triggers + exceptionalDefs.length + 1);
   assert.equal(before.returned, expectedCandidates,
     'candidate query must include matching/wildcard + expiry/completion only');
   assert.ok(before.keys.every(k => all.keys.includes(k)));
+  assert.deepEqual(unionBefore.keys, before.keys,
+    'separate source+lifecycle UNION must be semantically equal');
   assert.ok(!before.keys.some(k => k.endsWith('020001')),
     'wrong-server trigger cannot enter candidate superset');
 
@@ -216,8 +244,11 @@ try {
 
   stage = 'after-gin';
   const after = await measure(sql, args, samples);
+  const unionAfter = await measure(unionSql, args, samples);
   assert.deepEqual(after.keys, before.keys,
     'physical index must not alter candidate output');
+  assert.deepEqual(unionAfter.keys, before.keys,
+    'split UNION must return exactly the same candidates with index');
   const version = await pool.query('SHOW server_version');
   const nodesBefore = before.explain.nodes;
   const nodesAfter = after.explain.nodes;
@@ -244,6 +275,7 @@ try {
       expectedCandidates, beforeCandidates: before.returned,
       afterCandidates: after.returned,
       exactSameKeysPrePostIndex: true,
+      exactSameKeysOriginalAndSplitUnion: true,
       otherTenantExcluded: true,
       wrongServerExcluded: true,
     },
@@ -268,6 +300,22 @@ try {
         executionMs: after.explain.executionMs,
         nodes: nodesAfter,
         usedGinIndex: nodesAfter.some(n => n.indexName === indexName),
+      },
+      experimentalSplitUnionWithoutGin: {
+        count: unionBefore.returned,
+        queryWallMs: unionBefore.queryWallMs,
+        planningMs: unionBefore.explain.planningMs,
+        executionMs: unionBefore.explain.executionMs,
+        nodes: unionBefore.explain.nodes,
+        usedGinIndex: unionBefore.explain.nodes.some(n => n.indexName === indexName),
+      },
+      experimentalSplitUnionWithDisposableGin: {
+        count: unionAfter.returned,
+        queryWallMs: unionAfter.queryWallMs,
+        planningMs: unionAfter.explain.planningMs,
+        executionMs: unionAfter.explain.executionMs,
+        nodes: unionAfter.explain.nodes,
+        usedGinIndex: unionAfter.explain.nodes.some(n => n.indexName === indexName),
       },
     },
     disclosure: {
