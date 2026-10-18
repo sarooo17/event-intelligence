@@ -9,9 +9,13 @@ The timeline contains at most **32 source-occurrence references** and three
 persisted-stage markers (match, wake, receipt). All event, clause, trace, match,
 wake and host receipt identifiers are mapped to truncated SHA-256 references
 rather than copied raw; no payloads, descriptions, provider text, instructions,
-semantic rationale or target context are included. Source entries are sorted
-deterministically by hashed clause and source IDs, independently of the backing
-store's iteration order.
+semantic rationale or target context are included. Source entries are **selected and ordered** deterministically from the
+complete supplied source array by hashed clause, event and trace references,
+independently of backing-store iteration order. The output and retained
+selection memory are bounded to 32 entries, but determining the same subset
+after an arbitrary source-order permutation requires **scanning all source
+records** (linear input cardinality). This is not a bounded-time query for an
+unbounded persisted match; hosts must impose storage/query cardinality limits.
 
 The returned schema also includes `sourceCount`,
 `sourceTruncated`, `sourceLimit` and a deliberate
