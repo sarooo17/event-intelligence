@@ -52,23 +52,31 @@ export const REQUIRED_EVENT_STORE_METHODS = Object.freeze([
  * undefined: no method; null: unsafe/noncallable descriptor or Proxy;
  * function: callable own/prototype DATA method.
  */
-export function getHostDataMethod(receiver, key) {
+/** Return a data-only descriptor, without executing host getters or Proxy
+ * traps. undefined denotes absent, null denotes unsafe, otherwise the data
+ * descriptor (whose value may legitimately be undefined). */
+export function getHostDataDescriptor(receiver, key, ownOnly = false) {
   if (!receiver || typeof receiver !== 'object') return undefined;
   let current = receiver;
   for (let depth = 0; depth < 24 && current !== null; depth++) {
     if (isProxy(current)) return null;
     const descriptor = Object.getOwnPropertyDescriptor(current, key);
     if (descriptor) {
-      return Object.hasOwn(descriptor, 'value') &&
-        typeof descriptor.value === 'function'
-        ? descriptor.value : null;
+      return Object.hasOwn(descriptor, 'value') ? descriptor : null;
     }
+    if (ownOnly) return undefined;
     current = Object.getPrototypeOf(current);
   }
-  // A property absent from a normal receiver/prototype chain is different
-  // from an unsafe accessor or Proxy. This distinction matters for optional
-  // callback surfaces such as mcp.subscribe.
   return current === null ? undefined : null;
+}
+
+export function getHostDataMethod(receiver, key) {
+  const descriptor = getHostDataDescriptor(receiver, key);
+  if (descriptor === null || descriptor === undefined) return descriptor;
+  // Explicit undefined is a valid absent *optional* callback; an accessor,
+  // Proxy or non-undefined noncallable value is not.
+  if (descriptor.value === undefined) return undefined;
+  return typeof descriptor.value === 'function' ? descriptor.value : null;
 }
 
 export function hasRequiredStoreMethods(store) {
