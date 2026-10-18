@@ -201,6 +201,9 @@ jobs:
           const report = JSON.parse(fs.readFileSync('managed-consumer-report.json','utf8'));
           assert.equal(report.schema, 'event-intelligence.packed-managed-consumer.v1');
           assert.equal(report.status, 'pass');
+          assert.equal(report.hostContractVersion, '1');
+          assert.equal(report.hostRequiredCapabilities, 4);
+          assert.equal(report.hostContractRejectedBeforeStart, true);
           assert.equal(report.approvalDeniedBeforeWrite, true);
           assert.equal(report.policyActionsVerified, 10);
           assert.equal(report.reopenedReceiptVerified, true);

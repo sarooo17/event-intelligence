@@ -7,7 +7,12 @@ the consumer with only public `mcp-event-intelligence/embedded` imports.
 
 The fixture tests actual runtime-neutral management actions through EI's
 model-facing portable catalog, using explicit host-owned authorization and
-identity, and an ordinary synthetic event source:
+identity, and an ordinary synthetic event source. It now also negotiates the
+**versioned HostContract v1** *using only the public npm package*, requiring
+MCP registry, durable state location, host-owned wake receipts and owner-scoped
+mutation control. An invalid contract lacking host receipt wiring must be
+rejected **before the host factory starts**; after an actual EI store restart,
+the new integration must negotiate the same immutable capability report:
 
 1. The host denies creation and proves no durable mutation occurred.
 2. Each of **create/pause/resume/update/delete** runs a host-owned denial first;
@@ -21,6 +26,14 @@ identity, and an ordinary synthetic event source:
    append a logical match, nor mutate the previous receipt.
 7. Update changes a trigger condition, proving old threshold no longer fires;
    the new threshold does, and delete prevents further delivery.
+
+The Clean-room Smoke gate now asserts machine-readable report fields
+`hostContractVersion: '1'`, `hostRequiredCapabilities: 4` and
+`hostContractRejectedBeforeStart: true` alongside the existing mutation,
+replay and receipt assertions. The `HostContract` result demonstrates only
+configured host-owned capability wiring; receipt replay and mutation denial
+continue to be validated by the actual runnable consumer behavior, not
+inferred from the successful handshake.
 
 The code uses **no EI repository relative import, model SDK, provider secrets
 or network transport**, and emits machine-readable

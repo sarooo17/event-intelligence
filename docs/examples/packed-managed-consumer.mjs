@@ -25,7 +25,11 @@ const policyRequests = [];
 let starts = 0;
 let integration;
 
+const requiredHostCapabilities = [
+  'mcp.registry','storage.durable','wake.receipts','tooling.owner-scoped',
+];
 const options = {
+  hostContract: { version:'1', required:requiredHostCapabilities },
   dataDir: dir, env,
   mcp: { list: () => [] },
   runtime: {
@@ -118,10 +122,36 @@ const input = (threshold, extra = {}) => ({
 async function start() {
   integration = await createEventIntelligence(options);
   starts++;
+  assert.equal(integration.hostContract.schema,'event-intelligence.host-contract.v1');
+  assert.equal(integration.hostContract.version,'1');
+  assert.equal(integration.hostContract.readiness,'configuration-validated');
+  assert.deepEqual(integration.hostContract.required,requiredHostCapabilities);
+  for (const id of requiredHostCapabilities) {
+    assert.equal(integration.hostContract.available[id],true,id);
+  }
+  assert.equal(Object.isFrozen(integration.hostContract),true,
+    'the top-level packed negotiation report must be immutable on every start');
+  assert.equal(Object.isFrozen(integration.hostContract.required),true,
+    'the packed required-capability list must be immutable on every start');
+  assert.equal(Object.isFrozen(integration.hostContract.available),true);
   assert.equal(integration.toolCatalog.all.length, 8);
 }
 
 try {
+  // A malformed/insufficient requirement must be rejected by the packed
+  // public facade BEFORE creating a live host, MCP connection or store.
+  let rejectedHostStarts=0;
+  await assert.rejects(createEventIntelligence({
+    hostContract:{ version:'1',required:['wake.receipts'] },
+    runtime:{ deliver:()=>({runtimeReceiptId:'unreached'}) },
+    createHost:async()=>{
+      rejectedHostStarts++;
+      throw new Error('invalid HostContract unexpectedly started EI');
+    },
+  }),error=>error?.code==='EI_HOST_CAPABILITY_UNAVAILABLE');
+  assert.equal(rejectedHostStarts,0,
+    'packed HostContract must fail before host startup side effects');
+
   await start();
   await integration.host.triggerControl.registerEventSource({
     sourceId: 'consumer:order',
@@ -231,6 +261,9 @@ try {
   console.log(JSON.stringify({
     schema: 'event-intelligence.packed-managed-consumer.v1',
     status: 'pass',
+    hostContractVersion:'1',
+    hostRequiredCapabilities:requiredHostCapabilities.length,
+    hostContractRejectedBeforeStart:true,
     approvalDeniedBeforeWrite: true,
     policyActionsVerified: policyRequests.length,
     reopenedReceiptVerified: true,
