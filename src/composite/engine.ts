@@ -143,6 +143,32 @@ export class CompositeTriggerEngine {
     const results: CompositeIngestResult[] = [];
 
     for (const definition of await this.store.listTriggers()) {
+      // Expiry/lease expiry and max-fire completion are lifecycle
+      // transitions with durable side effects even for unrelated events.
+      // Such definitions MUST still read their current state and run the
+      // lifecycle gate before testing clauses, as they did previously.
+      //
+      // For definitions without a possible nonmatching transition, a
+      // nonmatching event cannot affect persisted lifecycle or matching
+      // state. Filter those synchronously first, avoiding one PostgreSQL
+      // getTriggerState() round trip per unrelated definition. Matching
+      // definitions still fetch the current state and pass the exact same
+      // lifecycle/authorization gate; no state is cached across events.
+      const lifecycle = definition.lifecycle;
+      const requiresUnmatchedLifecycleCheck = Boolean(
+        lifecycle?.expiresAt ||
+        lifecycle?.leaseUntil ||
+        lifecycle?.oneShot ||
+        lifecycle?.maxFirings !== undefined
+      );
+      let matchingClauses: TriggerClause[] | null = null;
+      if (!requiresUnmatchedLifecycleCheck) {
+        matchingClauses = definition.clauses.filter((clause) =>
+          clauseMatches(clause, event),
+        );
+        if (matchingClauses.length === 0) continue;
+      }
+
       const triggerState = this.store.getTriggerState
         ? await this.store.getTriggerState(
           definition.triggerId,
@@ -153,9 +179,11 @@ export class CompositeTriggerEngine {
         continue;
       }
 
-      const matchingClauses = definition.clauses.filter((clause) =>
-        clauseMatches(clause, event),
-      );
+      if (matchingClauses === null) {
+        matchingClauses = definition.clauses.filter((clause) =>
+          clauseMatches(clause, event),
+        );
+      }
       if (matchingClauses.length === 0) continue;
 
       const replayed = (await this.store
