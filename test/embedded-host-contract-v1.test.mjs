@@ -370,3 +370,56 @@ test('semantic evaluator accessors and proxies are not inspected outside require
   }),e=>e.code==='EI_HOST_CAPABILITY_UNAVAILABLE');
   assert.equal(invoked,0,'Proxy-backed evaluator cannot attest capability');
 });
+
+
+test('temporal scheduler methods are required for durable store before init',async()=>{
+  let initCalls=0;
+  const complete=Object.fromEntries(REQUIRED_EVENT_STORE_METHODS.map(name=>
+    [name,async()=>null]));
+  const incomplete={...complete,
+    init:async()=>{initCalls++;},
+  };
+  delete incomplete.listDueTemporalDeadlines;
+  let factoryCalls=0;
+  await assert.rejects(createEventIntelligence({
+    runtime,store:incomplete,
+    hostContract:contract(['storage.durable']),
+    createHost:async()=>{factoryCalls++;await incomplete.init();},
+  }),error=>error?.code==='EI_HOST_STORAGE_REQUIRED');
+  assert.equal(factoryCalls,0);
+  assert.equal(initCalls,0);
+  assert.ok(REQUIRED_EVENT_STORE_METHODS.includes('getTemporalDeadline'));
+  assert.ok(REQUIRED_EVENT_STORE_METHODS.includes('setTemporalDeadlineStatus'));
+  assert.ok(REQUIRED_EVENT_STORE_METHODS.includes('listDueTemporalDeadlines'));
+});
+
+test('observability sink readiness never evaluates getters and is lazy',()=>{
+  let getterCalls=0;
+  const sink={};
+  Object.defineProperty(sink,'emit',{
+    get(){getterCalls++;throw Error('host-private-observability-secret');},
+  });
+  const ready=negotiateHostContract(contract(['mcp.registry']),{
+    mcp:{list:()=>[]},runtime,observability:sink,
+  });
+  assert.equal(ready.available['mcp.registry'],true);
+  assert.equal(ready.available['observability.sink'],false);
+  assert.equal(getterCalls,0);
+  assert.throws(()=>negotiateHostContract(contract(['observability.sink']),{
+    runtime,observability:sink,
+  }),error=>error.code==='EI_HOST_CAPABILITY_UNAVAILABLE' &&
+    !error.message.includes('host-private-observability-secret'));
+  assert.equal(getterCalls,0);
+  const proxy=new Proxy({emit:()=>{}},{
+    get(){getterCalls++;throw Error('host-private-observability-secret');},
+    getOwnPropertyDescriptor(){getterCalls++;throw Error('host-private-observability-secret');},
+  });
+  assert.throws(()=>negotiateHostContract(contract(['observability.sink']),{
+    runtime,observability:proxy,
+  }),error=>error.code==='EI_HOST_CAPABILITY_UNAVAILABLE');
+  assert.equal(getterCalls,0);
+  const valid={emit(){}};
+  assert.equal(negotiateHostContract(contract(['observability.sink']),{
+    runtime,observability:valid,
+  }).available['observability.sink'],true);
+});
