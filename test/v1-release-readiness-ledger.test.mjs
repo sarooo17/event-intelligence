@@ -69,3 +69,34 @@ test('documented verification structure alone never bypasses other blockers',()=
   assert.ok(report.blocked.includes('pg-scale-measured'));
   assert.equal(report.autoPublish,false);
 });
+
+
+test('criteria cannot attach security evidence to integration issue or vice versa',()=>{
+  const altered=clone(ledger);
+  altered.criteria.find(x=>x.id==='security-independent-review').issue=42;
+  altered.criteria.find(x=>x.id==='embedded-host-independent').issue=45;
+  const report=evaluateV1Readiness(altered,'1.0.0');
+  assert.equal(report.status,'blocked');
+  assert.ok(report.errors.some(x=>x.includes('security-independent-review')));
+  assert.ok(report.errors.some(x=>x.includes('embedded-host-independent')));
+});
+
+test('audit date must be a real past or present UTC calendar day',()=>{
+  for(const invalid of [
+    '9999-99-99','2026-02-30','2030-01-01',
+    '2026-13-01','2026-00-01','2026-10-18T00:00:00Z',
+  ]) {
+    const altered=clone(ledger);
+    const row=altered.criteria.find(x=>x.id==='embedded-host-independent');
+    row.status='verified';
+    row.evidence=['https://github.com/sarooo17/event-intelligence/pull/188'];
+    row.verification={
+      reviewer:'independent-reviewer',
+      procedure:'Verify third-party host conformance',
+      date:invalid,
+    };
+    const report=evaluateV1Readiness(altered,'1.0.0');
+    assert.equal(report.status,'blocked',invalid);
+    assert.ok(report.errors.some(x=>x.includes('audit evidence')),invalid);
+  }
+});
