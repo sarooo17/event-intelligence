@@ -59,6 +59,13 @@ versioning and rollback) rather than silently added at startup.
   pause and expiry behavior. All scoped data is fixture isolated.
 - Existing generic JSONL and custom-host tests exercise the unmodified
   `listTriggers()` fallback, preserving compatibility.
+- The benchmark reports `totalRegisteredActiveDefinitions` separately
+  from **actual per-event candidate projection sizes** (sample count,
+  min/max/mean), recorded around the exact database projection call
+  during measured matching events. Under this fixture shape the 1-event
+  profile returns about 1,000 definitions per event, while the
+  20-event-name profile returns about 50; these are *observed candidate
+  counts*, not proof of a physical indexed lookup.
 - `postgres-active-1000-evidence.yml` now runs **two independent**
   real PostgreSQL16 jobs: 1,000 eligible single-event triggers and
   16 serial samples, in either **1 event name** (baseline) or **20 event
