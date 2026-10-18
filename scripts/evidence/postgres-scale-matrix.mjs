@@ -22,14 +22,27 @@ function validateRun(record){
      record.metrics?.listAll?.durableRowsVerified!==record.triggerCount ||
      !Number.isInteger(record.wakes) || record.wakes<1 ||
      !validLatency(record.metrics?.register?.latency) ||
+     record.metrics.register.latency.samples!==record.triggerCount ||
+     !validLatency(record.metrics?.listAll?.latency) ||
+     record.metrics.listAll.latency.samples!==3 ||
+     !validLatency(record.metrics?.wakeEnsure) ||
+     record.metrics.wakeEnsure.samples!==record.wakes ||
      !validLatency(record.metrics?.wakeClaim) ||
+     record.metrics.wakeClaim.samples!==record.wakes ||
      !validLatency(record.metrics?.wakeComplete) ||
+     record.metrics.wakeComplete.samples!==record.wakes ||
      !Number.isFinite(record.metrics?.storageTotalBytes) ||
      record.metrics.storageTotalBytes<=0 ||
      !Number.isFinite(record.metrics?.register?.triggersPerSecond) ||
      record.metrics.register.triggersPerSecond<=0 ||
      typeof record.runtime?.postgresVersion!=='string' ||
-     typeof record.runtime?.node!=='string') {
+     typeof record.runtime?.node!=='string' ||
+     typeof record.runtime?.platform!=='string' ||
+     !record.runtime.platform.trim() ||
+     typeof record.runtime?.arch!=='string' ||
+     !record.runtime.arch.trim() ||
+     !Number.isInteger(record.concurrency) ||
+     record.concurrency<1 || record.concurrency>16) {
     const error=new Error('Invalid or incomplete actual PostgreSQL benchmark result');
     error.code='EI_PG_SCALE_EVIDENCE_INVALID';
     throw error;
@@ -62,6 +75,9 @@ export function summarizeScaleEvidence(records){
       storageTotalBytes:row.metrics.storageTotalBytes,
       node:row.runtime.node,
       postgresVersion:row.runtime.postgresVersion,
+      platform:row.runtime.platform,
+      arch:row.runtime.arch,
+      concurrency:row.concurrency,
       commit:row.runtime.commit??null,
     };
     if(row.runtime.commit) commits.add(row.runtime.commit);
@@ -73,7 +89,8 @@ export function summarizeScaleEvidence(records){
       /^[0-9a-f]{40}$/.test(row.commit)) && commits.size===1;
   const environmentsComparable=Object.values(observed).length>0 &&
     new Set(Object.values(observed).map(row=>
-      row.node+'|'+row.postgresVersion)).size===1;
+      [row.node,row.postgresVersion,row.platform,row.arch,
+        row.concurrency].join('|'))).size===1;
   return Object.freeze({
     schema:'event-intelligence.postgres-scale-matrix.v1',
     status:missing.length?'incomplete-profiles':
