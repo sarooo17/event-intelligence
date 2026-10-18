@@ -205,7 +205,7 @@ export class PersistentEventStore {
     // Check BEFORE hydrating candidates, starting schedulers or mutating state.
     await assertJsonlPatternV2SignatureContract(
       this.dataDir,
-      triggers.length > 0 || triggerMatches.length > 0 ||
+      triggers.length > 0 || triggerStates.length > 0 || triggerMatches.length > 0 ||
         temporalDeadlines.length > 0 || semanticDecisionCache.length > 0 ||
         wakes.length > 0 || wakeDeliveries.length > 0 ||
         derivedEvents.length > 0,
