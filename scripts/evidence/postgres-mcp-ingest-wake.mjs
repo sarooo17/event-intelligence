@@ -46,13 +46,18 @@ function stats(numbers) {
     maxMs: sorted.at(-1),
   };
 }
-function definition(slot) {
+function eventNameForSlot(slot, sourceCount) {
+  return sourceCount === 1
+    ? 'pipeline.fixture.changed'
+    : 'pipeline.fixture.changed.' + (slot % sourceCount);
+}
+function definition(slot, sourceCount = 1) {
   return {
     triggerId: 'pipeline-slot-' + slot,
     version: '1',
     clauses: [{
       id: 'changed',
-      event: 'pipeline.fixture.changed',
+      event: eventNameForSlot(slot, sourceCount),
       arguments: {},
       where: [{ path: 'slot', op: 'eq', value: slot }],
     }],
@@ -68,10 +73,10 @@ function definition(slot) {
     },
   };
 }
-function occurrence(index, slot, epoch) {
+function occurrence(index, slot, epoch, sourceCount = 1) {
   return {
     eventId: 'pipeline-source-event-' + index,
-    name: 'pipeline.fixture.changed',
+    name: eventNameForSlot(slot, sourceCount),
     timestamp: new Date(epoch + index).toISOString(),
     data: { slot, value: index, correlation: 'partition-' + slot },
   };
@@ -97,6 +102,7 @@ try {
   }
   if (!process.env.POSTGRES_URL) fail('POSTGRES_URL is required');
   const triggers = numberArg('triggers', 8, 1000);
+  const sourceCount = numberArg('sources', 1, 32);
   // Distinguish eligible active trigger population from sampled events.
   // 1000 eligible definitions scanning 16 events does NOT mean 1000 matches.
   const events = numberArg('events', triggers, triggers);
@@ -121,7 +127,7 @@ try {
   const store = new PostgresEventStore({ pool, scopeId, tablePrefix: prefix });
   await store.init();
   const engine = new CompositeTriggerEngine(store);
-  for (let i = 0; i < triggers; i++) await engine.register(definition(i));
+  for (let i = 0; i < triggers; i++) await engine.register(definition(i, sourceCount));
 
   const measurements = { ingestToMatch: [], matchToWake: [], ingestToWake: [] };
   const hostReceipts = new Map();
@@ -168,7 +174,7 @@ try {
     const begin = performance.now();
     matchedAt = null;
     const result = await consumer.ingestMcpOccurrence({
-      event: occurrence(i, slotFor(i), baseEpoch),
+      event: occurrence(i, slotFor(i), baseEpoch, sourceCount),
       serverId: 'synthetic-mcp-source',
       provider: 'benchmark-fixture',
       traceId: 'pipeline-trace-' + i,
@@ -206,7 +212,7 @@ try {
 
   stage = 'noise-and-replay';
   for (let i = 0; i < noise; i++) {
-    const event = occurrence(triggers + i, -1, baseEpoch);
+    const event = occurrence(triggers + i, -1, baseEpoch, sourceCount);
     const result = await consumer.ingestMcpOccurrence({
       event, serverId: 'synthetic-mcp-source',
       provider: 'benchmark-fixture', traceId: 'noise-' + i,
@@ -216,7 +222,7 @@ try {
   }
   for (let i = 0; i < replays; i++) {
     const result = await consumer.ingestMcpOccurrence({
-      event: occurrence(i, slotFor(i), baseEpoch),
+      event: occurrence(i, slotFor(i), baseEpoch, sourceCount),
       serverId: 'synthetic-mcp-source',
       provider: 'benchmark-fixture', traceId: 'pipeline-trace-' + i,
     });
@@ -260,9 +266,10 @@ try {
     },
     workload: {
       triggers, activeEligibleTriggerDefinitions: triggers,
+      distinctEventNames: sourceCount,
       matchingMcpOccurrences: events,
       distinctMatchedTriggerDefinitions: matched.size,
-      selection: 'evenly-spaced unique slots across entire registered population',
+      selection: 'evenly-spaced unique slots across entire registered population; event names distributed by slot modulo sources',
       noiseMcpOccurrences: noise,
       replayedMcpOccurrences: replays, scopeCount: 1, concurrency: 1,
       source: 'in-process synthetic MCP occurrence',
