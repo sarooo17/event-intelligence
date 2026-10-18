@@ -128,3 +128,61 @@ authority. Headless embeddings can omit model-facing tooling.
 This is **an unreleased breaking change** only: no npm version has been bumped,
 and downstream locked consumers stay unchanged until they opt into a new EI
 version. It does not change persisted-state schemas.
+
+## Candidate signature/semantic identity version guard — #50 (unreleased)
+
+**Important distinction:** Pattern AST wire version remains `2` and the
+PostgreSQL physical layout remains `1`. Nevertheless, the latest Pattern v2
+candidate/physical-source identity algorithm changes persisted candidate
+signatures, derived match IDs and negative deadline condition IDs. **A schema
+version check alone is insufficient.** This new pre-v1 candidate introduces a
+distinct immutable **Pattern v2 signature contract marker, version 2**, written
+during initial store setup:
+
+- **JSONL:** per-scope `pattern-v2-signature-contract.json` containing
+  `{"component":"pattern_v2_candidate_signature","version":2}`.
+  Empty stores create it with exclusive-create + durable sync. Unmarked
+  existing triggers, match-history, temporal deadlines or semantic-cache state
+  **fail closed** without modifying original JSONL history.
+- **PostgreSQL:** `<prefix>_metadata` row
+  `component='pattern_v2_candidate_signature', version=2` committed under
+  the existing database-wide schema advisory transaction lock. The check
+  covers all scopes, trigger/match state, deadlines, semantic decisions and
+  match history. An unmarked populated store or unsupported marker version
+  aborts initialization and rolls back the transaction.
+- Failure code: `EVENT_INTELLIGENCE_PATTERN_V2_SIGNATURE_INCOMPATIBLE`;
+  the exception contains no event payload, tenant ID, credentials or
+  connection URL.
+- Existing stores created by the new build have the marker from their first
+  clean initialization, before inserting any Pattern v2 state. A restart
+  preserves the original triggers/receipts unchanged. A missing marker must
+  **never** be reconstructed by guessing which code version wrote old data.
+
+**Operator-controlled reset/replay is a separate action.** On the failure:
+1. Stop **all old and new workers** and disable remote delivery; old binaries
+   cannot be prevented from writing simply by introducing a new marker.
+2. Snapshot all scoped JSONL files or take and **verify** a PostgreSQL
+   `pg_dump/pg_restore` backup, including `_metadata` and receipt/audit
+   tables, with a separately accessible copy.
+3. Export trigger/owner definitions and source cursors according to the host
+   data-loss policy; separately reconcile pending host Turn/Work receipts.
+4. **Deliberately** reset or restore an **empty isolated** EI state store,
+   preserving the backup, then start the new candidate and verify the marker.
+   Recreate triggers and replay original source events only from an operator-
+   verified authoritative source; do not blindly reinsert old candidate IDs,
+   old deadline IDs, old semantic-cache keys or signed wake receipts.
+5. Verify scope/owner isolation and host idempotency against restored source
+   gaps before re-enabling workers and delivery. If an authoritative replay
+   or pending host receipt reconciliation is impossible, abort the upgrade.
+6. Downgrade means stopping all workers and restoring the **old complete
+   snapshot** with its matching old binary, not editing this marker by hand.
+
+**Limitations:** This is a **first fail-closed storage guard**, not a fully
+automated migration, mixed-version fencing protocol or proven complete
+production restore drill. Multi-process JSONL use is not safe. A custom store
+provided by a third-party host must enforce an equivalent semantic marker
+before opening old Pattern state; this change does not magically certify
+unknown external store implementations. The test suite includes JSONL
+reopen/legacy marker corruption and PG16 wrong/missing marker rollback;
+a full backup-reset-replay operator exercise remains a separate #50 release
+acceptance item. No npm release or downstream consumer upgrade is performed.
