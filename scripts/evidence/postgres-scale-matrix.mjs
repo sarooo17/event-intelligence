@@ -15,6 +15,25 @@ function validLatency(value) {
     value.p99Ms<=value.maxMs;
 }
 
+const EXPECTED_RELATIONS = Object.freeze([
+  'metadata','leases','history','records','counters',
+]);
+function validDerivedMetrics(metrics,triggerCount) {
+  const wall=metrics?.register?.wallMs;
+  const throughput=metrics?.register?.triggersPerSecond;
+  const sizes=metrics?.storageBytes;
+  if(!Number.isFinite(wall) || wall<=0 ||
+     !Number.isFinite(throughput) || throughput<=0 ||
+     !sizes || typeof sizes!=='object') return false;
+  const actualRate=triggerCount*1000/wall;
+  if(Math.abs(throughput-actualRate)>1e-8*Math.max(1,actualRate))return false;
+  if(!EXPECTED_RELATIONS.every(key=>
+      Number.isSafeInteger(sizes[key]) && sizes[key]>=0))return false;
+  const sum=EXPECTED_RELATIONS.reduce((total,key)=>total+sizes[key],0);
+  return Number.isSafeInteger(metrics.storageTotalBytes) &&
+    metrics.storageTotalBytes>0 && sum===metrics.storageTotalBytes;
+}
+
 function validateRun(record){
   if(!record || record.schema!=='event-intelligence.postgres-durable-scale.v1' ||
      record.status!=='completed' || !Object.hasOwn(REQUIRED_SCALE_PROFILES,record.profile) ||
@@ -31,12 +50,11 @@ function validateRun(record){
      record.metrics.wakeClaim.samples!==record.wakes ||
      !validLatency(record.metrics?.wakeComplete) ||
      record.metrics.wakeComplete.samples!==record.wakes ||
-     !Number.isFinite(record.metrics?.storageTotalBytes) ||
-     record.metrics.storageTotalBytes<=0 ||
-     !Number.isFinite(record.metrics?.register?.triggersPerSecond) ||
-     record.metrics.register.triggersPerSecond<=0 ||
+     !validDerivedMetrics(record.metrics,record.triggerCount) ||
      typeof record.runtime?.postgresVersion!=='string' ||
+     !record.runtime.postgresVersion.trim() ||
      typeof record.runtime?.node!=='string' ||
+     !record.runtime.node.trim() ||
      typeof record.runtime?.platform!=='string' ||
      !record.runtime.platform.trim() ||
      typeof record.runtime?.arch!=='string' ||
