@@ -28,7 +28,7 @@ test('causal timeline is fixed-cost, stable across reload/reorder and payload fr
   };
   const a=createCausalTimeline({match,wake});
   const b=createCausalTimeline({
-    match:{...match,sourceEvents:[...match.sourceEvents.slice(0,32)].reverse()},
+    match:{...match,sourceEvents:[...match.sourceEvents].reverse()},
     wake:{...wake},
   });
   assert.equal(a.contract,'ei.causal-timeline.v1');
@@ -109,4 +109,24 @@ test('inspector includes the same versioned ref-only timeline after independent 
   assert.deepEqual(first.causalTimeline,second.causalTimeline);
   assert.equal(first.causalTimeline.entries.at(-1).stage,'host_receipt_recorded');
   assert.doesNotMatch(JSON.stringify(first.causalTimeline),/PRIVATE_PAYLOAD|host-receipt/);
+});
+
+
+test('revoked source array proxy is safely ignored without throwing',()=>{
+  const {proxy,revoke}=Proxy.revocable([{sourceEventId:'sensitive'}],{});
+  revoke();
+  const report=createCausalTimeline({match:{matchId:'m-1',sourceEvents:proxy}});
+  assert.equal(report.sourceCount,0);
+  assert.equal(report.sourceTruncated,false);
+  assert.deepEqual(report.entries.map(x=>x.stage),['match_recorded']);
+});
+
+test('queued wake state is faithfully represented without inventing a receipt',()=>{
+  const report=createCausalTimeline({
+    match:fixture(1),
+    wake:{wakeId:'pending-wake',status:'queued',createdAt:occurredAt},
+  });
+  const wake=report.entries.find(x=>x.stage==='wake_recorded');
+  assert.equal(wake.status,'queued');
+  assert.ok(!report.entries.some(x=>x.stage==='host_receipt_recorded'));
 });
