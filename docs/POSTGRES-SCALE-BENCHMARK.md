@@ -130,3 +130,23 @@ multiworker chaos, RPO/RTO or production readiness. Hardware logs and
 full raw artifacts must be reviewed separately against agreed SLOs.
 CI unit tests use explicitly synthetic shapes and never substitute for
 running 1k/10k/100k PostgreSQL workloads.
+
+## Full-matrix CI artifact for actual PR benchmark runs
+
+The same benchmark-only PR workflow has a separate `aggregate-actual-profiles`
+job. It downloads the **raw results of its own run ID**, one per actual 1k,
+10k and 100k Postgres job, and runs the existing fail-closed
+`postgres-scale-matrix.mjs` validator across all three records. The aggregate
+job runs after the profile jobs **even when one failed**, so missing raw files
+or invalid/failed profile data fail its validation instead of being silently
+replaced with synthetic data.
+
+Only `status: profiles-observed`, no missing profiles, matching reported
+Node/PostgreSQL/platform/arch/concurrency versions, a single test checkout
+commit, and `productionSloCertified: false` are accepted. The machine-
+readable `actual-postgres-scale-matrix.json` is archived for 90 days under
+`ei-postgres-scale-matrix-<run_id>`. A pass certifies only that all three
+**store-operation benchmarks were actually observed and comparable by the
+stated fields**; it does **not** certify runner hardware equivalence, provider
+traffic, CEP matching throughput or a production SLO. Hardware logs remain in
+each underlying profile artifact.

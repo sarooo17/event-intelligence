@@ -93,3 +93,44 @@ jobs:
             benchmark-host.txt
           if-no-files-found: warn
           retention-days: 90
+
+  aggregate:
+    name: aggregate-actual-profiles
+    # Run even when one benchmark fails; missing/invalid profiles must be
+    # reported as failures, never replaced with synthetic zero values.
+    if: ${{ always() && github.event_name == 'pull_request' }}
+    needs: benchmark
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Retrieve each actual profile artifact
+        uses: actions/download-artifact@v4
+        with:
+          pattern: ei-postgres-scale-*-${{ github.run_id }}
+          path: raw-profiles
+          merge-multiple: false
+      - name: Generate complete matrix or parseable failure evidence
+        # Even if artifact download fails, publish a structured failed
+        # report describing missing files instead of an empty JSON artifact.
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/evidence/postgres-scale-matrix-report.mjs \
+            actual-postgres-scale-matrix.json \
+            "raw-profiles/ei-postgres-scale-1k-${GITHUB_RUN_ID}/benchmark-result.json" \
+            "raw-profiles/ei-postgres-scale-10k-${GITHUB_RUN_ID}/benchmark-result.json" \
+            "raw-profiles/ei-postgres-scale-100k-${GITHUB_RUN_ID}/benchmark-result.json"
+          cat actual-postgres-scale-matrix.json
+      - name: Archive consolidated matrix report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ei-postgres-scale-matrix-${{ github.run_id }}
+          path: actual-postgres-scale-matrix.json
+          if-no-files-found: warn
+          retention-days: 90
