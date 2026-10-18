@@ -19,6 +19,31 @@ export const V1_OPTIONAL_CRITERIA = Object.freeze([
   'semantic-triage',
 ]);
 
+// Acceptance ownership is part of the v1 contract; an otherwise valid
+// evidence URL for #42 must not silently certify a #45 security requirement.
+export const V1_CRITERION_ISSUES = Object.freeze({
+  'embedded-host-independent':42,
+  'host-contract-and-package':42,
+  'security-independent-review':45,
+  'security-revocation-and-tenant':45,
+  'pg-retention-audit':47,
+  'pg-chaos-recovery':47,
+  'pg-scale-measured':47,
+  'stored-state-upgrade':50,
+  'packed-v1-and-breaking-notes':50,
+  'downstream-pin-policy':50,
+  'full-explainability':48,
+  'semantic-triage':49,
+});
+
+function validSignoffDate(date) {
+  if(typeof date!=='string' || !/^\\d{4}-\\d{2}-\\d{2}$/.test(date)) return false;
+  const timestamp=Date.parse(date+'T00:00:00.000Z');
+  return Number.isFinite(timestamp) &&
+    new Date(timestamp).toISOString().slice(0,10)===date &&
+    date<=new Date().toISOString().slice(0,10);
+}
+
 /**
  * Evidence ledger checker, not a substitute for independent reviewer
  * judgments. A ledger "verified" line must have a concrete evidence URL and
@@ -46,7 +71,7 @@ export function evaluateV1Readiness(ledger, packageVersion) {
     }
     seen.add(row.id);
     if(row.required!==expected.get(row.id) ||
-      !Number.isInteger(row.issue) || ![42,45,47,48,49,50].includes(row.issue) ||
+      row.issue !== V1_CRITERION_ISSUES[row.id] ||
       !['blocked','verified'].includes(row.status) ||
       typeof row.note!=='string' || !row.note.trim() ||
       !Array.isArray(row.evidence)) {
@@ -62,7 +87,7 @@ export function evaluateV1Readiness(ledger, packageVersion) {
          !row.verification.reviewer.trim() ||
          typeof row.verification.procedure!=='string' ||
          !row.verification.procedure.trim() ||
-         !/^\d{4}-\d\d-\d\d$/.test(row.verification.date)) {
+         !validSignoffDate(row.verification.date)) {
         errors.push('Verified criterion lacks independent/manual audit evidence: '+row.id);
       }
     }
