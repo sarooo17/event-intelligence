@@ -70,6 +70,23 @@ test('JSONL unmarked/unknown signature refuses existing Pattern v2 data without 
   }
 });
 
+test('JSONL orphan wake record cannot be silently adopted', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'ei-v2-contract-wake-only-'));
+  try {
+    await writeFile(path.join(dir, 'wake-deliveries.jsonl'),
+      JSON.stringify({
+        wakeId: 'legacy-orphan', triggerId: 'deleted',
+        matchId: 'old-match', runtime: 'host',
+        status: 'delivered', runtimeReceiptId: 'old-receipt',
+      }) + '\\n');
+    await assert.rejects(new PersistentEventStore(dir).init(), incompatible);
+    await assert.rejects(readFile(path.join(dir, PATTERN_V2_SIGNATURE_FILE)),
+      { code: 'ENOENT' });
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('JSONL empty missing marker may adopt; orphan negative deadlines must not', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'ei-v2-contract-orphan-'));
   try {
