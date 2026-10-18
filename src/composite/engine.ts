@@ -142,7 +142,14 @@ export class CompositeTriggerEngine {
 
     const results: CompositeIngestResult[] = [];
 
-    for (const definition of await this.store.listTriggers()) {
+    const definitions = this.store.listTriggerCandidatesForEvent
+      ? await this.store.listTriggerCandidatesForEvent({
+        name: event.name,
+        ...(event.serverId ? { serverId: event.serverId } : {}),
+      })
+      : await this.store.listTriggers();
+
+    for (const definition of definitions) {
       // Expiry/lease expiry and max-fire completion are lifecycle
       // transitions with durable side effects even for unrelated events.
       // Such definitions MUST still read their current state and run the

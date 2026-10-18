@@ -9,6 +9,10 @@ on:
       - "src/composite/engine.ts"
       - "src/composite/runtimeSupport.ts"
       - "test/composite-unmatched-lifecycle-prefilter.test.mjs"
+      - "scripts/lib/postgres-event-store.mjs"
+      - "src/composite/store.ts"
+      - "test/postgres-source-aware-candidates.test.mjs"
+      - "docs/POSTGRES-SOURCE-CANDIDATES.md"
   workflow_dispatch:
 
 permissions:
@@ -16,7 +20,11 @@ permissions:
 
 jobs:
   active-trigger-benchmark:
-    name: active-1000-patterns-16-events
+    name: active-1000-source-names-${{ matrix.sources }}
+    strategy:
+      fail-fast: false
+      matrix:
+        sources: [1, 20]
     runs-on: ubuntu-latest
     timeout-minutes: 35
     services:
@@ -68,7 +76,7 @@ jobs:
         run: |
           set -euo pipefail
           node scripts/evidence/postgres-mcp-ingest-wake.mjs \
-            --triggers 1000 --events 16 --noise 4 --replays 2 \
+            --triggers 1000 --events 16 --sources "${{ matrix.sources }}" --noise 4 --replays 2 \
             > active-1000-result.json 2> active-1000-errors.jsonl
           cat active-1000-result.json
       - name: Print sanitized structured error if benchmark fails
@@ -86,7 +94,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ei-pg-active-1000-${{ github.run_id }}-${{ github.run_attempt }}
+          name: ei-pg-active-1000-sources-${{ matrix.sources }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             active-1000-result.json
             active-1000-errors.jsonl
