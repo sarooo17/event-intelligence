@@ -120,6 +120,19 @@ integrationTest('operator-managed PG backup/reset/replay fences old candidate id
     const restoredUrl = new URL(dbUrl);
     restoredUrl.pathname = '/' + backupDb;
     restorePool = new Pool({ connectionString: restoredUrl.toString(), max: 2 });
+    // Verify the actual restored catalog *before* PostgresEventStore.init()
+    // could CREATE missing empty tables and conceal an incomplete archive.
+    for (const object of [
+      ...tableKinds.map(kind => prefix + '_' + kind),
+      prefix + '_history_history_id_seq',
+    ]) {
+      const checked = await restorePool.query(
+        'SELECT to_regclass($1) AS restored_object',
+        ['"' + object + '"'],
+      );
+      assert.ok(checked.rows[0]?.restored_object,
+        'pg_restore omitted required table or sequence: ' + object);
+    }
     const recoveredLegacy = new PostgresEventStore({
       pool: restorePool, ...storeOptions,
     });
