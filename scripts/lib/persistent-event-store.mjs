@@ -10,6 +10,7 @@ import path from 'node:path';
 import { mcpGapSnapshot } from '../../dist/src/composite/gapFingerprint.js';
 import { safeMcpSourceArguments } from './mcp-safe-arguments.mjs';
 import { validateHistoryWindowLimit } from './history-window.mjs';
+import { assertJsonlPatternV2SignatureContract } from './pattern-v2-signature-contract.mjs';
 import { assertWakeClaimGeneration } from './wake-claim-generation.mjs';
 import {
   REFERENCE_STORE_CAPABILITIES,
@@ -197,6 +198,16 @@ export class PersistentEventStore {
       readJsonLines(this.files.partitionLeases),
       readJsonLines(this.files.audit),
     ]);
+
+    // This marker is independent of physical JSONL schema/Pattern AST v2.
+    // All extant composite trigger definitions use Pattern v2 identity.
+    // Orphan match/deadline/cache records also prevent safe blind adoption.
+    // Check BEFORE hydrating candidates, starting schedulers or mutating state.
+    await assertJsonlPatternV2SignatureContract(
+      this.dataDir,
+      triggers.length > 0 || triggerMatches.length > 0 ||
+        temporalDeadlines.length > 0 || semanticDecisionCache.length > 0,
+    );
 
     this.#wakes = wakes;
 
