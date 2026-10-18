@@ -1,0 +1,72 @@
+name: PostgreSQL MCP Ingest to Wake Evidence
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/postgres-mcp-pipeline-evidence.yml"
+      - "scripts/evidence/postgres-mcp-ingest-wake.mjs"
+      - "docs/POSTGRES-MCP-PIPELINE-EVIDENCE.md"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pipeline:
+    name: actual-pg-pipeline-${{ matrix.triggers }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        triggers: [8, 16]
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: event_intelligence
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d event_intelligence"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      POSTGRES_URL: postgresql://postgres:postgres@127.0.0.1:5432/event_intelligence
+      EI_PG_PIPELINE_CONFIRM: YES_ISOLATED
+      TRIGGERS: ${{ matrix.triggers }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install and build
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm install --no-save --ignore-scripts --no-audit --no-fund pg@8
+          npm run build
+      - name: Capture benchmark host
+        shell: bash
+        run: |
+          { uname -a; node --version; npm --version; lscpu; free -m; } > pipeline-host.txt
+      - name: Run real MCP occurrence through durable match and host receipt
+        shell: bash
+        run: |
+          set -o pipefail
+          node scripts/evidence/postgres-mcp-ingest-wake.mjs \
+            --triggers "$TRIGGERS" --noise 4 --replays 2 \
+            > pipeline-result.json 2> pipeline-errors.jsonl
+          cat pipeline-result.json
+      - name: Preserve independent raw measurements and failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ei-pg-mcp-pipeline-${{ matrix.triggers }}-${{ github.run_id }}
+          path: |
+            pipeline-result.json
+            pipeline-errors.jsonl
+            pipeline-host.txt
+          retention-days: 90
+          if-no-files-found: warn
