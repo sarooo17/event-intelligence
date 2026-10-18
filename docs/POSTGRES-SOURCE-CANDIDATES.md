@@ -74,6 +74,10 @@ versioning and rollback) rather than silently added at startup.
   Both jobs use identical workload *shape*, but different isolated
   GitHub runner machines. Never interpret p95 or throughput differences
   between jobs as a stable speedup without repeated controlled profiling.
+  The CLI fails closed when `--sources` exceeds `--triggers`, rather than
+  claiming more distinct event names than actually have definitions;
+  `test/postgres-mcp-pipeline-benchmark-config.test.mjs` covers this
+  constraint without opening a PostgreSQL connection.
 
 ## Still open for #47
 
