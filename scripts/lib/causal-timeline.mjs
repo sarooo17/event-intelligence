@@ -2,8 +2,9 @@ import { createHash } from 'node:crypto';
 import { isProxy } from 'node:util/types';
 
 // Reference-only causal evidence for host-authorized inspector results.
-// The maximum is deliberately fixed, not host-configurable without a new
-// version, so hostile high-cardinality matches cannot amplify tracing work.
+// Output and retained selection memory are fixed at 32 references. Selecting
+// the same 32 after reordered persistence requires inspecting each source
+// record once; hosts must independently bound source-event cardinality.
 export const CAUSAL_TIMELINE_VERSION = 'ei.causal-timeline.v1';
 export const CAUSAL_TIMELINE_SOURCE_LIMIT = 32;
 
@@ -32,27 +33,34 @@ function validInstant(value) {
  */
 export function createCausalTimeline({ match, wake } = {}) {
   const source = own(match, 'sourceEvents');
-  const events = Array.isArray(source) && !isProxy(source) ? source : [];
-  const entries = [];
-  const limit = Math.min(events.length, CAUSAL_TIMELINE_SOURCE_LIMIT);
-  for (let i = 0; i < limit; i++) {
+  // Revoked proxies throw from Array.isArray(): test the native proxy brand
+  // first to fail closed without evaluating user traps.
+  const events = isProxy(source) ? [] : Array.isArray(source) ? source : [];
+  const selected = [];
+  for (let i = 0; i < events.length; i++) {
     const slot = Object.getOwnPropertyDescriptor(events, String(i));
     if (!slot || !Object.hasOwn(slot, 'value')) continue;
     const event = slot.value;
     const sourceEventId = reference(own(event, 'sourceEventId'));
     if (!sourceEventId) continue;
-    entries.push(Object.freeze({
+    const item = Object.freeze({
       stage: 'source_observed',
       sourceRef: sourceEventId,
       clauseRef: reference(own(event, 'clauseId')),
       traceRef: reference(own(event, 'traceId')),
       occurredAt: validInstant(own(event, 'occurredAt')),
-    }));
+    });
+    // Stable subset on every permutation of the same persisted evidence,
+    // unlike sorting only the first 32 returned by the store.
+    const key = [item.clauseRef ?? '',item.sourceRef,
+      item.traceRef ?? '',item.occurredAt ?? ''].join('|');
+    if (selected.length===CAUSAL_TIMELINE_SOURCE_LIMIT &&
+        key>=selected.at(-1).key) continue;
+    const at=selected.findIndex(row=>row.key>key);
+    selected.splice(at<0?selected.length:at,0,{key,item});
+    if(selected.length>CAUSAL_TIMELINE_SOURCE_LIMIT)selected.pop();
   }
-  // Stable across store restarts when source occurrence storage order changes.
-  entries.sort((a, b) =>
-    (a.clauseRef ?? '').localeCompare(b.clauseRef ?? '') ||
-    a.sourceRef.localeCompare(b.sourceRef));
+  const entries = selected.map(row=>row.item);
 
   const matchId = reference(own(match, 'matchId'));
   if (matchId) entries.push(Object.freeze({
@@ -67,7 +75,7 @@ export function createCausalTimeline({ match, wake } = {}) {
     entries.push(Object.freeze({
       stage: 'wake_recorded',
       wakeRef: wakeId,
-      status: ['pending', 'claimed', 'delivered', 'failed', 'dead_letter']
+      status: ['queued', 'pending', 'claimed', 'delivered', 'failed', 'dead_letter']
         .includes(own(wake, 'status')) ? own(wake, 'status') : 'unknown',
       createdAt: validInstant(own(wake, 'createdAt')),
     }));
