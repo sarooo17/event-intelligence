@@ -206,7 +206,9 @@ export class PersistentEventStore {
     await assertJsonlPatternV2SignatureContract(
       this.dataDir,
       triggers.length > 0 || triggerMatches.length > 0 ||
-        temporalDeadlines.length > 0 || semanticDecisionCache.length > 0,
+        temporalDeadlines.length > 0 || semanticDecisionCache.length > 0 ||
+        wakes.length > 0 || wakeDeliveries.length > 0 ||
+        derivedEvents.length > 0,
     );
 
     this.#wakes = wakes;
