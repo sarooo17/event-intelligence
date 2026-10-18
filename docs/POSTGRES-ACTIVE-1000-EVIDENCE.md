@@ -54,7 +54,9 @@ EI_PG_PIPELINE_CONFIRM=YES_ISOLATED POSTGRES_URL='postgresql://...' \
 ```
 
 The script uses a random, isolated PostgreSQL table prefix; a non-empty
-explicit confirmation flag is required. It attempts to clean all tables even
+explicit confirmation flag is required. Populations above 64 require an
+explicit `--events` argument no greater than 64, so an accidental
+`--triggers 1000` invocation cannot launch 1,000 expensive event scans. It attempts to clean all tables even
 if assertions fail; cleanup failures also fail the job. The job has a
 35-minute limit and archives raw JSON, errors and environment diagnostics,
 including pinned `pg@8.16.3`, Node/PG versions, reviewed commit and CI
@@ -67,7 +69,7 @@ The script measures actual serial in-process normalization→Pattern match,
 match→durable wake and total accepted MCP event→wake p50/p95/p99;
 matching-events/sec, CPU delta, RSS and exact-match/noise/replay correctness.
 The measured interval **and sampled CPU/RSS end snapshot** exclude registration, negative events, replays,
-database reopen/receipt audit and cleanup. CPU/RSS start samples are taken immediately after registration, and end samples immediately after the 16 matching events. All 16 events sample the same
+database reopen/receipt audit and cleanup. CPU/RSS start samples are taken immediately after registration, and end samples immediately after the 16 matching events. **These CPU and RSS measurements cover only the Node.js benchmark process; they exclude the independent PostgreSQL service's CPU, RSS, kernel caches and runner-level overhead.** All 16 events sample the same
 registered population. No SLO thresholds are inferred before reviewing raw
 runner measurements, and quantiles over 16 events are **small samples**.
 
