@@ -1,0 +1,99 @@
+name: PostgreSQL MCP Ingest to Wake Evidence
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/postgres-mcp-pipeline-evidence.yml"
+      - "scripts/evidence/postgres-mcp-ingest-wake.mjs"
+      - "docs/POSTGRES-MCP-PIPELINE-EVIDENCE.md"
+      # Running only for benchmark-file changes is not a regression gate.
+      # Include every core path that can change matching/delivery results.
+      - "src/composite/**"
+      - "src/patternV2/**"
+      - "src/mcpEvents/**"
+      - "src/intelligenceProtocol/**"
+      - "src/protocol/ownPath.ts"
+      - "scripts/lib/composite-event-consumer.mjs"
+      - "scripts/lib/composite-wake-coordinator.mjs"
+      - "scripts/lib/generic-runtime-wake.mjs"
+      - "scripts/lib/postgres-event-store.mjs"
+      - "scripts/lib/pattern-v2-signature-contract.mjs"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pipeline:
+    name: actual-pg-pipeline-${{ matrix.triggers }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        triggers: [8, 16]
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: event_intelligence
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d event_intelligence"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # Actions pull_request defaults to a synthetic merge commit. Pin checkout
+      # and reported provenance to the exact code under Codex review.
+      BENCH_SOURCE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+      BENCH_IS_PULL_REQUEST: ${{ github.event_name == 'pull_request' }}
+      POSTGRES_URL: postgresql://postgres:postgres@127.0.0.1:5432/event_intelligence
+      EI_PG_PIPELINE_CONFIRM: YES_ISOLATED
+      TRIGGERS: ${{ matrix.triggers }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install and build
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm install --no-save --ignore-scripts --no-audit --no-fund pg@8.16.3
+          npm run build
+      - name: Capture benchmark host
+        shell: bash
+        run: |
+          {
+            echo "reviewed-code=$BENCH_SOURCE_COMMIT"
+            echo "github-sha=$GITHUB_SHA"
+            node -p "'pg-driver=' + require('pg/package.json').version"
+            uname -a
+            node --version
+            npm --version
+            lscpu
+            free -m
+          } > pipeline-host.txt
+      - name: Run real MCP occurrence through durable match and host receipt
+        shell: bash
+        run: |
+          set -o pipefail
+          node scripts/evidence/postgres-mcp-ingest-wake.mjs \
+            --triggers "$TRIGGERS" --noise 4 --replays 2 \
+            > pipeline-result.json 2> pipeline-errors.jsonl
+          cat pipeline-result.json
+      - name: Preserve independent raw measurements and failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ei-pg-mcp-pipeline-${{ matrix.triggers }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            pipeline-result.json
+            pipeline-errors.jsonl
+            pipeline-host.txt
+          retention-days: 90
+          if-no-files-found: warn
