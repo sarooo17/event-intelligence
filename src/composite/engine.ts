@@ -148,12 +148,13 @@ export class CompositeTriggerEngine {
       // Such definitions MUST still read their current state and run the
       // lifecycle gate before testing clauses, as they did previously.
       //
-      // For definitions without a possible nonmatching transition, a
-      // nonmatching event cannot affect persisted lifecycle or matching
-      // state. Filter those synchronously first, avoiding one PostgreSQL
+      // For definitions without a possible nonmatching transition AND
+      // without potentially expensive regex predicates, a negative
+      // clause match cannot affect persisted lifecycle or matching state.
+      // Filter these synchronously first, avoiding one PostgreSQL
       // getTriggerState() round trip per unrelated definition. Matching
-      // definitions still fetch the current state and pass the exact same
-      // lifecycle/authorization gate; no state is cached across events.
+      // definitions still fetch the current state and pass the original
+      // lifecycle gate; no state is cached across events.
       const lifecycle = definition.lifecycle;
       const requiresUnmatchedLifecycleCheck = Boolean(
         lifecycle?.expiresAt ||
@@ -161,8 +162,15 @@ export class CompositeTriggerEngine {
         lifecycle?.oneShot ||
         lifecycle?.maxFirings !== undefined
       );
+      // An inactive definition used to short-circuit BEFORE evaluating
+      // predicates. Unrestricted regex matching can be superlinear, so
+      // never run those clauses without first checking authoritative
+      // lifecycle state; a paused trigger must not consume regex CPU.
+      const hasRegexPredicate = definition.clauses.some((clause) =>
+        clause.where.some((predicate) => predicate.op === 'regex'),
+      );
       let matchingClauses: TriggerClause[] | null = null;
-      if (!requiresUnmatchedLifecycleCheck) {
+      if (!requiresUnmatchedLifecycleCheck && !hasRegexPredicate) {
         matchingClauses = definition.clauses.filter((clause) =>
           clauseMatches(clause, event),
         );
