@@ -155,6 +155,7 @@ try {
   const matched = new Set();
   const wakeIds = new Set();
   const expectedReceipts = new Map();
+  const originalDeliveriesByIndex = new Map();
   stage = 'measured-ingest-match-wake';
   const started = performance.now();
   for (let i = 0; i < events; i++) {
@@ -181,11 +182,18 @@ try {
       hostReceipts.get(match.matchId));
     expectedReceipts.set(result.deliveries[0].wakeId,
       result.deliveries[0].runtimeReceiptId);
+    originalDeliveriesByIndex.set(i, {
+      matchId: match.matchId,
+      wakeId: result.deliveries[0].wakeId,
+      receiptId: result.deliveries[0].runtimeReceiptId,
+    });
     measurements.ingestToMatch.push(matchedAt - begin);
     measurements.matchToWake.push(end - matchedAt);
     measurements.ingestToWake.push(end - begin);
   }
   const measuredWall = performance.now() - started;
+  const measuredCpu = process.cpuUsage(baselineCpu);
+  const measuredMemory = process.memoryUsage();
   assert.equal(hostCalls, events);
   assert.equal(matched.size, events);
   assert.equal(wakeIds.size, events);
@@ -208,6 +216,14 @@ try {
     });
     assert.equal(result.deliveries.length, 1);
     assert.equal(result.deliveries[0].status, 'already_fired');
+    const original = originalDeliveriesByIndex.get(i);
+    assert.ok(original, 'missing original delivery evidence');
+    assert.equal(result.results.filter(row => row.matched).length, 1);
+    assert.equal(result.results[0].match.matchId, original.matchId);
+    assert.equal(result.deliveries[0].wakeId, original.wakeId,
+      'replay must reuse original EI wake identity');
+    assert.equal(result.deliveries[0].runtimeReceiptId, original.receiptId,
+      'replay must reuse original host receipt identity');
   }
   assert.equal(hostCalls, events, 'event replay or noise generated host side effect');
   stage = 'independent-pool-reopen';
@@ -225,7 +241,7 @@ try {
     assert.equal(saved.runtimeReceiptId, receiptId);
     assert.equal(saved.attemptCount, 1);
   }
-  assert.equal(hostCalls, triggers);
+  assert.equal(hostCalls, events);
   record = {
     schema: SCHEMA, status: 'completed', measuredAt: new Date().toISOString(),
     runtime: {
@@ -255,9 +271,8 @@ try {
       falsePositiveWakeCount: 0,
       measuredWallMs: measuredWall,
       measuredMatchingEventsPerSecond: events * 1000 / measuredWall,
-      cpuMs: (() => { const delta = process.cpuUsage(baselineCpu);
-        return { user: delta.user / 1000, system: delta.system / 1000 }; })(),
-      rssBefore: baselineMemory.rss, rssAfter: process.memoryUsage().rss,
+      cpuMs: { user: measuredCpu.user / 1000, system: measuredCpu.system / 1000 },
+      rssBefore: baselineMemory.rss, rssAfter: measuredMemory.rss,
     },
     evidence: {
       persistedReceiptsCheckedAfterPoolReopen: expectedReceipts.size,
