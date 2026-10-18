@@ -36,8 +36,17 @@ function errorData(error, key) {
   return undefined;
 }
 
+// Refuse enormous *decoded* scalar values before any Unicode normalization
+// or credential regex pass. The host must still enforce transport byte/time
+// budgets before decoding, and arbitrary unlabelled secrets remain host-owned.
+export const MAX_OBSERVABILITY_INPUT_CHARS = 8192;
+
 function truncate(value, max = 1000) {
-  const text = safeScalar(value).normalize('NFKC')
+  const scalar = safeScalar(value);
+  if (scalar.length > MAX_OBSERVABILITY_INPUT_CHARS) {
+    return '[oversized value]';
+  }
+  const text = scalar.normalize('NFKC')
     .replace(/Bearer[\s\u0085]+[A-Za-z0-9._~+/=-]+/giu, 'Bearer [redacted]')
     .replace(
       /((?:["']?)(?:api[_-]?key|authorization|password|secret|token)(?:["']?)[\s\u0085]*[=:][\s\u0085]*(?:["']?))[^"'\s\u0085,;}\]]+/giu,
@@ -139,12 +148,22 @@ export function createObservabilityEmitter(
       // traps must never run as part of observability or redaction.
       const field = name => ownData(input, name);
       const rawEvent = field('event');
+      // The control fields are parsed BEFORE output projection. Cap their
+      // original decoded length prior to trim/lowercase/Number conversion.
+      if (typeof rawEvent === 'string' &&
+          rawEvent.length > MAX_OBSERVABILITY_INPUT_CHARS) {
+        throw new Error('observability event exceeds input size limit');
+      }
       const event = typeof rawEvent === 'string' ? rawEvent.trim() : '';
       if (!event.startsWith('ei.')) {
         throw new Error('observability event must use the ei.* namespace');
       }
 
       const rawLevel = field('level');
+      if (typeof rawLevel === 'string' &&
+          rawLevel.length > MAX_OBSERVABILITY_INPUT_CHARS) {
+        throw new Error('unsupported observability level');
+      }
       const level = rawLevel == null ? 'info'
         : typeof rawLevel === 'string' ? rawLevel.toLowerCase() : '';
       if (!LEVELS.has(level)) {
@@ -152,8 +171,10 @@ export function createObservabilityEmitter(
       }
 
       const attempt = field('attempt');
+      const boundedAttempt = typeof attempt === 'string' &&
+        attempt.length <= MAX_OBSERVABILITY_INPUT_CHARS ? attempt : null;
       const numericAttempt = typeof attempt === 'number' ? attempt
-        : typeof attempt === 'string' && attempt.trim() ? Number(attempt) : null;
+        : boundedAttempt?.trim() ? Number(boundedAttempt) : null;
       const metadata = field('metadata');
       const timestamp = field('timestamp');
       const record = {

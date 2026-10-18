@@ -62,6 +62,9 @@ export interface EventIntelligenceObservabilityEmitter {
 
 export const EI_OBSERVABILITY_SCHEMA_VERSION: '1';
 
+/** Maximum decoded telemetry scalar length before any expensive projection. */
+export const MAX_OBSERVABILITY_INPUT_CHARS: 8192;
+
 export function serializeObservabilityError(error: unknown): Readonly<{
   name?: string;
   code?: string;
