@@ -6,6 +6,18 @@ on:
       - ".github/workflows/postgres-mcp-pipeline-evidence.yml"
       - "scripts/evidence/postgres-mcp-ingest-wake.mjs"
       - "docs/POSTGRES-MCP-PIPELINE-EVIDENCE.md"
+      # Running only for benchmark-file changes is not a regression gate.
+      # Include every core path that can change matching/delivery results.
+      - "src/composite/**"
+      - "src/patternV2/**"
+      - "src/mcpEvents/**"
+      - "src/intelligenceProtocol/**"
+      - "src/protocol/ownPath.ts"
+      - "scripts/lib/composite-event-consumer.mjs"
+      - "scripts/lib/composite-wake-coordinator.mjs"
+      - "scripts/lib/generic-runtime-wake.mjs"
+      - "scripts/lib/postgres-event-store.mjs"
+      - "scripts/lib/pattern-v2-signature-contract.mjs"
   workflow_dispatch:
 
 permissions:
