@@ -27,7 +27,8 @@ test('threat model documents all P0 authority boundaries and referenced existing
   for(const boundary of matrix.boundaries){
     assert.equal(boundary.authorityOwner,ownerByBoundary[boundary.id],
       'privileged responsibility must not drift across EI/host/operator');
-    assert.ok(['partial','host-enforced'].includes(boundary.status),boundary.id);
+    assert.equal(boundary.status,'partial',
+      'no unreviewed host control may be represented as enforced');
     assert.ok(boundary.threat.length>=20,boundary.id);
     assert.ok(boundary.residual.length>=30,boundary.id);
     assert.ok(Array.isArray(boundary.evidence) && boundary.evidence.length>0,boundary.id);
@@ -61,4 +62,15 @@ test('all twelve authority owners are fixed, including derived provenance and pu
   const controls=matrix.boundaries.find(x=>x.id==='principal-authorization');
   assert.ok(controls.evidence.includes('test/neutral-facade-conformance.test.mjs'),
     'the authority matrix must cite a real exercised control-denial test');
+});
+
+
+test('host-owned obligations stay marked partial and lineage cites behavioral coverage',()=>{
+  const map=Object.fromEntries(matrix.boundaries.map(x=>[x.id,x]));
+  for(const id of ['transport-auth','principal-authorization','semantic-evaluation']){
+    assert.equal(map[id].status,'partial',id);
+  }
+  assert.ok(map['derived-lineage'].evidence.includes('test/derived-events.test.mjs'));
+  assert.ok(map['derived-lineage'].evidence.includes('test/trigger-explain-bounds.test.mjs'));
+  assert.equal(matrix.securitySignoff,'pending-independent-review');
 });
