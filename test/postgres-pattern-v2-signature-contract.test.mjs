@@ -61,6 +61,22 @@ integration('PG16 signature manifest rejects old/unknown candidate identities at
     const restored = new PostgresEventStore({ pool, tablePrefix: prefix });
     await restored.init();
     assert.equal((await restored.listTriggers()).length, 1);
+
+    // Orphan wake receipts must not be silently reinterpreted as compatible
+    // just because old trigger definitions were deleted/archived.
+    await pool.query("DELETE FROM " + records + " WHERE kind = 'trigger'");
+    await restored.ensureWakeDelivery({
+      wakeId: 'orphan-persisted-v2-wake', matchId: 'orphan-match',
+      triggerId: 'retired', triggerVersion: '1',
+      runtime: 'host', now: '2026-10-18T00:00:00.000Z',
+    });
+    await pool.query('DELETE FROM ' + metadata + ' WHERE component = $1',
+      [PATTERN_V2_SIGNATURE_COMPONENT]);
+    await assert.rejects(
+      new PostgresEventStore({ pool, tablePrefix: prefix }).init(),
+      error => error?.code === 'EVENT_INTELLIGENCE_PATTERN_V2_SIGNATURE_INCOMPATIBLE',
+      'old wake delivery alone must prohibit unmarked signature adoption',
+    );
   } finally {
     for (const suffix of suffixes) {
       await pool.query('DROP TABLE IF EXISTS "' + prefix + '_' + suffix + '" CASCADE');
