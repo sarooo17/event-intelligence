@@ -30,7 +30,7 @@
       "status": "host-enforced",
       "threat": "Agent tool bypasses principal policy or trigger approval",
       "evidence": [
-        "test/host-configuration-errors.test.mjs"
+        "test/neutral-facade-conformance.test.mjs"
       ],
       "residual": "Host must enforce permission on every action including resumed work; EI tool exposure metadata does not grant authority."
     },
@@ -67,7 +67,7 @@
     },
     {
       "id": "derived-lineage",
-      "authorityOwner": "ei",
+      "authorityOwner": "ei+host",
       "status": "partial",
       "threat": "Derived records masquerade as trusted instructions or exfiltrate payloads",
       "evidence": [
