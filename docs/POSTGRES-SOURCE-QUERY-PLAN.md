@@ -27,6 +27,13 @@ store implementation or the startup schema contract.
   and after adding the index, not just counts.
 - Emit exact commit, Node/PG versions, runner details, key counts and
   actual plan nodes; fail closed on mismatch and archive diagnostics.
+- As a separate **query-design probe only**, compare the original single
+  `OR` source/lifecycle query against a `UNION` of independently scoped
+  source and lifecycle branches. Both query forms must return **identical
+  sorted record keys**, pre/post disposable GIN creation. The UNION may
+  permit source-branch indexing but also pays its own deduplication and
+  lifecycle-branch scan costs; its planner selection is recorded, **not
+  assumed**. This experimental branch is never wired into EI runtime.
 
 The optional GIN index is built **only inside a randomly named disposable
 benchmark table**, not as part of EI database startup and not in any
