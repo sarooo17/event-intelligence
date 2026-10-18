@@ -34,7 +34,7 @@ test('canonical v1 public exports and declarations exist in packed package manif
   assert.ok(embeddedPublic.HOST_CONTRACT_CAPABILITIES.includes('wake.receipts'));
   execFileSync(process.execPath, [
     'node_modules/typescript/bin/tsc',
-    '--noEmit', '--strict', '--skipLibCheck',
+    '--ignoreConfig', '--noEmit', '--strict', '--skipLibCheck',
     '--module', 'NodeNext', '--moduleResolution', 'NodeNext',
     '--target', 'ES2022', 'test/fixtures/host-contract-v1-public-types.mts',
   ], { cwd: root, stdio: 'inherit', timeout: 30000 });
