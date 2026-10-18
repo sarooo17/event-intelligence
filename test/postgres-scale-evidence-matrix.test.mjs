@@ -13,12 +13,14 @@ function measured(profile) {
     runtime:{node:'v22.0.0',postgresVersion:'16.6',platform:'linux',arch:'x64',commit:sha},
     concurrency:4,
     metrics:{
-      register:{latency,triggersPerSecond:100},
+      register:{latency,wallMs:triggers*10,triggersPerSecond:100},
       listAll:{durableRowsVerified:triggers,latency:{...latency,samples:3}},
       wakeEnsure:{...latency,samples:128},
       wakeClaim:{...latency,samples:128},
       wakeComplete:{...latency,samples:128},
       storageTotalBytes:4096*triggers,
+      storageBytes:{metadata:4096*triggers,leases:0,history:0,
+        records:0,counters:0},
     },
   };
 }
@@ -56,6 +58,14 @@ test('missing real measurements, failed workloads, duplicates and fake counts ar
     x=>x.metrics.wakeClaim.samples=1,
     x=>x.metrics.wakeEnsure.samples=1,
     x=>x.metrics.listAll.latency.samples=1,
+    x=>delete x.metrics.register.wallMs,
+    x=>x.metrics.register.wallMs=0,
+    x=>x.metrics.register.triggersPerSecond=101,
+    x=>delete x.metrics.storageBytes,
+    x=>x.metrics.storageBytes.records=1,
+    x=>x.metrics.storageTotalBytes+=1,
+    x=>x.runtime.node='',
+    x=>x.runtime.postgresVersion=' ',
   ]) {
     const x=measured('1k');
     modify(x);
