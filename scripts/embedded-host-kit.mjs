@@ -12,7 +12,7 @@ import {
 } from './host-integration.mjs';
 import { OPERATION_MANIFEST } from './lib/operation-manifest.mjs';
 import { negotiateHostContract } from './lib/embedded-host-contract.mjs';
-import { getHostDataMethod } from './lib/store-capabilities.mjs';
+import { getHostDataDescriptor, getHostDataMethod } from './lib/store-capabilities.mjs';
 export {
   HOST_CONTRACT_VERSION,
   HOST_CONTRACT_CAPABILITIES,
@@ -1699,101 +1699,96 @@ export async function createEventIntelligence({
   hostContract,
   ...options
 } = {}) {
+  // Preflight must not invoke host getters or Proxy traps. Capture callable
+  // data methods once, preserving the receiver when invoked later.
+  const deliver = getHostDataMethod(runtime, 'deliver');
   if (!runtime || typeof runtime !== 'object' ||
-      typeof runtime.deliver !== 'function') {
+      typeof deliver !== 'function') {
     throw hostConfigurationError(
       'createEventIntelligence requires runtime.deliver() for host-owned continuation delivery',
       'EI_HOST_DELIVERY_REQUIRED',
     );
   }
 
-  // Negotiate the explicitly required capabilities before any legacy facade
-  // shape validation reads host-supplied registry properties. Otherwise
-  // accessor/Proxy traps could bypass the stable negotiation error.
+  // Negotiate strict opt-in capabilities before checking unrelated legacy
+  // boundaries, and before storage initialization or MCP subscription.
   const negotiatedContract = hostContract === undefined ? null :
     negotiateHostContract(hostContract, { mcp, runtime, ...options });
 
-  if (mcp !== undefined) {
-    let validRegistry = false;
-    try {
-      const list = getHostDataMethod(mcp, 'list');
-      const subscribe = getHostDataMethod(mcp, 'subscribe');
-      validRegistry = typeof list === 'function' &&
-        (subscribe === undefined || typeof subscribe === 'function');
-    } catch {
-      // Never propagate arbitrary host introspection errors.
-    }
-    if (!validRegistry) {
-      throw hostConfigurationError(
-        'createEventIntelligence mcp must provide list() and optional subscribe()',
-        'EI_HOST_MCP_REGISTRY_INVALID',
-      );
-    }
+  const list = getHostDataMethod(mcp, 'list');
+  const subscribe = getHostDataMethod(mcp, 'subscribe');
+  if (mcp !== undefined && (typeof list !== 'function' ||
+      (subscribe !== undefined && typeof subscribe !== 'function'))) {
+    throw hostConfigurationError(
+      'createEventIntelligence mcp must provide list() and optional subscribe()',
+      'EI_HOST_MCP_REGISTRY_INVALID',
+    );
   }
 
-  const wantsTools = runtime.resolveContext !== undefined ||
-    runtime.control !== undefined;
-  if (wantsTools &&
-      (typeof runtime.resolveContext !== 'function' ||
-        typeof runtime.control !== 'function')) {
+  const resolveContext = getHostDataMethod(runtime, 'resolveContext');
+  const control = getHostDataMethod(runtime, 'control');
+  const wantsTools = resolveContext !== undefined || control !== undefined;
+  if (wantsTools && (typeof resolveContext !== 'function' ||
+      typeof control !== 'function')) {
     throw hostConfigurationError(
       'Agent-facing EI tools require BOTH runtime.resolveContext() and runtime.control(); missing control must never grant mutations',
       'EI_HOST_CONTROL_REQUIRED',
     );
   }
+
+  const optionalCallbacks = {};
   for (const name of ['hasReceipt', 'resolveTarget', 'receiptId',
     'projectResult', 'projectError']) {
-    if (runtime[name] !== undefined && typeof runtime[name] !== 'function') {
+    const method = getHostDataMethod(runtime, name);
+    if (method !== undefined && typeof method !== 'function') {
       throw hostConfigurationError(
         `runtime.${name} must be a function when supplied`,
         'EI_HOST_CALLBACK_INVALID',
       );
     }
+    if (typeof method === 'function') optionalCallbacks[name] = method;
   }
-  if (runtime.receiptNamespace !== undefined &&
-      (typeof runtime.receiptNamespace !== 'string' ||
-        !runtime.receiptNamespace.trim())) {
+
+  const namespaceDescriptor = getHostDataDescriptor(runtime, 'receiptNamespace');
+  const receiptNamespace = namespaceDescriptor?.value;
+  if (namespaceDescriptor === null ||
+      (namespaceDescriptor !== undefined &&
+      (typeof receiptNamespace !== 'string' || !receiptNamespace.trim()))) {
     throw hostConfigurationError(
       'runtime.receiptNamespace must be a non-empty string',
       'EI_HOST_RECEIPT_CONFIG_INVALID',
     );
   }
-  if (runtime.receiptId && runtime.receiptNamespace) {
+  if (optionalCallbacks.receiptId && receiptNamespace) {
     throw hostConfigurationError(
       'Provide runtime.receiptId or receiptNamespace, not both',
       'EI_HOST_RECEIPT_CONFIG_INVALID',
     );
   }
 
-  // Opt-in HostContract is now already negotiated above. A later major
-  // revision can make it mandatory without introducing legacy aliases.
-
-  // Forward through runtime so ordinary object methods keep their receiver.
   const activation = {
-    deliver: (...args) => runtime.deliver(...args),
-    ...(runtime.resolveTarget
-      ? { resolveTarget: (...args) => runtime.resolveTarget(...args) }
+    deliver: (...args) => deliver.apply(runtime, args),
+    ...(optionalCallbacks.resolveTarget
+      ? { resolveTarget: (...args) => optionalCallbacks.resolveTarget.apply(runtime, args) }
       : {}),
-    ...(runtime.hasReceipt
-      ? { hasReceipt: (...args) => runtime.hasReceipt(...args) }
+    ...(optionalCallbacks.hasReceipt
+      ? { hasReceipt: (...args) => optionalCallbacks.hasReceipt.apply(runtime, args) }
       : {}),
-    ...(runtime.receiptId
-      ? { receiptId: (...args) => runtime.receiptId(...args) }
+    ...(optionalCallbacks.receiptId
+      ? { receiptId: (...args) => optionalCallbacks.receiptId.apply(runtime, args) }
       : {}),
-    ...(runtime.receiptNamespace
-      ? { receiptNamespace: runtime.receiptNamespace }
-      : {}),
+    ...(receiptNamespace ? { receiptNamespace } : {}),
   };
 
   const tooling = wantsTools
     ? {
-        resolveContext: (...args) => runtime.resolveContext(...args),
-        control: (...args) => runtime.control(...args),
-        ...(runtime.projectResult
-          ? { projectResult: (...args) => runtime.projectResult(...args) }
+        resolveContext: (...args) => resolveContext.apply(runtime, args),
+        control: (...args) => control.apply(runtime, args),
+        ...(optionalCallbacks.projectResult
+          ? { projectResult: (...args) => optionalCallbacks.projectResult.apply(runtime, args) }
           : {}),
-        ...(runtime.projectError
-          ? { projectError: (...args) => runtime.projectError(...args) }
+        ...(optionalCallbacks.projectError
+          ? { projectError: (...args) => optionalCallbacks.projectError.apply(runtime, args) }
           : {}),
       }
     : undefined;
@@ -1802,9 +1797,9 @@ export async function createEventIntelligence({
     ...options,
     ...(mcp ? {
       eventSources: {
-        list: (...args) => mcp.list(...args),
-        ...(mcp.subscribe
-          ? { subscribe: (...args) => mcp.subscribe(...args) }
+        list: (...args) => list.apply(mcp, args),
+        ...(subscribe
+          ? { subscribe: (...args) => subscribe.apply(mcp, args) }
           : {}),
       },
     } : {}),
