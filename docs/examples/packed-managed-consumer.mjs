@@ -129,6 +129,10 @@ async function start() {
   for (const id of requiredHostCapabilities) {
     assert.equal(integration.hostContract.available[id],true,id);
   }
+  assert.equal(Object.isFrozen(integration.hostContract),true,
+    'the top-level packed negotiation report must be immutable on every start');
+  assert.equal(Object.isFrozen(integration.hostContract.required),true,
+    'the packed required-capability list must be immutable on every start');
   assert.equal(Object.isFrozen(integration.hostContract.available),true);
   assert.equal(integration.toolCatalog.all.length, 8);
 }
