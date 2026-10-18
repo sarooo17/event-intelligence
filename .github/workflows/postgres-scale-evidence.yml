@@ -1,6 +1,11 @@
-name: PostgreSQL Scale Evidence (manual)
+name: PostgreSQL Scale Evidence (1k PR smoke / manual 10k/100k)
 
 on:
+  # A narrowly scoped, reproducible real 1k workload on PRs changing this
+  # workflow. Larger 10k/100k workloads remain explicit manual dispatches.
+  pull_request:
+    paths:
+      - ".github/workflows/postgres-scale-evidence.yml"
   workflow_dispatch:
     inputs:
       profile:
@@ -40,8 +45,8 @@ jobs:
     env:
       POSTGRES_URL: postgresql://postgres:postgres@127.0.0.1:5432/event_intelligence
       EI_PG_BENCHMARK_CONFIRM: YES_ISOLATED
-      PROFILE: ${{ inputs.profile }}
-      WAKES: ${{ inputs.wakes }}
+      PROFILE: ${{ github.event_name == 'pull_request' && '1k' || inputs.profile }}
+      WAKES: ${{ github.event_name == 'pull_request' && '32' || inputs.wakes }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -72,7 +77,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ei-postgres-scale-${{ inputs.profile }}-${{ github.run_id }}
+          name: ei-postgres-scale-${{ env.PROFILE }}-${{ github.run_id }}
           path: |
             benchmark-result.json
             benchmark-matrix.json
