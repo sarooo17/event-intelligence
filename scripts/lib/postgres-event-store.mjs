@@ -760,6 +760,45 @@ export class PostgresEventStore {
     return (await this.list('trigger')).map(parseCompositeTriggerDefinition);
   }
 
+  // Read the current durable scope on EVERY ingest. The query deliberately
+  // returns a *superset* of matching source candidates, never a snapshot
+  // cache that could miss trigger registration, pause, owner/source updates,
+  // or revoke. Exact arguments/contract/predicate checks remain in the
+  // canonical clauseMatches() path, after current lifecycle authorization.
+  //
+  // Lifecycle transitions on unrelated events must never be skipped:
+  // expiry, lease expiry, oneShot and maxFirings definitions are included
+  // even if NONE of their clauses has this source/event name. Ordering is
+  // the same record_key order as listTriggers(). This optimization does
+  // not alter PostgreSQL schema or create an index on existing deployments.
+  async listTriggerCandidatesForEvent({ name, serverId } = {}) {
+    if (typeof name !== 'string' || !name) {
+      throw new TypeError('candidate event name must be nonempty');
+    }
+    const result = await this.pool.query(
+      'SELECT payload FROM ' + this.records +
+        ' WHERE scope_id = $1 AND kind = $2 AND (' +
+        " (payload->'lifecycle'->>'expiresAt' IS NOT NULL)" +
+        " OR (payload->'lifecycle'->>'leaseUntil' IS NOT NULL)" +
+        " OR (payload->'lifecycle'->>'oneShot' = 'true')" +
+        " OR (payload->'lifecycle' ? 'maxFirings')" +
+        ' OR (' +
+        " (payload->'clauses' @> $3::jsonb)" +
+        ' AND EXISTS (' +
+        " SELECT 1 FROM jsonb_array_elements(payload->'clauses') AS clause" +
+        " WHERE clause->>'event' = $4" +
+        " AND (NOT clause ? 'serverId'" +
+        " OR COALESCE(clause->>'serverId', '') = ''" +
+        " OR clause->>'serverId' = $5)" +
+        ' )' +
+        ' )' +
+        ') ORDER BY record_key',
+      [this.scopeId, 'trigger', JSON.stringify([{ event: name }]),
+        name, serverId ?? null],
+    );
+    return result.rows.map((row) => parseCompositeTriggerDefinition(row.payload));
+  }
+
   async getTriggerState(triggerId, version) {
     return await this.get('trigger_state', triggerId + '@' + version) ??
       defaultTriggerState(triggerId, version);
