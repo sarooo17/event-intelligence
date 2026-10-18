@@ -54,7 +54,7 @@ function persistedMatch() {
 integrationTest('independent PG pools recover persisted match from worker loss BEFORE wake claim', async () => {
   const prefix = 'ei_preclaim_' + randomBytes(5).toString('hex');
   const scopeId = 'tenant-preclaim';
-  let poolA = new Pool({ connectionString: url, max: 2 });
+  let poolA = new Pool({ connectionString: url, max: 2, query_timeout: 3000, connectionTimeoutMillis: 3000, statement_timeout: 3000 });
   let poolB;
   let poolC;
   let continueDelivery;
@@ -90,17 +90,20 @@ integrationTest('independent PG pools recover persisted match from worker loss B
     let hostEffects = 0;
     const deliverer = async () => {
       hostEffects += 1;
+      if (hostEffects !== 1) {
+        throw new Error('duplicate external host effect: competing wake claimant');
+      }
       firstDeliveryStarted();
       await hold;
       return { runtimeReceiptId: 'host-durable-receipt-preclaim' };
     };
     const coordinatorB = new CompositeWakeCoordinator({
       store: left, triggerEngine: new CompositeTriggerEngine(left),
-      workerId: 'post-crash-worker-b', deliverer,
+      workerId: 'post-crash-worker-b', leaseMs: 120000, deliverer,
     });
     const coordinatorC = new CompositeWakeCoordinator({
       store: right, triggerEngine: new CompositeTriggerEngine(right),
-      workerId: 'post-crash-worker-c', deliverer,
+      workerId: 'post-crash-worker-c', leaseMs: 120000, deliverer,
     });
 
     firstRun = coordinatorB.deliverMatched(recovered);
@@ -151,7 +154,15 @@ integrationTest('independent PG pools recover persisted match from worker loss B
     // Settle the original winner before dropping live PostgreSQL tables.
     // Prevent orphan writes/unhandled rejections from masking a failed
     // arbitration assertion above.
-    if (firstRun) await Promise.allSettled([firstRun]);
+    if (firstRun) {
+      await Promise.race([
+        Promise.allSettled([firstRun]),
+        new Promise(resolve => {
+          const timer = setTimeout(resolve, 7000);
+          timer.unref?.();
+        }),
+      ]);
+    }
     const cleanup = poolC ?? poolB ?? new Pool({ connectionString: url, max: 2 });
     try {
       for (const suffix of ['metadata', 'leases', 'history', 'records', 'counters']) {
