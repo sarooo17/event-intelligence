@@ -169,8 +169,11 @@ integration('real OS SIGKILL after MCP Pattern match: independent PG workers con
         boundedExit(left, 'peer-a'), boundedExit(right, 'peer-b'),
       ]);
       assert.ok(completed.every(row => row.code === 0));
-      assert.equal(outcomes.filter(row => row.status === 'wake_delivered').length, 1,
-        'one claimed wake must win cross-process race');
+      // Both workers may report wake_delivered when the second observes
+      // the FIRST worker's already-durable receipt. Success status alone is
+      // not evidence of duplicate effect; the host ledger proves attempts.
+      assert.ok(outcomes.some(row => row.status === 'wake_delivered'),
+        'at least one worker must complete the authoritative claim');
       assert.ok(outcomes.every(row =>
         row.status === 'wake_delivered' || row.status === 'delivery_in_progress'));
       assert.equal(outcomes.reduce((sum, row) => sum + row.hostCalls, 0), 1,
