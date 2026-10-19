@@ -42,7 +42,7 @@ integration('PostgreSQL bounded audit proofs verify across restart, tenants and 
     assert.equal(empty.headHash, null);
     assert.deepEqual(empty.records, []);
     assert.equal(await verifyAuditProofWindow(empty, {
-      trustedAfterSequence: -1, trustedPreviousHash: null,
+      trustedAfterSequence: -1, trustedPreviousHash: null, trustedScopeId: 'audit-tenant-A',
     }), true);
 
     await Promise.all([0,1,2,3,4].map(i => (i % 2 ? reader : a).appendAudit(audit(i))));
@@ -61,7 +61,7 @@ integration('PostgreSQL bounded audit proofs verify across restart, tenants and 
     assert.equal(first.previousHash, null);
     assert.equal(first.headHash, all[1].hash);
     assert.equal(await verifyAuditProofWindow(first, {
-      trustedAfterSequence: -1, trustedPreviousHash: null,
+      trustedAfterSequence: -1, trustedPreviousHash: null, trustedScopeId: 'audit-tenant-A',
     }), true);
 
     // The second proof must be verified using an *externally pinned*
@@ -73,7 +73,7 @@ integration('PostgreSQL bounded audit proofs verify across restart, tenants and 
     assert.equal(next.previousHash, first.headHash);
     assert.equal(await verifyAuditProofWindow(next, {
       trustedAfterSequence: first.endSequence,
-      trustedPreviousHash: first.headHash,
+      trustedPreviousHash: first.headHash, trustedScopeId: 'audit-tenant-A',
     }), true);
     const tail = await reader.getAuditProofWindow({
       afterSequence: next.endSequence, limit: 2,
@@ -82,7 +82,7 @@ integration('PostgreSQL bounded audit proofs verify across restart, tenants and 
     assert.equal(tail.hasMore, false);
     assert.equal(await verifyAuditProofWindow(tail, {
       trustedAfterSequence: next.endSequence,
-      trustedPreviousHash: next.headHash,
+      trustedPreviousHash: next.headHash, trustedScopeId: 'audit-tenant-A',
     }), true);
     const final = await reader.getAuditProofWindow({
       afterSequence: tail.endSequence,
@@ -91,7 +91,7 @@ integration('PostgreSQL bounded audit proofs verify across restart, tenants and 
     assert.equal(final.headHash, tail.headHash);
     assert.equal(await verifyAuditProofWindow(final, {
       trustedAfterSequence: tail.endSequence,
-      trustedPreviousHash: tail.headHash,
+      trustedPreviousHash: tail.headHash, trustedScopeId: 'audit-tenant-A',
     }), true);
     assert.equal((await a.listAudit()).length, 5,
       'exporting proof windows must never prune source audit history');
@@ -102,23 +102,23 @@ integration('PostgreSQL bounded audit proofs verify across restart, tenants and 
     flipped.records[0].details = { revision: 999 };
     assert.equal(await verifyAuditProofWindow(flipped, {
       trustedAfterSequence: first.endSequence,
-      trustedPreviousHash: first.headHash,
+      trustedPreviousHash: first.headHash, trustedScopeId: 'audit-tenant-A',
     }), false, 'tampered payload must invalidate canonical record hash');
     const missing = clone(next);
     missing.records.shift();
     assert.equal(await verifyAuditProofWindow(missing, {
       trustedAfterSequence: first.endSequence,
-      trustedPreviousHash: first.headHash,
+      trustedPreviousHash: first.headHash, trustedScopeId: 'audit-tenant-A',
     }), false, 'skipped audit sequence is not a valid bounded proof');
     const switched = clone(next);
     switched.records.reverse();
     assert.equal(await verifyAuditProofWindow(switched, {
       trustedAfterSequence: first.endSequence,
-      trustedPreviousHash: first.headHash,
+      trustedPreviousHash: first.headHash, trustedScopeId: 'audit-tenant-A',
     }), false);
     assert.equal(await verifyAuditProofWindow(next, {
       trustedAfterSequence: first.endSequence,
-      trustedPreviousHash: 'untrusted-external-anchor',
+      trustedPreviousHash: 'untrusted-external-anchor', trustedScopeId: 'audit-tenant-A',
     }), false);
     assert.equal(await verifyAuditProofWindow(next), false,
       'verification MUST require an independently known predecessor anchor');
