@@ -87,6 +87,11 @@ export declare class PostgresEventStore {
   latestWake(wakeId: string): Promise<any | null>;
   getWakeDelivery(wakeId: string): Promise<any | null>;
   listDueWakeDeliveries(nowIso?: string): Promise<any[]>;
+  /** Bounded, scoped authoritative repair of matched records lacking a wake-delivery. */
+  listOrphanedMatchedWakeCandidates(options?: {
+    afterMatchId?: string;
+    limit?: number;
+  }): Promise<any[]>;
   ensureWakeDelivery(input: any): Promise<any>;
   claimWakeDelivery(wakeId: string, options: {
     workerId: string;
