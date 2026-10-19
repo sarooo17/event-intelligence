@@ -185,21 +185,24 @@ integration('actual SIGKILL after committed EI delivery receipt before wake appe
       assert.equal(await store.verifyAudit(), true);
     }
   } finally {
-    for (const child of live) child.kill('SIGKILL');
-    let timer;
+    // Even if child reaping times out, always close the parent pools.
+    // Preserve tables on uncertain child shutdown: dropping them while a
+    // live child can still write is unsafe and hides the original failure.
     try {
-      await Promise.race([
-        Promise.allSettled([...exits]),
-        new Promise((_, reject) => {
-          timer = setTimeout(() => reject(new Error(
-            'post-receipt child not reaped; refuse unsafe cleanup',
-          )), 7000);
-        }),
-      ]);
-    } finally {
-      clearTimeout(timer);
-    }
-    try {
+      for (const child of live) child.kill('SIGKILL');
+      let timer;
+      try {
+        await Promise.race([
+          Promise.allSettled([...exits]),
+          new Promise((_, reject) => {
+            timer = setTimeout(() => reject(new Error(
+              'post-receipt child not reaped; refuse unsafe cleanup',
+            )), 7000);
+          }),
+        ]);
+      } finally {
+        clearTimeout(timer);
+      }
       await hostPool.query('DROP TABLE IF EXISTS ' + effects);
       for (const kind of kinds) {
         await hostPool.query(
