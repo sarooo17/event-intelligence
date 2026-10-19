@@ -114,6 +114,29 @@ export declare class PostgresEventStore {
     options?: { limit?: number },
   ): Promise<{ records: any[]; hasMore: boolean; limit: number }>;
 
+  /**
+   * Operator-only and dry-run by default. Removes interior adjacent identical
+   * match revisions only for a durably fired match and an explicit past cutoff.
+   * Leaves first/last witnesses, distinct transitions, current match, audit,
+   * wake receipts and MCP occurrence deduplication untouched.
+   */
+  compactTerminalMatchDuplicateHistory(options: {
+    matchId: string;
+    before: string;
+    maxRows?: number;
+    dryRun?: boolean;
+  }): Promise<{
+    ok: true;
+    strategy: 'terminal-match-adjacent-duplicate-retention';
+    scopeId: string;
+    matchId: string;
+    dryRun: boolean;
+    eligible: number;
+    deleted: number;
+    capped: boolean;
+    skipped?: 'not_fired';
+  }>;
+
   appendMcpOccurrence(serverId: string, event: any, subscriptionId?: string | null): Promise<{
     accepted: boolean;
     sequence: number | null;
