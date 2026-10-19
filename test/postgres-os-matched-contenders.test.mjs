@@ -43,7 +43,7 @@ function occurrence(round) {
   };
 }
 
-function spawn(mode, round, prefix, children, exits, workerId) {
+function spawn(mode, round, prefix, children, exits, workerId, matchId = '') {
   const child = fork(workerFile, [], {
     env: {
       ...process.env,
@@ -51,6 +51,7 @@ function spawn(mode, round, prefix, children, exits, workerId) {
       EI_MATCH_KILL_SCOPE: 'os-matched-tenant',
       EI_MATCH_KILL_ROUND: String(round),
       EI_MATCH_KILL_MODE: mode, EI_MATCH_KILL_WORKER: workerId,
+      EI_MATCH_KILL_MATCH_ID: matchId,
     },
     stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
   });
@@ -156,8 +157,8 @@ integration('real OS SIGKILL after MCP Pattern match: independent PG workers con
 
       // Two separate processes with independent PostgreSQL pools both see
       // the same committed logical match. Neither inherits victim state.
-      const left = spawn('contend-delivery', round, prefix, children, exits, 'logical-peer-a');
-      const right = spawn('contend-delivery', round, prefix, children, exits, 'logical-peer-b');
+      const left = spawn('contend-delivery', round, prefix, children, exits, 'logical-peer-a', matched.matchId);
+      const right = spawn('contend-delivery', round, prefix, children, exits, 'logical-peer-b', matched.matchId);
       const ready = await Promise.all([left.next('ready'), right.next('ready')]);
       assert.ok(ready.every(row => row.matchId === matched.matchId));
       left.child.send({ type: 'go' });
