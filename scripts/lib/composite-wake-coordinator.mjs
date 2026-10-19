@@ -334,27 +334,13 @@ export class CompositeWakeCoordinator {
     });
 
     try {
+      const performClaimedDelivery = async () => {
       const packet = this.packetBuilder({
         wakeId,
         match,
         definition,
       });
-      // PostgreSQL holds the same advisory-key dispatch fence as lifecycle
-      // pause/delete mutations across the actual host callback. Revocation
-      // cannot commit between the final authorization read and host effect.
-      const fenced = typeof this.store.withTriggerDispatchFence === 'function'
-        ? await this.store.withTriggerDispatchFence(
-            match.triggerId, match.triggerVersion,
-            this.now().toISOString(),
-            () => this.deliverer(packet),
-          )
-        : { authorized: true, value: await this.deliverer(packet) };
-      if (!fenced.authorized) {
-        const error = new Error('Trigger authorization revoked before host dispatch');
-        error.code = 'EVENT_INTELLIGENCE_HOST_DISPATCH_REVOKED';
-        throw error;
-      }
-      const receipt = fenced.value;
+      const receipt = await this.deliverer(packet);
       if (
         !receipt ||
         typeof receipt.runtimeReceiptId !== 'string' ||
@@ -417,6 +403,29 @@ export class CompositeWakeCoordinator {
         packet,
         delivery,
       };
+      };
+      // PostgreSQL's per-trigger fence covers the WHOLE continuation,
+      // including durable receipt materialization, audit and markFired.
+      // In particular two competing oneShot matches cannot both observe
+      // the old lifecycle count before the next external host effect.
+      const guarded = typeof this.store.withTriggerDispatchFence === 'function'
+        ? await this.store.withTriggerDispatchFence(
+            match.triggerId, match.triggerVersion,
+            this.now().toISOString(), performClaimedDelivery,
+          )
+        : { authorized: true, value: await performClaimedDelivery() };
+      if (!guarded.authorized) {
+        const error = new Error(
+          guarded.reason === 'trigger_dispatch_busy'
+            ? 'Trigger delivery is busy on another worker'
+            : 'Trigger authorization revoked before host dispatch',
+        );
+        error.code = guarded.reason === 'trigger_dispatch_busy'
+          ? 'EVENT_INTELLIGENCE_DISPATCH_BUSY'
+          : 'EVENT_INTELLIGENCE_HOST_DISPATCH_REVOKED';
+        throw error;
+      }
+      return guarded.value;
     } catch (error) {
       if (error?.code === 'WAKE_DELIVERY_CLAIM_LOST') {
         return claimLostOutcome(error);
