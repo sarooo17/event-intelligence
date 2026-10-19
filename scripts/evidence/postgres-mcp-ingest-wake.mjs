@@ -395,7 +395,7 @@ try {
       definitionReadProfile: {
         indexedReads: measuredStoreOperations.get('getTrigger')?.length ?? 0,
         fullRegistryReads: measuredStoreOperations.get('listTriggers')?.length ?? 0,
-        expectedIndexedReads: events * 2,
+        expectedIndexedReads: events * 3,
       },
       storeOperationProfileIsInclusive: true,
       transportLatencyIncluded: false, hostExecutionLatencyIncluded: false,
