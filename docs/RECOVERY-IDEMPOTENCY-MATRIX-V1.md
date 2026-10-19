@@ -34,12 +34,12 @@ reuse of the original logical worker ID (ABA). A
 
 | Failure window | Durable fact before interruption | Expected restart action | Current test evidence | Still unproven |
 | --- | --- | --- | --- | --- |
-| Provider event not yet persisted | Source retains responsibility for replay and cursor | Re-deliver source event if provider supports replay; do not presume EI retained it | **No direct crash-before-persistence + provider-redelivery test yet.** The [MCP gap/restart negative test](../test/mcp-events-gap-negative-recovery-restart.test.mjs) covers gap detection/reconciliation only, **not this boundary** | Provider replay after real pre-persistence crash, remote source reliability, replay window and provider data loss |
+| Provider event not yet persisted | Source retains responsibility for replay and cursor | Re-deliver source event if provider retains it; do not assume EI persisted it or acknowledged the source | [Real OS SIGKILL after fixture provider handoff, before EI ingestion](../test/postgres-provider-pre-ingest-sigkill.test.mjs), **merged #215**: three retained MCP-shaped events, real child-process death, recovered re-poll with stable provider IDs, one fired wake/effect per distinct source event and forced replay | Remote MCP provider/webhook delivery, interrupted transaction *inside* EI.ingest, producer replay/retention bounds, network failure or upstream event loss |
 | After ingest and durable wake, before source cursor checkpoint | Fired match/receipt persisted; old cursor retained | Same provider ID is replayed; original fired match/wake/receipt is reused | [PG cursor pre-ack pool restart](../test/postgres-cursor-pre-ack-recovery.test.mjs), merged #205 | Real polling network, cursor/ack crash atomicity, remote host exactly-once |
 | After match committed, before wake claim | Matched trigger record persists; delivery may be absent | New worker recovers same logical match and competes for one wake claim | [PG independent pools preclaim recovery](../test/postgres-preclaim-crash-recovery.test.mjs) | Process/network failure at this exact phase with remote host |
 | After wake and partition claim, **before host effect** | Claim/owner/generation are durable; no receipt | Reclaim only after lease expiry; reject old generation, then complete as new worker | [Six real OS SIGKILL rounds](../test/postgres-os-sigkill-recovery.test.mjs), merged #210 | Real clock waiting, sustained failover, external host |
 | **After host effect**, before EI receipt | Host side effect exists, EI claim unresolved | Retry after lease expiry; host must return original receipt for same `wake_id` without another effect | [Real SIGKILL after host effect](../test/postgres-post-host-effect-sigkill.test.mjs), **merged PR #211** | Real remote host/HTTP TurnStore, unknown non-idempotent hosts, external transaction coordination |
-| After EI receipt committed, before durable wake record append / match marked fired | `wake_delivery.status=delivered`; match may still be `matched` | Coordinator must reconstruct wake and finalize match without calling host again; competing PG workers append at most one delivered history row | [PG receipt/finalization recovery test](../test/postgres-delivered-receipt-finalization.test.mjs), **merged PR #213**, with two independent pools, read barrier, queued history and a transactional per-wake materialization lock | Exact-instruction process SIGKILL, remote host, cross-adapter distributed atomicity and production failover |
+| After EI receipt committed, before durable wake record append / match marked fired | `wake_delivery.status=delivered`; match may still be `matched` | Coordinator must reconstruct wake and finalize match without host redispatch; competing PG workers append at most one delivered history row | [PG receipt/finalization recovery test](../test/postgres-delivered-receipt-finalization.test.mjs), **merged #213**, with independent-pool race barrier; [real OS SIGKILL after committed EI receipt](../test/postgres-post-receipt-sigkill.test.mjs), **merged #216**, with a test-owned post-commit barrier, killed process, replacement worker, one delivered history row and no host redispatch | Remote host/HTTP TurnStore, cross-adapter distributed atomicity, sustained failover, network faults and real RPO/RTO |
 | Multiple contenders during wake delivery and lease expiry | One active claim generation at a time; partition lease separated | Losers return in-progress/claim-lost; only rightful generation may write receipt | [PG shared-state arbitration](../test/postgres-shared-state.test.mjs), [reconnect/rebalance](../test/postgres-rebalance-reconnect.test.mjs) | Sustained multiworker overload, network partitions and chaotic interleaving |
 | After delivered receipt, provider replay or new worker | Delivery and fired state persist | Reuse delivery/receipt, no redispatch; never reset receipt based only on elapsed time | [PG cursor replay](../test/postgres-cursor-pre-ack-recovery.test.mjs), [PG SIGKILL recovery](../test/postgres-os-sigkill-recovery.test.mjs) | Retention/compaction beyond receipt lifetime, real host replay after restore |
 | Host permission revoked after queuing | Durable wake exists but host permission can change | Every retry must re-check host permission; deny without external action | [Queued host revocation test](../test/queued-wake-host-revocation.test.mjs) | Real remote host and complex RBAC policy changes |
@@ -70,15 +70,16 @@ reuse of the original logical worker ID (ABA). A
 ## Remaining v1 acceptance
 
 This document classifies the above boundaries, but **does not check
-off all of issue #47**. Required next: an **actual OS-level SIGKILL in the narrow**
-delivered-receipt-before-match-finalization window (the merged #213
-fixture injects both durable intermediate states and tears down the
-first PostgreSQL pool but does **not** kill the process mid-instruction),
-production-like host idempotency/authorization contract verification,
-true repeated
-partition/network faults, multiple event-rate/high-cardinality worker
-soak, retention/compaction with audit-chain integrity, and
-environment-specific SLO/RPO/RTO with complete raw evidence.
+off all of issue #47**. The provider-pre-ingest OS-kill fixture merged in
+#215 and the distinct *post-EI-receipt* actual SIGKILL recovery test merged
+in #216; #213 separately established concurrent cross-pool finalization
+from injected durable intermediate states. Neither #215 nor #216 includes
+a remote provider or host or establishes general network failover.
+Required next: production-like remote host idempotency/authorization
+contract verification, repeated partition/network faults, sustained
+multiworker and high-cardinality event-rate soak, retention/compaction
+with audit-chain integrity, and environment-specific SLO/RPO/RTO
+with complete raw evidence.
 
 This document does not change package API, DB schema, regex behavior,
 Muffin/Artemis integration, or any npm release.
