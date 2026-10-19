@@ -187,7 +187,8 @@ integration('PostgreSQL bounded audit proofs verify across restart, tenants and 
     await assert.rejects(
       () => reader.getAuditProofWindow({checkpoint,afterSequence: 3,limit: 2}),
     );
-    assert.equal(await reader.verifyAudit(), false);
+    await assert.rejects(() => reader.verifyAudit(),
+      'malformed retained audit row must fail closed during full-chain verification');
     assert.equal((await other.listAudit()).length, 1,
       'damage to tenant A cannot change tenant B');
   } finally {
