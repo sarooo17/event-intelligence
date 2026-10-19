@@ -94,7 +94,7 @@ jobs:
           # assertions. On any crash/setup error, preserve a truthful failure
           # status rather than suggesting zero loss/100% recovered receipts.
           if [ ! -s "$EI_CHAOS_EVIDENCE_OUT" ]; then
-            node -e 'const fs=require("node:fs");fs.writeFileSync(process.env.EI_CHAOS_EVIDENCE_OUT,JSON.stringify({schema:"ei-postgres-os-chaos-v1",status:"incomplete",reason:"soak did not produce completed metrics",requestedRounds:Number(process.env.EI_CHAOS_ROUNDS),killsConfirmed:null,recoveredReceipts:null,runId:process.env.GITHUB_RUN_ID,runAttempt:process.env.GITHUB_RUN_ATTEMPT},null,2)+"\\n")'
+            node -e 'const fs=require("node:fs");fs.writeFileSync(process.env.EI_CHAOS_EVIDENCE_OUT,JSON.stringify({schema:"ei-postgres-os-chaos-v1",status:"incomplete",reason:"soak did not produce completed metrics",requestedRounds:Number(process.env.EI_CHAOS_ROUNDS),killsConfirmed:null,recoveredReceipts:null,runId:process.env.GITHUB_RUN_ID,runAttempt:process.env.GITHUB_RUN_ATTEMPT},null,2)+"\n")'
           fi
           if [ ! -f "$RUNNER_TEMP/pg-os-chaos-test.log" ]; then
             printf '%s\n' 'No test log created (setup failed before test execution).' > "$RUNNER_TEMP/pg-os-chaos-test.log"
