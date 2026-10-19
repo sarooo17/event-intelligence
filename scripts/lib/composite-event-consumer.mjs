@@ -69,11 +69,14 @@ export class CompositeEventConsumer {
         status: result.match.status,
       });
 
-      const definition = (await this.store.listTriggers()).find(
-        (candidate) =>
-          candidate.triggerId === result.match.triggerId &&
-          candidate.version === result.match.triggerVersion,
-      );
+      // Prefer the store's authoritative scope-local keyed lookup; legacy
+      // adapters without it preserve the original full-list behavior.
+      const definition = typeof this.store.getTrigger === 'function'
+        ? await this.store.getTrigger(result.match.triggerId, result.match.triggerVersion)
+        : (await this.store.listTriggers()).find(
+            (candidate) => candidate.triggerId === result.match.triggerId &&
+              candidate.version === result.match.triggerVersion,
+          );
 
       if (!definition) {
         deliveries.push({
