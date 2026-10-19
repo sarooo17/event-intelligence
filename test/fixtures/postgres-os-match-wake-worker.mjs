@@ -29,7 +29,7 @@ try {
     throw new Error('invalid isolated OS matching fixture configuration');
   }
   storePool = new Pool({
-    connectionString: POSTGRES_URL, max: 2, query_timeout: 5000,
+    connectionString: POSTGRES_URL, max: 3, query_timeout: 5000,
     statement_timeout: 5000, connectionTimeoutMillis: 5000,
   });
   const store = new PostgresEventStore({ pool: storePool, tablePrefix, scopeId });
@@ -71,7 +71,7 @@ try {
       throw new Error('missing expected match identity for post-recovery assertion');
     }
     hostPool = new Pool({
-      connectionString: POSTGRES_URL, max: 2, query_timeout: 5000,
+      connectionString: POSTGRES_URL, max: 3, query_timeout: 5000,
       statement_timeout: 5000, connectionTimeoutMillis: 5000,
     });
     const coordinator = new CompositeWakeCoordinator({
