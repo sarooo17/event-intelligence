@@ -49,9 +49,15 @@ export function verifyOsChaosEvidence({
   if (!Array.isArray(report.evidence) || report.evidence.length !== rounds) {
     invalid('per-round evidence length mismatch');
   }
+  // The producing node:test fixture is itself limited to this exact
+  // deadline (95 seconds or 12 seconds per round). A verified successful
+  // Github-run result cannot claim astronomical wall times; this also
+  // prevents floating-point additions from absorbing small round durations.
+  const maxFixtureMs = Math.max(95000, rounds * 12000);
   if (!positiveNumber(report.totalDurationMs) ||
+      report.totalDurationMs > maxFixtureMs ||
       !report.handoverMs || typeof report.handoverMs !== 'object') {
-    invalid('missing positive duration and percentile evidence');
+    invalid('missing or impossible bounded fixture duration and percentiles');
   }
   if (typeof report.node !== 'string' || !/^v[0-9]+\./.test(report.node) ||
       typeof report.postgresVersion !== 'string' || !report.postgresVersion ||
