@@ -1,3 +1,26 @@
+/**
+ * Verify a bounded audit proof window against a separately pinned
+ * predecessor sequence, hash and tenant scope.
+ * Missing or mismatched trust inputs return false.
+ */
+export declare function verifyAuditProofWindow(
+  proof: {
+    scopeId: string;
+    afterSequence: number;
+    previousHash: string | null;
+    limit: number;
+    records: any[];
+    endSequence: number;
+    headHash: string | null;
+    hasMore: boolean;
+  },
+  options: {
+    trustedAfterSequence: number;
+    trustedPreviousHash: string | null;
+    trustedScopeId: string;
+  },
+): Promise<boolean>;
+
 import type { EventIntelligenceStoreCapabilities } from '../host-integration.d.mts';
 
 export interface PostgresQueryResult<Row = any> {
