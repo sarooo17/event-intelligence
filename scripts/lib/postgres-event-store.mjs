@@ -29,6 +29,8 @@ const POSTGRES_OBJECT_SUFFIXES = Object.freeze([
   '_records',
   '_records_kind_idx',
   '_records_age_idx',
+  '_records_orphan_status_idx',
+  '_records_wake_match_idx',
   '_history',
   '_history_scope_kind_idx',
   '_history_key_idx',
@@ -643,7 +645,9 @@ export class PostgresEventStore {
       'SELECT idx.relname AS name, tbl.relname AS table_name, ' +
       'i.indisvalid AS valid, i.indisready AS ready, ' +
       'am.amname AS method, i.indnkeyatts AS keys, ' +
-      'pg_get_indexdef(i.indexrelid) AS definition ' +
+      'pg_get_indexdef(i.indexrelid, 1, true) AS key1, ' +
+      'pg_get_indexdef(i.indexrelid, 2, true) AS key2, ' +
+      'pg_get_expr(i.indpred, i.indrelid) AS predicate ' +
       'FROM pg_class idx JOIN pg_index i ON i.indexrelid=idx.oid ' +
       'JOIN pg_class tbl ON tbl.oid=i.indrelid ' +
       'JOIN pg_am am ON am.oid=idx.relam ' +
@@ -652,20 +656,25 @@ export class PostgresEventStore {
       [suffixes.map(suffix => this.tablePrefix + suffix)],
     );
     const present = new Map(result.rows.map(row => [row.name, row]));
+    // Normalize only PostgreSQL's cosmetic casts, whitespace and brackets.
+    // Compare ALL predicate atoms, not just substrings: an extra restrictive
+    // condition makes a partial index unusable for the exact recovery query.
+    const normalize = value => String(value ?? '')
+      .replace(/::text/g, '').replace(/\s+/g, '').replace(/[()]/g, '');
+    const atoms = value => normalize(value).split('AND').sort().join('AND');
     const schemas = [
-      { suffix: suffixes[0], key: /\(scope_id, record_key\)/,
-        pred: /trigger_match/, expr: /status/ },
-      { suffix: suffixes[1], key: /scope_id.*matchId/,
-        pred: /wake_delivery/, expr: /matchId/ },
+      { suffix: suffixes[0], key2: 'record_key',
+        predicate: "kind='trigger_match'ANDpayload->>'status'='matched'" },
+      { suffix: suffixes[1], key2: "payload->>'matchId'",
+        predicate: "kind='wake_delivery'" },
     ];
     for (const expected of schemas) {
       const row = present.get(this.tablePrefix + expected.suffix);
-      const sql = row?.definition ?? '';
       if (!row || row.valid !== true || row.ready !== true ||
           row.method !== 'btree' || row.table_name !== this.tablePrefix + '_records' ||
-          Number(row.keys) !== 2 || !expected.key.test(sql) ||
-          !expected.pred.test(sql) || !expected.expr.test(sql) ||
-          !sql.includes(' WHERE ')) {
+          Number(row.keys) !== 2 || normalize(row.key1) !== 'scope_id' ||
+          normalize(row.key2) !== normalize(expected.key2) ||
+          atoms(row.predicate) !== atoms(expected.predicate)) {
         const error = new Error(
           'PG orphan reconciliation needs both verified scoped expression indexes; ' +
           'run store.migrateOrphanRecoveryIndexes() explicitly after store.init(). ' +
