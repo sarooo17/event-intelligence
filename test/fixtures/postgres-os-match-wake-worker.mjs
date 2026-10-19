@@ -127,13 +127,16 @@ try {
     });
     const candidates = await scheduler.runDue();
     const outcomes = candidates.filter(row => row.matchId === persistedMatchId);
-    if (outcomes.length !== 1 ||
-        !['wake_delivered', 'delivery_in_progress'].includes(outcomes[0].status)) {
-      throw new Error('scheduler did not recover exactly one committed match');
+    if (outcomes.length > 1 || (outcomes.length === 1 &&
+        !['wake_delivered', 'delivery_in_progress'].includes(outcomes[0].status))) {
+      throw new Error('scheduler produced multiple or invalid matching outcomes');
     }
+    // When another contender has already claimed and begun delivery, the
+    // second scheduler can correctly observe NO eligible work: claimed
+    // unexpired deliveries are omitted from both due and orphan queries.
     const reported = {
-      type: 'completed', round, status: outcomes[0].status,
-      matchId: persistedMatchId, wakeId: outcomes[0].wakeId ?? null,
+      type: 'completed', round, status: outcomes[0]?.status ?? 'no_work',
+      matchId: persistedMatchId, wakeId: outcomes[0]?.wakeId ?? null,
       receiptId: null, hostCalls,
     };
     stage = 'close';
