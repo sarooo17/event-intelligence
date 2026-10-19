@@ -40,24 +40,36 @@
       "issue": 47,
       "required": true,
       "status": "blocked",
-      "evidence": [],
-      "note": "Append-only retention/compaction preserving dedup and audit lineage remains unproven."
+      "evidence": [
+        "https://github.com/sarooo17/event-intelligence/pull/218",
+        "https://github.com/sarooo17/event-intelligence/pull/219",
+        "https://github.com/sarooo17/event-intelligence/issues/47"
+      ],
+      "note": "Partial: #218 supplies opt-in terminal-match duplicate revision thinning; #219 supplies checkpoint-pinned, non-destructive audit proof windows. Source occurrence retention, safe archived audit-prefix deletion, external immutable anchor/storage and replay-lineage guarantees remain UNSOLVED. No production TTL enabled."
     },
     {
       "id": "pg-chaos-recovery",
       "issue": 47,
       "required": true,
       "status": "blocked",
-      "evidence": [],
-      "note": "Repeated independent-process fault-soak and specified crash boundaries unverified."
+      "evidence": [
+        "https://github.com/sarooo17/event-intelligence/pull/215",
+        "https://github.com/sarooo17/event-intelligence/pull/216",
+        "https://github.com/sarooo17/event-intelligence/pull/220"
+      ],
+      "note": "Partial: real provider pre-ingest and receipt-before-finalize OS crash boundaries verified in #215/#216; #220 multi-round OS SIGKILL evidence workflow is still under review, and manual long runs, network/database partitions and sustained multiworker/CEP recovery evidence remain UNSOLVED."
     },
     {
       "id": "pg-scale-measured",
       "issue": 47,
       "required": true,
       "status": "blocked",
-      "evidence": [],
-      "note": "Actual measured 1k/10k/100k workloads and SLO evidence unavailable; 16-trigger CI smoke not enough."
+      "evidence": [
+        "https://github.com/sarooo17/event-intelligence/pull/221",
+        "https://github.com/sarooo17/event-intelligence/actions/runs/39234715605",
+        "https://github.com/sarooo17/event-intelligence/issues/47"
+      ],
+      "note": "Partial actual PostgreSQL 16 scale evidence: #221 CI run 39234715605 completed all 1k/10k/100k durable store profiles with retained raw artifacts and an aggregate profiles-observed report. These measure registration, listing and synthetic wake claims/receipts, NOT active 10k/100k CEP event-to-wake under varied rates, provider or host latency, sustained load, database fault or production SLO; the release gate remains BLOCKED."
     },
     {
       "id": "stored-state-upgrade",
