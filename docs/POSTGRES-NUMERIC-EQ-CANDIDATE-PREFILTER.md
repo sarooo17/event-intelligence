@@ -27,7 +27,13 @@ Pattern v2, wake dedup and host receipt fencing in the normal engine.
 
 The old source-only superset is retained when the optional `data`
 argument is absent, null, array, nested, fractional, exceeds safe
-integer precision or otherwise requires a complex interpretation.
+integer precision or otherwise requires a complex interpretation. Flat
+string keys/values with U+0000 or any UTF-16 surrogate code unit also
+**fail open**: PostgreSQL JSONB rejects NUL/unpaired surrogate escapes,
+and this intentionally conservative boundary also disables pushdown for
+valid supplementary Unicode code points. Numeric `eq` constants stored
+in a trigger that are fractional or outside the signed JavaScript safe
+integer range are likewise kept in the canonical candidate set.
 A `where` clause with multiple predicates, a dotted/nested path,
 string equality, regex, time window, `contains`, semantic logic etc.
 also remains in the returned source candidate set. If a definition has
@@ -48,7 +54,8 @@ expressions; **this is not a claim of O(1) database matching**.
 
 `test/postgres-safe-numeric-eq-prefilter.test.mjs` on real PG16
 checks matching/mismatching integer predicates, two alternative
-clauses, multiple predicates, numeric fractions, nested paths,
+clauses, multiple predicates, fractional/unsafe predicate constants,
+JSONB-unrepresentable NUL/surrogate string values and keys, nested paths,
 string/regex, serverId scope, dynamic registration, paused
 definitions, tenant isolation and unrelated lifecycle expiry.
 It also requires the no-`data` legacy behavior to be unchanged.
