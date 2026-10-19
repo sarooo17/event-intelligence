@@ -87,7 +87,16 @@ export class WakeRetryScheduler {
           const state = typeof this.store.getTriggerState === 'function'
             ? await this.store.getTriggerState(match.triggerId, match.triggerVersion)
             : null;
-          if (!definition?.target || (state && state.status !== 'active')) {
+          const lifecycle = definition?.lifecycle ?? {};
+          const expiresAt = lifecycle.expiresAt
+            ? Date.parse(lifecycle.expiresAt) : Number.POSITIVE_INFINITY;
+          const leaseUntil = lifecycle.leaseUntil
+            ? Date.parse(lifecycle.leaseUntil) : Number.POSITIVE_INFINITY;
+          const count = state?.fireCount ?? 0;
+          if (!definition?.target || (state && state.status !== 'active') ||
+              nowMs > Math.min(expiresAt, leaseUntil) ||
+              (lifecycle.oneShot === true && count >= 1) ||
+              (lifecycle.maxFirings !== undefined && count >= lifecycle.maxFirings)) {
             outcomes.push({ matchId: match.matchId, status: 'recovery_not_authorized' });
             continue;
           }
