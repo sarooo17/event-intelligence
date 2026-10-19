@@ -54,13 +54,26 @@ If a matching trigger has been paused/deleted/expired/completed since
 matching, or its `expiresAt` / `leaseUntil` deadline has passed while
 durably marked active, the sweep returns `recovery_not_authorized`.
 The PostgreSQL delivery boundary also holds the **same session advisory
-lock as `setTriggerState()` uses transactionally** across the external
-host callback: revocation may only commit before the callback starts
-(then delivery fails closed) or after the already-authorized callback
-finishes. This requires a real session-preserving PostgreSQL connection,
-not PgBouncer transaction-pooling, and a pool with at least two
-connections. Hosts must still implement idempotent receipt handling
-for process failure after an external side effect. Missing runtime coordinators remain
+lock as `setTriggerState()` uses transactionally** across the entire
+host callback, durable receipt and `markFired` lifecycle finalization.
+This prevents two different matched wakes for a one-shot/max-fire
+trigger from both seeing an old firing count before either commit.
+Only the matching internal system-lifecycle finalizer may reenter its
+own advisory fence, avoiding a self-deadlock. A concurrent user pause
+waits until already-authorized work has finished, or commits before
+the final guarded check and suppresses the effect. A pool-wide local
+admission gate reserves **at least two connections** for callback
+lookups/management mutations, rather than exhausting the pool with
+competing lock waiters; same-trigger lock contention is fail-closed
+and re-enters the existing durable retry protocol.
+
+**Operational constraint:** this mechanism requires direct,
+session-preserving PostgreSQL (not PgBouncer transaction-pooling) and a
+pool of **at least three connections**. Session loss in the middle of an
+external callback and external idempotency remain integration risks.
+Long callbacks hold a PG connection and delay lifecycle revocations;
+this is not a guaranteed distributed external-host atomic transaction.
+The host must still implement durable receipt idempotency after crash. Missing runtime coordinators remain
 `runtime_unconfigured`. A separate PG16 regression verifies paused
 matches remain pending, not resurrected.
 
@@ -97,8 +110,9 @@ reconciliation and trigger delivery ordering.
 
 **Production behavior and public adapter API DO change.** This PR adds
 indexed PostgreSQL orphan recovery, an explicit online index migration,
-host delivery / mutation serialization and live lifecycle deadline
-guards; it is not a test-only refactor. A single PG16 service is still
+host delivery / mutation serialization through receipt and lifecycle
+finalization, and live lifecycle deadline guards; it is not a test-only
+refactor. A single PG16 service is still
 used in all jobs. Indexes limit the scan, but the queue cadence,
 migration, locks, and host callback durations need operational load and
 fault profiling before production SLO signoff. The callback lock can
