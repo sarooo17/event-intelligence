@@ -89,14 +89,14 @@ try {
         await hostPool.query(
           'INSERT INTO "' + tablePrefix + '_host_attempts" ' +
           '(wake_id,worker_id) VALUES ($1,$2)',
-          [packet.wakeId, workerId],
+          [packet.wake_id, workerId],
         );
-        const receiptId = 'fixture-external:' + packet.wakeId;
+        const receiptId = 'fixture-external:' + packet.wake_id;
         const result = await hostPool.query(
           'INSERT INTO "' + tablePrefix + '_host_effects" ' +
           '(wake_id,receipt_id) VALUES ($1,$2) ' +
           'ON CONFLICT (wake_id) DO NOTHING RETURNING receipt_id',
-          [packet.wakeId, receiptId],
+          [packet.wake_id, receiptId],
         );
         if (result.rowCount !== 1) {
           throw new Error('external fixture would have duplicated host work');
