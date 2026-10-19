@@ -100,7 +100,7 @@ async function main() {
       node: process.version,
       platform: process.platform,
       arch: process.arch,
-      commit: process.env.GITHUB_SHA ?? null,
+      commit: process.env.EI_BENCH_SOURCE_COMMIT ?? process.env.GITHUB_SHA ?? null,
     },
     metrics: {},
   };
