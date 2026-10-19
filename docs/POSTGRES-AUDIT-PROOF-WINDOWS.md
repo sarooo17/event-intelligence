@@ -11,7 +11,7 @@ It adds two advanced storage operations:
 
 - `store.getAuditProofWindow({ afterSequence: -1, limit: 100 })`:
   serializes against audit writers across PostgreSQL pools, reads an
-  ordered, scope-local window of at most 1–1000 entries with its
+  ordered, scope-local window of at most 1–1000 entries, paged by immutable PostgreSQL history IDs rather than untrusted JSON sequence fields, with its
   predecessor hash, `headHash`, `endSequence`, and `hasMore`.
   It validates sequence continuity, every canonical SHA-256 record hash,
   and predecessor links *before* returning.
