@@ -585,6 +585,31 @@ export class PostgresEventStore {
     return this.latestHistory('wake', wakeId);
   }
 
+  // Idempotent, scope-local materialization after a durable delivery receipt.
+  // The same advisory transaction lock is shared by independent PG pools,
+  // so concurrent recovery workers cannot append duplicate delivered rows.
+  // Existing schema/history remains unchanged; never delete queued evidence.
+  async appendDeliveredWakeIfMissing(record) {
+    if (!record?.wakeId || record.status !== 'delivered') {
+      throw new Error('Delivered wake materialization requires delivered WakeRecord');
+    }
+    return this.tx(async (client) => {
+      await this.lock(client, 'wake-delivered-history', record.wakeId);
+      const existing = await client.query(
+        'SELECT payload FROM ' + this.history +
+          ' WHERE scope_id=$1 AND kind=$2 AND record_key=$3' +
+          " AND payload->>'status'='delivered'" +
+          ' ORDER BY history_id DESC LIMIT 1',
+        [this.scopeId, 'wake', String(record.wakeId)],
+      );
+      if (existing.rows.length) {
+        return { wake: existing.rows[0].payload, appended: false };
+      }
+      await this.appendHistory('wake', record.wakeId, record, client);
+      return { wake: record, appended: true };
+    });
+  }
+
   getWakeDelivery(wakeId) {
     return this.get('wake_delivery', wakeId);
   }

@@ -65,6 +65,21 @@ export class CompositeWakeCoordinator {
     }
   }
 
+  async persistDeliveredWake(record) {
+    if (typeof this.store.appendDeliveredWakeIfMissing === 'function') {
+      return this.store.appendDeliveredWakeIfMissing(record);
+    }
+    // Stores without distributed transactions retain their existing
+    // single-process recovery behavior; the PG adapter owns cross-worker
+    // atomicity via its advisory transaction lock.
+    const existing = await this.store.latestWake(record.wakeId);
+    if (existing?.status === 'delivered') {
+      return { wake: existing, appended: false };
+    }
+    await this.store.appendWake(record);
+    return { wake: record, appended: true };
+  }
+
   async deliveredResult({ match, wakeId, definition, delivery }) {
     const existing = await this.store.latestWake(wakeId);
     let delivered = existing;
@@ -83,8 +98,9 @@ export class CompositeWakeCoordinator {
         status: 'delivered',
         runtimeReceiptId: delivery.runtimeReceiptId,
       });
-      await this.store.appendWake(delivered);
-      await this.store.appendAudit({
+      const persisted = await this.persistDeliveredWake(delivered);
+      delivered = persisted.wake;
+      if (persisted.appended) await this.store.appendAudit({
         auditId: await stableId(
           'audit',
           `${wakeId}:delivered-recovered:${await this.store.auditLength()}`,
@@ -103,7 +119,7 @@ export class CompositeWakeCoordinator {
           composite: true,
         },
       });
-      await this.observability?.emit({
+      if (persisted.appended) await this.observability?.emit({
         event: 'ei.wake.delivered',
         level: 'info',
         traceId: delivered.traceId,
@@ -341,8 +357,8 @@ export class CompositeWakeCoordinator {
         status: 'delivered',
         runtimeReceiptId: receipt.runtimeReceiptId,
       });
-      await this.store.appendWake(delivered);
-      await this.store.appendAudit({
+      const persisted = await this.persistDeliveredWake(delivered);
+      if (persisted.appended) await this.store.appendAudit({
         auditId: await stableId(
           'audit',
           `${wakeId}:delivered:${await this.store.auditLength()}`,
@@ -362,7 +378,7 @@ export class CompositeWakeCoordinator {
           composite: true,
         },
       });
-      await this.observability?.emit({
+      if (persisted.appended) await this.observability?.emit({
         event: 'ei.wake.delivered',
         level: 'info',
         traceId: delivered.traceId,
@@ -378,7 +394,7 @@ export class CompositeWakeCoordinator {
 
       return {
         status: 'wake_delivered',
-        wake: delivered,
+        wake: persisted.wake,
         packet,
         delivery,
       };
