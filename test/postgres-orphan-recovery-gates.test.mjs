@@ -97,6 +97,14 @@ integration('concurrent lifecycle revocation waits for actual PG dispatch callba
   assert.equal(after.authorized, false);
   assert.equal(hostAttempts, 0);
   assert.equal((await store.getTriggerState('dispatch-fence', '1')).status, 'paused');
+  const lifecycleAttempt = await store.setTriggerState(
+    'dispatch-fence', '1', 'active',
+    { type: 'system', principal_id: 'event-intelligence:lifecycle' },
+    { fireCount: 1 },
+  );
+  assert.equal(lifecycleAttempt.status, 'paused',
+    'post-receipt system lifecycle cannot resurrect revocation');
+  assert.equal((await store.getTriggerState('dispatch-fence', '1')).status, 'paused');
 }));
 
 integration('existing PG store requires explicit online indexes, and cannot scan orphan history without them', async () => fixture(async ({ store, pool, prefix }) => {
