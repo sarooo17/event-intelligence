@@ -4,8 +4,8 @@
 
 The prior real active-trigger CI [run 39237414663](https://github.com/sarooo17/event-intelligence/actions/runs/39237414663)
 showed a substantial **match-to-wake** interval at 10k/100k
-definitions. Both `CompositeEventConsumer` and
-`CompositeWakeCoordinator.deliverMatched` called
+definitions. The `CompositeEventConsumer`,
+`CompositeWakeCoordinator.deliverMatched` and lifecycle advancement called
 `store.listTriggers()` and filtered the **entire tenant definition
 registry** for one `triggerId@version`, after the engine had already
 matched an event. At 100k this caused two unnecessary tenant-wide
