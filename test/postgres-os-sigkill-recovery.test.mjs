@@ -26,7 +26,7 @@ function at(value) { return new Date(value).toISOString(); }
 // Never race a live store transaction: doing so could trigger cleanup
 // while its underlying client still holds locks on these tables.
 function requireOperationBudget(endsAt, name) {
-  if (Date.now() >= endsAt - 35000) {
+  if (Date.now() >= endsAt - 60000) {
     throw new Error('chaos finalizer reserve reached before: ' + name);
   }
 }
@@ -263,7 +263,8 @@ integration('real SIGKILL PostgreSQL worker takeovers fence generations and keep
       const auditor = guardedStore(new PostgresEventStore({
         pool: auditPool, scopeId, tablePrefix,
       }), testEndsAt);
-      await auditor.init();
+      // The schema was initialized by the parent store. A read-only audit
+      // reconnection must not re-run multi-statement DDL initialization.
       for (let i = 0; i < ROUNDS; i++) {
         const wakeId = wakeIds[i];
         const saved = await auditor.getWakeDelivery(wakeId);
@@ -300,7 +301,8 @@ integration('real SIGKILL PostgreSQL worker takeovers fence generations and keep
         JSON.stringify(report, null, 2) + '\n', { flag: 'wx' });
     }
   } finally {
-    // Reserve 35s for child reaping, a single bounded DDL and pool close.
+    // Keep a 60s pre-operation reserve for bounded multi-query store calls,
+    // reaping, one 5s DROP statement and clean PG pool shutdown.
     try {
       for (const child of liveChildren) child.kill('SIGKILL');
       let timer;
