@@ -23,7 +23,21 @@ A heavyweight GitHub Actions workflow runs **only** on PRs changing
 manual dispatch, never on normal feature PRs. Each run uses a fresh
 Postgres service, Node 22, exact `pg@8.16.3`, 90-min timeout per profile,
 recorded exact source commit, raw result/errors and environment artifacts.
-Profiles are independent (a failure does not cancel the other two):
+Profiles are independent (a failure does not cancel the other two).
+Each heavy benchmark command has an **80-minute process timeout** inside
+the 90-minute job limit, preserving time for structured failure output and
+artifact upload on timeout. A timeout/OOM is failure evidence, never a
+performance measurement.
+
+For large profiles the test seeds only independent simple single-event
+definitions using `PostgresEventStore.putTrigger()`, which validates the
+canonical definition schema but avoids `CompositeTriggerEngine.register()`'s
+global derived-event cycle scan on every insertion (quadratic setup).
+The subsequent **measured path** still uses the unchanged production
+`CompositeEventConsumer`, engine Pattern matching, PostgreSQL wake
+claims and host receipt. This does not benchmark bulk registration through
+`engine.register()` or its cycle-check cost:
+
 
 | Profile | Registered active definitions | Event names | Sampled matching events |
 | --- | ---: | ---: | ---: |
