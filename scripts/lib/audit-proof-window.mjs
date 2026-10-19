@@ -2,49 +2,65 @@ import { parseAuditRecord } from '../../dist/src/intelligenceProtocol/index.js';
 import { canonicalJson, sha256Hex } from '../../dist/src/intelligenceProtocol/canonical.js';
 
 /**
- * Verify a bounded audit archive against a *separately trusted* predecessor
- * anchor. An unpinned hash returned from the same compromised database does
- * not prove historical authenticity, even if internal links all match.
+ * Independent verification requires a trusted snapshot committed out of
+ * band. It must bind the scope, first record, final sequence and final hash.
+ * An unpinned database-provided checkpoint is never a trust root.
  */
 export async function verifyAuditProofWindow(proof, {
+  trustedCheckpoint,
   trustedAfterSequence,
   trustedPreviousHash,
-  trustedScopeId,
+  trustedLimit,
 } = {}) {
-  if (!proof || !Array.isArray(proof.records) ||
-      !Number.isSafeInteger(proof.afterSequence) ||
-      proof.afterSequence < -1 ||
-      !Number.isSafeInteger(proof.limit) || proof.limit < 1 || proof.limit > 1000 ||
-      proof.records.length > proof.limit ||
-      typeof proof.scopeId !== 'string' || !proof.scopeId ||
-      proof.scopeId !== trustedScopeId ||
+  const checkpoint = trustedCheckpoint;
+  if (!checkpoint || !proof || !Array.isArray(proof.records) ||
+      typeof checkpoint.scopeId !== 'string' || !checkpoint.scopeId ||
+      !Number.isSafeInteger(checkpoint.endSequence) ||
+      checkpoint.endSequence < -1 ||
       !Number.isSafeInteger(trustedAfterSequence) ||
-      trustedAfterSequence !== proof.afterSequence ||
-      (trustedPreviousHash !== null &&
-        (typeof trustedPreviousHash !== 'string' || !trustedPreviousHash)) ||
+      trustedAfterSequence < -1 ||
+      trustedAfterSequence > checkpoint.endSequence ||
+      !Number.isSafeInteger(trustedLimit) ||
+      trustedLimit < 1 || trustedLimit > 1000 ||
+      proof.limit !== trustedLimit ||
+      proof.records.length > trustedLimit ||
+      proof.scopeId !== checkpoint.scopeId ||
+      proof.afterSequence !== trustedAfterSequence ||
       proof.previousHash !== trustedPreviousHash ||
+      !Number.isSafeInteger(proof.endSequence) ||
       typeof proof.hasMore !== 'boolean' ||
-      !Number.isSafeInteger(proof.endSequence)) {
+      (checkpoint.endSequence === -1 &&
+        (checkpoint.firstHash !== null || checkpoint.headHash !== null)) ||
+      (checkpoint.endSequence >= 0 &&
+        (typeof checkpoint.firstHash !== 'string' || !checkpoint.firstHash ||
+          typeof checkpoint.headHash !== 'string' || !checkpoint.headHash)) ||
+      (trustedAfterSequence === -1 && trustedPreviousHash !== null) ||
+      (trustedAfterSequence >= 0 &&
+        (typeof trustedPreviousHash !== 'string' || !trustedPreviousHash))) {
     return false;
   }
-  if (proof.afterSequence === -1 && trustedPreviousHash !== null) return false;
-  if (proof.afterSequence >= 0 && trustedPreviousHash === null) return false;
-
-  let previousHash = trustedPreviousHash;
   let sequence = trustedAfterSequence;
+  let hash = trustedPreviousHash;
   try {
-    for (const raw of proof.records) {
-      const record = parseAuditRecord(raw);
-      sequence++;
-      if (record.sequence !== sequence ||
-          record.previousHash !== previousHash) return false;
-      const { hash, ...unsigned } = record;
-      if (hash !== await sha256Hex(canonicalJson(unsigned))) return false;
-      previousHash = hash;
+    for (const row of proof.records) {
+      const record = parseAuditRecord(row);
+      sequence += 1;
+      if (record.sequence !== sequence || record.previousHash !== hash) {
+        return false;
+      }
+      const { hash: actual, ...unsigned } = record;
+      if (actual !== await sha256Hex(canonicalJson(unsigned))) return false;
+      if (sequence === 0 && actual !== checkpoint.firstHash) return false;
+      hash = actual;
     }
   } catch {
     return false;
   }
-  return proof.endSequence === sequence && proof.headHash === previousHash &&
-    (!proof.hasMore || proof.records.length === proof.limit);
+  if (sequence !== proof.endSequence || hash !== proof.headHash ||
+      sequence > checkpoint.endSequence) return false;
+  const moreExpected = sequence < checkpoint.endSequence;
+  return proof.hasMore === moreExpected &&
+    (moreExpected
+      ? proof.records.length === trustedLimit
+      : sequence === checkpoint.endSequence && hash === checkpoint.headHash);
 }
