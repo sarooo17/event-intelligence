@@ -49,6 +49,12 @@ jobs:
       EI_CHAOS_ROUNDS: ${{ github.event_name == 'pull_request' && '60' || inputs.rounds }}
       EI_CHAOS_EVIDENCE_OUT: ${{ runner.temp }}/pg-os-chaos-evidence.json
     steps:
+      # This runs before checkout/install so even an early setup failure has
+      # a persisted human-readable log in the always-uploaded artifact.
+      - name: Initialize fail-closed chaos evidence log
+        shell: bash
+        run: |
+          printf '%s\n' 'PostgreSQL OS kill chaos run initialized; no round completed yet.' > "$RUNNER_TEMP/pg-os-chaos-test.log"
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -80,6 +86,19 @@ jobs:
         run: |
           set -o pipefail
           node --test test/postgres-os-sigkill-recovery.test.mjs 2>&1 | tee "$RUNNER_TEMP/pg-os-chaos-test.log"
+      - name: Guarantee explicit incomplete-run JSON evidence on failure
+        if: always()
+        shell: bash
+        run: |
+          # The Node soak harness writes a success JSON only after ALL
+          # assertions. On any crash/setup error, preserve a truthful failure
+          # status rather than suggesting zero loss/100% recovered receipts.
+          if [ ! -s "$EI_CHAOS_EVIDENCE_OUT" ]; then
+            node -e 'const fs=require("node:fs");fs.writeFileSync(process.env.EI_CHAOS_EVIDENCE_OUT,JSON.stringify({schema:"ei-postgres-os-chaos-v1",status:"incomplete",reason:"soak did not produce completed metrics",requestedRounds:Number(process.env.EI_CHAOS_ROUNDS),killsConfirmed:null,recoveredReceipts:null,runId:process.env.GITHUB_RUN_ID,runAttempt:process.env.GITHUB_RUN_ATTEMPT},null,2)+"\\n")'
+          fi
+          if [ ! -f "$RUNNER_TEMP/pg-os-chaos-test.log" ]; then
+            printf '%s\n' 'No test log created (setup failed before test execution).' > "$RUNNER_TEMP/pg-os-chaos-test.log"
+          fi
       - name: Archive raw metrics and complete test log
         if: always()
         uses: actions/upload-artifact@v4
