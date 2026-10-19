@@ -1,0 +1,71 @@
+name: PostgreSQL OS Kill Chaos (manual evidence)
+
+on:
+  workflow_dispatch:
+    inputs:
+      rounds:
+        description: Number of real OS kill/recovery rounds (bounded)
+        type: choice
+        options:
+          - '30'
+          - '60'
+          - '120'
+        default: '30'
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ei-pg-os-chaos-manual
+  cancel-in-progress: false
+
+jobs:
+  bounded-os-chaos:
+    name: Bounded PostgreSQL OS process chaos
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: ei_chaos
+          POSTGRES_PASSWORD: ei_chaos_isolated
+          POSTGRES_DB: ei_chaos
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ei_chaos -d ei_chaos"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      POSTGRES_URL: postgresql://ei_chaos:ei_chaos_isolated@127.0.0.1:5432/ei_chaos
+      EI_CHAOS_ROUNDS: ${{ inputs.rounds }}
+      EI_CHAOS_EVIDENCE_OUT: ${{ runner.temp }}/pg-os-chaos-evidence.json
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install pinned dependencies and PostgreSQL test driver
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm install --no-save --ignore-scripts --no-audit --no-fund pg@8.16.3
+          npm run build
+      - name: Run bounded independent-process OS kill evidence
+        shell: bash
+        run: |
+          set -o pipefail
+          node --test test/postgres-os-sigkill-recovery.test.mjs 2>&1 | tee "$RUNNER_TEMP/pg-os-chaos-test.log"
+      - name: Archive raw metrics and complete test log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pg-os-chaos-${{ inputs.rounds }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/pg-os-chaos-evidence.json
+            ${{ runner.temp }}/pg-os-chaos-test.log
+          if-no-files-found: error
+          retention-days: 30
