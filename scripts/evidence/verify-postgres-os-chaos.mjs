@@ -106,6 +106,14 @@ export function verifyOsChaosEvidence({
     receipts.add(row.receiptId);
     timings.push(row.handoverMs);
   }
+  // The producer measures rounds serially inside the total wall-clock
+  // window. A forged aggregate shorter than their sum must never pass:
+  // compare the UNSORTED per-round sum, with floating-point tolerance.
+  const sumOfRoundsMs = timings.reduce((sum, value) => sum + value, 0);
+  if (report.totalDurationMs + Math.max(0.001, sumOfRoundsMs * 1e-10) <
+      sumOfRoundsMs) {
+    invalid('total wall duration is shorter than the sum of sequential rounds');
+  }
   timings.sort((a, b) => a - b);
   for (const [label, p] of [['p50', .5], ['p95', .95], ['p99', .99]]) {
     const expected = timings[Math.min(timings.length - 1, Math.ceil(p * timings.length) - 1)];
