@@ -132,6 +132,7 @@ integration('real OS SIGKILL after MCP Pattern match: independent PG workers con
   });
   const children = new Set(), exits = new Set();
   const evidence = [];
+  let completedReport = null;
   const started = process.hrtime.bigint();
   try {
     const store = new PostgresEventStore({ pool, scopeId, tablePrefix: prefix });
@@ -237,10 +238,9 @@ integration('real OS SIGKILL after MCP Pattern match: independent PG workers con
       limits: 'same PG16 instance, 2 competing worker processes, simulated MCP occurrence, fixture host ledger; no real provider network, database partition/failover or durable upstream cursor',
       evidence,
     };
-    if (process.env.EI_MATCH_KILL_EVIDENCE_OUT) {
-      await writeFile(process.env.EI_MATCH_KILL_EVIDENCE_OUT,
-        JSON.stringify(report, null, 2) + '\n', { flag: 'wx' });
-    }
+    // Stage the success-shaped report only in memory. It is not evidence
+    // until every worker is reaped and PG cleanup has actually succeeded.
+    completedReport = report;
   } finally {
     // Never drop isolated tables while children can still use them.
     for (const child of children) child.kill('SIGKILL');
@@ -262,5 +262,11 @@ integration('real OS SIGKILL after MCP Pattern match: independent PG workers con
       clearTimeout(timer);
       await pool.end();
     }
+  }
+  // Any failure above throws out of the callback before reaching this point,
+  // so a red job cannot retain a success-shaped artifact from aborted cleanup.
+  if (completedReport && process.env.EI_MATCH_KILL_EVIDENCE_OUT) {
+    await writeFile(process.env.EI_MATCH_KILL_EVIDENCE_OUT,
+      JSON.stringify(completedReport, null, 2) + '\n', { flag: 'wx' });
   }
 });
