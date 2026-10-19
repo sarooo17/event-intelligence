@@ -54,6 +54,7 @@ export class WakeRetryScheduler {
         const result = await coordinator.deliverMatched(match);
         outcomes.push({
           wakeId: delivery.wakeId,
+          matchId: delivery.matchId,
           status: result.status,
         });
       }
