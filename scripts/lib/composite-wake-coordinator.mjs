@@ -339,7 +339,22 @@ export class CompositeWakeCoordinator {
         match,
         definition,
       });
-      const receipt = await this.deliverer(packet);
+      // PostgreSQL holds the same advisory-key dispatch fence as lifecycle
+      // pause/delete mutations across the actual host callback. Revocation
+      // cannot commit between the final authorization read and host effect.
+      const fenced = typeof this.store.withTriggerDispatchFence === 'function'
+        ? await this.store.withTriggerDispatchFence(
+            match.triggerId, match.triggerVersion,
+            this.now().toISOString(),
+            () => this.deliverer(packet),
+          )
+        : { authorized: true, value: await this.deliverer(packet) };
+      if (!fenced.authorized) {
+        const error = new Error('Trigger authorization revoked before host dispatch');
+        error.code = 'EVENT_INTELLIGENCE_HOST_DISPATCH_REVOKED';
+        throw error;
+      }
+      const receipt = fenced.value;
       if (
         !receipt ||
         typeof receipt.runtimeReceiptId !== 'string' ||
