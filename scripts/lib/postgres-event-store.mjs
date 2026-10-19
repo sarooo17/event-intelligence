@@ -1594,7 +1594,12 @@ export class PostgresEventStore {
         'SELECT payload FROM ' + this.history +
         ' WHERE scope_id=$1 AND kind=$2' +
         (previousHistoryId === null ? '' : ' AND history_id>$3') +
-        ' ORDER BY history_id ASC LIMIT 
+        ' ORDER BY history_id ASC LIMIT ' +
+        (previousHistoryId === null ? '$3' : '$4'),
+        previousHistoryId === null
+          ? [this.scopeId, 'audit', limit + 1]
+          : [this.scopeId, 'audit', previousHistoryId, limit + 1],
+      );
       const records = rows.rows.slice(0, limit).map(row =>
         parseAuditRecord(row.payload)
       );
