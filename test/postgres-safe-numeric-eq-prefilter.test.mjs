@@ -63,6 +63,9 @@ integration('PG source candidate numeric-eq prefilter is fail-open and never dro
       definition('two-predicates', { where: [eq('slot', 7), eq('tag', 'okay')] }),
       definition('regex-constraint', { where: [{ path: 'tag', op: 'regex', value: '^ok' }] }),
       definition('numeric-fraction', { where: [eq('slot', 1.5)] }),
+      definition('numeric-unsafe-constant', {
+        where: [eq('slot', Number.MAX_SAFE_INTEGER + 10)],
+      }),
       definition('lifecycle-expired', {
         event: 'unrelated.event',
         lifecycle: { expiresAt: '2020-01-01T00:00:00.000Z' },
@@ -96,6 +99,7 @@ integration('PG source candidate numeric-eq prefilter is fail-open and never dro
       'string-constraint', 'two-predicates', 'regex-constraint',
       'lifecycle-expired', 'lifecycle-one-shot', 'lifecycle-max',
       'alternate-clause', 'paused-current-state',
+      'numeric-fraction', 'numeric-unsafe-constant',
     ].sort();
     assert.deepEqual(ids(narrowed), expected,
       'drop only provably false single direct-number eq candidates');
@@ -106,6 +110,10 @@ integration('PG source candidate numeric-eq prefilter is fail-open and never dro
       { slot: 1.5, tag: 'okay' },
       { slot: Number.MAX_SAFE_INTEGER + 10 },
       { slot: { deep: 7 } },
+      { slot: 7, note: 'contains' + String.fromCharCode(0) + 'nul' },
+      { slot: 7, ['nul' + String.fromCharCode(0)]: 'key' },
+      { slot: 7, note: String.fromCharCode(0xd800) },
+      { slot: 7, note: 'emoji ' + String.fromCodePoint(0x1f600) },
       [7],
       null,
     ]) {
