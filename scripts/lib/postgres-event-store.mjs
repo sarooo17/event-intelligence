@@ -2,6 +2,8 @@ import * as z from 'zod/v4';
 import { mcpGapSnapshot } from '../../dist/src/composite/gapFingerprint.js';
 import { safeMcpSourceArguments } from './mcp-safe-arguments.mjs';
 import { randomUUID } from 'node:crypto';
+import { verifyAuditProofWindow } from './audit-proof-window.mjs';
+export { verifyAuditProofWindow } from './audit-proof-window.mjs';
 import {
   AuditChain,
   McpEventOccurrenceSchema,
@@ -1545,6 +1547,74 @@ export class PostgresEventStore {
       const record = await chain.append(input);
       await this.appendHistory('audit', input.auditId, record, client);
       return record;
+    });
+  }
+
+  /**
+   * Produce a consistent, bounded audit archive slice with a predecessor
+   * hash anchor. No pruning: AuditChain currently requires genesis records
+   * to validate the full chain. External systems must pin headHash before
+   * trusting a subsequent window's predecessor anchor.
+   */
+  async getAuditProofWindow({ afterSequence = -1, limit = 100 } = {}) {
+    if (!Number.isSafeInteger(afterSequence) || afterSequence < -1 ||
+        !Number.isSafeInteger(limit) || limit < 1 || limit > 1000) {
+      const error = new TypeError(
+        'Audit proof needs afterSequence >= -1 and limit 1..1000',
+      );
+      error.code = 'EVENT_INTELLIGENCE_AUDIT_PROOF_POLICY_INVALID';
+      throw error;
+    }
+    return this.tx(async (client) => {
+      // Serializes the predecessor lookup and window read against appends
+      // from *all* independent PG workers in this scope.
+      await this.lock(client, 'audit', 'chain');
+      let previousHash = null;
+      if (afterSequence >= 0) {
+        const prev = await client.query(
+          'SELECT payload FROM ' + this.history +
+          ' WHERE scope_id=$1 AND kind=$2' +
+          " AND (payload->>'sequence')::bigint=$3" +
+          ' ORDER BY history_id DESC LIMIT 1',
+          [this.scopeId, 'audit', afterSequence],
+        );
+        if (prev.rows.length !== 1) {
+          const error = new Error('Audit proof predecessor was not found');
+          error.code = 'EVENT_INTELLIGENCE_AUDIT_PROOF_ANCHOR_MISSING';
+          throw error;
+        }
+        previousHash = parseAuditRecord(prev.rows[0].payload).hash;
+      }
+      const rows = await client.query(
+        'SELECT payload FROM ' + this.history +
+        ' WHERE scope_id=$1 AND kind=$2' +
+        " AND (payload->>'sequence')::bigint>$3" +
+        ' ORDER BY history_id ASC LIMIT $4',
+        [this.scopeId, 'audit', afterSequence, limit + 1],
+      );
+      const records = rows.rows.slice(0, limit).map(row =>
+        parseAuditRecord(row.payload)
+      );
+      const proof = {
+        scopeId: this.scopeId,
+        afterSequence,
+        previousHash,
+        limit,
+        records,
+        endSequence: afterSequence + records.length,
+        headHash: records.length
+          ? records[records.length - 1].hash : previousHash,
+        hasMore: rows.rows.length > limit,
+      };
+      if (!await verifyAuditProofWindow(proof, {
+        trustedAfterSequence: afterSequence,
+        trustedPreviousHash: previousHash,
+      })) {
+        const error = new Error('Audit proof segment is not a valid hash chain');
+        error.code = 'EVENT_INTELLIGENCE_AUDIT_PROOF_CHAIN_INVALID';
+        throw error;
+      }
+      return proof;
     });
   }
 
