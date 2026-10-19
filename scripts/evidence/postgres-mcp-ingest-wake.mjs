@@ -147,7 +147,19 @@ try {
   const store = new PostgresEventStore({ pool, scopeId, tablePrefix: prefix });
   await store.init();
   const engine = new CompositeTriggerEngine(store);
-  for (let i = 0; i < triggers; i++) await engine.register(definition(i, sourceCount));
+  for (let i = 0; i < triggers; i++) {
+    const item = definition(i, sourceCount);
+    if (triggers > 1000) {
+      // Large fixtures contain only independent single-event clauses,
+      // no derived-event references or cycles. putTrigger validates the
+      // exact canonical schema and inserts in O(N), avoiding the
+      // register() cycle-check O(N^2) setup over 100k existing triggers.
+      // The *measured ingest* still runs the unmodified real engine.
+      await store.putTrigger(item);
+    } else {
+      await engine.register(item);
+    }
+  }
 
   // Record how many *actual* definitions the live PG candidate projection
   // returned for each measured MCP event. Total eligible population is NOT
