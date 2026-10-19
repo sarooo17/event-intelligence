@@ -1012,6 +1012,88 @@ export class PostgresEventStore {
     };
   }
 
+  /**
+   * Explicit, per-match and scope-local operator retention.
+   * Never remove a distinct transition, first/last witness of a run,
+   * current trigger_match, MCP occurrence/dedup, wake, receipt or audit row.
+   * No implicit TTL job: only exact adjacent duplicate *snapshots* of a
+   * durably fired match may be pruned, and only before a past cutoff.
+   */
+  async compactTerminalMatchDuplicateHistory({
+    matchId,
+    before,
+    maxRows = 100,
+    dryRun = true,
+  } = {}) {
+    if (typeof matchId !== 'string' || !matchId.trim() ||
+        !z.iso.datetime({ offset: true }).safeParse(before).success ||
+        Date.parse(before) > Date.now() ||
+        !Number.isSafeInteger(maxRows) || maxRows < 1 || maxRows > 1000 ||
+        typeof dryRun !== 'boolean') {
+      const error = new TypeError(
+        'Match history compaction needs matchId, past offset-aware ISO cutoff, ' +
+        'maxRows 1..1000 and boolean dryRun',
+      );
+      error.code = 'EVENT_INTELLIGENCE_MATCH_HISTORY_RETENTION_INVALID';
+      throw error;
+    }
+    return this.tx(async (client) => {
+      // The same advisory lock serializes appendTriggerMatch and markFired
+      // across separate PostgreSQL pools. No writer can interleave between
+      // candidate selection and deletion. Lock current row as well.
+      await this.lock(client, 'trigger-match', matchId);
+      const current = await this.get('trigger_match', matchId, client, true);
+      if (!current || current.status !== 'fired') {
+        return {
+          ok: true, strategy: 'terminal-match-adjacent-duplicate-retention',
+          scopeId: this.scopeId, matchId, dryRun, eligible: 0,
+          deleted: 0, capped: false, skipped: 'not_fired',
+        };
+      }
+      // LAG+LEAD must examine *all* revisions of this ONE match before
+      // applying cutoff and maxRows. Filtering first could erase a boundary
+      // witness of an older-vs-newer transition. The key index confines the
+      // scan to the selected scope, kind and matchId.
+      const candidatesSql =
+        'WITH ordered AS (' +
+        ' SELECT history_id, created_at, payload,' +
+        ' LAG(payload) OVER (ORDER BY history_id) AS previous_payload,' +
+        ' LEAD(payload) OVER (ORDER BY history_id) AS next_payload' +
+        ' FROM ' + this.history +
+        ' WHERE scope_id=$1 AND kind=$2 AND record_key=$3' +
+        '), candidates AS (' +
+        ' SELECT history_id FROM ordered' +
+        ' WHERE created_at < $4::timestamptz' +
+        ' AND payload = previous_payload AND payload = next_payload' +
+        ' ORDER BY history_id LIMIT $5' +
+        ') ';
+      const args = [
+        this.scopeId, 'trigger_match_history', matchId, before, maxRows,
+      ];
+      // Deleting only interior exact duplicates preserves the first and
+      // last witness of every consecutive identical run (even when the
+      // same payload reappears after a different revision).
+      const result = dryRun
+        ? await client.query(
+            candidatesSql + 'SELECT history_id FROM candidates', args,
+          )
+        : await client.query(
+            candidatesSql +
+            'DELETE FROM ' + this.history + ' AS h USING candidates AS c' +
+            ' WHERE h.history_id=c.history_id AND h.scope_id=$1' +
+            ' AND h.kind=$2 AND h.record_key=$3 RETURNING h.history_id',
+            args,
+          );
+      const count = result.rows.length;
+      return {
+        ok: true, strategy: 'terminal-match-adjacent-duplicate-retention',
+        scopeId: this.scopeId, matchId, dryRun,
+        eligible: count, deleted: dryRun ? 0 : count,
+        capped: count === maxRows,
+      };
+    });
+  }
+
   async appendMcpOccurrence(serverId, eventInput, subscriptionIdInput = null) {
     const event = McpEventOccurrenceSchema.parse(eventInput);
     const subscriptionId = subscriptionIdInput == null
