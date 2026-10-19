@@ -136,6 +136,10 @@ export class CompositeTriggerRuntimeSupport {
       : null;
 
     if (!definition || !this.store.setTriggerState) return;
+    // A trigger may be paused/deleted while post-host receipt finalization
+    // runs. Never overwrite revocation by writing the old lifecycle 'active'
+    // snapshot after a completed host effect.
+    if (triggerState && triggerState.status !== 'active') return;
 
     const previousCount = triggerState?.fireCount ?? 0;
     const fireCount = previousCount + 1;
