@@ -109,9 +109,19 @@ export function verifyOsChaosEvidence({
   // The producer measures rounds serially inside the total wall-clock
   // window. A forged aggregate shorter than their sum must never pass:
   // compare the UNSORTED per-round sum, with floating-point tolerance.
-  const sumOfRoundsMs = timings.reduce((sum, value) => sum + value, 0);
-  if (report.totalDurationMs + Math.max(0.001, sumOfRoundsMs * 1e-10) <
-      sumOfRoundsMs) {
+  let sumOfRoundsMs = 0;
+  for (const value of timings) {
+    sumOfRoundsMs += value;
+    if (!Number.isFinite(sumOfRoundsMs)) {
+      invalid('sum of sequential round durations overflowed');
+    }
+  }
+  // Bound the rounding allowance: using an unbounded relative tolerance
+  // could otherwise silently bless physically impossible huge run totals.
+  const roundingToleranceMs = Math.max(
+    0.001, Math.min(1, sumOfRoundsMs * 1e-12),
+  );
+  if (report.totalDurationMs + roundingToleranceMs < sumOfRoundsMs) {
     invalid('total wall duration is shorter than the sum of sequential rounds');
   }
   timings.sort((a, b) => a - b);
