@@ -46,7 +46,15 @@ It is written only after successful assertions. On failure or even
 before toolchain setup finishes, the Actions workflow uploads a test log
 and a **separate explicit incomplete-status JSON marker** with requested
 rounds and null (unknown) kill/receipt counts; this cannot be counted as
-a completed chaos drill. The log is initialized before checkout. If an un-reaped process makes cleanup unsafe,
+a completed chaos drill. The log is initialized before checkout.
+
+If the PostgreSQL **job service fails to provision before any steps**,
+a second independent `service-startup-failure-evidence` job runs on
+its own runner without PostgreSQL and uploads an incomplete-status JSON
+and error-explanation log. The original failing job still fails the
+workflow. Platform-level cancellation or runner infrastructure outages
+may prevent even that independent fallback; these are not claimed as
+successfully evidenced trials. If an un-reaped process makes cleanup unsafe,
 the fixture preserves its isolated tables but closes the parent PG
 pool instead of deleting data under a potentially live writer.
 
