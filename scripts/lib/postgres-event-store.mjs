@@ -783,6 +783,12 @@ export class PostgresEventStore {
     return definition;
   }
 
+  /** Current, scope-local, indexed lookup. Never cached across revocation or restart. */
+  async getTrigger(triggerId, version) {
+    const raw = await this.get('trigger', String(triggerId) + '@' + String(version));
+    return raw ? parseCompositeTriggerDefinition(raw) : null;
+  }
+
   async listTriggers() {
     return (await this.list('trigger')).map(parseCompositeTriggerDefinition);
   }
