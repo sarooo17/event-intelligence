@@ -6,6 +6,7 @@ import { PostgresEventStore } from '../scripts/lib/postgres-event-store.mjs';
 import { CompositeEventConsumer } from '../scripts/lib/composite-event-consumer.mjs';
 import { CompositeTriggerEngine } from '../dist/src/composite/engine.js';
 import { WakeRetryScheduler } from '../scripts/lib/wake-retry-scheduler.mjs';
+import { CompositeWakeCoordinator } from '../scripts/lib/composite-wake-coordinator.mjs';
 
 const pgUrl = process.env.POSTGRES_URL;
 const { Pool } = pgUrl ? await import('pg') : { Pool: null };
@@ -22,9 +23,9 @@ function trigger(id, lifecycle = {}) {
     target: { runtime:'fixture-host', kind:'task', id },
   };
 }
-async function fixture(body) {
+async function fixture(body, { max = 6 } = {}) {
   const prefix = 'ei_orphan_gates_' + randomBytes(5).toString('hex');
-  const pool = new Pool({ connectionString: pgUrl, max: 6,
+  const pool = new Pool({ connectionString: pgUrl, max,
     query_timeout: 5000, statement_timeout: 5000 });
   const store = new PostgresEventStore({ pool, tablePrefix: prefix, scopeId: 'scope-recovery' });
   try {
@@ -121,5 +122,83 @@ integration('existing PG store requires explicit online indexes, and cannot scan
   assert.equal(migrated.indexes.length, 2);
   assert.deepEqual(await store.listOrphanedMatchedWakeCandidates(), []);
   await store.assertOrphanRecoveryIndexes();
+  // An index with the right name/keys but an EXTRA predicate is NOT usable
+  // for the recovery anti-join. Reject it instead of silently allowing an
+  // unbounded history scan.
+  await pool.query('DROP INDEX "' + prefix + '_records_wake_match_idx"');
+  await pool.query(
+    'CREATE INDEX "' + prefix + '_records_wake_match_idx" ON "' +
+    prefix + '_records" (scope_id, (payload->>\'matchId\'))' +
+    " WHERE kind='wake_delivery' AND (payload->>'disabled')='false'",
+  );
+  await assert.rejects(
+    () => store.assertOrphanRecoveryIndexes(),
+    error => error?.code === 'EVENT_INTELLIGENCE_ORPHAN_RECOVERY_INDEX_REQUIRED',
+  );
   assert.equal(await store.verifyAudit(), true);
 }));
+
+integration('one-shot simultaneous matched wakes serialize host plus durable lifecycle finalization', async () => fixture(async ({ store }) => {
+  const definition = trigger('one-shot-race', { oneShot: true });
+  const engine = new CompositeTriggerEngine(store);
+  await engine.register(definition);
+  const consumer = new CompositeEventConsumer({ store, triggerEngine: engine });
+  const matches = [];
+  for (const i of [1, 2]) {
+    const result = await consumer.ingestMcpOccurrence({
+      event: { eventId: 'race-event-' + i, name: 'fixture.recovery.expiration',
+        timestamp: new Date(Date.now() + i).toISOString(), data: { slot: 7 } },
+      provider: 'test-source', serverId: 'test-source', traceId: 'race-' + i,
+    });
+    assert.equal(result.deliveries[0]?.status, 'runtime_unconfigured');
+    matches.push(result.results.find(row => row.matched)?.match);
+  }
+  assert.ok(matches.every(Boolean));
+  assert.notEqual(matches[0].matchId, matches[1].matchId);
+  let effects = 0;
+  const coordinator = workerId => new CompositeWakeCoordinator({
+    store, triggerEngine: new CompositeTriggerEngine(store), workerId,
+    deliverer: async packet => {
+      // Canonical host identity; different matches have different wake_id.
+      const current = await store.getTriggerState('one-shot-race', '1');
+      assert.equal(current.status, 'active');
+      effects++;
+      return { runtimeReceiptId: 'host:' + packet.wake_id };
+    },
+  });
+  const [a, b] = await Promise.all([
+    coordinator('contender-one').deliverMatched(matches[0]),
+    coordinator('contender-two').deliverMatched(matches[1]),
+  ]);
+  assert.equal([a, b].filter(x => x.status === 'wake_delivered').length, 1,
+    'only one of two different one-shot matches may deliver its host effect');
+  assert.equal(effects, 1);
+  const current = await store.getTriggerState('one-shot-race', '1');
+  assert.equal(current.status, 'completed');
+  assert.equal(current.fireCount, 1);
+  assert.equal(await store.verifyAudit(), true);
+}, { max: 3 }));
+
+integration('fenced callback with same-store lookup and another waiter does not saturate a 3-connection pool', async () => fixture(async ({ store }) => {
+  await store.putTrigger(trigger('pool-safety'));
+  let start, release;
+  const entered = new Promise(resolve => { start = resolve; });
+  const blocked = new Promise(resolve => { release = resolve; });
+  const first = store.withTriggerDispatchFence('pool-safety', '1',
+    new Date().toISOString(), async () => {
+      start();
+      await blocked;
+      assert.ok(await store.getTrigger('pool-safety', '1'),
+        'callback needs a second PG connection while fence is held');
+      return 'first';
+    });
+  await entered;
+  const second = store.withTriggerDispatchFence('pool-safety', '1',
+    new Date().toISOString(), async () => {
+      assert.ok(await store.getTriggerState('pool-safety', '1'));
+      return 'second';
+    });
+  release();
+  const outcomes = await Promise.all([first, second]);
+  assert.deepEqual(outcomes.map(x => x.authorized), [true, true]);
+}, { max: 3 }));
