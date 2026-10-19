@@ -80,7 +80,7 @@ export interface CompositeTriggerStore {
    * Called only for non-timer events; older stores use listTriggers().
    */
   listTriggerCandidatesForEvent?(
-    event: Pick<CorrelatableEvent, 'name' | 'serverId'>,
+    event: Pick<CorrelatableEvent, 'name' | 'serverId'> & { data?: CorrelatableEvent['data'] },
   ):
     | CompositeTriggerDefinition[]
     | Promise<CompositeTriggerDefinition[]>;

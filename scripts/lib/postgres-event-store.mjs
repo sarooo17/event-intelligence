@@ -804,10 +804,64 @@ export class PostgresEventStore {
   // even if NONE of their clauses has this source/event name. Ordering is
   // the same record_key order as listTriggers(). This optimization does
   // not alter PostgreSQL schema or create an index on existing deployments.
-  async listTriggerCandidatesForEvent({ name, serverId } = {}) {
+  async listTriggerCandidatesForEvent({ name, serverId, data } = {}) {
     if (typeof name !== 'string' || !name) {
       throw new TypeError('candidate event name must be nonempty');
     }
+    // Only enable this conservative pushdown for flat JSON objects whose
+    // numeric values are safe integers. JS eq on an unsafe number/fraction
+    // cannot be assumed equivalent to PostgreSQL JSONB numeric comparison
+    // after JSON serialization, so complex/untrusted inputs fail OPEN and
+    // run the canonical clauseMatches() evaluation in Node.
+    // PostgreSQL JSONB disallows U+0000 and rejects malformed surrogate
+    // escapes. For this optional fast path, conservatively refuse *all*
+    // surrogate code units (even valid pairs) rather than risk a failed
+    // source query; canonical Node matching still receives the event.
+    const pgJsonbSafeText = (value) => {
+      for (let i = 0; i < value.length; i++) {
+        const code = value.charCodeAt(i);
+        if (code === 0 || (code >= 0xd800 && code <= 0xdfff)) return false;
+      }
+      return true;
+    };
+    const flat = data !== null && data !== undefined &&
+      typeof data === 'object' && !Array.isArray(data) &&
+      Object.entries(data).every(([key, value]) =>
+        pgJsonbSafeText(key) && (
+          value === null ||
+          (typeof value === 'string' && pgJsonbSafeText(value)) ||
+          typeof value === 'boolean' ||
+          (typeof value === 'number' && Number.isSafeInteger(value))
+        )
+      );
+    const sourceData = flat ? JSON.stringify(data) : null;
+    const hasSafeEqPushdown = typeof sourceData === 'string';
+    // Evaluate only a single top-level numeric equality predicate.
+    // Anything more complex (additional predicates, nested paths, regex,
+    // lifecycle work, multi-clause alternatives) remains in the superset.
+    // The SQL predicate is attached to EACH source-matching clause so an
+    // unrelated clause cannot accidentally hide a valid alternative.
+    const numericEqSuperset = hasSafeEqPushdown
+      ? ' AND (' +
+        " jsonb_typeof(clause->'where') <> 'array'" +
+        " OR jsonb_array_length(clause->'where') <> 1" +
+        " OR clause->'where'->0->>'op' IS DISTINCT FROM 'eq'" +
+        // A fraction or a non-safe integer in a definition must also
+        // fail OPEN; the JavaScript matcher remains authoritative.
+        " OR CASE WHEN jsonb_typeof(clause->'where'->0->'value') = 'number'" +
+        " THEN (" +
+        " ((clause->'where'->0->>'value')::numeric <>" +
+        " trunc((clause->'where'->0->>'value')::numeric))" +
+        " OR abs((clause->'where'->0->>'value')::numeric) > 9007199254740991" +
+        " ) ELSE TRUE END" +
+        " OR strpos(clause->'where'->0->>'path', '.') > 0" +
+        ' OR (' +
+        " ($6::jsonb ? (clause->'where'->0->>'path'))" +
+        " AND ($6::jsonb -> (clause->'where'->0->>'path')) =" +
+        " clause->'where'->0->'value'" +
+        ' )' +
+        ')'
+      : '';
     const result = await this.pool.query(
       'SELECT payload FROM ' + this.records +
         ' WHERE scope_id = $1 AND kind = $2 AND (' +
@@ -823,11 +877,15 @@ export class PostgresEventStore {
         " AND (NOT clause ? 'serverId'" +
         " OR COALESCE(clause->>'serverId', '') = ''" +
         " OR clause->>'serverId' = $5)" +
+        numericEqSuperset +
         ' )' +
         ' )' +
         ') ORDER BY record_key',
-      [this.scopeId, 'trigger', JSON.stringify([{ event: name }]),
-        name, serverId ?? null],
+      [
+        this.scopeId, 'trigger', JSON.stringify([{ event: name }]),
+        name, serverId ?? null,
+        ...(hasSafeEqPushdown ? [sourceData] : []),
+      ],
     );
     return result.rows.map((row) => parseCompositeTriggerDefinition(row.payload));
   }
