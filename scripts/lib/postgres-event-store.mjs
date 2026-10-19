@@ -2,6 +2,7 @@ import * as z from 'zod/v4';
 import { mcpGapSnapshot } from '../../dist/src/composite/gapFingerprint.js';
 import { safeMcpSourceArguments } from './mcp-safe-arguments.mjs';
 import { randomUUID } from 'node:crypto';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { verifyAuditProofWindow } from './audit-proof-window.mjs';
 export { verifyAuditProofWindow } from './audit-proof-window.mjs';
 import {
@@ -24,6 +25,33 @@ import {
   DEFAULT_EVENT_SCOPE_ID,
   normalizeEventScopeId,
 } from './persistent-event-store.mjs';
+
+// Context is scoped to one fenced async callback, never persisted or shared
+// with unrelated tenant/host requests. It allows the lifecycle finalizer to
+// reuse its own trigger authorization lock without deadlocking itself.
+const dispatchContext = new AsyncLocalStorage();
+const poolFenceSlots = new WeakMap();
+
+async function withPoolFenceCapacity(pool, capacity, run) {
+  let state = poolFenceSlots.get(pool);
+  if (!state) {
+    state = { active: 0, waiters: [] };
+    poolFenceSlots.set(pool, state);
+  }
+  // Admit at most maxPool-2 fence sessions in this Node process so at
+  // least two PG connections remain for callback lookups and lifecycle
+  // mutations, rather than filling the pool with lock waiters.
+  if (state.active >= capacity) {
+    await new Promise(resolve => state.waiters.push(resolve));
+  }
+  state.active++;
+  try {
+    return await run();
+  } finally {
+    state.active--;
+    state.waiters.shift()?.();
+  }
+}
 
 const POSTGRES_OBJECT_SUFFIXES = Object.freeze([
   '_records',
@@ -1056,7 +1084,16 @@ export class PostgresEventStore {
     }
     const key = String(triggerId) + '@' + String(version);
     return this.tx(async (client) => {
-      await this.lock(client, 'trigger-state', key);
+      // The SAME async delivery already holds the session advisory lock
+      // until completeWakeDelivery + markFired finish. Do not attempt to
+      // re-acquire that lock on another connection for its own system
+      // lifecycle finalization (which would deadlock). All independent
+      // mutations still acquire the ordinary transactional lock.
+      const context = dispatchContext.getStore();
+      const lifecycleReentrant =
+        context?.store === this && context.key === key &&
+        actor?.principal_id === 'event-intelligence:lifecycle';
+      if (!lifecycleReentrant) await this.lock(client, 'trigger-state', key);
       const previous = await this.get('trigger_state', key, client) ??
         defaultTriggerState(triggerId, version);
       // A wake callback may finish just before a user pause/delete, while
@@ -1100,54 +1137,69 @@ export class PostgresEventStore {
     if (typeof operation !== 'function') throw new TypeError('dispatch callback required');
     const key = String(triggerId) + '@' + String(version);
     const maxPool = Number(this.pool.options?.max ?? 10);
-    if (maxPool < 2) {
-      const error = new Error('Fenced PG host dispatch requires >=2 pool connections');
+    if (!Number.isSafeInteger(maxPool) || maxPool < 3) {
+      const error = new Error('Fenced PG dispatch requires >=3 pool connections');
       error.code = 'EVENT_INTELLIGENCE_DISPATCH_POOL_TOO_SMALL';
       throw error;
     }
     const atMs = Date.parse(at);
     if (!Number.isFinite(atMs)) throw new TypeError('dispatch time must be valid ISO');
     const lockKey = this.tablePrefix + ':' + this.scopeId + ':trigger-state:' + key;
-    const client = await this.pool.connect();
-    let locked = false;
-    try {
-      // Both session and xact variants map to the same PG advisory key.
-      await client.query('SELECT pg_advisory_lock(hashtextextended($1, 0))', [lockKey]);
-      locked = true;
-      const raw = await this.get('trigger', key, client);
-      const state = await this.get('trigger_state', key, client) ??
-        defaultTriggerState(triggerId, version);
-      const definition = raw ? parseCompositeTriggerDefinition(raw) : null;
-      const lifecycle = definition?.lifecycle ?? {};
-      const expiresAt = lifecycle.expiresAt
-        ? Date.parse(lifecycle.expiresAt) : Number.POSITIVE_INFINITY;
-      const leaseUntil = lifecycle.leaseUntil
-        ? Date.parse(lifecycle.leaseUntil) : Number.POSITIVE_INFINITY;
-      const count = state.fireCount ?? 0;
-      if (!definition?.target || state.status !== 'active' ||
-          atMs > Math.min(expiresAt, leaseUntil) ||
-          (lifecycle.oneShot === true && count >= 1) ||
-          (lifecycle.maxFirings !== undefined && count >= lifecycle.maxFirings)) {
-        return { authorized: false, reason: 'trigger_not_active_at_dispatch' };
-      }
-      return { authorized: true, value: await operation() };
-    } finally {
-      if (locked) {
-        try {
-          await client.query(
-            'SELECT pg_advisory_unlock(hashtextextended($1, 0))',
-            [lockKey],
-          );
-          client.release();
-        } catch (error) {
-          // Never return a connection with an uncertain held SESSION lock.
-          client.release(error);
-          throw error;
+
+    return withPoolFenceCapacity(this.pool, maxPool - 2, async () => {
+      const client = await this.pool.connect();
+      let locked = false;
+      try {
+        // Never let another callback sit idle while HOLDING a pool client
+        // waiting for this advisory lock. A loser retries via the normal
+        // durable wake delivery schedule.
+        const attempt = await client.query(
+          'SELECT pg_try_advisory_lock(hashtextextended($1, 0)) AS acquired',
+          [lockKey],
+        );
+        if (attempt.rows[0]?.acquired !== true) {
+          return { authorized: false, reason: 'trigger_dispatch_busy' };
         }
-      } else {
-        client.release();
+        locked = true;
+        const raw = await this.get('trigger', key, client);
+        const state = await this.get('trigger_state', key, client) ??
+          defaultTriggerState(triggerId, version);
+        const definition = raw ? parseCompositeTriggerDefinition(raw) : null;
+        const lifecycle = definition?.lifecycle ?? {};
+        const expiresAt = lifecycle.expiresAt
+          ? Date.parse(lifecycle.expiresAt) : Number.POSITIVE_INFINITY;
+        const leaseUntil = lifecycle.leaseUntil
+          ? Date.parse(lifecycle.leaseUntil) : Number.POSITIVE_INFINITY;
+        const count = state.fireCount ?? 0;
+        if (!definition?.target || state.status !== 'active' ||
+            atMs > Math.min(expiresAt, leaseUntil) ||
+            (lifecycle.oneShot === true && count >= 1) ||
+            (lifecycle.maxFirings !== undefined && count >= lifecycle.maxFirings)) {
+          return { authorized: false, reason: 'trigger_not_active_at_dispatch' };
+        }
+        // The callback includes ALL durable receipt/lifecycle finalization,
+        // not just the external HTTP/host side effect. One-shot and max-fire
+        // counters are therefore committed BEFORE the next match can pass.
+        const value = await dispatchContext.run({ store: this, key }, operation);
+        return { authorized: true, value };
+      } finally {
+        if (locked) {
+          try {
+            await client.query(
+              'SELECT pg_advisory_unlock(hashtextextended($1, 0))',
+              [lockKey],
+            );
+            client.release();
+          } catch (error) {
+            // Do not return an uncertain SESSION-locked connection to pool.
+            client.release(error);
+            throw error;
+          }
+        } else {
+          client.release();
+        }
       }
-    }
+    });
   }
 
   listTriggerStates() {
