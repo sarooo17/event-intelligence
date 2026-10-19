@@ -1,0 +1,109 @@
+name: PostgreSQL Active 10k and 100k CEP Evidence
+
+on:
+  # Explicit heavy matrix: only this workflow's own PRs, never routine code PRs.
+  pull_request:
+    paths:
+      - ".github/workflows/postgres-active-large-evidence.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  active-large:
+    name: active-${{ matrix.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: 10k-sources1
+            triggers: 10000
+            events: 8
+            sources: 1
+          - name: 100k-sources1
+            triggers: 100000
+            events: 2
+            sources: 1
+          - name: 100k-sources20
+            triggers: 100000
+            events: 2
+            sources: 20
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: event_intelligence
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d event_intelligence"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      POSTGRES_URL: postgresql://postgres:postgres@127.0.0.1:5432/event_intelligence
+      EI_PG_PIPELINE_CONFIRM: YES_ISOLATED
+      EI_PG_PIPELINE_LARGE_CONFIRM: YES_ISOLATED_LARGE
+      BENCH_SOURCE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+      BENCH_IS_PULL_REQUEST: ${{ github.event_name == 'pull_request' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install exact driver and compile
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm install --no-save --ignore-scripts --no-audit --no-fund pg@8.16.3
+          npm run build
+      - name: Capture environment and provenance
+        shell: bash
+        run: |
+          {
+            echo "bench-source-sha=$BENCH_SOURCE_COMMIT"
+            echo "checked-out-sha=$(git rev-parse HEAD)"
+            echo "run-id=$GITHUB_RUN_ID"
+            echo "attempt=$GITHUB_RUN_ATTEMPT"
+            node -p "'pg-driver=' + require('pg/package.json').version"
+            node --version
+            npm --version
+            uname -a
+            lscpu
+            free -m
+          } > active-large-host.txt
+      - name: Measure actual eligible active CEP definitions through MCP to durable wake
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/evidence/postgres-mcp-ingest-wake.mjs \
+            --triggers ${{ matrix.triggers }} \
+            --events ${{ matrix.events }} \
+            --sources ${{ matrix.sources }} \
+            --noise 2 --replays 1 \
+            > active-large-result.json 2> active-large-errors.jsonl
+          cat active-large-result.json
+      - name: Print bounded failure evidence
+        if: failure()
+        shell: bash
+        run: |
+          if [ -f active-large-errors.jsonl ]; then
+            head -c 3500 active-large-errors.jsonl
+            echo
+          fi
+      - name: Archive every completed or failed workload
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ei-pg-active-large-${{ matrix.name }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            active-large-result.json
+            active-large-errors.jsonl
+            active-large-host.txt
+          if-no-files-found: warn
+          retention-days: 90
