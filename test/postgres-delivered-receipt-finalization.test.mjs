@@ -44,6 +44,7 @@ integration('PostgreSQL recovery finalizes delivered EI receipt before wake appe
   const scopeId = 'receipt-gap-tenant';
   let originalPool = new Pool({ connectionString: url, max: 3 });
   let recoveredPool = null;
+  let competingPool = null;
   let hostInvocations = 0;
   const cases = [];
   try {
@@ -75,6 +76,14 @@ integration('PostgreSQL recovery finalizes delivered EI receipt before wake appe
         workerId: 'crashed-before-finalize', now: at, leaseMs: 1000,
       });
       assert.equal(claimed?.attemptCount, 1);
+      // The real coordinator persists a queued WakeRecord before the host
+      // receives the packet. A post-receipt crash retains that history.
+      await first.appendWake(WakeRecordSchema.parse({
+        wakeId, traceId: match.sourceEvents[0]?.traceId ?? match.matchId,
+        decisionId: null, subscriptionId: 'trigger:' + def.triggerId,
+        sourceEventId: match.matchId, createdAt: at, target: def.target,
+        status: 'queued',
+      }));
       const persisted = await first.completeWakeDelivery(wakeId, {
         workerId: 'crashed-before-finalize',
         attemptCount: claimed.attemptCount,
@@ -106,10 +115,15 @@ integration('PostgreSQL recovery finalizes delivered EI receipt before wake appe
     await originalPool.end();
     originalPool = null;
     recoveredPool = new Pool({ connectionString: url, max: 3 });
+    competingPool = new Pool({ connectionString: url, max: 3 });
     const recovered = new PostgresEventStore({
       pool: recoveredPool, tablePrefix: prefix, scopeId,
     });
     await recovered.init();
+    const competing = new PostgresEventStore({
+      pool: competingPool, tablePrefix: prefix, scopeId,
+    });
+    await competing.init();
     const recoveredEngine = new CompositeTriggerEngine(recovered);
     const coordinator = new CompositeWakeCoordinator({
       store: recovered, triggerEngine: recoveredEngine,
@@ -120,6 +134,15 @@ integration('PostgreSQL recovery finalizes delivered EI receipt before wake appe
         throw new Error('host must never be called after durable receipt');
       },
     });
+    const competitor = new CompositeWakeCoordinator({
+      store: competing, triggerEngine: new CompositeTriggerEngine(competing),
+      workerId: 'independent-recovery-contender',
+      now: () => new Date(at),
+      deliverer: async () => {
+        hostInvocations += 1;
+        throw new Error('competing recovery must not call host');
+      },
+    });
     for (const { slot, def, matchId, wakeId, receiptId } of cases) {
       const savedMatch = (await recovered.listTriggerMatches(def.triggerId))
         .find(row => row.matchId === matchId);
@@ -127,7 +150,53 @@ integration('PostgreSQL recovery finalizes delivered EI receipt before wake appe
       const due = await recovered.listDueWakeDeliveries(at);
       assert.ok(due.some(row => row.wakeId === wakeId),
         'receipt/finalization inconsistency must be discoverable');
-      const resumed = await coordinator.deliverMatched(savedMatch);
+      let resumed;
+      if (slot === 0) {
+        // Both independent pools must have observed the same queued-only
+        // history before either is allowed to materialize the delivered row.
+        // A non-atomic latestWake()+appendWake() would duplicate it.
+        let arrived = 0;
+        let release;
+        let timeout;
+        const gate = Promise.race([
+          new Promise(resolve => { release = resolve; }),
+          new Promise((_, reject) => {
+            timeout = setTimeout(() => reject(new Error(
+              'two independent recoverers did not reach the history barrier',
+            )), 10000);
+          }),
+        ]);
+        const holdSecondRead = (store) => {
+          const read = store.latestWake.bind(store);
+          let reads = 0;
+          store.latestWake = async (id) => {
+            const wake = await read(id);
+            if (id === wakeId && ++reads === 2) {
+              arrived += 1;
+              if (arrived === 2) release();
+              await gate;
+            }
+            return wake;
+          };
+        };
+        holdSecondRead(recovered);
+        holdSecondRead(competing);
+        try {
+          const otherMatch = (await competing.listTriggerMatches(def.triggerId))
+            .find(row => row.matchId === matchId);
+          const both = await Promise.all([
+            coordinator.deliverMatched(savedMatch),
+            competitor.deliverMatched(otherMatch),
+          ]);
+          assert.deepEqual(both.map(item => item.status),
+            ['wake_delivered', 'wake_delivered']);
+          resumed = both[0];
+        } finally {
+          clearTimeout(timeout);
+        }
+      } else {
+        resumed = await coordinator.deliverMatched(savedMatch);
+      }
       assert.equal(resumed.status, 'wake_delivered');
       assert.equal(resumed.wake.wakeId, wakeId);
       assert.equal(resumed.wake.runtimeReceiptId, receiptId);
@@ -142,12 +211,18 @@ integration('PostgreSQL recovery finalizes delivered EI receipt before wake appe
       assert.equal(recheck.wake.wakeId, wakeId);
 
       const audit = await recoveredPool.query(
-        'SELECT COUNT(*)::int AS count FROM "' + prefix + '_history"' +
+        'SELECT COUNT(*)::int AS total, ' +
+          "COUNT(*) FILTER (WHERE payload->>'status'='queued')::int AS queued, " +
+          "COUNT(*) FILTER (WHERE payload->>'status'='delivered')::int AS delivered " +
+          'FROM "' + prefix + '_history"' +
           " WHERE scope_id=$1 AND kind='wake' AND record_key=$2",
         [scopeId, wakeId],
       );
-      assert.equal(audit.rows[0].count, 1,
-        'wake finalization must append at most one delivered WakeRecord');
+      assert.equal(audit.rows[0].queued, 1,
+        'realistic wake history retains its original queued record');
+      assert.equal(audit.rows[0].delivered, 1,
+        'competing recovery workers must append only one delivered record');
+      assert.equal(audit.rows[0].total, 2);
       assert.equal(hostInvocations, 0);
     }
     assert.equal(await recovered.verifyAudit(), true);
@@ -161,7 +236,7 @@ integration('PostgreSQL recovery finalizes delivered EI receipt before wake appe
         );
       }
     } finally {
-      for (const p of new Set([originalPool, recoveredPool, cleanup].filter(Boolean))) {
+      for (const p of new Set([originalPool, recoveredPool, competingPool, cleanup].filter(Boolean))) {
         await p.end();
       }
     }
