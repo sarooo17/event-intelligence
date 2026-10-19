@@ -94,7 +94,7 @@ jobs:
           # assertions. On any crash/setup error, preserve a truthful failure
           # status rather than suggesting zero loss/100% recovered receipts.
           if [ ! -s "$EI_CHAOS_EVIDENCE_OUT" ]; then
-            printf '{"schema":"ei-postgres-os-chaos-v1","status":"incomplete","reason":"soak did not produce completed metrics","requestedRounds":%s,"killsConfirmed":null,"recoveredReceipts":null,"runId":"%s","runAttempt":"%s"}\\n' "$EI_CHAOS_ROUNDS" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" > "$EI_CHAOS_EVIDENCE_OUT"
+            printf '{"schema":"ei-postgres-os-chaos-v1","status":"incomplete","reason":"soak did not produce completed metrics","requestedRounds":%s,"killsConfirmed":null,"recoveredReceipts":null,"runId":"%s","runAttempt":"%s"}\n' "$EI_CHAOS_ROUNDS" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" > "$EI_CHAOS_EVIDENCE_OUT"
           fi
           if [ ! -f "$RUNNER_TEMP/pg-os-chaos-test.log" ]; then
             printf '%s\n' 'No test log created (setup failed before test execution).' > "$RUNNER_TEMP/pg-os-chaos-test.log"
