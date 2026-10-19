@@ -110,3 +110,32 @@ jobs:
             ${{ runner.temp }}/pg-os-chaos-host.txt
           if-no-files-found: error
           retention-days: 30
+
+  # Job services start before all steps. This separate runner is necessary
+  # to retain explicit failure evidence when PostgreSQL never becomes healthy.
+  service-startup-failure-evidence:
+    name: Preserve failed chaos evidence
+    needs: bounded-os-chaos
+    if: ${{ always() && needs['bounded-os-chaos'].result == 'failure' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    env:
+      EI_CHAOS_ROUNDS: ${{ github.event_name == 'pull_request' && '60' || inputs.rounds }}
+    steps:
+      - name: Write independent failure artifact without PostgreSQL
+        shell: bash
+        run: |
+          printf '%s\n' 'Primary PostgreSQL chaos job failed; consult its runner logs for the root cause.' > "$RUNNER_TEMP/pg-os-chaos-fallback.log"
+          printf '{"schema":"ei-postgres-os-chaos-v1","status":"incomplete","reason":"primary chaos job failed (including possible PostgreSQL service provisioning)","requestedRounds":%s,"killsConfirmed":null,"recoveredReceipts":null,"runId":"%s","runAttempt":"%s","origin":"independent-fallback-job"}\n' "$EI_CHAOS_ROUNDS" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" > "$RUNNER_TEMP/pg-os-chaos-fallback.json"
+      - name: Upload independent failure artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pg-os-chaos-fallback-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/pg-os-chaos-fallback.json
+            ${{ runner.temp }}/pg-os-chaos-fallback.log
+          if-no-files-found: error
+          retention-days: 30
