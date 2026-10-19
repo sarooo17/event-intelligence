@@ -363,11 +363,13 @@ export class CompositeTriggerEngine {
     const deadline = await this.store.getTemporalDeadline(deadlineId);
     if (!deadline || deadline.status !== 'pending') return [];
 
-    const definition = (await this.store.listTriggers()).find(
-      (candidate) =>
-        candidate.triggerId === deadline.triggerId &&
-        candidate.version === deadline.triggerVersion,
-    );
+    const definition = this.store.getTrigger
+      ? await this.store.getTrigger(deadline.triggerId, deadline.triggerVersion)
+      : (await this.store.listTriggers()).find(
+          (candidate) =>
+            candidate.triggerId === deadline.triggerId &&
+            candidate.version === deadline.triggerVersion,
+        );
     if (!definition) return [];
 
     const triggerState = this.store.getTriggerState
