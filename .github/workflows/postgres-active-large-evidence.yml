@@ -2,6 +2,8 @@ name: PostgreSQL Active 10k and 100k CEP Evidence
 
 on:
   # Explicit heavy matrix: only this workflow's own PRs, never routine code PRs.
+  # #47 optimization replay: measure exact-head keyed wake definition lookup
+  # against the same isolated 10k/100k workloads as PR #223.
   pull_request:
     paths:
       - ".github/workflows/postgres-active-large-evidence.yml"
