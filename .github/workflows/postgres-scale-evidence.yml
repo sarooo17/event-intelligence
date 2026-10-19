@@ -53,22 +53,36 @@ jobs:
     env:
       POSTGRES_URL: postgresql://postgres:postgres@127.0.0.1:5432/event_intelligence
       EI_PG_BENCHMARK_CONFIRM: YES_ISOLATED
+      EI_BENCH_SOURCE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
       PROFILE: ${{ matrix.profile }}
       WAKES: ${{ github.event_name == 'pull_request' && '32' || inputs.wakes }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
       - name: Install and build
         run: |
           npm ci --ignore-scripts --no-audit --no-fund
-          npm install --no-save --ignore-scripts --no-audit --no-fund pg@8
+          npm install --no-save --ignore-scripts --no-audit --no-fund pg@8.16.3
           npm run build
       - name: Record reproducibility environment
         shell: bash
         run: |
-          { uname -a; node --version; npm --version; lscpu; free -m; } > benchmark-host.txt
+          {
+            echo "source-head-sha=$EI_BENCH_SOURCE_COMMIT"
+            echo "checked-out-sha=$(git rev-parse HEAD)"
+            echo "github-run-id=$GITHUB_RUN_ID"
+            echo "github-run-attempt=$GITHUB_RUN_ATTEMPT"
+            node -p "'pg-driver=' + require('pg/package.json').version"
+            uname -a
+            node --version
+            npm --version
+            lscpu
+            free -m
+          } > benchmark-host.txt
       - name: Benchmark durable PostgreSQL operations
         shell: bash
         run: |
@@ -104,6 +118,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
