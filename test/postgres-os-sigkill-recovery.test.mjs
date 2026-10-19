@@ -22,38 +22,60 @@ const origin = Date.parse('2026-10-18T12:00:00.000Z');
 
 function at(value) { return new Date(value).toISOString(); }
 
-// Per-operation deadlines fire INSIDE the test callback, leaving the outer
-// node:test deadline at least 12 seconds for finally cleanup and child reaping.
-function bounded(promise, operation, endsAt, maximumMs = 7000) {
-  const remaining = endsAt - Date.now() - 12000;
-  if (remaining <= 0) {
-    // Observe rejected promises even when no more test time remains.
-    void Promise.resolve(promise).catch(() => {});
-    return Promise.reject(new Error('chaos test cleanup reserve reached: ' + operation));
+// PostgreSQL query/statement/connect timeouts are enforced by pg.
+// Never race a live store transaction: doing so could trigger cleanup
+// while its underlying client still holds locks on these tables.
+function requireOperationBudget(endsAt, name) {
+  if (Date.now() >= endsAt - 35000) {
+    throw new Error('chaos finalizer reserve reached before: ' + name);
   }
-  const timeoutMs = Math.min(maximumMs, remaining);
-  let timer;
-  return Promise.race([
-    Promise.resolve(promise),
-    new Promise((_, reject) => {
-      timer = setTimeout(
-        () => reject(new Error('chaos operation deadline exceeded: ' + operation)),
-        timeoutMs,
-      );
-    }),
-  ]).finally(() => clearTimeout(timer));
 }
-function timedStore(store, endsAt) {
+function guardedStore(store, endsAt) {
   return new Proxy(store, {
     get(target, property) {
       const value = Reflect.get(target, property, target);
       if (typeof value !== 'function') return value;
-      return (...args) => bounded(
-        Promise.resolve().then(() => value.apply(target, args)),
-        'PostgresEventStore.' + String(property), endsAt,
-      );
+      return (...args) => {
+        requireOperationBudget(endsAt, String(property));
+        return value.apply(target, args);
+      };
     },
   });
+}
+async function childExitOrKill(child, exited, label) {
+  let timer;
+  let timedOut = false;
+  try {
+    const exit = await Promise.race([
+      exited,
+      new Promise(resolve => {
+        timer = setTimeout(() => {
+          timedOut = true;
+          child.kill('SIGKILL');
+          resolve(null);
+        }, 6500);
+      }),
+    ]);
+    if (exit) return exit;
+  } finally {
+    clearTimeout(timer);
+  }
+  if (!timedOut) throw new Error('unexpected child exit state: ' + label);
+  let reapTimer;
+  try {
+    await Promise.race([
+      exited,
+      new Promise((_, reject) => {
+        reapTimer = setTimeout(
+          () => reject(new Error('unreaped child after SIGKILL: ' + label)),
+          3000,
+        );
+      }),
+    ]);
+  } finally {
+    clearTimeout(reapTimer);
+  }
+  throw new Error('child did not exit by its deadline: ' + label);
 }
 
 function forkWorker(env, liveChildren, childExits) {
@@ -121,7 +143,7 @@ integration('real SIGKILL PostgreSQL worker takeovers fence generations and keep
   const rawRounds = [];
   const testStart = process.hrtime.bigint();
   try {
-    const store = timedStore(new PostgresEventStore({ pool, tablePrefix, scopeId }), testEndsAt);
+    const store = guardedStore(new PostgresEventStore({ pool, tablePrefix, scopeId }), testEndsAt);
     await store.init();
     for (let round = 0; round < ROUNDS; round++) {
       const started = process.hrtime.bigint();
@@ -172,7 +194,7 @@ integration('real SIGKILL PostgreSQL worker takeovers fence generations and keep
       }), null);
       assert.equal(victim.child.kill('SIGKILL'), true,
         'real OS worker must accept SIGKILL');
-      const dead = await bounded(victim.exited, 'victim OS exit', testEndsAt);
+      const dead = await childExitOrKill(victim.child, victim.exited, 'victim');
       assert.equal(dead.signal, 'SIGKILL',
         'test must prove OS kill, not just PG pool disconnect');
       assert.notEqual(original.pid, process.pid);
@@ -191,7 +213,7 @@ integration('real SIGKILL PostgreSQL worker takeovers fence generations and keep
         EI_CHAOS_NOW: at(t0 + leaseMs),
       }, liveChildren, childExits);
       const result = await successor.result;
-      const completed = await bounded(successor.exited, 'successor OS exit', testEndsAt);
+      const completed = await childExitOrKill(successor.child, successor.exited, 'successor');
       assert.equal(completed.code, 0, 'successor must exit cleanly');
       assert.equal(result.type, 'completed');
       assert.notEqual(result.pid, original.pid);
@@ -238,7 +260,7 @@ integration('real SIGKILL PostgreSQL worker takeovers fence generations and keep
       statement_timeout: 5000,
     });
     try {
-      const auditor = timedStore(new PostgresEventStore({
+      const auditor = guardedStore(new PostgresEventStore({
         pool: auditPool, scopeId, tablePrefix,
       }), testEndsAt);
       await auditor.init();
@@ -253,7 +275,7 @@ integration('real SIGKILL PostgreSQL worker takeovers fence generations and keep
         )).workerId, i % 2 === 0 ? 'logical-worker-a' : 'logical-worker-b');
       }
     } finally {
-      await bounded(auditPool.end(), 'independent audit pool close', testEndsAt);
+      await auditPool.end();
     }
     const timings = rawRounds.map(r => r.handoverMs).sort((a,b) => a-b);
     const percentile = p => timings[Math.min(timings.length - 1, Math.ceil(p * timings.length) - 1)];
@@ -263,7 +285,7 @@ integration('real SIGKILL PostgreSQL worker takeovers fence generations and keep
       node: process.version,
       platform: process.platform,
       arch: process.arch,
-      postgresVersion: (await bounded(pool.query('SHOW server_version'), 'postgres version', testEndsAt)).rows[0]?.server_version,
+      postgresVersion: (await pool.query('SHOW server_version')).rows[0]?.server_version,
       rounds: ROUNDS,
       killsConfirmed: rawRounds.filter(r => r.killedSignal === 'SIGKILL').length,
       recoveredReceipts: wakeIds.length,
@@ -273,11 +295,12 @@ integration('real SIGKILL PostgreSQL worker takeovers fence generations and keep
       limits: 'single PG16 instance, synthetic claims only; no provider/match/wake end-to-end or network partition',
     };
     if (process.env.EI_CHAOS_EVIDENCE_OUT) {
-      await bounded(writeFile(process.env.EI_CHAOS_EVIDENCE_OUT,
-        JSON.stringify(report, null, 2) + '\n', { flag: 'wx' }),
-      'JSON evidence export', testEndsAt);
+      requireOperationBudget(testEndsAt, 'JSON evidence export');
+      await writeFile(process.env.EI_CHAOS_EVIDENCE_OUT,
+        JSON.stringify(report, null, 2) + '\n', { flag: 'wx' });
     }
   } finally {
+    // Reserve 35s for child reaping, a single bounded DDL and pool close.
     try {
       for (const child of liveChildren) child.kill('SIGKILL');
       let timer;
@@ -293,10 +316,12 @@ integration('real SIGKILL PostgreSQL worker takeovers fence generations and keep
       } finally {
         clearTimeout(timer);
       }
-      for (const suffix of TABLES) {
-        await pool.query('DROP TABLE IF EXISTS "' +
-          tablePrefix + '_' + suffix + '" CASCADE');
-      }
+      // One pg statement with statement_timeout=5s, not five serial DROP
+      // calls that could exhaust the reserved finalizer window.
+      const safeTables = TABLES.map(suffix =>
+        '"' + tablePrefix + '_' + suffix + '"',
+      ).join(', ');
+      await pool.query('DROP TABLE IF EXISTS ' + safeTables + ' CASCADE');
     } finally {
       await pool.end();
     }
