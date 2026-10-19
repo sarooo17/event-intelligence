@@ -108,6 +108,15 @@ test('recalculate p50/p95/p99 and require complete environment provenance', () =
   shouldReject(x => { x.report.handoverMs.p50 = 300; }, 'tampered p50');
   shouldReject(x => { x.report.handoverMs.p99 = 0; }, 'tampered p99');
   shouldReject(x => { x.report.totalDurationMs = -1; }, 'negative run wall time');
+  shouldReject(x => { x.report.totalDurationMs = 100000; },
+    'total duration cannot exceed producer node:test fixture timeout for 3 rounds');
+  shouldReject(x => {
+    x.report.totalDurationMs = 1e308;
+    x.report.evidence[0].handoverMs = 1e308;
+    x.report.evidence[1].handoverMs = 1;
+    x.report.evidence[2].handoverMs = 1;
+    x.report.handoverMs = { p50: 1, p95: 1e308, p99: 1e308 };
+  }, 'reject finite precision-loss forgery of 1e308 + 1 + 1');
   shouldReject(x => { x.report.totalDurationMs = 450; },
     'run total smaller than sum 100+200+300 but larger than any one round');
   shouldReject(x => {
