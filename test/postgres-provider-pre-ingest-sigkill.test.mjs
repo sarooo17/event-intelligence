@@ -146,6 +146,7 @@ integration('real SIGKILL before EI event persistence replays from durable provi
       const beforeCursor = await store.getMcpClientState(
         source.connectionId, eventName, source.arguments,
       );
+      const beforeMatches = await store.listTriggerMatches(definition().triggerId);
       assert.equal(beforeCursor.cursor, 'cursor:' + (sequence - 1));
 
       const common = {
@@ -161,8 +162,10 @@ integration('real SIGKILL before EI event persistence replays from durable provi
       assert.notEqual(observed.pid, process.pid);
       // Precise boundary: event is present at provider and the victim has
       // received it, but EI has not persisted a match or advanced a cursor.
-      assert.equal((await store.listTriggerMatches(definition().triggerId))
-        .length, sequence - 1);
+      assert.deepEqual(
+        await store.listTriggerMatches(definition().triggerId), beforeMatches,
+        'receiving the provider event did not durably mutate EI matches',
+      );
       assert.equal((await hostPool.query(
         'SELECT acked FROM ' + outbox + ' WHERE sequence=$1',
         [sequence],
@@ -175,8 +178,10 @@ integration('real SIGKILL before EI event persistence replays from durable provi
       const dead = await victim.exited;
       assert.equal(dead.signal, 'SIGKILL',
         'this must be a real OS process kill, not a pool disconnect');
-      assert.equal((await store.listTriggerMatches(definition().triggerId))
-        .length, sequence - 1);
+      assert.deepEqual(
+        await store.listTriggerMatches(definition().triggerId), beforeMatches,
+        'OS kill occurred before any EI match persistence',
+      );
       const replacement = startWorker({
         ...common, EI_SOURCE_MODE: 'recover',
         EI_SOURCE_WORKER: 'replacement-' + sequence,
@@ -198,7 +203,7 @@ integration('real SIGKILL before EI event persistence replays from durable provi
         [sequence],
       )).rows[0].acked, true);
       const saved = (await store.listTriggerMatches(definition().triggerId));
-      assert.equal(saved.length, sequence);
+      // Pattern v2 persists partial/open candidate state as well.
       assert.equal(saved.filter(row => row.status === 'fired').length, sequence);
 
       // Explicitly replay the SAME event and source identity again, even
@@ -215,7 +220,8 @@ integration('real SIGKILL before EI event persistence replays from durable provi
       assert.equal(replayed.receiptId, recovered.receiptId);
       assert.equal(replayed.hostCalls, 0);
       assert.equal((await store.listTriggerMatches(definition().triggerId))
-        .length, sequence);
+        .filter(row => row.status === 'fired').length, sequence,
+        'forced replay must not create a second fired logical match');
       assert.equal((await hostPool.query(
         'SELECT COUNT(*)::int AS count FROM ' + attempts,
       )).rows[0].count, sequence);
