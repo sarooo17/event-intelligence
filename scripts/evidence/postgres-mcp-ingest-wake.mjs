@@ -101,7 +101,7 @@ try {
     fail('set EI_PG_PIPELINE_CONFIRM=YES_ISOLATED for disposable PostgreSQL tables');
   }
   if (!process.env.POSTGRES_URL) fail('POSTGRES_URL is required');
-  const triggers = numberArg('triggers', 8, 1000);
+  const triggers = numberArg('triggers', 8, 100000);
   const sourceCount = numberArg('sources', 1, 32);
   if (sourceCount > triggers) {
     fail('--sources cannot exceed --triggers: each named source must have at least one registered definition');
@@ -117,7 +117,24 @@ try {
   if (triggers > 64 && (
     process.argv.indexOf('--events') === -1 || events > 64
   )) fail('more than 64 triggers requires explicit --events <= 64');
-  const slotFor = index => Math.floor(index * triggers / events);
+  // Larger active populations require a SECOND, explicit confirmation to
+  // avoid accidental expensive O(N triggers x sampled events) workloads.
+  if (triggers > 1000 && process.env.EI_PG_PIPELINE_LARGE_CONFIRM !==
+      'YES_ISOLATED_LARGE') {
+    fail('more than 1000 triggers requires EI_PG_PIPELINE_LARGE_CONFIRM=YES_ISOLATED_LARGE');
+  }
+  if (triggers > 1000 && events > 16) {
+    fail('more than 1000 triggers requires --events <= 16');
+  }
+  // Spread sampled matches across the population and, for large profiles,
+  // across event-name partitions. This is a *bounded sample*, not a claim
+  // about 100k simultaneous fired events or all names being sampled.
+  const slotFor = index => {
+    const base = Math.floor(index * triggers / events);
+    return triggers > 1000
+      ? Math.min(triggers - 1, base + (index % sourceCount))
+      : base;
+  };
   const { Pool } = await import('pg');
   const driverVersion = createRequire(import.meta.url)('pg/package.json').version;
   if (typeof Pool !== 'function') fail('pg Pool driver unavailable');
