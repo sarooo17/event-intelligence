@@ -86,7 +86,7 @@ integration('PG indexed trigger lookup serves matched consumer and coordinator w
     assert.equal(result.deliveries.length, 2,
       'both independently versioned active definitions must receive distinct wakes');
     assert.ok(result.deliveries.every(row => row.status === 'wake_delivered'));
-    assert.equal(pointCalls, 4, 'consumer and coordinator each do one point lookup per match');
+    assert.equal(pointCalls, 6, 'consumer, coordinator and lifecycle each use an exact point lookup per matched version');
     assert.equal(deliveries, 2);
 
     const replay = await consumer.ingestMcpOccurrence({
