@@ -33,13 +33,34 @@ disposable PostgreSQL 16 service and independent Node OS processes:
    the parent verifies that durable audit history is intact and total
    external effects equal the number of unique matches.
 
-The repair query scans at most **32 matching records per sweep** and
-runs every 30 seconds in the hosted runtime by default. The scan uses the
-existing primary-key ordering and a persisted-match cursor only in local
-scheduler memory; it never changes schema or deletes orphaned records.
+The repair query returns at most **32 matching records per sweep**
+and runs every 30 seconds in the hosted runtime by default. It now
+requires **two verified scoped partial B-tree indexes**: on matched
+trigger records ordered by match ID and on wake-delivery records by
+referenced match ID. The indexes avoid scanning every historical match
+or performing an unindexed anti-join on each empty recovery sweep.
+Fresh empty PG installations create them at init. Existing populated
+databases DO NOT build indexes during startup, because blocking DDL
+could stall production writes: an operator must explicitly invoke
+`await store.migrateOrphanRecoveryIndexes()` on an initialized store
+against the real, session-capable PostgreSQL service. It uses
+`CREATE INDEX CONCURRENTLY` with a durable exclusive operator
+claim; interrupted or invalid indexes fail closed for the recovery
+scan until inspected/rectified. This is a physical database index
+migration, with no user-data deletion or schema re-interpretation.
+The cursor lives only in scheduler memory; a restart resumes from the
+start, and SQL does not mutate any match or audit history.
 If a matching trigger has been paused/deleted/expired/completed since
-matching, the sweep returns `recovery_not_authorized` without calling
-the host or creating a wake. Missing runtime coordinators remain
+matching, or its `expiresAt` / `leaseUntil` deadline has passed while
+durably marked active, the sweep returns `recovery_not_authorized`.
+The PostgreSQL delivery boundary also holds the **same session advisory
+lock as `setTriggerState()` uses transactionally** across the external
+host callback: revocation may only commit before the callback starts
+(then delivery fails closed) or after the already-authorized callback
+finishes. This requires a real session-preserving PostgreSQL connection,
+not PgBouncer transaction-pooling, and a pool with at least two
+connections. Hosts must still implement idempotent receipt handling
+for process failure after an external side effect. Missing runtime coordinators remain
 `runtime_unconfigured`. A separate PG16 regression verifies paused
 matches remain pending, not resurrected.
 
@@ -72,11 +93,15 @@ forbids orphan worker cleanup and uses SQL-bound connection/statement
 timeouts. It does not change any production EI API, lease policy, regex,
 Muffin integration, or runtime behavior.
 
-This change modifies the **production PostgreSQL retry repair path**
-(additive store query + scheduler sweep), not just a test harness. A
-single PG16 service is still used in all jobs. Bounded scan limits
-reduce, but do not eliminate, database load; measure the behavior with
-large matched registries before claiming production-scale SLOs.
+**Production behavior and public adapter API DO change.** This PR adds
+indexed PostgreSQL orphan recovery, an explicit online index migration,
+host delivery / mutation serialization and live lifecycle deadline
+guards; it is not a test-only refactor. A single PG16 service is still
+used in all jobs. Indexes limit the scan, but the queue cadence,
+migration, locks, and host callback durations need operational load and
+fault profiling before production SLO signoff. The callback lock can
+delay pause/delete until a slow host response or be interrupted on
+worker process death; the host must still handle idempotent receipts.
 
 This test does **not** establish an actual upstream provider transport,
 durable cursor/ack checkpoint, real external host/network delivery,
