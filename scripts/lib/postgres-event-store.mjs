@@ -1609,6 +1609,7 @@ export class PostgresEventStore {
       if (!await verifyAuditProofWindow(proof, {
         trustedAfterSequence: afterSequence,
         trustedPreviousHash: previousHash,
+        trustedScopeId: this.scopeId,
       })) {
         const error = new Error('Audit proof segment is not a valid hash chain');
         error.code = 'EVENT_INTELLIGENCE_AUDIT_PROOF_CHAIN_INVALID';
