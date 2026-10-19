@@ -15,9 +15,16 @@ export declare function verifyAuditProofWindow(
     hasMore: boolean;
   },
   options: {
+    /** Trusted checkpoint must be externally pinned, not taken from the untrusted proof. */
+    trustedCheckpoint: {
+      scopeId: string;
+      firstHash: string | null;
+      endSequence: number;
+      headHash: string | null;
+    };
     trustedAfterSequence: number;
     trustedPreviousHash: string | null;
-    trustedScopeId: string;
+    trustedLimit: number;
   },
 ): Promise<boolean>;
 
@@ -220,8 +227,21 @@ export declare class PostgresEventStore {
   getSemanticDecisionCache(key: string): Promise<any | null>;
   putSemanticDecisionCache(key: string, decision: any): Promise<any>;
   semanticDecisionCacheSize(): Promise<number>;
-  /** Non-destructive bounded audit archive; verify against externally pinned hash and scope. */
-  getAuditProofWindow(options?: {
+  /** Validate whole hash chain and obtain tenant/genesis/terminal commitment to pin externally. */
+  getAuditCheckpoint(): Promise<{
+    scopeId: string;
+    firstHash: string | null;
+    endSequence: number;
+    headHash: string | null;
+  }>;
+  /** Non-destructive bounded audit export against one externally pinned snapshot. */
+  getAuditProofWindow(options: {
+    checkpoint: {
+      scopeId: string;
+      firstHash: string | null;
+      endSequence: number;
+      headHash: string | null;
+    };
     afterSequence?: number;
     limit?: number;
   }): Promise<{
