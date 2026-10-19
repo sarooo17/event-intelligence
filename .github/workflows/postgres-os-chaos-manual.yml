@@ -2,6 +2,8 @@ name: PostgreSQL OS Kill Chaos (bounded evidence)
 
 on:
   # Run real 60-round isolated SIGKILL/reclaim when THIS workflow changes.
+  # Evidence gate #47: dedicated actual sixty-round PR soak run, with raw
+  # JSON/log/host artifacts; never claim success solely from workflow YAML.
   # Ordinary feature PRs do not pay the 60-round Actions cost.
   pull_request:
     paths:
