@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { fork } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { writeFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import test from 'node:test';
 
 import { PostgresEventStore } from '../scripts/lib/postgres-event-store.mjs';
@@ -287,6 +288,7 @@ integration('real SIGKILL PostgreSQL worker takeovers fence generations and keep
       platform: process.platform,
       arch: process.arch,
       postgresVersion: (await pool.query('SHOW server_version')).rows[0]?.server_version,
+      pgDriverVersion: createRequire(import.meta.url)('pg/package.json').version,
       rounds: ROUNDS,
       killsConfirmed: rawRounds.filter(r => r.killedSignal === 'SIGKILL').length,
       recoveredReceipts: wakeIds.length,
