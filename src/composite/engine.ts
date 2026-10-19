@@ -146,6 +146,7 @@ export class CompositeTriggerEngine {
       ? await this.store.listTriggerCandidatesForEvent({
         name: event.name,
         ...(event.serverId ? { serverId: event.serverId } : {}),
+        data: event.data,
       })
       : await this.store.listTriggers();
 
