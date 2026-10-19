@@ -47,7 +47,9 @@ jobs:
     env:
       POSTGRES_URL: postgresql://ei_chaos:ei_chaos_isolated@127.0.0.1:5432/ei_chaos
       EI_CHAOS_ROUNDS: ${{ github.event_name == 'pull_request' && '60' || inputs.rounds }}
-      EI_CHAOS_EVIDENCE_OUT: ${{ runner.temp }}/pg-os-chaos-evidence.json
+      # The runner context is NOT allowed at jobs.<job_id>.env.
+      # Node runs from the checked-out workspace; upload from that path.
+      EI_CHAOS_EVIDENCE_OUT: pg-os-chaos-evidence.json
     steps:
       # This runs before checkout/install so even an early setup failure has
       # a persisted human-readable log in the always-uploaded artifact.
@@ -105,7 +107,7 @@ jobs:
         with:
           name: pg-os-chaos-${{ env.EI_CHAOS_ROUNDS }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
-            ${{ runner.temp }}/pg-os-chaos-evidence.json
+            pg-os-chaos-evidence.json
             ${{ runner.temp }}/pg-os-chaos-test.log
             ${{ runner.temp }}/pg-os-chaos-host.txt
           if-no-files-found: error
