@@ -8,6 +8,7 @@ import { PostgresEventStore } from '../scripts/lib/postgres-event-store.mjs';
 import { CompositeTriggerEngine } from '../dist/src/composite/engine.js';
 import { CompositeEventConsumer } from '../scripts/lib/composite-event-consumer.mjs';
 import { CompositeWakeCoordinator } from '../scripts/lib/composite-wake-coordinator.mjs';
+import { WakeRetryScheduler } from '../scripts/lib/wake-retry-scheduler.mjs';
 
 const url = process.env.POSTGRES_URL;
 const pg = url ? await import('pg') : null;
@@ -226,6 +227,41 @@ integration('real OS SIGKILL after MCP Pattern match: independent PG workers con
         deliveryGeneration: delivery.attemptCount, receiptId: delivery.runtimeReceiptId,
       });
     }
+    // An orphan whose definition was PAUSED after matching must NOT be
+    // revived by the automatic recovery sweep. Assert this against the
+    // exact same authoritative PG store and trigger lifecycle contract.
+    const pausedRound = rounds;
+    await engine.register(definition(pausedRound));
+    const orphaned = await new CompositeEventConsumer({
+      store, triggerEngine: engine,
+    }).ingestMcpOccurrence({
+      event: occurrence(pausedRound), serverId: 'fixture-mcp-server',
+      provider: 'fixture-mcp-source',
+      traceId: 'os-matched-trace-' + pausedRound,
+    });
+    const pausedMatch = orphaned.results.find(row =>
+      row.matched && row.triggerId === definition(pausedRound).triggerId)?.match;
+    assert.ok(pausedMatch?.matchId);
+    assert.equal(orphaned.deliveries[0]?.status, 'runtime_unconfigured');
+    await store.setTriggerState(definition(pausedRound).triggerId, '1', 'paused');
+    const recoveredPaused = await new WakeRetryScheduler({
+      store,
+      resolveCoordinator: () => {
+        throw new Error('paused orphan cannot reach host coordinator');
+      },
+      now: () => new Date(at(pausedRound)),
+    }).runDue();
+    assert.ok(recoveredPaused.some(row =>
+      row.matchId === pausedMatch.matchId &&
+      row.status === 'recovery_not_authorized'));
+    assert.equal((await store.listDueWakeDeliveries(at(pausedRound))).length, 0);
+    assert.equal((await store.listTriggerMatches(definition(pausedRound).triggerId))
+      .find(row => row.matchId === pausedMatch.matchId).status, 'matched');
+    await assert.rejects(
+      () => store.listOrphanedMatchedWakeCandidates({ limit: 0 }),
+      TypeError,
+    );
+
     assert.equal(await store.verifyAudit(), true);
     assert.equal((await pool.query('SELECT COUNT(*)::int AS n FROM "' +
       prefix + '_host_effects"')).rows[0].n, rounds);
