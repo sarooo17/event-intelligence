@@ -120,6 +120,10 @@ integration('PostgreSQL bounded audit proofs verify across restart, tenants and 
       trustedAfterSequence: first.endSequence,
       trustedPreviousHash: 'untrusted-external-anchor', trustedScopeId: 'audit-tenant-A',
     }), false);
+    assert.equal(await verifyAuditProofWindow(next, {
+      trustedAfterSequence: first.endSequence,
+      trustedPreviousHash: first.headHash, trustedScopeId: 'audit-tenant-B',
+    }), false, 'externally pinned scope prevents proof reuse across tenants');
     assert.equal(await verifyAuditProofWindow(next), false,
       'verification MUST require an independently known predecessor anchor');
 
@@ -148,6 +152,17 @@ integration('PostgreSQL bounded audit proofs verify across restart, tenants and 
     await assert.rejects(
       () => reader.getAuditProofWindow({afterSequence: 1,limit: 2}),
       e=>e.code==='EVENT_INTELLIGENCE_AUDIT_PROOF_CHAIN_INVALID',
+    );
+    // Breaking the *last* row's JSON sequence must not cause it to be
+    // silently excluded from page results. Physical history ID pagination
+    // still returns it for validation (and rejects malformed records).
+    await poolA.query(
+      'UPDATE "' + prefix + '_history" SET payload=payload - $1' +
+      " WHERE scope_id=$2 AND kind='audit' AND payload->>'sequence'='4'",
+      ['sequence', 'audit-tenant-A'],
+    );
+    await assert.rejects(
+      () => reader.getAuditProofWindow({afterSequence: 3,limit: 2}),
     );
     assert.equal(await reader.verifyAudit(), false);
     assert.equal((await other.listAudit()).length, 1,
