@@ -197,6 +197,20 @@ export declare class PostgresEventStore {
   getSemanticDecisionCache(key: string): Promise<any | null>;
   putSemanticDecisionCache(key: string, decision: any): Promise<any>;
   semanticDecisionCacheSize(): Promise<number>;
+  /** Non-destructive bounded audit archive; verify against externally pinned hash and scope. */
+  getAuditProofWindow(options?: {
+    afterSequence?: number;
+    limit?: number;
+  }): Promise<{
+    scopeId: string;
+    afterSequence: number;
+    previousHash: string | null;
+    limit: number;
+    records: any[];
+    endSequence: number;
+    headHash: string | null;
+    hasMore: boolean;
+  }>;
   appendAudit(input: any): Promise<any>;
   listAudit(options?: { traceId?: string; afterSequence?: number }): Promise<any[]>;
   trace(traceId: string): Promise<any>;
