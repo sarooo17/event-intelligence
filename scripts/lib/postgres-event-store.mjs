@@ -1551,24 +1551,76 @@ export class PostgresEventStore {
   }
 
   /**
-   * Produce a consistent, bounded audit archive slice with a predecessor
-   * hash anchor. No pruning: AuditChain currently requires genesis records
-   * to validate the full chain. External systems must pin headHash before
-   * trusting a subsequent window's predecessor anchor.
+   * Operator snapshot: verifies every record from genesis, and returns the
+   * tenant/genesis/terminal commitment. Pin this checkpoint independently
+   * (off-host/WORM) before trusting later exported archive windows.
    */
-  async getAuditProofWindow({ afterSequence = -1, limit = 100 } = {}) {
-    if (!Number.isSafeInteger(afterSequence) || afterSequence < -1 ||
-        !Number.isSafeInteger(limit) || limit < 1 || limit > 1000) {
+  async getAuditCheckpoint() {
+    return this.tx(async (client) => {
+      await this.lock(client, 'audit', 'chain');
+      const records = (await this.historyList('audit', undefined, client))
+        .map(parseAuditRecord);
+      if (!await new AuditChain(records).verify()) {
+        const error = new Error('Cannot checkpoint a damaged audit chain');
+        error.code = 'EVENT_INTELLIGENCE_AUDIT_PROOF_CHAIN_INVALID';
+        throw error;
+      }
+      return {
+        scopeId: this.scopeId,
+        firstHash: records[0]?.hash ?? null,
+        endSequence: records.length - 1,
+        headHash: records.length ? records[records.length - 1].hash : null,
+      };
+    });
+  }
+
+  /** Bounded, nondestructive proof against one externally pinned snapshot. */
+  async getAuditProofWindow({
+    checkpoint,
+    afterSequence = -1,
+    limit = 100,
+  } = {}) {
+    if (!checkpoint || checkpoint.scopeId !== this.scopeId ||
+        !Number.isSafeInteger(checkpoint.endSequence) ||
+        checkpoint.endSequence < -1 ||
+        !Number.isSafeInteger(afterSequence) || afterSequence < -1 ||
+        afterSequence > checkpoint.endSequence ||
+        !Number.isSafeInteger(limit) || limit < 1 || limit > 1000 ||
+        (checkpoint.endSequence === -1 &&
+          (checkpoint.firstHash !== null || checkpoint.headHash !== null)) ||
+        (checkpoint.endSequence >= 0 &&
+          (!checkpoint.firstHash || !checkpoint.headHash))) {
       const error = new TypeError(
-        'Audit proof needs afterSequence >= -1 and limit 1..1000',
+        'Audit proof requires a scope-bound snapshot, bounded sequence and limit 1..1000',
       );
       error.code = 'EVENT_INTELLIGENCE_AUDIT_PROOF_POLICY_INVALID';
       throw error;
     }
     return this.tx(async (client) => {
-      // Serializes the predecessor lookup and window read against appends
-      // from *all* independent PG workers in this scope.
       await this.lock(client, 'audit', 'chain');
+      let terminalHistoryId = null;
+      if (checkpoint.endSequence >= 0) {
+        const first = await client.query(
+          'SELECT payload FROM ' + this.history +
+          ' WHERE scope_id=$1 AND kind=$2 ORDER BY history_id ASC LIMIT 1',
+          [this.scopeId, 'audit'],
+        );
+        const terminal = await client.query(
+          'SELECT history_id, payload FROM ' + this.history +
+          ' WHERE scope_id=$1 AND kind=$2' +
+          " AND (payload->>'sequence')::bigint=$3" +
+          ' ORDER BY history_id ASC LIMIT 1',
+          [this.scopeId, 'audit', checkpoint.endSequence],
+        );
+        if (!first.rows.length || !terminal.rows.length ||
+            parseAuditRecord(first.rows[0].payload).hash !== checkpoint.firstHash ||
+            parseAuditRecord(terminal.rows[0].payload).hash !== checkpoint.headHash) {
+          const error = new Error('Stored audit snapshot no longer matches checkpoint');
+          error.code = 'EVENT_INTELLIGENCE_AUDIT_PROOF_CHECKPOINT_MISMATCH';
+          throw error;
+        }
+        terminalHistoryId = terminal.rows[0].history_id;
+      }
       let previousHash = null;
       let previousHistoryId = null;
       if (afterSequence >= 0) {
@@ -1576,7 +1628,7 @@ export class PostgresEventStore {
           'SELECT history_id, payload FROM ' + this.history +
           ' WHERE scope_id=$1 AND kind=$2' +
           " AND (payload->>'sequence')::bigint=$3" +
-          ' ORDER BY history_id DESC LIMIT 1',
+          ' ORDER BY history_id ASC LIMIT 1',
           [this.scopeId, 'audit', afterSequence],
         );
         if (prev.rows.length !== 1) {
@@ -1587,39 +1639,47 @@ export class PostgresEventStore {
         previousHash = parseAuditRecord(prev.rows[0].payload).hash;
         previousHistoryId = prev.rows[0].history_id;
       }
-      // Page by immutable physical history_id, NOT by JSON payload sequence:
-      // corrupted/missing sequence values must fail validation instead of
-      // silently disappearing from a proof window or its final tail.
-      const rows = await client.query(
-        'SELECT payload FROM ' + this.history +
-        ' WHERE scope_id=$1 AND kind=$2' +
-        (previousHistoryId === null ? '' : ' AND history_id>$3') +
-        ' ORDER BY history_id ASC LIMIT ' +
-        (previousHistoryId === null ? '$3' : '$4'),
-        previousHistoryId === null
-          ? [this.scopeId, 'audit', limit + 1]
-          : [this.scopeId, 'audit', previousHistoryId, limit + 1],
-      );
-      const records = rows.rows.slice(0, limit).map(row =>
-        parseAuditRecord(row.payload)
-      );
+      // Do NOT page by untrusted JSON sequence fields: a damaged sequence
+      // in the last record must not silently disappear from the proof.
+      let records = [];
+      let hasMore = false;
+      if (terminalHistoryId !== null) {
+        const conditions = [
+          'scope_id=$1', 'kind=$2', 'history_id<=$3',
+        ];
+        const args = [this.scopeId, 'audit', terminalHistoryId];
+        if (previousHistoryId !== null) {
+          conditions.push('history_id>$4');
+          args.push(previousHistoryId);
+        }
+        args.push(limit + 1);
+        const rows = await client.query(
+          'SELECT payload FROM ' + this.history +
+          ' WHERE ' + conditions.join(' AND ') +
+          ' ORDER BY history_id ASC LIMIT ' +
+          (previousHistoryId === null ? '$4' : '$5'),
+          args,
+        );
+        records = rows.rows.slice(0, limit).map(row =>
+          parseAuditRecord(row.payload)
+        );
+        hasMore = rows.rows.length > limit;
+      }
       const proof = {
         scopeId: this.scopeId,
-        afterSequence,
-        previousHash,
-        limit,
-        records,
+        afterSequence, previousHash, limit, records,
         endSequence: afterSequence + records.length,
         headHash: records.length
           ? records[records.length - 1].hash : previousHash,
-        hasMore: rows.rows.length > limit,
+        hasMore,
       };
       if (!await verifyAuditProofWindow(proof, {
+        trustedCheckpoint: checkpoint,
         trustedAfterSequence: afterSequence,
         trustedPreviousHash: previousHash,
-        trustedScopeId: this.scopeId,
+        trustedLimit: limit,
       })) {
-        const error = new Error('Audit proof segment is not a valid hash chain');
+        const error = new Error('Audit proof segment is not a valid pinned chain');
         error.code = 'EVENT_INTELLIGENCE_AUDIT_PROOF_CHAIN_INVALID';
         throw error;
       }
