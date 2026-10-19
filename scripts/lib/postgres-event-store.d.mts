@@ -118,6 +118,7 @@ export declare class PostgresEventStore {
   listTriggerCandidatesForEvent(event: {
     name: string;
     serverId?: string | null;
+    data?: unknown;
   }): Promise<any[]>;
   getTriggerState(triggerId: string, version: string): Promise<any>;
   setTriggerState(
