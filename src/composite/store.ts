@@ -66,6 +66,11 @@ export interface CompositeTriggerStore {
   listTriggers():
     | CompositeTriggerDefinition[]
     | Promise<CompositeTriggerDefinition[]>;
+  /** Optional authoritative scope-local point lookup (no stale cache). */
+  getTrigger?(
+    triggerId: string,
+    version: string,
+  ): CompositeTriggerDefinition | null | Promise<CompositeTriggerDefinition | null>;
   /**
    * Optional fresh, scope-local *superset* of possible candidate definitions
    * for a normal event. Include every clause with the matching event name and
