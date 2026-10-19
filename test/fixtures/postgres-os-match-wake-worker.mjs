@@ -3,6 +3,7 @@ import { Pool } from 'pg';
 import { PostgresEventStore } from '../../scripts/lib/postgres-event-store.mjs';
 import { CompositeEventConsumer } from '../../scripts/lib/composite-event-consumer.mjs';
 import { CompositeWakeCoordinator } from '../../scripts/lib/composite-wake-coordinator.mjs';
+import { WakeRetryScheduler } from '../../scripts/lib/wake-retry-scheduler.mjs';
 import { CompositeTriggerEngine } from '../../dist/src/composite/engine.js';
 
 const {
@@ -62,15 +63,13 @@ try {
     setInterval(() => {}, 60000);
   } else {
     stage = 'load-match';
-    const matches = await store.listTriggerMatches(triggerId);
-    const matching = matches.filter(row =>
-      row.matchId === persistedMatchId && row.status === 'matched');
-    if (!persistedMatchId || matching.length !== 1) {
-      const error = new Error('successor cannot find exact persisted match ID');
-      error.code = 'EI_OS_MATCH_EXACT_ID_UNAVAILABLE';
-      throw error;
+    // The expected match ID is used ONLY to validate the discovered outcome.
+    // The worker itself must discover orphaned durable matches through the
+    // production retry scheduler, never by manually passing a saved match
+    // to deliverMatched().
+    if (!persistedMatchId) {
+      throw new Error('missing expected match identity for post-recovery assertion');
     }
-    const matched = matching[0];
     hostPool = new Pool({
       connectionString: POSTGRES_URL, max: 2, query_timeout: 5000,
       statement_timeout: 5000, connectionTimeoutMillis: 5000,
@@ -80,7 +79,7 @@ try {
       now: () => new Date(occurredAt),
       deliverer: async packet => {
         hostCalls++;
-        if (packet.trigger_match_id !== matched.matchId ||
+        if (packet.trigger_match_id !== persistedMatchId ||
             packet.target.runtime !== 'fixture-host') {
           throw new Error('unexpected host continuation target or identity');
         }
@@ -117,17 +116,25 @@ try {
         resolve();
       };
       process.on('message', release);
-      ack({ type: 'ready', round, matchId: matched.matchId });
+      ack({ type: 'ready', round, matchId: persistedMatchId });
     });
-    stage = 'contended-wake';
-    const outcome = await coordinator.deliverMatched(matched);
-    if (!['wake_delivered', 'delivery_in_progress'].includes(outcome.status)) {
-      throw new Error('unexpected competing wake outcome: ' + outcome.status);
+    stage = 'production-orphan-recovery';
+    const scheduler = new WakeRetryScheduler({
+      store,
+      resolveCoordinator: runtime => runtime === 'fixture-host' ? coordinator : null,
+      now: () => new Date(occurredAt),
+      orphanReconcileIntervalMs: 1000,
+    });
+    const candidates = await scheduler.runDue();
+    const outcomes = candidates.filter(row => row.matchId === persistedMatchId);
+    if (outcomes.length !== 1 ||
+        !['wake_delivered', 'delivery_in_progress'].includes(outcomes[0].status)) {
+      throw new Error('scheduler did not recover exactly one committed match');
     }
     const reported = {
-      type: 'completed', round, status: outcome.status,
-      matchId: matched.matchId, wakeId: outcome.wake?.wakeId ?? null,
-      receiptId: outcome.wake?.runtimeReceiptId ?? null, hostCalls,
+      type: 'completed', round, status: outcomes[0].status,
+      matchId: persistedMatchId, wakeId: outcomes[0].wakeId ?? null,
+      receiptId: null, hostCalls,
     };
     stage = 'close';
     await Promise.all([hostPool.end(), storePool.end()]);
