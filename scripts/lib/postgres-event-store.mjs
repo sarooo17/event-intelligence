@@ -286,6 +286,20 @@ export class PostgresEventStore {
             '_records_age_idx" ON ' + this.records +
             ' (scope_id, kind, updated_at, record_key)',
           );
+          // Only empty installations may build the orphan-repair indexes
+          // synchronously. Existing populated databases need an explicit
+          // operator-initiated CONCURRENTLY migration after init().
+          await client.query(
+            'CREATE INDEX IF NOT EXISTS "' + this.tablePrefix +
+            '_records_orphan_status_idx" ON ' + this.records +
+            " (scope_id, record_key) WHERE kind = 'trigger_match'" +
+            " AND (payload->>'status') = 'matched'",
+          );
+          await client.query(
+            'CREATE INDEX IF NOT EXISTS "' + this.tablePrefix +
+            '_records_wake_match_idx" ON ' + this.records +
+            " (scope_id, (payload->>'matchId')) WHERE kind = 'wake_delivery'",
+          );
         }
       });
       this.initialized = true;
@@ -633,14 +647,14 @@ export class PostgresEventStore {
     }
     const result = await this.pool.query(
       'SELECT m.payload FROM ' + this.records + ' AS m' +
-      ' WHERE m.scope_id=$1 AND m.kind=$2 AND m.record_key>$3' +
-      " AND m.payload->>'status'='matched'" +
+      " WHERE m.scope_id=$1 AND m.kind='trigger_match' AND m.record_key>$2" +
+      " AND (m.payload->>'status')='matched'" +
       ' AND NOT EXISTS (' +
       ' SELECT 1 FROM ' + this.records + ' AS d' +
-      ' WHERE d.scope_id=m.scope_id AND d.kind=$4' +
-      " AND d.payload->>'matchId'=m.record_key" +
-      ' ) ORDER BY m.record_key LIMIT $5',
-      [this.scopeId, 'trigger_match', afterMatchId, 'wake_delivery', limit],
+      " WHERE d.scope_id=m.scope_id AND d.kind='wake_delivery'" +
+      " AND (d.payload->>'matchId')=m.record_key" +
+      ' ) ORDER BY m.record_key LIMIT $3',
+      [this.scopeId, afterMatchId, limit],
     );
     return result.rows.map(row => parseTriggerMatchRecord(row.payload));
   }
