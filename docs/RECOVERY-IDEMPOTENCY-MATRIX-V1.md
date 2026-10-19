@@ -39,7 +39,7 @@ reuse of the original logical worker ID (ABA). A
 | After match committed, before wake claim | Matched trigger record persists; delivery may be absent | New worker recovers same logical match and competes for one wake claim | [PG independent pools preclaim recovery](../test/postgres-preclaim-crash-recovery.test.mjs) | Process/network failure at this exact phase with remote host |
 | After wake and partition claim, **before host effect** | Claim/owner/generation are durable; no receipt | Reclaim only after lease expiry; reject old generation, then complete as new worker | [Six real OS SIGKILL rounds](../test/postgres-os-sigkill-recovery.test.mjs), merged #210 | Real clock waiting, sustained failover, external host |
 | **After host effect**, before EI receipt | Host side effect exists, EI claim unresolved | Retry after lease expiry; host must return original receipt for same `wake_id` without another effect | [Real SIGKILL after host effect](../test/postgres-post-host-effect-sigkill.test.mjs), **merged PR #211** | Real remote host/HTTP TurnStore, unknown non-idempotent hosts, external transaction coordination |
-| After EI receipt committed, before durable wake record append / match marked fired | `wake_delivery.status=delivered`; match may still be `matched` | Coordinator must reconstruct wake and finalize match without host redispatch; competing PG workers append at most one delivered history row | [PG receipt/finalization recovery test](../test/postgres-delivered-receipt-finalization.test.mjs), **merged #213**, with independent-pool race barrier; [OS SIGKILL receipt-commit test](../test/postgres-post-receipt-sigkill.test.mjs), **PR #216 pending review/merge**, not yet accepted as merged evidence | Exact post-receipt OS SIGKILL until #216 passes final review and merge; remote host, cross-adapter distributed atomicity and production failover |
+| After EI receipt committed, before durable wake record append / match marked fired | `wake_delivery.status=delivered`; match may still be `matched` | Coordinator must reconstruct wake and finalize match without host redispatch; competing PG workers append at most one delivered history row | [PG receipt/finalization recovery test](../test/postgres-delivered-receipt-finalization.test.mjs), **merged #213**, with independent-pool race barrier; [real OS SIGKILL after committed EI receipt](../test/postgres-post-receipt-sigkill.test.mjs), **merged #216**, with a test-owned post-commit barrier, killed process, replacement worker, one delivered history row and no host redispatch | Remote host/HTTP TurnStore, cross-adapter distributed atomicity, sustained failover, network faults and real RPO/RTO |
 | Multiple contenders during wake delivery and lease expiry | One active claim generation at a time; partition lease separated | Losers return in-progress/claim-lost; only rightful generation may write receipt | [PG shared-state arbitration](../test/postgres-shared-state.test.mjs), [reconnect/rebalance](../test/postgres-rebalance-reconnect.test.mjs) | Sustained multiworker overload, network partitions and chaotic interleaving |
 | After delivered receipt, provider replay or new worker | Delivery and fired state persist | Reuse delivery/receipt, no redispatch; never reset receipt based only on elapsed time | [PG cursor replay](../test/postgres-cursor-pre-ack-recovery.test.mjs), [PG SIGKILL recovery](../test/postgres-os-sigkill-recovery.test.mjs) | Retention/compaction beyond receipt lifetime, real host replay after restore |
 | Host permission revoked after queuing | Durable wake exists but host permission can change | Every retry must re-check host permission; deny without external action | [Queued host revocation test](../test/queued-wake-host-revocation.test.mjs) | Real remote host and complex RBAC policy changes |
@@ -71,10 +71,11 @@ reuse of the original logical worker ID (ABA). A
 
 This document classifies the above boundaries, but **does not check
 off all of issue #47**. The provider-pre-ingest OS-kill fixture merged in
-#215; the narrower post-EI-receipt OS-kill PR #216 is a **candidate** until
-its latest-head independent review and merge. The merged #213 fixture only
-injected intermediate durable states and closed the original PG pool.
-Required next: accept or fix #216 without overclaiming remote-host proof,
+#215 and the distinct *post-EI-receipt* actual SIGKILL recovery test merged
+in #216; #213 separately established concurrent cross-pool finalization
+from injected durable intermediate states. Neither #215 nor #216 includes
+a remote provider or host or establishes general network failover.
+Required next: verify remote host idempotency/authorization contracts,
 production-like host idempotency/authorization contract verification,
 true repeated
 partition/network faults, multiple event-rate/high-cardinality worker
