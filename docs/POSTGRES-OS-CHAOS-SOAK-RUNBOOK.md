@@ -11,7 +11,7 @@ Invoke the manual GitHub Actions workflow
 `PostgreSQL OS Kill Chaos (manual evidence)` and select 30, 60 or 120
 rounds. It uses an isolated PostgreSQL 16 container and Node 22, then
 retains the unredacted *synthetic fixture* process-kill log plus a JSON
-report as a run artifact. It contains no application database DSN,
+report as a run artifact. The test driver is pinned exactly to `pg@8.16.3` and its resolved version is recorded in the result JSON. It contains no application database DSN,
 customer data or production credentials. Alternatively on an isolated
 PG16 instance:
 
