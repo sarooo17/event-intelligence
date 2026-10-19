@@ -9,6 +9,7 @@ import { canonicalJson, sha256Hex } from '../../dist/src/intelligenceProtocol/ca
 export async function verifyAuditProofWindow(proof, {
   trustedAfterSequence,
   trustedPreviousHash,
+  trustedScopeId,
 } = {}) {
   if (!proof || !Array.isArray(proof.records) ||
       !Number.isSafeInteger(proof.afterSequence) ||
@@ -16,6 +17,7 @@ export async function verifyAuditProofWindow(proof, {
       !Number.isSafeInteger(proof.limit) || proof.limit < 1 || proof.limit > 1000 ||
       proof.records.length > proof.limit ||
       typeof proof.scopeId !== 'string' || !proof.scopeId ||
+      proof.scopeId !== trustedScopeId ||
       !Number.isSafeInteger(trustedAfterSequence) ||
       trustedAfterSequence !== proof.afterSequence ||
       (trustedPreviousHash !== null &&
