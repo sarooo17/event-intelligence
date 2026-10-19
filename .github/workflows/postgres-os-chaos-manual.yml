@@ -52,7 +52,7 @@ jobs:
       - name: Install pinned dependencies and PostgreSQL test driver
         run: |
           npm ci --ignore-scripts --no-audit --no-fund
-          npm install --no-save --ignore-scripts --no-audit --no-fund pg@8
+          npm install --no-save --ignore-scripts --no-audit --no-fund pg@8.16.3
           npm run build
       - name: Run bounded independent-process OS kill evidence
         shell: bash
