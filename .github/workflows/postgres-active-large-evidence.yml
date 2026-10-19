@@ -81,12 +81,23 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          node scripts/evidence/postgres-mcp-ingest-wake.mjs \
-            --triggers ${{ matrix.triggers }} \
-            --events ${{ matrix.events }} \
-            --sources ${{ matrix.sources }} \
-            --noise 2 --replays 1 \
-            > active-large-result.json 2> active-large-errors.jsonl
+          # 80-minute process cap leaves 10 minutes of the job's
+          # 90-minute budget for error reporting and artifact upload.
+          # A job-level timeout alone would cancel all later steps.
+          set +e
+          timeout --signal=TERM --kill-after=30s 80m \
+            node scripts/evidence/postgres-mcp-ingest-wake.mjs \
+              --triggers ${{ matrix.triggers }} \
+              --events ${{ matrix.events }} \
+              --sources ${{ matrix.sources }} \
+              --noise 2 --replays 1 \
+              > active-large-result.json 2> active-large-errors.jsonl
+          result=$?
+          set -e
+          if [ "$result" -eq 124 ] || [ "$result" -eq 137 ]; then
+            printf '%s\n' '{"schema":"ei.active-large.timeout.v1","status":"failed","reason":"process-time-limit-or-kill"}' > active-large-timeout.json
+          fi
+          if [ "$result" -ne 0 ]; then exit "$result"; fi
           cat active-large-result.json
       - name: Print bounded failure evidence
         if: failure()
@@ -105,5 +116,6 @@ jobs:
             active-large-result.json
             active-large-errors.jsonl
             active-large-host.txt
+            active-large-timeout.json
           if-no-files-found: warn
           retention-days: 90
