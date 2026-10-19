@@ -7,9 +7,11 @@ pay for a lengthy soak on every pull request.
 
 ## Reproduce
 
-Invoke the manual GitHub Actions workflow
-`PostgreSQL OS Kill Chaos (manual evidence)` and select 30, 60 or 120
-rounds. It uses an isolated PostgreSQL 16 container and Node 22, then
+Invoke the GitHub Actions workflow
+`PostgreSQL OS Kill Chaos (bounded evidence)` and select 30, 60 or 120
+rounds manually. Changes to *only its own workflow YAML* additionally
+trigger an isolated 60-round run on that PR (not for ordinary feature PRs),
+with exact source SHA and runner/driver provenance. It uses an isolated PostgreSQL 16 container and Node 22, then
 retains the unredacted *synthetic fixture* process-kill log plus a JSON
 report as a run artifact. The test driver is pinned exactly to `pg@8.16.3` and its resolved version is recorded in the result JSON. It contains no application database DSN,
 customer data or production credentials. Alternatively on an isolated
@@ -54,9 +56,12 @@ ingest-to-wake service. Logical-time expiry eliminates unnecessary
 wall-clock waits; a 120-round successful run is repeated
 process-crash evidence, **not 120 seconds of real lease expiry**.
 
-The workflow is manually triggered to control GitHub Actions
-expenditure. Publishing a workflow does not mean a 30/60/120-round
-run has actually executed, and no SLO/RPO/RTO claims may be inferred.
+The workflow is manually triggered or scoped to pull requests
+modifying the workflow YAML itself, to control GitHub Actions spending.
+Publishing a workflow does **not** mean a 60-round run has actually
+executed. Verify the completed CI job, exact-head logs, environment and
+raw JSON artifacts before citing results; no SLO/RPO/RTO claim follows
+from synthetic process kills alone.
 Retain complete raw JSON and Actions logs with exact commit SHA and
 compare multiple actual runs before considering #47 soak acceptance.
 
