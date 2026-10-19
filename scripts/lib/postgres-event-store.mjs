@@ -637,6 +637,108 @@ export class PostgresEventStore {
    * The coordinator remains the authority for exact-target wake id,
    * transactional claim, receipt and dedup. Never delete an orphan here.
    */
+  async assertOrphanRecoveryIndexes() {
+    const suffixes = ['_records_orphan_status_idx', '_records_wake_match_idx'];
+    const result = await this.pool.query(
+      'SELECT idx.relname AS name, tbl.relname AS table_name, ' +
+      'i.indisvalid AS valid, i.indisready AS ready, ' +
+      'am.amname AS method, i.indnkeyatts AS keys, ' +
+      'pg_get_indexdef(i.indexrelid) AS definition ' +
+      'FROM pg_class idx JOIN pg_index i ON i.indexrelid=idx.oid ' +
+      'JOIN pg_class tbl ON tbl.oid=i.indrelid ' +
+      'JOIN pg_am am ON am.oid=idx.relam ' +
+      'JOIN pg_namespace ns ON ns.oid=idx.relnamespace ' +
+      'WHERE ns.nspname=current_schema() AND idx.relname=ANY($1)',
+      [suffixes.map(suffix => this.tablePrefix + suffix)],
+    );
+    const present = new Map(result.rows.map(row => [row.name, row]));
+    const schemas = [
+      { suffix: suffixes[0], key: /\(scope_id, record_key\)/,
+        pred: /trigger_match/, expr: /status/ },
+      { suffix: suffixes[1], key: /scope_id.*matchId/,
+        pred: /wake_delivery/, expr: /matchId/ },
+    ];
+    for (const expected of schemas) {
+      const row = present.get(this.tablePrefix + expected.suffix);
+      const sql = row?.definition ?? '';
+      if (!row || row.valid !== true || row.ready !== true ||
+          row.method !== 'btree' || row.table_name !== this.tablePrefix + '_records' ||
+          Number(row.keys) !== 2 || !expected.key.test(sql) ||
+          !expected.pred.test(sql) || !expected.expr.test(sql) ||
+          !sql.includes(' WHERE ')) {
+        const error = new Error(
+          'PG orphan reconciliation needs both verified scoped expression indexes; ' +
+          'run store.migrateOrphanRecoveryIndexes() explicitly after store.init(). ' +
+          'Do not repeatedly scan historical matches without indexes.',
+        );
+        error.code = 'EVENT_INTELLIGENCE_ORPHAN_RECOVERY_INDEX_REQUIRED';
+        throw error;
+      }
+    }
+  }
+
+  /**
+   * Explicit, nonblocking online operator migration for populated PG stores.
+   * No CREATE INDEX on production startup; a durable claim prevents two
+   * operators starting concurrent index creation on the same prefix.
+   */
+  async migrateOrphanRecoveryIndexes() {
+    if (!this.initialized) {
+      const error = new Error('Initialize store before orphan index migration');
+      error.code = 'EVENT_INTELLIGENCE_ORPHAN_MIGRATION_NOT_INITIALIZED';
+      throw error;
+    }
+    const component = 'orphan-recovery-index-migration';
+    const claim = randomUUID();
+    const inserted = await this.tx(client => client.query(
+      'INSERT INTO ' + this.metadata +
+      ' (component, version, adopted_from) VALUES ($1, 1, $2)' +
+      ' ON CONFLICT (component) DO NOTHING RETURNING component',
+      [component, claim],
+    ));
+    if (inserted.rows.length !== 1) {
+      const error = new Error('Orphan index migration has an outstanding operator claim');
+      error.code = 'EVENT_INTELLIGENCE_ORPHAN_MIGRATION_BUSY';
+      throw error;
+    }
+    let verified = false;
+    try {
+      const statements = [
+        ['_records_orphan_status_idx',
+          " (scope_id, record_key) WHERE kind = 'trigger_match'" +
+          " AND (payload->>'status') = 'matched'"],
+        ['_records_wake_match_idx',
+          " (scope_id, (payload->>'matchId')) WHERE kind = 'wake_delivery'"],
+      ];
+      for (const [suffix, ddl] of statements) {
+        const name = this.tablePrefix + suffix;
+        const existing = await this.pool.query(
+          'SELECT 1 FROM pg_class idx JOIN pg_namespace ns' +
+          ' ON ns.oid=idx.relnamespace' +
+          ' WHERE ns.nspname=current_schema() AND idx.relname=$1',
+          [name],
+        );
+        if (!existing.rows.length) {
+          await this.pool.query(
+            'CREATE INDEX CONCURRENTLY IF NOT EXISTS "' + name +
+            '" ON ' + this.records + ddl,
+          );
+        }
+      }
+      await this.assertOrphanRecoveryIndexes();
+      verified = true;
+      return { ok: true, indexes: statements.map(([suffix]) => this.tablePrefix + suffix) };
+    } finally {
+      // An interrupted CONCURRENTLY build may still be running (or have
+      // left an invalid index). Leave the claim until operator diagnosis.
+      if (verified) await this.pool.query(
+        'DELETE FROM ' + this.metadata +
+        ' WHERE component=$1 AND adopted_from=$2',
+        [component, claim],
+      );
+    }
+  }
+
   async listOrphanedMatchedWakeCandidates({
     afterMatchId = '',
     limit = 32,
@@ -645,6 +747,7 @@ export class PostgresEventStore {
         !Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
       throw new TypeError('orphan match scan requires a string cursor and limit 1..100');
     }
+    await this.assertOrphanRecoveryIndexes();
     const result = await this.pool.query(
       'SELECT m.payload FROM ' + this.records + ' AS m' +
       " WHERE m.scope_id=$1 AND m.kind='trigger_match' AND m.record_key>$2" +
