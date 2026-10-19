@@ -7,9 +7,11 @@ pay for a lengthy soak on every pull request.
 
 ## Reproduce
 
-Invoke the manual GitHub Actions workflow
-`PostgreSQL OS Kill Chaos (manual evidence)` and select 30, 60 or 120
-rounds. It uses an isolated PostgreSQL 16 container and Node 22, then
+Invoke the GitHub Actions workflow
+`PostgreSQL OS Kill Chaos (bounded evidence)` and select 30, 60 or 120
+rounds manually. Changes to *only its own workflow YAML* additionally
+trigger an isolated 60-round run on that PR (not for ordinary feature PRs),
+with exact source SHA and runner/driver provenance. It uses an isolated PostgreSQL 16 container and Node 22, then
 retains the unredacted *synthetic fixture* process-kill log plus a JSON
 report as a run artifact. The test driver is pinned exactly to `pg@8.16.3` and its resolved version is recorded in the result JSON. It contains no application database DSN,
 customer data or production credentials. Alternatively on an isolated
@@ -40,8 +42,19 @@ When requested, the evidence file reports the configured round count,
 confirmed kills, recovered receipt count, environment Node/OS/Postgres,
 total run duration, p50/p95/p99 end-to-end **test round** time and
 every round's elapsed handover duration, identities and stable receipt.
-It is written only after successful assertions; the Actions log is
-retained even on failure. If an un-reaped process makes cleanup unsafe,
+It is written only after successful assertions. On failure or even
+before toolchain setup finishes, the Actions workflow uploads a test log
+and a **separate explicit incomplete-status JSON marker** with requested
+rounds and null (unknown) kill/receipt counts; this cannot be counted as
+a completed chaos drill. The log is initialized before checkout.
+
+If the PostgreSQL **job service fails to provision before any steps**,
+a second independent `service-startup-failure-evidence` job runs on
+its own runner without PostgreSQL and uploads an incomplete-status JSON
+and error-explanation log. The original failing job still fails the
+workflow. Platform-level cancellation or runner infrastructure outages
+may prevent even that independent fallback; these are not claimed as
+successfully evidenced trials. If an un-reaped process makes cleanup unsafe,
 the fixture preserves its isolated tables but closes the parent PG
 pool instead of deleting data under a potentially live writer.
 
@@ -54,9 +67,12 @@ ingest-to-wake service. Logical-time expiry eliminates unnecessary
 wall-clock waits; a 120-round successful run is repeated
 process-crash evidence, **not 120 seconds of real lease expiry**.
 
-The workflow is manually triggered to control GitHub Actions
-expenditure. Publishing a workflow does not mean a 30/60/120-round
-run has actually executed, and no SLO/RPO/RTO claims may be inferred.
+The workflow is manually triggered or scoped to pull requests
+modifying the workflow YAML itself, to control GitHub Actions spending.
+Publishing a workflow does **not** mean a 60-round run has actually
+executed. Verify the completed CI job, exact-head logs, environment and
+raw JSON artifacts before citing results; no SLO/RPO/RTO claim follows
+from synthetic process kills alone.
 Retain complete raw JSON and Actions logs with exact commit SHA and
 compare multiple actual runs before considering #47 soak acceptance.
 
