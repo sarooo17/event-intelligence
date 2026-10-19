@@ -9,6 +9,7 @@ const {
   POSTGRES_URL, EI_MATCH_KILL_PREFIX: tablePrefix,
   EI_MATCH_KILL_SCOPE: scopeId, EI_MATCH_KILL_ROUND,
   EI_MATCH_KILL_MODE: mode, EI_MATCH_KILL_WORKER: workerId,
+  EI_MATCH_KILL_MATCH_ID: persistedMatchId,
 } = process.env;
 const round = Number(EI_MATCH_KILL_ROUND);
 const triggerId = 'os-match-before-wake-' + round;
@@ -62,10 +63,14 @@ try {
   } else {
     stage = 'load-match';
     const matches = await store.listTriggerMatches(triggerId);
-    const matched = matches.find(row => row.status === 'matched');
-    if (!matched || matches.length !== 1) {
-      throw new Error('successor cannot find exactly one persisted logical match');
+    const matching = matches.filter(row =>
+      row.matchId === persistedMatchId && row.status === 'matched');
+    if (!persistedMatchId || matching.length !== 1) {
+      const error = new Error('successor cannot find exact persisted match ID');
+      error.code = 'EI_OS_MATCH_EXACT_ID_UNAVAILABLE';
+      throw error;
     }
+    const matched = matching[0];
     hostPool = new Pool({
       connectionString: POSTGRES_URL, max: 2, query_timeout: 5000,
       statement_timeout: 5000, connectionTimeoutMillis: 5000,
