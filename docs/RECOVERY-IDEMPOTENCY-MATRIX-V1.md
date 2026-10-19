@@ -39,7 +39,7 @@ reuse of the original logical worker ID (ABA). A
 | After match committed, before wake claim | Matched trigger record persists; delivery may be absent | New worker recovers same logical match and competes for one wake claim | [PG independent pools preclaim recovery](../test/postgres-preclaim-crash-recovery.test.mjs) | Process/network failure at this exact phase with remote host |
 | After wake and partition claim, **before host effect** | Claim/owner/generation are durable; no receipt | Reclaim only after lease expiry; reject old generation, then complete as new worker | [Six real OS SIGKILL rounds](../test/postgres-os-sigkill-recovery.test.mjs), merged #210 | Real clock waiting, sustained failover, external host |
 | **After host effect**, before EI receipt | Host side effect exists, EI claim unresolved | Retry after lease expiry; host must return original receipt for same `wake_id` without another effect | [Real SIGKILL after host effect](../test/postgres-post-host-effect-sigkill.test.mjs), **merged PR #211** | Real remote host/HTTP TurnStore, unknown non-idempotent hosts, external transaction coordination |
-| After EI receipt committed, before durable wake record append / match marked fired | `wake_delivery.status=delivered`; match may still be `matched` | Coordinator must reconstruct wake and finalize match without calling host again | [CompositeWakeCoordinator.deliveredResult](../scripts/lib/composite-wake-coordinator.mjs) implementation | **Direct real-PG process-crash mutation test for this exact gap is still missing** |
+| After EI receipt committed, before durable wake record append / match marked fired | `wake_delivery.status=delivered`; match may still be `matched` | Coordinator must reconstruct wake and finalize match without calling host again; competing PG workers append at most one delivered history row | [PG receipt/finalization recovery test](../test/postgres-delivered-receipt-finalization.test.mjs), **merged PR #213**, with two independent pools, read barrier, queued history and a transactional per-wake materialization lock | Exact-instruction process SIGKILL, remote host, cross-adapter distributed atomicity and production failover |
 | Multiple contenders during wake delivery and lease expiry | One active claim generation at a time; partition lease separated | Losers return in-progress/claim-lost; only rightful generation may write receipt | [PG shared-state arbitration](../test/postgres-shared-state.test.mjs), [reconnect/rebalance](../test/postgres-rebalance-reconnect.test.mjs) | Sustained multiworker overload, network partitions and chaotic interleaving |
 | After delivered receipt, provider replay or new worker | Delivery and fired state persist | Reuse delivery/receipt, no redispatch; never reset receipt based only on elapsed time | [PG cursor replay](../test/postgres-cursor-pre-ack-recovery.test.mjs), [PG SIGKILL recovery](../test/postgres-os-sigkill-recovery.test.mjs) | Retention/compaction beyond receipt lifetime, real host replay after restore |
 | Host permission revoked after queuing | Durable wake exists but host permission can change | Every retry must re-check host permission; deny without external action | [Queued host revocation test](../test/queued-wake-host-revocation.test.mjs) | Real remote host and complex RBAC policy changes |
@@ -70,9 +70,12 @@ reuse of the original logical worker ID (ABA). A
 ## Remaining v1 acceptance
 
 This document classifies the above boundaries, but **does not check
-off all of issue #47**. Required next: real process disruption in the
-delivered-receipt-before-match-finalization window, production-like
-host idempotency/authorization contract verification, true repeated
+off all of issue #47**. Required next: an **actual OS-level SIGKILL in the narrow**
+delivered-receipt-before-match-finalization window (the merged #213
+fixture injects both durable intermediate states and tears down the
+first PostgreSQL pool but does **not** kill the process mid-instruction),
+production-like host idempotency/authorization contract verification,
+true repeated
 partition/network faults, multiple event-rate/high-cardinality worker
 soak, retention/compaction with audit-chain integrity, and
 environment-specific SLO/RPO/RTO with complete raw evidence.
