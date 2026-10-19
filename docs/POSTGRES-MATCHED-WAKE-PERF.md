@@ -8,8 +8,8 @@ definitions. The `CompositeEventConsumer`,
 `CompositeWakeCoordinator.deliverMatched` and lifecycle advancement called
 `store.listTriggers()` and filtered the **entire tenant definition
 registry** for one `triggerId@version`, after the engine had already
-matched an event. At 100k this caused two unnecessary tenant-wide
-PostgreSQL JSONB fetches/parses **per fired match**.
+matched an event. At 100k this caused **three** unnecessary tenant-wide
+PostgreSQL JSONB fetches/parses **per fired match**, including lifecycle finalization.
 
 This PR adds optional `store.getTrigger(triggerId, version)` and uses
 it in those two wake paths. The PostgreSQL adapter reads one current
