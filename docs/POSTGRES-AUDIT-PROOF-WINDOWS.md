@@ -1,62 +1,66 @@
-# PostgreSQL audit proof windows (non-destructive archive prerequisite)
+# PostgreSQL audit archive proofs — externally pinned snapshot required
 
-Issue #47 requires traceable, tamper-evident audit retention before any
-historical audit rows can be deleted. The current `AuditChain` starts at
-sequence zero with a genesis `previousHash: null` and verifies **all**
-records from the beginning; deleting a prefix today would break
-`verifyAudit()`, ordinary append, and chain continuity.
+**Status:** non-destructive prerequisite for #47 audit retention. No audit
+entries, MCP occurrences, match evidence, receipts or dedup keys are deleted.
 
-This first, independently testable slice **does not delete any audit rows**.
-It adds two advanced storage operations:
+The current `AuditChain` verifies from genesis (sequence 0,
+`previousHash:null`). Physically deleting an audit prefix today would
+break the append path and `verifyAudit()`. This change provides bounded
+*exports* and independent verification, **not** a pruning policy.
 
-- `store.getAuditProofWindow({ afterSequence: -1, limit: 100 })`:
-  serializes against audit writers across PostgreSQL pools, reads an
-  ordered, scope-local window of at most 1–1000 entries, paged by immutable PostgreSQL history IDs rather than untrusted JSON sequence fields, with its
-  predecessor hash, `headHash`, `endSequence`, and `hasMore`.
-  It validates sequence continuity, every canonical SHA-256 record hash,
-  and predecessor links *before* returning.
-- `verifyAuditProofWindow(proof, { trustedAfterSequence,
-  trustedPreviousHash, trustedScopeId })`: independently verifies a
-  received proof against a **separately pinned** anchor and tenant identity;
-  refuses untrusted or missing anchors, reordered, truncated, or altered
-  records. It can run without a PostgreSQL connection.
+## Contract
 
-## Operator handoff
+1. `store.getAuditCheckpoint()` validates the **complete** PostgreSQL
+   tenant audit chain and returns `{scopeId, firstHash, endSequence,
+   headHash}`. This operation is O(total audit history) and is
+   **operator-controlled**, not used in ingestion. It can be expensive.
+2. The operator must independently authenticate and pin that tuple outside
+   the same database (e.g. trusted signed WORM archive manifest). A hash
+   freshly supplied with an untrusted proof is **not** independently trusted.
+   The initial checkpoint itself is only as trustworthy as the source and
+   chain verification at the moment of pinning; it cannot prove a
+   compromised historical genesis was once authentic.
+3. `store.getAuditProofWindow({checkpoint,afterSequence:-1,limit:100})`
+   provides at most 1000 contiguous audit records from the **pinned
+   snapshot**, including the predecessor hash, ending sequence/head hash
+   and `hasMore`. It uses the same scope-local PostgreSQL advisory
+   lock as audit appends, and paginates by physical `history_id` so a
+   damaged/missing JSON sequence cannot silently vanish from a page.
+   New audits appended *after* the checkpoint do not extend this snapshot.
+4. `verifyAuditProofWindow(proof, {trustedCheckpoint,
+   trustedAfterSequence,trustedPreviousHash,trustedLimit})` checks the
+   externally pinned scope, first (genesis) hash, terminal sequence and
+   hash, the requested fixed page size, each canonical SHA256 record hash
+   and predecessor link. It rejects changed scope, truncated suffix,
+   reordered/missing entries, invalid chain, or a claimed false end.
+   Each next page uses the *previous independently validated* head and
+   end sequence. The final window must land at the checkpoint's terminal
+   sequence/hash. The overall export is authentic only when the full
+   chain of windows has reached the trusted terminal commitment.
 
-1. Start at `afterSequence: -1` and `trustedPreviousHash: null`
-   with the expected tenant scope. Verify every exported chunk off-host.
-2. Save an immutable/externally pinned copy of the scope, end sequence
-   and head hash *together with the complete archive window*; a hash
-   stored only in the same writable database is **not** an external
-   integrity guarantee. The host decides storage/WORM, encryption,
-   access controls, time-based retention and backup policies.
-3. For the next window pass the previous verified `endSequence` and
-   `headHash` as *trusted* inputs; verify continuity. Never derive
-   trusted inputs from the unverified window you are checking.
-4. Re-check audit count, `listAudit`, and `verifyAudit()`.
-   Window exports never modify the operational chain.
+## Operational limits
 
-All audit records remain in EI PostgreSQL. No automatic archiver,
-checkpoint table, background pruning, producer cursor changes,
-JSONL retention, or schema migration is included.
+- **No implicit trust in a database-reported checkpoint.** Its scope,
+  genesis hash and terminal hash must already be pinned by an independent
+  trusted system. Creating the checkpoint and immediately accepting it
+  from the same potentially compromised database is not independent
+  provenance.
+- No external archive/WORM writer, archive signatures, lifecycle TTL,
+  source-replay fence, interruption-resumable archive transaction, or
+  checkpoint-aware pruning has been added.
+- Exports are read-only; the original PostgreSQL audit history, chain
+  verification and write behavior remain unchanged.
+- The proof verifier validates a bounded window against an externally
+  trusted whole-snapshot commitment. It does not sign data itself or
+  certify live producer completeness beyond the snapshot boundary.
 
-## Proven vs unproven
+**PG16 regression:** `test/postgres-audit-proof-windows.test.mjs`
+covers separate pools and concurrent audit append, chained snapshots,
+tenant isolation, tampered/reordered/skipped evidence, forged genesis
+scope relabeling, suffix-shortening attempts, and direct on-disk
+corruption fail-closed behavior. No schema migration, regex refactor,
+Muffin/Artemis adapter update or npm publication is included.
 
-The real-PG16 `postgres-audit-proof-windows.test.mjs` checks empty
-genesis, concurrent writers, separate pool reads, multi-chunk anchor
-continuity, cross-tenant isolation, skipped/reordered/tampered proof
-rejection, validation of a directly damaged on-disk JSONB payload,
-and unchanged persistent audit count and verification before tampering.
-
-This **does not** establish trustworthy off-site WORM storage,
-external anchoring/countersignatures, long-term archive retrieval,
-proof of non-equivocation when a database is already compromised at
-the *initial* genesis export, or a valid design for physically
-deleting audit prefixes. Full #47 compaction/TTL acceptance stays
-unchecked. Future deletion needs checkpoint-aware append/verify APIs,
-cross-worker cutover fencing and recovery tests across retained vs
-archived history (including trace/receipt provenance).
-
-Compatibility: additive advanced PostgreSQL export and pure proof
-verifier, no destructive retention, public MCP command changes,
-regex modifications, package release, Muffin or Artemis upgrade.
+The #47 append-only retention/compaction acceptance **remains open**
+until external archive commitment, safe checkpoint-aware deletion and
+crash/replay/audit conformance tests are designed and actually validated.
