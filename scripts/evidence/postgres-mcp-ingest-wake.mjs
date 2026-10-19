@@ -286,6 +286,17 @@ try {
   assert.equal(observedCandidateCounts.length, events,
     'one scoped candidate query must be measured for each accepted event');
   const measuredCandidateCounts = [...observedCandidateCounts];
+  // For this canonical fixture each registered definition has exactly one
+  // source event name. This is a separate metric from the candidates returned
+  // AFTER optional conservative predicate pushdown in PostgreSQL.
+  const eligibleBySourceName = Array.from({ length: events }, (_, index) => {
+    const residue = slotFor(index) % sourceCount;
+    return Math.floor((triggers - 1 - residue) / sourceCount) + 1;
+  });
+  if (triggers > 1000) {
+    assert.ok(measuredCandidateCounts.every(value => value === 1),
+      'large single direct numeric-equality fixtures must use safe PG prefilter');
+  }
   const measuredWall = performance.now() - started;
   const measuredCpu = process.cpuUsage(baselineCpu);
   const measuredMemory = process.memoryUsage();
@@ -384,7 +395,15 @@ try {
     evidence: {
       persistedReceiptsCheckedAfterPoolReopen: expectedReceipts.size,
       totalRegisteredActiveDefinitions: triggers,
+      sourceNameEligibleDefinitionsBeforePredicateFilter: {
+        min: Math.min(...eligibleBySourceName),
+        max: Math.max(...eligibleBySourceName),
+      },
       candidateDefinitionsPerMeasuredEvent: {
+        // Actual rows returned by current PG candidate selection; when the
+        // single-numeric-eq filter is active this is NOT the source-only
+        // eligible definition population.
+        stage: 'after-conservative-numeric-eq-prefilter',
         samples: measuredCandidateCounts.length,
         min: Math.min(...measuredCandidateCounts),
         max: Math.max(...measuredCandidateCounts),
