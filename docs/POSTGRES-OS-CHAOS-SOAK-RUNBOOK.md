@@ -42,8 +42,11 @@ When requested, the evidence file reports the configured round count,
 confirmed kills, recovered receipt count, environment Node/OS/Postgres,
 total run duration, p50/p95/p99 end-to-end **test round** time and
 every round's elapsed handover duration, identities and stable receipt.
-It is written only after successful assertions; the Actions log is
-retained even on failure. If an un-reaped process makes cleanup unsafe,
+It is written only after successful assertions. On failure or even
+before toolchain setup finishes, the Actions workflow uploads a test log
+and a **separate explicit incomplete-status JSON marker** with requested
+rounds and null (unknown) kill/receipt counts; this cannot be counted as
+a completed chaos drill. The log is initialized before checkout. If an un-reaped process makes cleanup unsafe,
 the fixture preserves its isolated tables but closes the parent PG
 pool instead of deleting data under a potentially live writer.
 
