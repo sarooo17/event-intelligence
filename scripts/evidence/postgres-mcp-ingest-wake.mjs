@@ -165,6 +165,36 @@ try {
   // returned for each measured MCP event. Total eligible population is NOT
   // the same as candidates returned after filtering by source/event name.
   const observedCandidateCounts = [];
+  const measuredStoreOperations = new Map();
+  const profileMethods = [
+    'getTrigger', 'listTriggers', 'getTriggerState',
+    'ensureWakeDelivery', 'getWakeDelivery', 'claimWakeDelivery',
+    'completeWakeDelivery', 'appendWake', 'appendAudit',
+    'appendDeliveredWakeIfMissing', 'latestWake', 'auditLength',
+    'appendTriggerMatch', 'compareAndAppendTriggerMatch',
+    'listTriggerMatchHistory', 'listTriggerMatches',
+  ];
+  // Profile actual awaited store calls, NEVER spoof method returns or
+  // replace the persistent receipt/claim transaction implementation.
+  // Metrics are inclusive per-operation timings; overlapping or nested
+  // calls may not be added together as an exact critical-path breakdown.
+  for (const method of profileMethods) {
+    if (typeof store[method] !== 'function') continue;
+    const original = store[method].bind(store);
+    store[method] = async (...args) => {
+      const inMeasurement = stage === 'measured-ingest-match-wake';
+      if (!inMeasurement) return original(...args);
+      const start = performance.now();
+      try {
+        return await original(...args);
+      } finally {
+        if (!measuredStoreOperations.has(method)) {
+          measuredStoreOperations.set(method, []);
+        }
+        measuredStoreOperations.get(method).push(performance.now() - start);
+      }
+    };
+  }
   const originalCandidates = store.listTriggerCandidatesForEvent.bind(store);
   store.listTriggerCandidatesForEvent = async (event) => {
     const candidates = await originalCandidates(event);
@@ -175,6 +205,7 @@ try {
   };
 
   const measurements = { ingestToMatch: [], matchToWake: [], ingestToWake: [] };
+  const measuredHostCallbackMs = [];
   const hostReceipts = new Map();
   let hostCalls = 0;
   const coordinator = new CompositeWakeCoordinator({
@@ -182,6 +213,7 @@ try {
     triggerEngine: engine,
     workerId: 'pipeline-benchmark-worker',
     deliverer: async packet => {
+      const hostStart = performance.now();
       hostCalls++;
       assert.equal(packet.target.runtime, 'fixture-host');
       assert.ok(packet.trigger_match_id);
@@ -192,6 +224,9 @@ try {
       assert.equal(hostReceipts.has(packet.trigger_match_id), false,
         'duplicate host continuation for one logical match');
       hostReceipts.set(packet.trigger_match_id, receiptId);
+      if (stage === 'measured-ingest-match-wake') {
+        measuredHostCallbackMs.push(performance.now() - hostStart);
+      }
       return { runtimeReceiptId: receiptId };
     },
   });
@@ -327,6 +362,16 @@ try {
       ingestToMatch: stats(measurements.ingestToMatch),
       matchToWake: stats(measurements.matchToWake),
       ingestToWake: stats(measurements.ingestToWake),
+      wakeStoreProfile: Object.fromEntries(
+        [...measuredStoreOperations.entries()].map(([method, samples]) => [
+          method,
+          {
+            ...stats(samples),
+            totalMs: samples.reduce((total, value) => total + value, 0),
+          },
+        ]),
+      ),
+      hostCallback: stats(measuredHostCallbackMs),
       matchedCount: matched.size, durableWakeCount: wakeIds.size,
       hostSideEffects: hostCalls, duplicateHostSideEffects: hostCalls - matched.size,
       falsePositiveWakeCount: 0,
@@ -347,6 +392,12 @@ try {
           measuredCandidateCounts.length,
       },
       measuredDistinctMatches: events,
+      definitionReadProfile: {
+        indexedReads: measuredStoreOperations.get('getTrigger')?.length ?? 0,
+        fullRegistryReads: measuredStoreOperations.get('listTriggers')?.length ?? 0,
+        expectedIndexedReads: events * 2,
+      },
+      storeOperationProfileIsInclusive: true,
       transportLatencyIncluded: false, hostExecutionLatencyIncluded: false,
       productionSloCertified: false,
     },
