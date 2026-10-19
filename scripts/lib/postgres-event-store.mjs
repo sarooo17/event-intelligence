@@ -1073,6 +1073,68 @@ export class PostgresEventStore {
     });
   }
 
+  /**
+   * Fence the ACTUAL external host callback against concurrent pause/delete
+   * commits. This session advisory lock has the SAME key as the transaction
+   * lock in setTriggerState(). Revocation cannot commit until the callback
+   * returns; a post-revocation attempt re-reads status under the lock.
+   * Requires a session-preserving PostgreSQL connection (not transaction
+   * pooling PgBouncer) and >=2 pool slots for callbacks that use the store.
+   */
+  async withTriggerDispatchFence(triggerId, version, at, operation) {
+    if (typeof operation !== 'function') throw new TypeError('dispatch callback required');
+    const key = String(triggerId) + '@' + String(version);
+    const maxPool = Number(this.pool.options?.max ?? 10);
+    if (maxPool < 2) {
+      const error = new Error('Fenced PG host dispatch requires >=2 pool connections');
+      error.code = 'EVENT_INTELLIGENCE_DISPATCH_POOL_TOO_SMALL';
+      throw error;
+    }
+    const atMs = Date.parse(at);
+    if (!Number.isFinite(atMs)) throw new TypeError('dispatch time must be valid ISO');
+    const lockKey = this.tablePrefix + ':' + this.scopeId + ':trigger-state:' + key;
+    const client = await this.pool.connect();
+    let locked = false;
+    try {
+      // Both session and xact variants map to the same PG advisory key.
+      await client.query('SELECT pg_advisory_lock(hashtextextended($1, 0))', [lockKey]);
+      locked = true;
+      const raw = await this.get('trigger', key, client);
+      const state = await this.get('trigger_state', key, client) ??
+        defaultTriggerState(triggerId, version);
+      const definition = raw ? parseCompositeTriggerDefinition(raw) : null;
+      const lifecycle = definition?.lifecycle ?? {};
+      const expiresAt = lifecycle.expiresAt
+        ? Date.parse(lifecycle.expiresAt) : Number.POSITIVE_INFINITY;
+      const leaseUntil = lifecycle.leaseUntil
+        ? Date.parse(lifecycle.leaseUntil) : Number.POSITIVE_INFINITY;
+      const count = state.fireCount ?? 0;
+      if (!definition?.target || state.status !== 'active' ||
+          atMs > Math.min(expiresAt, leaseUntil) ||
+          (lifecycle.oneShot === true && count >= 1) ||
+          (lifecycle.maxFirings !== undefined && count >= lifecycle.maxFirings)) {
+        return { authorized: false, reason: 'trigger_not_active_at_dispatch' };
+      }
+      return { authorized: true, value: await operation() };
+    } finally {
+      if (locked) {
+        try {
+          await client.query(
+            'SELECT pg_advisory_unlock(hashtextextended($1, 0))',
+            [lockKey],
+          );
+          client.release();
+        } catch (error) {
+          // Never return a connection with an uncertain held SESSION lock.
+          client.release(error);
+          throw error;
+        }
+      } else {
+        client.release();
+      }
+    }
+  }
+
   listTriggerStates() {
     return this.list('trigger_state');
   }
