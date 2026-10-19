@@ -1570,9 +1570,10 @@ export class PostgresEventStore {
       // from *all* independent PG workers in this scope.
       await this.lock(client, 'audit', 'chain');
       let previousHash = null;
+      let previousHistoryId = null;
       if (afterSequence >= 0) {
         const prev = await client.query(
-          'SELECT payload FROM ' + this.history +
+          'SELECT history_id, payload FROM ' + this.history +
           ' WHERE scope_id=$1 AND kind=$2' +
           " AND (payload->>'sequence')::bigint=$3" +
           ' ORDER BY history_id DESC LIMIT 1',
@@ -1584,13 +1585,94 @@ export class PostgresEventStore {
           throw error;
         }
         previousHash = parseAuditRecord(prev.rows[0].payload).hash;
+        previousHistoryId = prev.rows[0].history_id;
       }
+      // Page by immutable physical history_id, NOT by JSON payload sequence:
+      // corrupted/missing sequence values must fail validation instead of
+      // silently disappearing from a proof window or its final tail.
       const rows = await client.query(
         'SELECT payload FROM ' + this.history +
         ' WHERE scope_id=$1 AND kind=$2' +
-        " AND (payload->>'sequence')::bigint>$3" +
-        ' ORDER BY history_id ASC LIMIT $4',
-        [this.scopeId, 'audit', afterSequence, limit + 1],
+        (previousHistoryId === null ? '' : ' AND history_id>$3') +
+        ' ORDER BY history_id ASC LIMIT 
+      const records = rows.rows.slice(0, limit).map(row =>
+        parseAuditRecord(row.payload)
+      );
+      const proof = {
+        scopeId: this.scopeId,
+        afterSequence,
+        previousHash,
+        limit,
+        records,
+        endSequence: afterSequence + records.length,
+        headHash: records.length
+          ? records[records.length - 1].hash : previousHash,
+        hasMore: rows.rows.length > limit,
+      };
+      if (!await verifyAuditProofWindow(proof, {
+        trustedAfterSequence: afterSequence,
+        trustedPreviousHash: previousHash,
+        trustedScopeId: this.scopeId,
+      })) {
+        const error = new Error('Audit proof segment is not a valid hash chain');
+        error.code = 'EVENT_INTELLIGENCE_AUDIT_PROOF_CHAIN_INVALID';
+        throw error;
+      }
+      return proof;
+    });
+  }
+
+  async listAudit({ traceId, afterSequence = -1 } = {}) {
+    return (await this.historyList('audit'))
+      .map(parseAuditRecord)
+      .filter((record) => record.sequence > afterSequence)
+      .filter((record) => !traceId || record.traceId === traceId);
+  }
+
+  async trace(traceId) {
+    const [wakes, matches, audit] = await Promise.all([
+      this.historyList('wake'),
+      this.listTriggerMatches(),
+      this.listAudit({ traceId }),
+    ]);
+    return {
+      wakes: wakes.filter((record) => record.traceId === traceId),
+      triggerMatches: matches.filter((record) =>
+        record.sourceEvents.some((event) => event.traceId === traceId)
+      ),
+      audit,
+    };
+  }
+
+  async auditLength() {
+    const result = await this.pool.query(
+      'SELECT count(*)::bigint AS count FROM ' + this.history +
+      " WHERE scope_id = $1 AND kind = 'audit'",
+      [this.scopeId],
+    );
+    return Number(result.rows[0]?.count ?? 0);
+  }
+
+  async verifyAudit() {
+    const chain = new AuditChain(
+      (await this.historyList('audit')).map(parseAuditRecord),
+    );
+    return chain.verify();
+  }
+
+  async drain() {}
+
+  async close() {
+    if (this.ownsPool && typeof this.pool.end === 'function') {
+      await this.pool.end();
+    }
+  }
+}
+ +
+        (previousHistoryId === null ? '3' : '4'),
+        previousHistoryId === null
+          ? [this.scopeId, 'audit', limit + 1]
+          : [this.scopeId, 'audit', previousHistoryId, limit + 1],
       );
       const records = rows.rows.slice(0, limit).map(row =>
         parseAuditRecord(row.payload)
