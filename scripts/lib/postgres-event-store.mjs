@@ -38,9 +38,9 @@ async function withPoolFenceCapacity(pool, capacity, run) {
     state = { active: 0, waiters: [] };
     poolFenceSlots.set(pool, state);
   }
-  // Admit at most maxPool-2 fence sessions in this Node process so at
-  // least two PG connections remain for callback lookups and lifecycle
-  // mutations, rather than filling the pool with lock waiters.
+  // Admit at most floor((maxPool-1)/2) fenced continuations per
+  // shared pool, reserving slots for callbacks that query the same store
+  // and for independent lifecycle mutations.
   if (state.active >= capacity) {
     await new Promise(resolve => state.waiters.push(resolve));
   }
@@ -1146,7 +1146,11 @@ export class PostgresEventStore {
     if (!Number.isFinite(atMs)) throw new TypeError('dispatch time must be valid ISO');
     const lockKey = this.tablePrefix + ':' + this.scopeId + ':trigger-state:' + key;
 
-    return withPoolFenceCapacity(this.pool, maxPool - 2, async () => {
+    // At most floor((max-1)/2) concurrent fenced continuations. Keep
+    // enough free connections for one competing lifecycle mutation per
+    // callback PLUS a spare for the callback's own data access.
+    const capacity = Math.max(1, Math.floor((maxPool - 1) / 2));
+    return withPoolFenceCapacity(this.pool, capacity, async () => {
       const client = await this.pool.connect();
       let locked = false;
       try {
