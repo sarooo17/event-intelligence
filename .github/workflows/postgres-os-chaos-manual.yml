@@ -1,6 +1,11 @@
-name: PostgreSQL OS Kill Chaos (manual evidence)
+name: PostgreSQL OS Kill Chaos (bounded evidence)
 
 on:
+  # Run real 60-round isolated SIGKILL/reclaim when THIS workflow changes.
+  # Ordinary feature PRs do not pay the 60-round Actions cost.
+  pull_request:
+    paths:
+      - '.github/workflows/postgres-os-chaos-manual.yml'
   workflow_dispatch:
     inputs:
       rounds:
@@ -41,10 +46,12 @@ jobs:
           --health-retries 12
     env:
       POSTGRES_URL: postgresql://ei_chaos:ei_chaos_isolated@127.0.0.1:5432/ei_chaos
-      EI_CHAOS_ROUNDS: ${{ inputs.rounds }}
+      EI_CHAOS_ROUNDS: ${{ github.event_name == 'pull_request' && '60' || inputs.rounds }}
       EI_CHAOS_EVIDENCE_OUT: ${{ runner.temp }}/pg-os-chaos-evidence.json
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -54,6 +61,20 @@ jobs:
           npm ci --ignore-scripts --no-audit --no-fund
           npm install --no-save --ignore-scripts --no-audit --no-fund pg@8.16.3
           npm run build
+      - name: Record exact commit and environment
+        shell: bash
+        run: |
+          {
+            echo "source-head-sha=$(git rev-parse HEAD)"
+            echo "run-id=$GITHUB_RUN_ID"
+            echo "run-attempt=$GITHUB_RUN_ATTEMPT"
+            echo "rounds=$EI_CHAOS_ROUNDS"
+            node -p "'pg-driver=' + require('pg/package.json').version"
+            node --version
+            uname -a
+            lscpu
+            free -m
+          } > "$RUNNER_TEMP/pg-os-chaos-host.txt"
       - name: Run bounded independent-process OS kill evidence
         shell: bash
         run: |
@@ -63,9 +84,10 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: pg-os-chaos-${{ inputs.rounds }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: pg-os-chaos-${{ env.EI_CHAOS_ROUNDS }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             ${{ runner.temp }}/pg-os-chaos-evidence.json
             ${{ runner.temp }}/pg-os-chaos-test.log
+            ${{ runner.temp }}/pg-os-chaos-host.txt
           if-no-files-found: error
           retention-days: 30
