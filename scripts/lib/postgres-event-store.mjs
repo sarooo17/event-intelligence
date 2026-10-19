@@ -616,6 +616,35 @@ export class PostgresEventStore {
     return this.get('wake_delivery', wakeId);
   }
 
+  /**
+   * Bounded, scope-local scan of durable Pattern matches which may have
+   * survived a process crash before ANY wake_delivery was inserted.
+   * Match selection is anchored by the existing (scope,kind,key) PK.
+   * The coordinator remains the authority for exact-target wake id,
+   * transactional claim, receipt and dedup. Never delete an orphan here.
+   */
+  async listOrphanedMatchedWakeCandidates({
+    afterMatchId = '',
+    limit = 32,
+  } = {}) {
+    if (typeof afterMatchId !== 'string' ||
+        !Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
+      throw new TypeError('orphan match scan requires a string cursor and limit 1..100');
+    }
+    const result = await this.pool.query(
+      'SELECT m.payload FROM ' + this.records + ' AS m' +
+      ' WHERE m.scope_id=$1 AND m.kind=$2 AND m.record_key>$3' +
+      " AND m.payload->>'status'='matched'" +
+      ' AND NOT EXISTS (' +
+      ' SELECT 1 FROM ' + this.records + ' AS d' +
+      ' WHERE d.scope_id=m.scope_id AND d.kind=$4' +
+      " AND d.payload->>'matchId'=m.record_key" +
+      ' ) ORDER BY m.record_key LIMIT $5',
+      [this.scopeId, 'trigger_match', afterMatchId, 'wake_delivery', limit],
+    );
+    return result.rows.map(row => parseTriggerMatchRecord(row.payload));
+  }
+
   async listDueWakeDeliveries(nowIso = new Date().toISOString()) {
     const now = Date.parse(nowIso);
     const out = [];
