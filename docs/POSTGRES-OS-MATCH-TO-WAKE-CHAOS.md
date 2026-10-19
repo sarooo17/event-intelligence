@@ -89,9 +89,11 @@ node --test test/postgres-os-matched-contenders.test.mjs
 
 `npm run build` and installation of the optional `pg` driver are required.
 No customer table is ever used. The test generates a random safe prefix,
-forbids orphan worker cleanup and uses SQL-bound connection/statement
-timeouts. It does not change any production EI API, lease policy, regex,
-Muffin integration, or runtime behavior.
+reaps every orphaned worker before cleanup and uses bounded SQL
+connection/statement timeouts. The synthetic test fixture does not
+modify Muffin/Artemis integrations or regex handling; the separately
+documented PG store and wake scheduler changes DO affect runtime
+reconciliation and trigger delivery ordering.
 
 **Production behavior and public adapter API DO change.** This PR adds
 indexed PostgreSQL orphan recovery, an explicit online index migration,
