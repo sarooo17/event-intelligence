@@ -110,6 +110,11 @@ test('recalculate p50/p95/p99 and require complete environment provenance', () =
   shouldReject(x => { x.report.totalDurationMs = -1; }, 'negative run wall time');
   shouldReject(x => { x.report.totalDurationMs = 450; },
     'run total smaller than sum 100+200+300 but larger than any one round');
+  shouldReject(x => {
+    x.report.totalDurationMs = 1e308;
+    for (const row of x.report.evidence) row.handoverMs = 1e308;
+    x.report.handoverMs = { p50: 1e308, p95: 1e308, p99: 1e308 };
+  }, 'reject overflowing aggregate even if each timing is individually finite');
   shouldReject(x => { x.report.postgresVersion = ''; }, 'PG version required');
   shouldReject(x => { x.report.pgDriverVersion = '8.15.0'; }, 'driver pin mismatch');
   shouldReject(x => { x.report.node = 'v21.0.0'; }, 'node mismatch');
