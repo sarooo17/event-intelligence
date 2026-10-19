@@ -108,6 +108,8 @@ test('recalculate p50/p95/p99 and require complete environment provenance', () =
   shouldReject(x => { x.report.handoverMs.p50 = 300; }, 'tampered p50');
   shouldReject(x => { x.report.handoverMs.p99 = 0; }, 'tampered p99');
   shouldReject(x => { x.report.totalDurationMs = -1; }, 'negative run wall time');
+  shouldReject(x => { x.report.totalDurationMs = 450; },
+    'run total smaller than sum 100+200+300 but larger than any one round');
   shouldReject(x => { x.report.postgresVersion = ''; }, 'PG version required');
   shouldReject(x => { x.report.pgDriverVersion = '8.15.0'; }, 'driver pin mismatch');
   shouldReject(x => { x.report.node = 'v21.0.0'; }, 'node mismatch');
