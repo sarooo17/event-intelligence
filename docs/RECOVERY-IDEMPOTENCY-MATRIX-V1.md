@@ -75,12 +75,11 @@ off all of issue #47**. The provider-pre-ingest OS-kill fixture merged in
 in #216; #213 separately established concurrent cross-pool finalization
 from injected durable intermediate states. Neither #215 nor #216 includes
 a remote provider or host or establishes general network failover.
-Required next: verify remote host idempotency/authorization contracts,
-production-like host idempotency/authorization contract verification,
-true repeated
-partition/network faults, multiple event-rate/high-cardinality worker
-soak, retention/compaction with audit-chain integrity, and
-environment-specific SLO/RPO/RTO with complete raw evidence.
+Required next: production-like remote host idempotency/authorization
+contract verification, repeated partition/network faults, sustained
+multiworker and high-cardinality event-rate soak, retention/compaction
+with audit-chain integrity, and environment-specific SLO/RPO/RTO
+with complete raw evidence.
 
 This document does not change package API, DB schema, regex behavior,
 Muffin/Artemis integration, or any npm release.
