@@ -111,6 +111,8 @@ export declare class PostgresEventStore {
   }): Promise<any | null>;
 
   putTrigger(definition: any): Promise<any>;
+  /** Fresh scope-local indexed definition lookup; no cross-event caching. */
+  getTrigger(triggerId: string, version: string): Promise<any | null>;
   listTriggers(): Promise<any[]>;
   /** Current scope-local conservative source/event candidate superset. */
   listTriggerCandidatesForEvent(event: {

@@ -156,11 +156,15 @@ export class CompositeWakeCoordinator {
       };
     }
 
-    const definition = (await this.store.listTriggers()).find(
-      (candidate) =>
-        candidate.triggerId === match.triggerId &&
-        candidate.version === match.triggerVersion,
-    );
+    // Never load the entire tenant registry for a single matched wake when
+    // the durable store supports a fresh exact-version keyed read. Retain
+    // compatibility with other store backends and independently built hosts.
+    const definition = typeof this.store.getTrigger === 'function'
+      ? await this.store.getTrigger(match.triggerId, match.triggerVersion)
+      : (await this.store.listTriggers()).find(
+          (candidate) => candidate.triggerId === match.triggerId &&
+            candidate.version === match.triggerVersion,
+        );
     if (!definition) {
       throw new Error(
         `Trigger definition not found for ${match.triggerId}@${match.triggerVersion}`,

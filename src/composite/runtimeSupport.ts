@@ -121,11 +121,13 @@ export class CompositeTriggerRuntimeSupport {
     effectKind: 'wake' | 'derived_event',
     effectId: string,
   ): Promise<void> {
-    const definition = (await this.store.listTriggers()).find(
-      (candidate) =>
-        candidate.triggerId === match.triggerId &&
-        candidate.version === match.triggerVersion,
-    );
+    const definition = this.store.getTrigger
+      ? await this.store.getTrigger(match.triggerId, match.triggerVersion)
+      : (await this.store.listTriggers()).find(
+          (candidate) =>
+            candidate.triggerId === match.triggerId &&
+            candidate.version === match.triggerVersion,
+        );
     const triggerState = this.store.getTriggerState
       ? await this.store.getTriggerState(
         match.triggerId,
