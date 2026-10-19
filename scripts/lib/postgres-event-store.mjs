@@ -38,9 +38,9 @@ async function withPoolFenceCapacity(pool, capacity, run) {
     state = { active: 0, waiters: [] };
     poolFenceSlots.set(pool, state);
   }
-  // Admit at most floor((maxPool-1)/2) fenced continuations per
-  // shared pool, reserving slots for callbacks that query the same store
-  // and for independent lifecycle mutations.
+  // Admit at most floor(maxPool/2) fenced continuations per shared
+  // pool. Contending lifecycle mutations use nonblocking try-lock/retry
+  // and never pin all remaining PostgreSQL connections.
   if (state.active >= capacity) {
     await new Promise(resolve => state.waiters.push(resolve));
   }
@@ -1083,46 +1083,70 @@ export class PostgresEventStore {
       throw new Error('Invalid trigger lifecycle status: ' + status);
     }
     const key = String(triggerId) + '@' + String(version);
-    return this.tx(async (client) => {
-      // The SAME async delivery already holds the session advisory lock
-      // until completeWakeDelivery + markFired finish. Do not attempt to
-      // re-acquire that lock on another connection for its own system
-      // lifecycle finalization (which would deadlock). All independent
-      // mutations still acquire the ordinary transactional lock.
-      const context = dispatchContext.getStore();
-      const lifecycleReentrant =
-        context?.store === this && context.key === key &&
-        actor?.principal_id === 'event-intelligence:lifecycle';
-      if (!lifecycleReentrant) await this.lock(client, 'trigger-state', key);
-      const previous = await this.get('trigger_state', key, client) ??
-        defaultTriggerState(triggerId, version);
-      // A wake callback may finish just before a user pause/delete, while
-      // its markFired/lifecycle continuation is still pending. That system
-      // continuation must NEVER resurrect an already-revoked trigger.
-      // Check under the same state transaction/advisory lock as user edits.
-      if (actor?.principal_id === 'event-intelligence:lifecycle' &&
-          previous.status !== 'active') return previous;
-      const next = {
-        triggerId: String(triggerId),
-        version: String(version),
-        status,
-        updatedAt: new Date().toISOString(),
-        actor,
-        owner: metadata.owner ?? previous.owner ?? null,
-        connectionIds: Array.isArray(metadata.connectionIds)
-          ? metadata.connectionIds.map(String)
-          : previous.connectionIds ?? [],
-        fireCount: Number.isInteger(metadata.fireCount)
-          ? metadata.fireCount
-          : previous.fireCount ?? 0,
-        lastFiredAt: metadata.lastFiredAt !== undefined
-          ? metadata.lastFiredAt
-          : previous.lastFiredAt ?? null,
-        revision: Number(previous.revision || 0) + 1,
-      };
-      await this.upsert('trigger_state', key, next, client);
-      return next;
-    });
+    const lockKey = this.tablePrefix + ':' + this.scopeId + ':trigger-state:' + key;
+    // Lifecycle mutations must never occupy ALL pool connections while
+    // waiting for an in-flight host callback's session lock. A blocking
+    // pg_advisory_xact_lock could deadlock if that callback needs the
+    // same pool to hydrate/commit its durable receipt. Try non-blocking,
+    // ROLLBACK and release the client before a bounded retry.
+    const retryUntil = Date.now() + 30000;
+    for (;;) {
+      try {
+        return await this.tx(async client => {
+          const context = dispatchContext.getStore();
+          const lifecycleReentrant =
+            context?.store === this && context.key === key &&
+            actor?.principal_id === 'event-intelligence:lifecycle';
+          if (!lifecycleReentrant) {
+            const attempt = await client.query(
+              'SELECT pg_try_advisory_xact_lock(hashtextextended($1,0)) AS acquired',
+              [lockKey],
+            );
+            if (attempt.rows[0]?.acquired !== true) {
+              const error = new Error('Lifecycle mutation waits for fenced host callback');
+              error.code = 'EVENT_INTELLIGENCE_TRIGGER_STATE_LOCK_BUSY';
+              throw error;
+            }
+          }
+          const previous = await this.get('trigger_state', key, client) ??
+            defaultTriggerState(triggerId, version);
+          if (actor?.principal_id === 'event-intelligence:lifecycle' &&
+              previous.status !== 'active') return previous;
+          const next = {
+            triggerId: String(triggerId),
+            version: String(version),
+            status,
+            updatedAt: new Date().toISOString(),
+            actor,
+            owner: metadata.owner ?? previous.owner ?? null,
+            connectionIds: Array.isArray(metadata.connectionIds)
+              ? metadata.connectionIds.map(String)
+              : previous.connectionIds ?? [],
+            fireCount: Number.isInteger(metadata.fireCount)
+              ? metadata.fireCount
+              : previous.fireCount ?? 0,
+            lastFiredAt: metadata.lastFiredAt !== undefined
+              ? metadata.lastFiredAt
+              : previous.lastFiredAt ?? null,
+            revision: Number(previous.revision || 0) + 1,
+          };
+          await this.upsert('trigger_state', key, next, client);
+          return next;
+        });
+      } catch (error) {
+        if (error?.code !== 'EVENT_INTELLIGENCE_TRIGGER_STATE_LOCK_BUSY') {
+          throw error;
+        }
+        if (Date.now() >= retryUntil) {
+          const timeout = new Error(
+            'Trigger mutation could not acquire dispatch fence; retry later',
+          );
+          timeout.code = 'EVENT_INTELLIGENCE_TRIGGER_MUTATION_RETRY_REQUIRED';
+          throw timeout;
+        }
+        await new Promise(resolve => setTimeout(resolve, 25));
+      }
+    }
   }
 
   /**
@@ -1137,8 +1161,8 @@ export class PostgresEventStore {
     if (typeof operation !== 'function') throw new TypeError('dispatch callback required');
     const key = String(triggerId) + '@' + String(version);
     const maxPool = Number(this.pool.options?.max ?? 10);
-    if (!Number.isSafeInteger(maxPool) || maxPool < 3) {
-      const error = new Error('Fenced PG dispatch requires >=3 pool connections');
+    if (!Number.isSafeInteger(maxPool) || maxPool < 2) {
+      const error = new Error('Fenced PG dispatch requires >=2 pool connections');
       error.code = 'EVENT_INTELLIGENCE_DISPATCH_POOL_TOO_SMALL';
       throw error;
     }
@@ -1146,10 +1170,10 @@ export class PostgresEventStore {
     if (!Number.isFinite(atMs)) throw new TypeError('dispatch time must be valid ISO');
     const lockKey = this.tablePrefix + ':' + this.scopeId + ':trigger-state:' + key;
 
-    // At most floor((max-1)/2) concurrent fenced continuations. Keep
-    // enough free connections for one competing lifecycle mutation per
-    // callback PLUS a spare for the callback's own data access.
-    const capacity = Math.max(1, Math.floor((maxPool - 1) / 2));
+    // At most floor(max/2) concurrent fenced continuations. A competing
+    // pause/delete uses a nonblocking advisory try-lock and releases the
+    // connection during retry, so the callback always has a free slot.
+    const capacity = Math.max(1, Math.floor(maxPool / 2));
     return withPoolFenceCapacity(this.pool, capacity, async () => {
       const client = await this.pool.connect();
       let locked = false;
