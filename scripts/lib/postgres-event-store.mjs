@@ -1050,6 +1050,12 @@ export class PostgresEventStore {
       await this.lock(client, 'trigger-state', key);
       const previous = await this.get('trigger_state', key, client) ??
         defaultTriggerState(triggerId, version);
+      // A wake callback may finish just before a user pause/delete, while
+      // its markFired/lifecycle continuation is still pending. That system
+      // continuation must NEVER resurrect an already-revoked trigger.
+      // Check under the same state transaction/advisory lock as user edits.
+      if (actor?.principal_id === 'event-intelligence:lifecycle' &&
+          previous.status !== 'active') return previous;
       const next = {
         triggerId: String(triggerId),
         version: String(version),
