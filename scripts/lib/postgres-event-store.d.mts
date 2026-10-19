@@ -92,6 +92,17 @@ export declare class PostgresEventStore {
     afterMatchId?: string;
     limit?: number;
   }): Promise<any[]>;
+  /** Operator-only online migration for pre-existing populated PG stores. */
+  migrateOrphanRecoveryIndexes(): Promise<{ ok: true; indexes: string[] }>;
+  /** Refuse unindexed recurring historical scans; fail closed. */
+  assertOrphanRecoveryIndexes(): Promise<void>;
+  /** Session-scoped transactional-revocation fence across the real host callback. */
+  withTriggerDispatchFence<T>(
+    triggerId: string,
+    version: string,
+    at: string,
+    operation: () => Promise<T>,
+  ): Promise<{ authorized: false; reason: string } | { authorized: true; value: T }>;
   ensureWakeDelivery(input: any): Promise<any>;
   claimWakeDelivery(wakeId: string, options: {
     workerId: string;
