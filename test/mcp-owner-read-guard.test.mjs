@@ -666,3 +666,34 @@ test('JSONL restart must not fabricate version 1 for an unversioned legacy wake'
     await rm(dir,{recursive:true,force:true});
   }
 });
+
+
+test('missing-match nondisclosure cannot be overwritten by authorization backend failure',async()=>{
+  let authorizationReads=0;
+  const guard=createOwnerReadGuard({
+    owner:alice,
+    triggerControl:{
+      async listTriggers(){
+        authorizationReads++;
+        if(authorizationReads>1) throw new Error('SECRET-AUTH-SERVICE-DETAIL');
+        return [{definition:{triggerId:'shared-name',version:'1'},state:{owner:alice}}];
+      },
+    },
+    store:{
+      async latestWake(){
+        return {subscriptionId:'trigger:shared-name',sourceEventId:'missing'};
+      },
+      async getWakeDelivery(){
+        return {matchId:'missing',triggerId:'shared-name',triggerVersion:'1'};
+      },
+      async listTriggerMatches(){return [];},
+    },
+  });
+  await assert.rejects(()=>guard.assertWake('nonexistent-wake-match'),error=>{
+    notVisible(error);
+    assert.equal(errorDiagnostics(error).includes('SECRET-AUTH-SERVICE'),false);
+    return true;
+  });
+  assert.equal(authorizationReads,1,
+    'missing match is a completed not-found decision, not an evidence-read failure');
+});
