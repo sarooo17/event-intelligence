@@ -67,13 +67,13 @@ export function assessPostgresProductionSloEvidence(report) {
       missing.push('environment:' + key);
     }
   }
-  if (!Array.isArray(report?.profiles) ||
-      report.profiles.length !== PROFILES.length ||
-      new Set(report.profiles.map(row=>row?.name)).size !== PROFILES.length) {
+  const profiles = Array.isArray(report?.profiles) ? report.profiles : [];
+  if (profiles.length !== PROFILES.length ||
+      new Set(profiles.map(row=>row?.name)).size !== PROFILES.length) {
     missing.push('steady-burst-fault-profile-matrix');
   }
   for (const name of PROFILES) {
-    const p = report?.profiles?.find(row => row?.name === name);
+    const p = profiles.find(row => row?.name === name);
     if (!p) {
       missing.push('profile:' + name);
       continue;
