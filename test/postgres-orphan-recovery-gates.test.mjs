@@ -631,3 +631,112 @@ integration('wrapped PostgreSQL pools fail closed without capacity and run safel
     async () => 'unsafe-overconfiguration',
   ), error => error?.code === 'EVENT_INTELLIGENCE_DISPATCH_POOL_CAPACITY_MISMATCH');
 }, { max:2 }));
+
+
+integration('stale claimed wake cannot reach host after capacity wait and independent pool reclaim', async () => fixture(async ({ store, prefix }) => {
+  await store.putTrigger(trigger('wake-admission-blocker'));
+  await store.putTrigger(trigger('wake-admission-claimed'));
+  await store.ensureWakeDelivery({
+    wakeId:'stale-claim-wake', matchId:'stale-claim-match',
+    triggerId:'wake-admission-claimed', triggerVersion:'1',
+    runtime:'fixture-host', now:new Date(Date.now()-10000).toISOString(),
+  });
+  const old = await store.claimWakeDelivery('stale-claim-wake', {
+    workerId:'old-worker', now:new Date(Date.now()-5000).toISOString(), leaseMs:1000,
+  });
+  assert.equal(old.attemptCount, 1);
+  let entered, release;
+  const started = new Promise(resolve => { entered=resolve; });
+  const blocked = new Promise(resolve => { release=resolve; });
+  const blocker = store.withTriggerDispatchFence('wake-admission-blocker','1',
+    new Date().toISOString(), async () => {
+      entered();
+      await blocked;
+    });
+  await started;
+  let staleEffects = 0;
+  const stale = store.withTriggerDispatchFence('wake-admission-claimed','1',
+    new Date().toISOString(), async () => {
+      staleEffects++;
+      return 'unsafe';
+    }, { wakeId:'stale-claim-wake', workerId:'old-worker',
+      attemptCount:old.attemptCount });
+  const otherPool = new Pool({ connectionString:pgUrl, max:2,
+    query_timeout:5000, statement_timeout:5000 });
+  try {
+    const contender = new PostgresEventStore({
+      pool:otherPool, dispatchPoolIdentity:otherPool,
+      tablePrefix:prefix, scopeId:'scope-recovery',
+    });
+    const newClaim = await contender.claimWakeDelivery('stale-claim-wake', {
+      workerId:'successor', now:new Date().toISOString(), leaseMs:30000,
+    });
+    assert.ok(newClaim);
+    assert.equal(newClaim.attemptCount, 2);
+    release();
+    await blocker;
+    const denied = await stale;
+    assert.deepEqual(denied, { authorized:false, reason:'wake_claim_lost' });
+    assert.equal(staleEffects, 0);
+    const winner = await contender.withTriggerDispatchFence(
+      'wake-admission-claimed','1', new Date().toISOString(),
+      async () => 'authorized-winner',
+      { wakeId:'stale-claim-wake', workerId:'successor',
+        attemptCount:newClaim.attemptCount },
+    );
+    assert.deepEqual(winner, {authorized:true,value:'authorized-winner'});
+  } finally {
+    release();
+    await otherPool.end();
+  }
+}, {max:2}));
+
+integration('wake session fence blocks lease-expiry reclaim across independent PG pools during host callback', async () => fixture(async ({store,prefix}) => {
+  await store.putTrigger(trigger('long-running-wake'));
+  await store.ensureWakeDelivery({
+    wakeId:'long-wake', matchId:'long-match',
+    triggerId:'long-running-wake', triggerVersion:'1',
+    runtime:'fixture-host', now:new Date().toISOString(),
+  });
+  const initial = await store.claimWakeDelivery('long-wake', {
+    workerId:'dispatch-owner', leaseMs:1000,
+  });
+  assert.ok(initial);
+  let entered, release;
+  const started = new Promise(resolve => { entered=resolve; });
+  const blocked = new Promise(resolve => { release=resolve; });
+  let effects=0;
+  const dispatch = store.withTriggerDispatchFence('long-running-wake','1',
+    new Date().toISOString(), async () => {
+      entered();
+      await blocked;
+      effects++;
+      return 'host-committed';
+    }, {wakeId:'long-wake',workerId:'dispatch-owner',
+      attemptCount:initial.attemptCount});
+  await started;
+  const otherPool = new Pool({connectionString:pgUrl,max:2,
+    query_timeout:5000,statement_timeout:5000});
+  try {
+    const contender = new PostgresEventStore({
+      pool:otherPool,dispatchPoolIdentity:otherPool,
+      tablePrefix:prefix,scopeId:'scope-recovery',
+    });
+    const attempted = await contender.claimWakeDelivery('long-wake', {
+      workerId:'stealing-worker',now:new Date(Date.now()+10000).toISOString(),
+    });
+    assert.equal(attempted, null,
+      'even a time-expired lease may not be reclaimed while host fence is held');
+    release();
+    assert.deepEqual(await dispatch, {authorized:true,value:'host-committed'});
+    assert.equal(effects,1);
+    const reclaimed = await contender.claimWakeDelivery('long-wake', {
+      workerId:'new-worker',now:new Date(Date.now()+10000).toISOString(),
+    });
+    assert.ok(reclaimed,'ordinary lease reclaim resumes after callback fence exits');
+    assert.equal(reclaimed.attemptCount,2);
+  } finally {
+    release();
+    await otherPool.end();
+  }
+}, {max:2}));
