@@ -40,7 +40,21 @@ SIGKILL PID, two distinct successor PIDs, match/wake IDs, exact receipt,
 host attempts/effects, monotonic generation) is validated, not merely
 counted. Local execution therefore requires a clean Git checkout.
 
-Local, against a **disposable PostgreSQL database only**:
+Local, against a **disposable PostgreSQL database only**.
+Run the same pinned driver setup as CI from a clean repository checkout
+before invoking the runner; `pg` is an optional test dependency and
+is **not** installed by the normal `npm ci` alone:
+
+```sh
+npm ci --ignore-scripts --no-audit --no-fund
+npm install --no-save --ignore-scripts --no-audit --no-fund pg@8.16.3
+```
+
+The runner rebuilds ignored `dist` from the verified checkout itself.
+`SIGINT`/`SIGTERM` cancellation is forwarded to the detached cohort
+process group so fixture workers are reaped; interrupted runs fail without
+a successful completion artifact. Uncertain cleanup still requires a
+manual inspection of the **disposable** database.
 
 ```sh
 EI_PG_CHAOS_SOAK_CONFIRM=YES_DISPOSABLE_PG \
