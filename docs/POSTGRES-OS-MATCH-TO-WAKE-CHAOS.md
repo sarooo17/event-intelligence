@@ -56,8 +56,17 @@ durably marked active, the sweep returns `recovery_not_authorized`.
 The PostgreSQL delivery boundary also holds the **same session advisory
 lock as `setTriggerState()` uses transactionally** across the entire
 host callback, durable receipt and `markFired` lifecycle finalization.
-This prevents two different matched wakes for a one-shot/max-fire
-trigger from both seeing an old firing count before either commit.
+Before invoking the host, bounded (`oneShot`, `completeOnGoal`,
+`maxFirings`) triggers now **commit a durable wake-ID reservation**
+under the same per-trigger lock. This is required because a worker can
+be SIGKILLed after the external effect but before `markFired`: the
+reservation survives lock/session loss and prevents another wake ID from
+consuming that firing slot. Only retrying the **same** wake may reuse
+its reservation, and its successful lifecycle update removes that wake's
+reservation atomically with `fireCount`. If a bounded wake becomes
+permanently unrecoverable, its reserved capacity remains fail-closed
+until an operator uses an audited recovery process; it is not silently
+reallocated to a different match.
 Only the matching internal system-lifecycle finalizer may reenter its
 own advisory fence, avoiding a self-deadlock. A concurrent user pause
 waits until already-authorized work has finished, or commits before
@@ -65,7 +74,11 @@ the final guarded check and suppresses the effect. A pool-wide local
 admission gate reserves **at least one connection** for callback
 lookups/management mutations, rather than exhausting the pool with
 competing lock waiters; same-trigger lock contention is fail-closed
-and re-enters the existing durable retry protocol. FIFO admission
+and re-enters the existing durable retry protocol. Busy-fence
+deferrals are recorded as `retry_pending` while keeping their
+monotonically increasing claim generation; a separate persisted
+`dispatchContentions` count prevents contention-only claims from
+exhausting the actual host-failure / dead-letter budget. FIFO admission
 hands each reserved slot directly to its next waiter so a newly arriving
 callback cannot over-admit an already-full pool. A real PG16 regression
 confirms eight queued callbacks on a pool of two never use both slots
@@ -117,8 +130,8 @@ reconciliation and trigger delivery ordering.
 **Production behavior and public adapter API DO change.** This PR adds
 indexed PostgreSQL orphan recovery, an explicit online index migration,
 host delivery / mutation serialization through receipt and lifecycle
-finalization, and live lifecycle deadline guards; it is not a test-only
-refactor. A single PG16 service is still
+finalization, durable per-wake reservations for bounded firings, and
+contention-only rescheduling; it is not a test-only refactor. A single PG16 service is still
 used in all jobs. Indexes limit the scan, but the queue cadence,
 migration, locks, and host callback durations need operational load and
 fault profiling before production SLO signoff. The callback lock can
