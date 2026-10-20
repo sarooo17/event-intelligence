@@ -136,7 +136,7 @@ integration('real OS SIGKILL after MCP Pattern match: independent PG workers con
   let completedReport = null;
   const started = process.hrtime.bigint();
   try {
-    const store = new PostgresEventStore({ pool, scopeId, tablePrefix: prefix });
+    const store = new PostgresEventStore({ pool: pool, dispatchPoolIdentity: pool, scopeId, tablePrefix: prefix });
     await store.init();
     await pool.query('CREATE TABLE "' + prefix + '_host_effects" (' +
       'wake_id TEXT PRIMARY KEY, receipt_id TEXT NOT NULL)');
