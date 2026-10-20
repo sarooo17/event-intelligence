@@ -1810,8 +1810,11 @@ export class PostgresEventStore {
       };
     });
     } catch (error) {
-      if (error?.code === '57014' &&
-          /statement timeout/i.test(String(error.message))) {
+      // SQLSTATE 57014 identifies query cancellation even when
+      // lc_messages localizes PostgreSQL diagnostics. The operator's own
+      // transaction-local timeout was installed for all covered statements;
+      // do not key policy semantics on English server message text.
+      if (error?.code === '57014') {
         const bounded = new Error(
           'Match-history retention exceeded operator SQL time budget; no history was modified',
         );
