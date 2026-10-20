@@ -69,6 +69,7 @@ const pool = new pg.Pool({
 
 const store = new PostgresEventStore({
   pool,
+  dispatchPoolIdentity: pool, // same physical object for all wrappers/stores
   ownsPool: true,
 });
 
