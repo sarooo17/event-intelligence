@@ -78,7 +78,7 @@ integrationTest('operator-managed PG backup/reset/replay fences old candidate id
   let restorePool = null;
   let createdDb = false;
   const storeOptions = { tablePrefix: prefix, scopeId: 'tenant-A' };
-  const makeSource = () => new PostgresEventStore({ pool: sourcePool, ...storeOptions });
+  const makeSource = () => new PostgresEventStore({ pool: sourcePool, dispatchPoolIdentity: sourcePool, ...storeOptions });
   try {
     const old = makeSource();
     await old.init();
@@ -134,7 +134,7 @@ integrationTest('operator-managed PG backup/reset/replay fences old candidate id
         'pg_restore omitted required table or sequence: ' + object);
     }
     const recoveredLegacy = new PostgresEventStore({
-      pool: restorePool, ...storeOptions,
+      pool: restorePool, dispatchPoolIdentity: restorePool, ...storeOptions,
     });
     await assert.rejects(recoveredLegacy.init(),
       e => e?.code === 'EVENT_INTELLIGENCE_PATTERN_V2_SIGNATURE_INCOMPATIBLE',
