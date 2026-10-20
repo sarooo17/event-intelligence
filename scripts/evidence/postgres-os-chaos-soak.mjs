@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
-import {spawnSync} from 'node:child_process';
-import {mkdtemp, readFile, rm, writeFile} from 'node:fs/promises';
+import {spawn, spawnSync} from 'node:child_process';
+import {mkdtemp, readFile, rm, stat, writeFile} from 'node:fs/promises';
 import {tmpdir, cpus, totalmem} from 'node:os';
 import path from 'node:path';
+import {createRequire} from 'node:module';
 import {validateRoundEvidence} from './postgres-os-chaos-evidence.mjs';
 
 const opts=process.argv.slice(2);
@@ -48,6 +49,81 @@ function checkoutSourceSha() {
   return head;
 }
 
+const require=createRequire(import.meta.url);
+
+/** Isolated POSIX process group: kill the full node:test worker tree on
+ * timeout, maxBuffer overflow OR any failed child exit, not just its leader. */
+function runCohort({rounds,artifact,timeoutMs,index}) {
+  return new Promise((resolve,reject)=>{
+    const child=spawn(process.execPath,[
+      '--test','test/postgres-os-matched-contenders.test.mjs',
+    ],{
+      detached:true,
+      stdio:['ignore','pipe','pipe'],
+      env:{
+        ...process.env,
+        EI_MATCH_KILL_ROUNDS:String(rounds),
+        EI_MATCH_KILL_EVIDENCE_OUT:artifact,
+      },
+    });
+    let failed=null,bytes=0,settled=false;
+    const killAll=()=>{
+      if (!Number.isSafeInteger(child.pid)) return;
+      try{process.kill(-child.pid,'SIGKILL');}
+      catch(error){if(error?.code!=='ESRCH')failed??='group-reap-failed';}
+    };
+    const timer=setTimeout(()=>{
+      failed??='cohort-timeout';
+      killAll();
+    },timeoutMs);
+    const finish=error=>{
+      if(settled)return;
+      settled=true;clearTimeout(timer);
+      if(error){killAll();reject(new Error(
+        'cohort '+(index+1)+' failed: '+error+
+        '; no completion artifact may be trusted'));
+      }else resolve();
+    };
+    const count=data=>{
+      bytes+=data.length;
+      if(bytes>2*1024*1024&&!failed){
+        failed='cohort-output-exceeded-budget';
+        killAll();
+      }
+    };
+    child.stdout?.on('data',count);
+    child.stderr?.on('data',count);
+    child.once('error',error=>finish(error?.code??'spawn-failed'));
+    child.once('close',(code,signal)=>{
+      finish(failed??(code===0?null:
+        (signal??String(code??'nonzero-test-exit'))));
+    });
+  });
+}
+
+async function verifyPostgres16() {
+  const pkg=require('pg/package.json');
+  if(pkg.version!=='8.16.3') {
+    throw new Error('PG chaos evidence requires pinned pg driver 8.16.3');
+  }
+  const pg=await import('pg');
+  const Pool=pg.Pool??pg.default?.Pool;
+  if(typeof Pool!=='function')throw new Error('PG client unavailable');
+  const pool=new Pool({connectionString:process.env.POSTGRES_URL,
+    max:1,connectionTimeoutMillis:4000,statement_timeout:4000});
+  try{
+    const result=await pool.query('SHOW server_version_num');
+    const numeric=Number(result.rows[0]?.server_version_num);
+    if(!Number.isSafeInteger(numeric)||Math.floor(numeric/10000)!==16) {
+      throw new Error('PG chaos evidence requires actual PostgreSQL 16');
+    }
+    const label=await pool.query('SHOW server_version');
+    return {serverVersionNum:numeric,
+      serverVersion:String(label.rows[0]?.server_version??'unknown'),
+      driverVersion:pkg.version};
+  }finally{await pool.end();}
+}
+
 let temp=null;
 async function main() {
   const cohorts=integerArg('cohorts',1,12);
@@ -65,30 +141,23 @@ async function main() {
   }
   if(process.platform==='win32')
     throw new Error('real SIGKILL process chaos requires POSIX runner');
+  // Refuse stale success artifacts BEFORE touching PG or running a single
+  // cohort. A failed rerun must never leave an old success at --out.
+  try {
+    await stat(out);
+    throw new Error('output artifact already exists; choose a fresh --out path');
+  } catch(error) {
+    if(error?.code!=='ENOENT')throw error;
+  }
   const verifiedSourceSha=checkoutSourceSha();
+  const postgres=await verifyPostgres16();
   temp=await mkdtemp(path.join(tmpdir(),'ei-pg-os-soak-'));
   const records=[];
   const start=performance.now();
   for(let index=0;index<cohorts;index++) {
     const artifact=path.join(temp,'cohort-'+index+'.json');
-    const child=spawnSync(process.execPath,[
-      '--test','test/postgres-os-matched-contenders.test.mjs',
-    ],{
-      encoding:'utf8',
-      maxBuffer:2*1024*1024,
-      timeout:perCohortMinutes*60*1000,
-      env:{
-        ...process.env,
-        EI_MATCH_KILL_ROUNDS:String(rounds),
-        EI_MATCH_KILL_EVIDENCE_OUT:artifact,
-      },
-    });
-    if(child.status!==0 || child.error) {
-      throw new Error('cohort '+(index+1)+' failed: '+(
-        child.error?.code??child.signal??child.status??
-        'nonzero-test-exit')+
-        '; no completion artifact may be trusted');
-    }
+    await runCohort({rounds,artifact,
+      timeoutMs:perCohortMinutes*60*1000,index});
     const data=JSON.parse(await readFile(artifact,'utf8'));
     assert.equal(data.schema,'ei-postgres-os-matched-contenders-v1');
     assert.equal(data.rounds,rounds);
@@ -114,6 +183,7 @@ async function main() {
     schema:'ei-postgres-os-chaos-soak-v1',
     status:'completed',
     sourceCommitSha:verifiedSourceSha,
+    postgres,
     hardware:{
       platform:process.platform,
       cpuModel:cpus()[0]?.model??'unknown',
