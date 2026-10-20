@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 import { createOwnerReadGuard } from '../scripts/lib/mcp-owner-read-guard.mjs';
+import { PersistentEventStore } from '../scripts/lib/persistent-event-store.mjs';
 
 const alice = { type: 'user', principal_id: 'alice', tenant_id: 'tenant-a' };
 const bob = { type: 'user', principal_id: 'bob', tenant_id: 'tenant-a' };
@@ -602,4 +606,58 @@ test('final owner denial cannot be replaced by a third authorization query error
   });
   await released;
   assert.equal(lookups,2,'must not re-query after definitive authorization denial');
+});
+
+
+test('JSONL restart must not fabricate version 1 for an unversioned legacy wake',async()=>{
+  const dir=await mkdtemp(path.join(tmpdir(),'ei-legacy-wake-version-'));
+  try {
+    const source=new PersistentEventStore(dir);
+    await source.init();
+    const id='legacy-unknown-version',matchId='legacy-match';
+    await source.ensureWakeDelivery({
+      wakeId:id,matchId,triggerId:'shared-name',triggerVersion:'1',
+      runtime:'fixture',now:new Date().toISOString(),
+    });
+    const file=source.files.wakeDeliveries;
+    const lines=(await readFile(file,'utf8')).trim().split('\n');
+    const legacy=JSON.parse(lines.at(-1));
+    delete legacy.triggerVersion; // persisted pre-versioned record
+    lines[lines.length-1]=JSON.stringify(legacy);
+    await writeFile(file,lines.join('\n')+'\n','utf8');
+    const restored=new PersistentEventStore(dir);
+    await restored.init();
+    const loaded=await restored.getWakeDelivery(id);
+    assert.equal(loaded.triggerVersion,'',
+      'missing producer version must remain unknown across JSONL restart');
+    let evidenceReads=0;
+    const guard=createOwnerReadGuard({
+      owner:alice,
+      triggerControl:{
+        async listTriggers({owner}){
+          return sameIdentity(owner,alice)
+            ? [{definition:{triggerId:'shared-name',version:'2'},state:{owner:alice}}]
+            : [];
+        },
+      },
+      store:{
+        async latestWake(){
+          return {subscriptionId:'trigger:shared-name',sourceEventId:matchId};
+        },
+        getWakeDelivery:(wakeId)=>restored.getWakeDelivery(wakeId),
+        async listTriggerMatches(){
+          evidenceReads++;
+          throw new Error('SECRET-LEGACY-MATCH-V1');
+        },
+      },
+    });
+    await assert.rejects(()=>guard.assertWake(id),notVisible);
+    assert.equal(evidenceReads,0);
+    await assert.rejects(()=>restored.ensureWakeDelivery({
+      wakeId:'new-missing-version',matchId,triggerId:'shared-name',
+      runtime:'fixture',
+    }),/explicit triggerVersion/);
+  } finally {
+    await rm(dir,{recursive:true,force:true});
+  }
 });
