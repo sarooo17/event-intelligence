@@ -532,13 +532,16 @@ export class PersistentEventStore {
       const wakeId = String(input.wakeId || '');
       const matchId = String(input.matchId || '');
       const runtime = String(input.runtime || '');
+      // Keep old retry clients idempotent: once an authoritative delivery
+      // already exists, its persisted version wins regardless of omitted
+      // creation fields on an older caller's retry.
+      const existing = this.#wakeDeliveries.get(wakeId);
+      if (existing) return existing;
       const triggerVersion = typeof input.triggerVersion === 'string' &&
         input.triggerVersion.trim() ? input.triggerVersion : '';
       if (!wakeId || !matchId || !runtime || !triggerVersion) {
         throw new Error('Wake delivery requires wakeId, matchId, runtime and explicit triggerVersion');
       }
-      const existing = this.#wakeDeliveries.get(wakeId);
-      if (existing) return existing;
 
       const now = String(input.now ?? new Date().toISOString());
       const record = {
