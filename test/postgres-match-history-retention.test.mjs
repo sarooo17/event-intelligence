@@ -230,6 +230,31 @@ integration('PG retention statement timeout bounds physical work under writer lo
     await holder.query('ROLLBACK');
     holder.release();holder=null;
     assert.deepEqual(await store.listTriggerMatchHistory(matchId),initial);
+    // PostgreSQL SQLSTATE is stable even when lc_messages is not English.
+    // Inject only a translated 57014 at a query boundary, then ensure the
+    // transaction rolls back and no SQL text/error diagnostics escape.
+    const originalConnect=pool.connect.bind(pool);
+    pool.connect=async()=>{
+      const client=await originalConnect();
+      return {
+        query:(sql,params)=>{
+          if(String(sql).includes('pg_advisory_xact_lock')){
+            const localized=new Error('requête interrompue par délai');
+            localized.code='57014';
+            return Promise.reject(localized);
+          }
+          return client.query(sql,params);
+        },
+        release:()=>client.release(),
+      };
+    };
+    try{
+      await assert.rejects(()=>store.compactTerminalMatchDuplicateHistory({
+        matchId,before:cutoff,maxScanMs:1000,dryRun:false,
+      }),e=>e.code==='EVENT_INTELLIGENCE_MATCH_HISTORY_TIME_BUDGET_EXCEEDED' &&
+        !e.message.includes('requête interrompue'));
+    }finally{pool.connect=originalConnect;}
+    assert.deepEqual(await store.listTriggerMatchHistory(matchId),initial);
     const completed=await store.compactTerminalMatchDuplicateHistory({
       matchId,before:cutoff,maxScanMs:1000,dryRun:true,
     });
