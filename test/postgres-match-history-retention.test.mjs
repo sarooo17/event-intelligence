@@ -176,6 +176,9 @@ integration('PG16 operator match-history compaction prunes only exact adjacent r
       { matchId: finishedId, before: cutoff, maxHistoryRows: 2 },
       { matchId: finishedId, before: cutoff, maxHistoryRows: 100001 },
       { matchId: finishedId, before: cutoff, maxHistoryRows: '10000' },
+      { matchId: finishedId, before: cutoff, maxScanMs: 99 },
+      { matchId: finishedId, before: cutoff, maxScanMs: 30001 },
+      { matchId: finishedId, before: cutoff, maxScanMs: '1000' },
       { matchId: finishedId, before: cutoff, dryRun: 'false' },
     ]) {
       await assert.rejects(
@@ -192,5 +195,55 @@ integration('PG16 operator match-history compaction prunes only exact adjacent r
     } finally {
       await Promise.allSettled([poolA.end(), poolB.end()]);
     }
+  }
+});
+
+
+integration('PG retention statement timeout bounds physical work under writer lock and rolls back without DELETE',async()=>{
+  const prefix='ei_scanbudget_'+randomBytes(5).toString('hex');
+  const scope='tenant-time-budget',matchId='matched-and-finished';
+  const pool=new Pool({connectionString:url,max:3});
+  const other=new Pool({connectionString:url,max:3});
+  const store=new PostgresEventStore({
+    pool,dispatchPoolIdentity:pool,tablePrefix:prefix,scopeId:scope,
+  });
+  let holder=null;
+  try{
+    await store.init();
+    const committed=record(matchId);
+    for(let i=0;i<4;i++) await store.appendTriggerMatch(committed);
+    const initial=await store.listTriggerMatchHistory(matchId);
+    assert.equal(initial.length,4);
+    holder=await other.connect();
+    await holder.query('BEGIN');
+    // Simulate another worker holding the per-match advisory lock, exactly
+    // the same lock compaction obtains before OFFSET/window/delete.
+    await holder.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[
+      prefix+':'+scope+':trigger-match:'+matchId,
+    ]);
+    const before=Date.now();
+    await assert.rejects(()=>store.compactTerminalMatchDuplicateHistory({
+      matchId,before:cutoff,maxScanMs:150,dryRun:false,
+    }),e=>e.code==='EVENT_INTELLIGENCE_MATCH_HISTORY_TIME_BUDGET_EXCEEDED');
+    assert.ok(Date.now()-before<3500,
+      'operator SQL budget must bound waiting while another worker holds lock');
+    await holder.query('ROLLBACK');
+    holder.release();holder=null;
+    assert.deepEqual(await store.listTriggerMatchHistory(matchId),initial);
+    const completed=await store.compactTerminalMatchDuplicateHistory({
+      matchId,before:cutoff,maxScanMs:1000,dryRun:true,
+    });
+    assert.equal(completed.maxScanMs,1000);
+    assert.equal(completed.deleted,0);
+  }finally{
+    if(holder){
+      try{await holder.query('ROLLBACK');}catch{}
+      holder.release();
+    }
+    try{
+      for(const kind of ['metadata','leases','history','records','counters']){
+        await pool.query('DROP TABLE IF EXISTS "'+prefix+'_'+kind+'" CASCADE');
+      }
+    }finally{await Promise.allSettled([pool.end(),other.end()]);}
   }
 });
