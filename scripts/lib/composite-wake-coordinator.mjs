@@ -333,8 +333,13 @@ export class CompositeWakeCoordinator {
       error,
     });
 
+    let hostContinuationEntered = false;
     try {
       const performClaimedDelivery = async () => {
+      // A nested host adapter can throw an identically coded POOL_QUARANTINED
+      // error AFTER the outer callback starts. Only a failure originating
+      // BEFORE this callback is admitted is provably free of host effects.
+      hostContinuationEntered = true;
       const packet = this.packetBuilder({
         wakeId,
         match,
@@ -447,6 +452,47 @@ export class CompositeWakeCoordinator {
     } catch (error) {
       if (error?.code === 'WAKE_DELIVERY_CLAIM_LOST') {
         return claimLostOutcome(error);
+      }
+      // This code is raised BEFORE the host callback is admitted: the
+      // shared physical PG pool was quarantined after an uncertain unlock.
+      // This deferral is ONLY safe when this coordinator's host continuation
+      // was never entered. The SAME public code can originate from nested
+      // host-side dispatch AFTER an effect; such errors remain uncertain
+      // host attempts and must consume the normal retry / DLQ budget.
+      // Treat genuine pre-host failure as backpressure, NOT a host effect,
+      // so repeated scheduler retries during operator recovery cannot spend
+      // the entire host-attempt/DLQ budget. Keep attemptCount monotonic and
+      // increment only dispatchContentions in the durable store.
+      // IMPORTANT: SESSION_QUARANTINED is NOT included here: that failure
+      // can occur AFTER a real host effect and must retain normal
+      // uncertainty/idempotency recovery semantics.
+      if (!hostContinuationEntered &&
+          error?.code === 'EVENT_INTELLIGENCE_DISPATCH_POOL_QUARANTINED') {
+        if (typeof this.store.deferBusyWakeDelivery !== 'function') {
+          throw error; // fail closed; never fall into host-failure DLQ logic
+        }
+        const at = this.now();
+        let deferred;
+        try {
+          deferred = await this.store.deferBusyWakeDelivery(wakeId, {
+            workerId: this.workerId,
+            attemptCount: claim.attemptCount,
+            now: at.toISOString(),
+            nextAttemptAt: new Date(at.getTime() +
+              Math.max(1000, this.retryBaseDelayMs)).toISOString(),
+          });
+        } catch (deferError) {
+          if (deferError?.code === 'WAKE_DELIVERY_CLAIM_LOST') {
+            return claimLostOutcome(deferError);
+          }
+          throw deferError;
+        }
+        return {
+          status: 'retry_scheduled',
+          wake: persistedQueued,
+          delivery: deferred,
+          error,
+        };
       }
       // The claim generation must remain monotonic for ABA fencing, but
       // contention-only claims never reached the host and must not inflate
