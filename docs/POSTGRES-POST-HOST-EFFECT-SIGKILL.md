@@ -1,7 +1,8 @@
 # SIGKILL after host effect before EI receipt — at-least-once boundary (#47)
 
 This real PostgreSQL16 integration fixture tests the **ambiguous external
-delivery window** with **three genuine SIGKILL subprocess terminations**.
+delivery window** with **three genuine SIGKILL subprocess terminations** by default.
+The same path now supports bounded 1–30-round operator experiments.
 
 For each durable Pattern v2 match, an independent EI worker builds the
 real generic wake packet, obtains a wake claim, invokes a separate
@@ -48,3 +49,29 @@ release packaging or downstream integrations.
 The earlier #210 establishes the *before host-effect* crash boundary;
 this case is intentionally distinct. #47 remains OPEN for full
 network-level and long-soak evidence.
+
+## Repeated evidence and limits
+
+The dedicated `PostgreSQL Post-Host-Effect SIGKILL Evidence` workflow
+runs three actual SIGKILL/recovery rounds on scoped pull request changes.
+An operator can dispatch 10, 20 or 30 rounds on a disposable PG16 service.
+Equivalent local invocation, after building source and provisioning isolated PG16:
+
+```sh
+EI_EFFECT_KILL_ROUNDS=20 \
+EI_EFFECT_KILL_EVIDENCE_OUT=post-host-effect-evidence.json \
+POSTGRES_URL='postgresql://<disposable-test-database>' \
+node --test test/postgres-post-host-effect-sigkill.test.mjs
+```
+
+The JSON file is created exclusively after every recovery, independent
+receipt verification, worker reap and database cleanup succeeds. Existing
+output paths fail closed; a failed process must not publish a new completed
+artifact. Each round retains distinct wake/match IDs, victim/successor
+process IDs, SIGKILL confirmation, receipt, claim generation, host attempts
+and effects. CI also retains the raw JSON as an Actions artifact.
+
+This is repeatable real OS fault evidence, **not** a 24-hour multi-host
+network/database partition experiment or production p99/SLO evidence.
+The workflow may test a previous PR commit if changes occur concurrently;
+verify exact source checkout and run metadata before citing an artifact.
