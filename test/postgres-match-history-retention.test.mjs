@@ -100,6 +100,21 @@ integration('PG16 operator match-history compaction prunes only exact adjacent r
     assert.equal(original.length, 11);
     assert.equal(await a.verifyAudit(), true);
 
+    // Budget must fail CLOSED before any DELETE, even if maxRows would
+    // otherwise allow removing many interior duplicates. A second
+    // independent pool observes identical immutable history/receipt/audit.
+    for (const dryRun of [true, false]) {
+      await assert.rejects(() => a.compactTerminalMatchDuplicateHistory({
+        matchId: finishedId, before: cutoff, maxRows: 100,
+        maxHistoryRows: 10, dryRun,
+      }), error => error?.code ===
+        'EVENT_INTELLIGENCE_MATCH_HISTORY_SCAN_BUDGET_EXCEEDED');
+    }
+    assert.deepEqual(await contender.listTriggerMatchHistory(finishedId),original);
+    assert.equal((await contender.getWakeDelivery('retention-wake-' + finishedId))
+      .runtimeReceiptId,'host-persistent-receipt');
+    assert.equal(await contender.verifyAudit(),true);
+
     const preview = await a.compactTerminalMatchDuplicateHistory({
       matchId: finishedId, before: cutoff, maxRows: 2,
     });
@@ -158,6 +173,9 @@ integration('PG16 operator match-history compaction prunes only exact adjacent r
       { matchId: finishedId, before: '2999-01-01T00:00:00Z' },
       { matchId: finishedId, before: cutoff, maxRows: 0 },
       { matchId: finishedId, before: cutoff, maxRows: 1001 },
+      { matchId: finishedId, before: cutoff, maxHistoryRows: 2 },
+      { matchId: finishedId, before: cutoff, maxHistoryRows: 100001 },
+      { matchId: finishedId, before: cutoff, maxHistoryRows: '10000' },
       { matchId: finishedId, before: cutoff, dryRun: 'false' },
     ]) {
       await assert.rejects(
