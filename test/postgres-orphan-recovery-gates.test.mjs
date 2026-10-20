@@ -478,3 +478,55 @@ integration('delivered receipt with still-matched one-shot is finalized by the r
     .find(record => record.matchId === match.matchId)?.status, 'fired');
   assert.equal(await store.verifyAudit(), true);
 }));
+
+
+integration('coordinator uses only real host attempts for exponential retry delay after busy claims', async () => fixture(async ({ store }) => {
+  const definition = trigger('host-backoff-after-contention');
+  const engine = new CompositeTriggerEngine(store);
+  await engine.register(definition);
+  const consumed = await new CompositeEventConsumer({ store, triggerEngine:engine })
+    .ingestMcpOccurrence({
+      event:{ eventId:'backoff-event-1', name:'fixture.recovery.expiration',
+        timestamp:new Date().toISOString(), data:{ slot:7 } },
+      provider:'test-source', serverId:'test-source', traceId:'backoff-test',
+    });
+  const match = consumed.results.find(result => result.matched)?.match;
+  assert.ok(match);
+  const { sha256Hex } = await import('../dist/src/intelligenceProtocol/index.js');
+  const identity = 'composite:' + match.matchId + ':' +
+    definition.target.runtime + ':' + definition.target.id;
+  const wakeId = 'wake_' + (await sha256Hex(identity)).slice(0, 24);
+  const origin = Date.now() - 40000;
+  const when = n => new Date(origin + n * 2000).toISOString();
+  await store.ensureWakeDelivery({
+    wakeId, matchId:match.matchId,
+    triggerId:definition.triggerId, triggerVersion:definition.version,
+    runtime:definition.target.runtime, now:when(0),
+  });
+  for (let i = 0; i < 6; i++) {
+    const claim = await store.claimWakeDelivery(wakeId, {
+      workerId:'busy-worker', now:when(i * 2),
+    });
+    assert.ok(claim);
+    await store.deferBusyWakeDelivery(wakeId, {
+      workerId:'busy-worker', attemptCount:claim.attemptCount,
+      now:when(i * 2), nextAttemptAt:when(i * 2 + 1),
+    });
+  }
+  let hostCalls = 0;
+  const coordinator = new CompositeWakeCoordinator({
+    store, triggerEngine:engine, workerId:'host-worker',
+    now:() => new Date(when(13)),
+    retryBaseDelayMs:1000, retryMaxDelayMs:60000, maxAttempts:5,
+    deliverer:async () => { hostCalls++; throw new Error('simulated host failure'); },
+  });
+  const outcome = await coordinator.deliverMatched(match);
+  assert.equal(outcome.status, 'retry_scheduled');
+  assert.equal(hostCalls, 1);
+  const persisted = await store.getWakeDelivery(wakeId);
+  assert.equal(persisted.attemptCount, 7, 'claim ownership generation never goes backwards');
+  assert.equal(persisted.dispatchContentions, 6);
+  assert.equal(persisted.status, 'retry_pending');
+  assert.equal(Date.parse(persisted.nextAttemptAt) - Date.parse(when(13)), 1000,
+    'six no-host contentions cannot raise the first host failure to seventh backoff');
+}));
