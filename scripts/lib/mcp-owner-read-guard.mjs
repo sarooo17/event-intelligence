@@ -74,7 +74,6 @@ export function createOwnerReadGuard({ triggerControl, store, owner }) {
         entry.triggerId === triggerId &&
         entry.triggerVersion === delivery.triggerVersion
       );
-      if (!match) throw notFound();
     } catch (error) {
       await assertTrigger(
         initiallyOwned.definition.triggerId,
@@ -82,6 +81,10 @@ export function createOwnerReadGuard({ triggerControl, store, owner }) {
       );
       throw error;
     }
+    // A missing match is already a safely redacted denial; do not perform
+    // another authorization read that could replace not-found with backend
+    // diagnostics or disclose owner existence.
+    if (!match) throw notFound();
     // Authorization denials from THIS last lookup must not be captured by
     // the evidence-error handler: its extra query could overwrite an
     // established safe not-found with an internal storage exception.
