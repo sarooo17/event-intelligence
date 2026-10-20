@@ -16,6 +16,28 @@ function positive(value) {
   return typeof value === 'number' && Number.isFinite(value) && value > 0;
 }
 
+// Require an explicit, canonical ISO calendar timestamp with timezone.
+// Date.parse(0), Date.parse(1) and malformed/normalized calendar dates are
+// not admissible evidence of pre-registered operator budgets.
+function evidenceTimestamp(value) {
+  if (typeof value !== 'string') return NaN;
+  const match = /^(\\d{4})-(\\d{2})-(\\d{2})T([01]\\d|2[0-3]):([0-5]\\d):([0-5]\\d)(?:\\.(\\d{1,3}))?(Z|[+-](?:0\\d|1[0-4]):[0-5]\\d)$/.exec(value);
+  if (!match) return NaN;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  // Reject invalid dates which Date.parse may silently normalize, including
+  // February 30, by comparing the UTC calendar tuple before offsets.
+  const calendar = new Date(Date.UTC(year, month - 1, day));
+  if (calendar.getUTCFullYear() !== year ||
+      calendar.getUTCMonth() !== month - 1 ||
+      calendar.getUTCDate() !== day) return NaN;
+  const offset = match[8];
+  if (offset !== 'Z' && Number(offset.slice(1,3)) === 14 &&
+      Number(offset.slice(4,6)) !== 0) return NaN;
+  return Date.parse(value);
+}
+
 function percentileSeries(value) {
   return value && Number.isSafeInteger(value.samples) && value.samples >= 1000 &&
     [value.p50Ms, value.p95Ms, value.p99Ms, value.maxMs].every(
@@ -33,8 +55,8 @@ export function assessPostgresProductionSloEvidence(report) {
     missing.push('self-certification-forbidden');
   }
   const budgets = report?.preRegisteredSloBudgets;
-  const registeredAt = Date.parse(budgets?.registeredAt);
-  const observedAt = Date.parse(report?.observedAt);
+  const registeredAt = evidenceTimestamp(budgets?.registeredAt);
+  const observedAt = evidenceTimestamp(report?.observedAt);
   if (!Number.isFinite(registeredAt) || !Number.isFinite(observedAt) ||
       registeredAt >= observedAt) {
     missing.push('pre-registered-before-measurement');
@@ -44,19 +66,16 @@ export function assessPostgresProductionSloEvidence(report) {
       missing.push('pre-registered-budget:' + metric);
     }
   }
-  if (!positive(budgets?.minVerifiedWakeRatePerSecond) ||
-      !positive(budgets?.maxDuplicateEffectRate)) {
-    // Explicitly allow maxDuplicateEffectRate=0: the intended strongest
-    // limit for side-effect duplicates. Reject negative/NaN/unbounded.
-    if (!positive(budgets?.minVerifiedWakeRatePerSecond)) {
-      missing.push('pre-registered-min-throughput');
-    }
-    if (typeof budgets?.maxDuplicateEffectRate !== 'number' ||
-        !Number.isFinite(budgets.maxDuplicateEffectRate) ||
-        budgets.maxDuplicateEffectRate < 0 ||
-        budgets.maxDuplicateEffectRate > 1) {
-      missing.push('pre-registered-max-duplicate-rate');
-    }
+  if (!positive(budgets?.minVerifiedWakeRatePerSecond)) {
+    missing.push('pre-registered-min-throughput');
+  }
+  // The range check must be unconditional: 0 is valid, but a positive
+  // bound like 2 is NOT a rate and Infinity is not a bound at all.
+  const maximumDuplicateRate = budgets?.maxDuplicateEffectRate;
+  if (typeof maximumDuplicateRate !== 'number' ||
+      !Number.isFinite(maximumDuplicateRate) ||
+      maximumDuplicateRate < 0 || maximumDuplicateRate > 1) {
+    missing.push('pre-registered-max-duplicate-rate');
   }
   const environment = report?.environment;
   for (const key of ['node', 'postgres', 'pgDriver', 'cpuModel',
@@ -99,7 +118,7 @@ export function assessPostgresProductionSloEvidence(report) {
       missing.push(name + ':provider-host-db-attribution');
     }
     if (typeof p.rawArtifactUrl !== 'string' ||
-        !/^https:\/\/github\.com\/[^\s]+\/actions\/runs\/\d+/.test(p.rawArtifactUrl)) {
+        !/^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/actions\/runs\/[1-9]\d*(?:\/attempts\/[1-9]\d*)?$/.test(p.rawArtifactUrl)) {
       missing.push(name + ':raw-public-run-artifact');
     }
     for (const metric of METRICS) {
