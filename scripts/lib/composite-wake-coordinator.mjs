@@ -411,10 +411,16 @@ export class CompositeWakeCoordinator {
       const guarded = typeof this.store.withTriggerDispatchFence === 'function'
         ? await this.store.withTriggerDispatchFence(
             match.triggerId, match.triggerVersion,
-            this.now().toISOString(), performClaimedDelivery, { wakeId },
+            this.now().toISOString(), performClaimedDelivery,
+            { wakeId, workerId: this.workerId, attemptCount: claim.attemptCount },
           )
         : { authorized: true, value: await performClaimedDelivery() };
       if (!guarded.authorized) {
+        if (guarded.reason === 'wake_claim_lost') {
+          const error = new Error('Wake claim was lost before callback admission');
+          error.code = 'WAKE_DELIVERY_CLAIM_LOST';
+          return claimLostOutcome(error);
+        }
         if (guarded.reason === 'trigger_dispatch_busy' &&
             typeof this.store.deferBusyWakeDelivery === 'function') {
           const at = this.now();
