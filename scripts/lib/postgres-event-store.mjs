@@ -1217,6 +1217,7 @@ export class PostgresEventStore {
       error.code = 'EVENT_INTELLIGENCE_DISPATCH_POOL_TOO_SMALL';
       throw error;
     }
+    const observedAt = Date.now();
     const atMs = Date.parse(at);
     if (!Number.isFinite(atMs)) throw new TypeError('dispatch time must be valid ISO');
     const lockKey = this.tablePrefix + ':' + this.scopeId + ':trigger-state:' + key;
@@ -1257,8 +1258,12 @@ export class PostgresEventStore {
           : (lifecycle.maxFirings === undefined
             ? Number.POSITIVE_INFINITY : lifecycle.maxFirings);
         const alreadyReserved = typeof wakeId === 'string' && pending.includes(wakeId);
+        // Revalidate wall-clock authorization AFTER the admission queue and
+        // session-lock acquisition, not at the original call entry. Preserve
+        // virtual test-clock semantics by adding actual elapsed waiting time.
+        const effectiveAtMs = atMs + Math.max(0, Date.now() - observedAt);
         if (!definition?.target || state.status !== 'active' ||
-            atMs > Math.min(expiresAt, leaseUntil) ||
+            effectiveAtMs > Math.min(expiresAt, leaseUntil) ||
             (Number.isFinite(cap) && count + pending.length >= cap &&
               !alreadyReserved)) {
           return { authorized: false, reason: 'trigger_not_active_at_dispatch' };
