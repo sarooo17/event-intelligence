@@ -1256,14 +1256,18 @@ export class PostgresEventStore {
     // can share ONE physical max=2 pool. They must pass the same underlying
     // pool object as dispatchPoolIdentity, or admission queues can each
     // occupy one session and deadlock during callback DB I/O.
-    if (!Number.isSafeInteger(exposedMax) && !this.dispatchPoolIdentity) {
+    // No structural check can prove a pool object is the underlying physical
+    // pool: wrappers can forward options.max and have separate JS identities.
+    // Require an explicit stable identity for EVERY dispatch-capable store,
+    // including direct pg.Pool clients, so wrappers cannot split the gate.
+    if (!this.dispatchPoolIdentity) {
       const error = new Error(
-        'Wrapped PostgreSQL dispatch requires dispatchPoolIdentity shared by all wrappers of the physical pool',
+        'Fenced PostgreSQL dispatch requires dispatchPoolIdentity for the physical connection pool',
       );
       error.code = 'EVENT_INTELLIGENCE_DISPATCH_POOL_IDENTITY_REQUIRED';
       throw error;
     }
-    const capacityIdentity = this.dispatchPoolIdentity ?? this.pool;
+    const capacityIdentity = this.dispatchPoolIdentity;
     const observedAt = Date.now();
     const atMs = Date.parse(at);
     if (!Number.isFinite(atMs)) throw new TypeError('dispatch time must be valid ISO');
