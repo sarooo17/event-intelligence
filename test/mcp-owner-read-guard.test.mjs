@@ -127,7 +127,7 @@ test('versionless owner inspection binds exactly to owned version, not global la
 });
 
 
-test('wake hydration rechecks owner after a same-tenant ownership transfer mid-read', async () => {
+test('wake hydration rechecks owner when transfer commits before final lookup begins', async () => {
   const triggerId = 'shared-name';
   const matchId = 'old-owner-match';
   let currentOwner = alice;
@@ -164,7 +164,13 @@ test('wake hydration rechecks owner after a same-tenant ownership transfer mid-r
   release();
   await assert.rejects(pending, error => {
     notVisible(error);
-    assert.equal(JSON.stringify(error).includes('OWNER-HANDOFF-PRIVATE'),false);
+    const diagnostics = [
+      error.message, error.stack, error.code,
+      error.cause instanceof Error ? error.cause.message : error.cause,
+      Object.getOwnPropertyDescriptors(error),
+    ];
+    assert.equal(JSON.stringify(diagnostics).includes('OWNER-HANDOFF-PRIVATE'),false,
+      'secret must not occur in enumerable or non-enumerable error details');
     return true;
   });
   assert.equal(listed,2,'owner must be queried AGAIN after matched evidence lookup');
@@ -172,7 +178,7 @@ test('wake hydration rechecks owner after a same-tenant ownership transfer mid-r
   assert.equal((await newGuard.assertWake('wake-under-transfer')).matchId,matchId);
 });
 
-test('wake hydration rechecks tenant when same principal is rebound mid-read', async () => {
+test('wake hydration rechecks tenant when transfer precedes final lookup', async () => {
   const triggerId='shared-name';
   let currentOwner=alice;
   let release, entered;
