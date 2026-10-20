@@ -74,7 +74,7 @@ jobs:
       - name: Install pinned EI and PG16 fixture dependencies
         run: |
           npm ci --ignore-scripts --no-audit --no-fund
-          npm install --no-save --ignore-scripts --no-audit --no-fund pg@8
+          npm install --no-save --ignore-scripts --no-audit --no-fund pg@8.16.3
           npm run build
       - name: Run independent real OS SIGKILL recovery cohorts
         run: |
