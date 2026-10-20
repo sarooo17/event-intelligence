@@ -1423,9 +1423,18 @@ export class PostgresEventStore {
             }
             client.release();
           } catch (error) {
-            // Do not return a session with uncertain held advisory locks.
-            client.release(error);
-            throw error;
+            // Generic PostgresPoolLike wrappers may silently IGNORE the
+            // release(error) destruction hint. Returning a possibly
+            // session-locked client would poison future trigger dispatches.
+            // Quarantine this checked-out connection instead: no release()
+            // call, so the pool CANNOT reuse it. The operator must recycle
+            // the pool/process after this exceptional session failure.
+            const uncertain = new Error(
+              'Fenced PostgreSQL advisory unlock failed: quarantine session and recycle pool',
+              { cause: error },
+            );
+            uncertain.code = 'EVENT_INTELLIGENCE_DISPATCH_SESSION_QUARANTINED';
+            throw uncertain;
           }
         } else {
           client.release();
