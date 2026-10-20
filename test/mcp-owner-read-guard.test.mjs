@@ -125,3 +125,81 @@ test('versionless owner inspection binds exactly to owned version, not global la
   assert.equal(owned.definition.version, '1');
   await assert.rejects(() => guard.assertTrigger('shared-name', '2'), notVisible);
 });
+
+
+test('wake hydration rechecks owner after a same-tenant ownership transfer mid-read', async () => {
+  const triggerId = 'shared-name';
+  const matchId = 'old-owner-match';
+  let currentOwner = alice;
+  let listed = 0;
+  let entered, release;
+  const reading = new Promise(resolve => { entered = resolve; });
+  const blocked = new Promise(resolve => { release = resolve; });
+  const control = {
+    async listTriggers({ owner }) {
+      listed++;
+      return sameIdentity(owner, currentOwner)
+        ? [{ definition: { triggerId, version:'1' }, state:{owner:currentOwner} }]
+        : [];
+    },
+  };
+  const store = {
+    async latestWake() {
+      return { subscriptionId:'trigger:shared-name', sourceEventId:matchId };
+    },
+    async getWakeDelivery() {
+      return { matchId, triggerId, triggerVersion:'1' };
+    },
+    async listTriggerMatches() {
+      entered();
+      await blocked;
+      return [{ matchId, triggerId, triggerVersion:'1',
+        sourceEvents:[{data:{secret:'OWNER-HANDOFF-PRIVATE'}}] }];
+    },
+  };
+  const staleGuard = createOwnerReadGuard({owner:alice, triggerControl:control, store});
+  const pending = staleGuard.assertWake('wake-under-transfer');
+  await reading;
+  currentOwner = bob;
+  release();
+  await assert.rejects(pending, error => {
+    notVisible(error);
+    assert.equal(JSON.stringify(error).includes('OWNER-HANDOFF-PRIVATE'),false);
+    return true;
+  });
+  assert.equal(listed,2,'owner must be queried AGAIN after matched evidence lookup');
+  const newGuard = createOwnerReadGuard({owner:bob,triggerControl:control,store});
+  assert.equal((await newGuard.assertWake('wake-under-transfer')).matchId,matchId);
+});
+
+test('wake hydration rechecks tenant when same principal is rebound mid-read', async () => {
+  const triggerId='shared-name';
+  let currentOwner=alice;
+  let release, entered;
+  const gate=new Promise(resolve=>{release=resolve;});
+  const observed=new Promise(resolve=>{entered=resolve;});
+  const guard=createOwnerReadGuard({
+    owner:alice,
+    triggerControl:{
+      async listTriggers({owner}) {
+        return sameIdentity(currentOwner,owner)
+          ? [{definition:{triggerId,version:'1'},state:{owner:currentOwner}}]
+          : [];
+      },
+    },
+    store:{
+      async latestWake(){return {subscriptionId:'trigger:shared-name',sourceEventId:'m'};},
+      async getWakeDelivery(){return {matchId:'m',triggerId,triggerVersion:'1'};},
+      async listTriggerMatches(){
+        entered();
+        await gate;
+        return [{matchId:'m',triggerId,triggerVersion:'1'}];
+      },
+    },
+  });
+  const pending=guard.assertWake('wake-same-principal-other-tenant');
+  await observed;
+  currentOwner=aliceOtherTenant;
+  release();
+  await assert.rejects(pending,notVisible);
+});
