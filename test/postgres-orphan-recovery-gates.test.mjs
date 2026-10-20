@@ -346,3 +346,135 @@ integration('busy delivery claims keep monotonic generations without consuming h
   );
   assert.equal(claimedAgain.attemptCount, 8);
 }));
+
+
+integration('bounded markFired rolls back lifecycle and match together when the second write fails', async () => fixture(async ({ store }) => {
+  const engine = new CompositeTriggerEngine(store);
+  await engine.register(trigger('atomic-mark-fired', { oneShot:true }));
+  const consumed = await new CompositeEventConsumer({ store, triggerEngine:engine })
+    .ingestMcpOccurrence({
+      event:{ eventId:'atomic-event-1', name:'fixture.recovery.expiration',
+        timestamp:new Date().toISOString(), data:{ slot:7 } },
+      provider:'test-source', serverId:'test-source', traceId:'atomic-test',
+    });
+  const match = consumed.results.find(result => result.matched)?.match;
+  assert.ok(match);
+  const wakeId = 'atomic-wake-id';
+  const originalUpsert = store.upsert.bind(store);
+  let injected = false;
+  store.upsert = async (...args) => {
+    if (!injected && args[0] === 'trigger_match' && args[2]?.status === 'fired') {
+      injected = true;
+      throw new Error('injected-after-lifecycle-upsert');
+    }
+    return originalUpsert(...args);
+  };
+  try {
+    await assert.rejects(() => store.withTriggerDispatchFence(
+      'atomic-mark-fired', '1', new Date().toISOString(),
+      () => engine.markFired(match.matchId, wakeId), { wakeId },
+    ), /injected-after-lifecycle-upsert/);
+  } finally {
+    store.upsert = originalUpsert;
+  }
+  assert.equal(injected, true);
+  const interrupted = await store.getTriggerState('atomic-mark-fired', '1');
+  assert.equal(interrupted.fireCount, 0, 'transaction rollback must undo firing increment');
+  assert.deepEqual(interrupted.dispatchReservations, [wakeId],
+    'previously committed reservation remains durable after failed finalization');
+  assert.equal((await store.listTriggerMatches('atomic-mark-fired'))
+    .find(record => record.matchId === match.matchId)?.status, 'matched');
+
+  const retry = await store.withTriggerDispatchFence(
+    'atomic-mark-fired', '1', new Date().toISOString(),
+    () => engine.markFired(match.matchId, wakeId), { wakeId },
+  );
+  assert.equal(retry.authorized, true);
+  assert.equal(retry.value.status, 'fired');
+  const finalized = await store.getTriggerState('atomic-mark-fired', '1');
+  assert.equal(finalized.status, 'completed');
+  assert.equal(finalized.fireCount, 1);
+  assert.deepEqual(finalized.dispatchReservations, []);
+  assert.equal(await store.verifyAudit(), true);
+}));
+
+integration('a callback queued behind pool admission cannot dispatch after its deadline', async () => fixture(async ({ store }) => {
+  await store.putTrigger(trigger('occupies-slot'));
+  await store.putTrigger(trigger('expires-in-queue', {
+    expiresAt:new Date(Date.now() + 180).toISOString(),
+  }));
+  let enteredFirst, releaseFirst;
+  const entered = new Promise(resolve => { enteredFirst = resolve; });
+  const blocker = new Promise(resolve => { releaseFirst = resolve; });
+  const first = store.withTriggerDispatchFence('occupies-slot', '1',
+    new Date().toISOString(), async () => {
+      enteredFirst();
+      await blocker;
+      return 'first-complete';
+    });
+  await entered;
+  let forbiddenEffects = 0;
+  const second = store.withTriggerDispatchFence('expires-in-queue', '1',
+    new Date().toISOString(), async () => {
+      forbiddenEffects++;
+      return 'wrongly-authorized';
+    });
+  await new Promise(resolve => setTimeout(resolve, 260));
+  releaseFirst();
+  assert.equal((await first).authorized, true);
+  const expired = await second;
+  assert.equal(expired.authorized, false);
+  assert.equal(expired.reason, 'trigger_not_active_at_dispatch');
+  assert.equal(forbiddenEffects, 0);
+}, { max:2 }));
+
+integration('delivered receipt with still-matched one-shot is finalized by the real retry scheduler without host replay', async () => fixture(async ({ store }) => {
+  const engine = new CompositeTriggerEngine(store);
+  await engine.register(trigger('delivered-before-finalize', { oneShot:true }));
+  const consumed = await new CompositeEventConsumer({ store, triggerEngine:engine })
+    .ingestMcpOccurrence({
+      event:{ eventId:'delivered-crash-1', name:'fixture.recovery.expiration',
+        timestamp:new Date().toISOString(), data:{ slot:7 } },
+      provider:'test-source', serverId:'test-source', traceId:'delivered-crash-test',
+    });
+  const match = consumed.results.find(result => result.matched)?.match;
+  assert.ok(match);
+  let hostCalls = 0;
+  const coordinator = new CompositeWakeCoordinator({
+    store, triggerEngine:engine, workerId:'recovery-one-shot',
+    deliverer:async packet => {
+      hostCalls++;
+      return { runtimeReceiptId:'receipt:' + packet.wake_id };
+    },
+  });
+  const originalMark = engine.markFired.bind(engine);
+  engine.markFired = async () => {
+    throw new Error('injected-crash-after-persisted-delivery-before-match');
+  };
+  try {
+    const interrupted = await coordinator.deliverMatched(match);
+    assert.equal(interrupted.status, 'claim_lost',
+      'delivered claim cannot be turned back into an ordinary failed claim');
+  } finally {
+    engine.markFired = originalMark;
+  }
+  assert.equal(hostCalls, 1);
+  assert.equal((await store.listTriggerMatches('delivered-before-finalize'))
+    .find(record => record.matchId === match.matchId)?.status, 'matched');
+  const due = await store.listDueWakeDeliveries();
+  assert.equal(due.length, 1);
+  assert.equal(due[0].status, 'delivered');
+  const scheduler = new WakeRetryScheduler({
+    store, resolveCoordinator:runtime => runtime === 'fixture-host' ? coordinator : null,
+  });
+  const repaired = await scheduler.runDue();
+  assert.equal(repaired.find(row => row.matchId === match.matchId)?.status, 'wake_delivered');
+  assert.equal(hostCalls, 1, 'durable receipt prevents replay of host callback');
+  const state = await store.getTriggerState('delivered-before-finalize', '1');
+  assert.equal(state.status, 'completed');
+  assert.equal(state.fireCount, 1);
+  assert.deepEqual(state.dispatchReservations, []);
+  assert.equal((await store.listTriggerMatches('delivered-before-finalize'))
+    .find(record => record.matchId === match.matchId)?.status, 'fired');
+  assert.equal(await store.verifyAudit(), true);
+}));
