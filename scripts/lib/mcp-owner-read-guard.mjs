@@ -51,43 +51,42 @@ export function createOwnerReadGuard({ triggerControl, store, owner }) {
       ? await store.getWakeDelivery(wakeId)
       : null;
 
-    // Bind the exact initially owned version so a failed matched-evidence
-    // read cannot fall back to a different version still owned by the
-    // principal after a concurrent transfer of THIS version.
-    const initiallyOwned = await assertTrigger(
-      triggerId, delivery?.triggerVersion || undefined,
-    );
-    try {
-      // All wake/delivery/match references must agree, even if a colliding
-      // match ID or corrupted subscription points to another trigger.
-      if (delivery && (
+    // Without a durable wake-delivery version there is no safe way to
+    // authorize matched evidence before reading it: an owner could retain
+    // trigger v2 after losing v1, while this wake belongs to v1. Fail
+    // CLOSED rather than selecting the latest owned trigger version.
+    if (typeof delivery?.triggerVersion !== 'string' ||
+        !delivery.triggerVersion ||
         delivery.matchId !== wake.sourceEventId ||
-        (delivery.triggerId && delivery.triggerId !== triggerId)
-      )) {
-        throw notFound();
-      }
+        (delivery.triggerId && delivery.triggerId !== triggerId)) {
+      throw notFound();
+    }
+    // Pin exactly the version that produced this wake.
+    const initiallyOwned = await assertTrigger(triggerId, delivery.triggerVersion);
+    let match;
+    try {
+      // Any matched-evidence read failure may carry sensitive SQL/provider
+      // diagnostics. On errors ONLY, recheck the pinned owner before allowing
+      // those diagnostics to propagate.
       const matches = await store.listTriggerMatches(triggerId);
-      const match = matches.find((entry) =>
+      match = matches.find((entry) =>
         entry?.matchId === wake.sourceEventId &&
         entry.triggerId === triggerId &&
-        (!delivery?.triggerVersion ||
-          entry.triggerVersion === delivery.triggerVersion)
+        entry.triggerVersion === delivery.triggerVersion
       );
       if (!match) throw notFound();
-      await assertTrigger(triggerId, match.triggerVersion);
-      return match;
     } catch (error) {
-      // A rejected store.listTriggerMatches() may contain sensitive SQL,
-      // provider or matched-event details. Re-check the pinned owner before
-      // propagating ANY error from this post-authorization evidence phase.
-      // If transferred, notFound replaces the original error; if still
-      // authorized, preserve the real error for operator diagnostics.
       await assertTrigger(
         initiallyOwned.definition.triggerId,
         initiallyOwned.definition.version,
       );
       throw error;
     }
+    // Authorization denials from THIS last lookup must not be captured by
+    // the evidence-error handler: its extra query could overwrite an
+    // established safe not-found with an internal storage exception.
+    await assertTrigger(triggerId, match.triggerVersion);
+    return match;
   }
 
   /**
