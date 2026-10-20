@@ -58,8 +58,8 @@ export interface PostgresEventStoreOptions {
   /** Explicit ACTUAL max connections for pg-compatible wrappers without pool.options.max.
    * Must be >= 2; never configure above the underlying pool's real limit. */
   dispatchPoolMax?: number;
-  /** REQUIRED with wrapper pools: the SAME underlying physical pool object must be
-   * supplied by every wrapper/store sharing its connections, including direct users. */
+  /** REQUIRED for EVERY fenced PG dispatch store, native pg.Pool or wrapper.
+   * Pass the SAME underlying physical pool object for all shared aliases. */
   dispatchPoolIdentity?: object;
 }
 
@@ -110,7 +110,8 @@ export declare class PostgresEventStore {
     version: string,
     at: string,
     operation: () => Promise<T>,
-    options?: { wakeId?: string | null },
+    /** Claim generation is revalidated under an additional wake session fence. */
+    options?: { wakeId?: string | null; workerId?: string | null; attemptCount?: number | null },
   ): Promise<{ authorized: false; reason: string } | { authorized: true; value: T }>;
   ensureWakeDelivery(input: any): Promise<any>;
   claimWakeDelivery(wakeId: string, options: {
