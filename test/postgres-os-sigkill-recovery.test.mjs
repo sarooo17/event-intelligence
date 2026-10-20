@@ -144,7 +144,7 @@ integration('real SIGKILL PostgreSQL worker takeovers fence generations and keep
   const rawRounds = [];
   const testStart = process.hrtime.bigint();
   try {
-    const store = guardedStore(new PostgresEventStore({ pool, tablePrefix, scopeId }), testEndsAt);
+    const store = guardedStore(new PostgresEventStore({ pool: pool, dispatchPoolIdentity: pool, tablePrefix, scopeId }), testEndsAt);
     await store.init();
     for (let round = 0; round < ROUNDS; round++) {
       const started = process.hrtime.bigint();
@@ -262,7 +262,7 @@ integration('real SIGKILL PostgreSQL worker takeovers fence generations and keep
     });
     try {
       const auditor = guardedStore(new PostgresEventStore({
-        pool: auditPool, scopeId, tablePrefix,
+        pool: auditPool, dispatchPoolIdentity: auditPool, scopeId, tablePrefix,
       }), testEndsAt);
       // The schema was initialized by the parent store. A read-only audit
       // reconnection must not re-run multi-statement DDL initialization.

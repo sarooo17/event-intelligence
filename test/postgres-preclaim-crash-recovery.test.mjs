@@ -60,7 +60,7 @@ integrationTest('independent PG pools recover persisted match from worker loss B
   let continueDelivery;
   let firstRun;
   try {
-    const original = new PostgresEventStore({ pool: poolA, scopeId, tablePrefix: prefix });
+    const original = new PostgresEventStore({ pool: poolA, dispatchPoolIdentity: poolA, scopeId, tablePrefix: prefix });
     await original.init();
     await original.putTrigger(trigger());
     await original.appendTriggerMatch(persistedMatch());
@@ -76,8 +76,8 @@ integrationTest('independent PG pools recover persisted match from worker loss B
 
     poolB = new Pool({ connectionString: url, max: 2 });
     poolC = new Pool({ connectionString: url, max: 2 });
-    const left = new PostgresEventStore({ pool: poolB, scopeId, tablePrefix: prefix });
-    const right = new PostgresEventStore({ pool: poolC, scopeId, tablePrefix: prefix });
+    const left = new PostgresEventStore({ pool: poolB, dispatchPoolIdentity: poolB, scopeId, tablePrefix: prefix });
+    const right = new PostgresEventStore({ pool: poolC, dispatchPoolIdentity: poolC, scopeId, tablePrefix: prefix });
     await Promise.all([left.init(), right.init()]);
 
     const recovered = (await left.listTriggerMatches('preclaim-crash-trigger'))

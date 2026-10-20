@@ -49,7 +49,7 @@ integration('PostgreSQL recovery finalizes delivered EI receipt before wake appe
   const cases = [];
   try {
     const first = new PostgresEventStore({
-      pool: originalPool, tablePrefix: prefix, scopeId,
+      pool: originalPool, dispatchPoolIdentity: originalPool, tablePrefix: prefix, scopeId,
     });
     await first.init();
     const engine = new CompositeTriggerEngine(first);
@@ -117,11 +117,11 @@ integration('PostgreSQL recovery finalizes delivered EI receipt before wake appe
     recoveredPool = new Pool({ connectionString: url, max: 3 });
     competingPool = new Pool({ connectionString: url, max: 3 });
     const recovered = new PostgresEventStore({
-      pool: recoveredPool, tablePrefix: prefix, scopeId,
+      pool: recoveredPool, dispatchPoolIdentity: recoveredPool, tablePrefix: prefix, scopeId,
     });
     await recovered.init();
     const competing = new PostgresEventStore({
-      pool: competingPool, tablePrefix: prefix, scopeId,
+      pool: competingPool, dispatchPoolIdentity: competingPool, tablePrefix: prefix, scopeId,
     });
     await competing.init();
     const recoveredEngine = new CompositeTriggerEngine(recovered);

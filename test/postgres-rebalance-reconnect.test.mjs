@@ -21,7 +21,7 @@ integrationTest('repeated physical worker disconnects preserve rebalance leases,
   ];
   const at = (ms) => new Date(ms).toISOString();
   const createStore = (db) => new PostgresEventStore({
-    pool: db, scopeId, tablePrefix: prefix,
+    pool: db, dispatchPoolIdentity: db, scopeId, tablePrefix: prefix,
   });
   const stores = pools.map(createStore);
   const wakeIds = [];

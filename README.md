@@ -309,8 +309,10 @@ import {
   PostgresEventStore,
 } from 'mcp-event-intelligence/storage/postgres';
 
+const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
 const store = new PostgresEventStore({
-  pool: new pg.Pool({ connectionString: process.env.DATABASE_URL }),
+  pool,
+  dispatchPoolIdentity: pool, // required for fenced host dispatch
   ownsPool: true,
 });
 ```

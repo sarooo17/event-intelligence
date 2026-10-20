@@ -19,7 +19,7 @@ const ownB = { type: 'user', principal_id: 'bob', tenant_id: 'tenant-b' };
 const sameTenantForeignOwner = { type: 'user', principal_id: 'bob', tenant_id: 'tenant-a' };
 
 function store(pool, scope) {
-  return new PostgresEventStore({ pool, tablePrefix: prefix, scopeId: scope });
+  return new PostgresEventStore({ pool: pool, dispatchPoolIdentity: pool, tablePrefix: prefix, scopeId: scope });
 }
 
 function trigger() {

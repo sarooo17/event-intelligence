@@ -43,10 +43,10 @@ integration('PG candidate projection sees live source changes, server wildcard a
   const pool = new Pool({ connectionString: url, max: 4 });
   const prefix = 'ei_source_route_' + randomBytes(5).toString('hex');
   const store = new PostgresEventStore({
-    pool, tablePrefix: prefix, scopeId: 'tenant-routing-A',
+    pool: pool, dispatchPoolIdentity: pool, tablePrefix: prefix, scopeId: 'tenant-routing-A',
   });
   const other = new PostgresEventStore({
-    pool, tablePrefix: prefix, scopeId: 'tenant-routing-B',
+    pool: pool, dispatchPoolIdentity: pool, tablePrefix: prefix, scopeId: 'tenant-routing-B',
   });
   const tables = ['metadata', 'counters', 'leases', 'history', 'records'];
   try {

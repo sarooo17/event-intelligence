@@ -334,6 +334,7 @@ export class CompositeWakeCoordinator {
     });
 
     try {
+      const performClaimedDelivery = async () => {
       const packet = this.packetBuilder({
         wakeId,
         match,
@@ -402,12 +403,58 @@ export class CompositeWakeCoordinator {
         packet,
         delivery,
       };
+      };
+      // PostgreSQL's per-trigger fence covers the WHOLE continuation,
+      // including durable receipt materialization, audit and markFired.
+      // In particular two competing oneShot matches cannot both observe
+      // the old lifecycle count before the next external host effect.
+      const guarded = typeof this.store.withTriggerDispatchFence === 'function'
+        ? await this.store.withTriggerDispatchFence(
+            match.triggerId, match.triggerVersion,
+            this.now().toISOString(), performClaimedDelivery,
+            { wakeId, workerId: this.workerId, attemptCount: claim.attemptCount },
+          )
+        : { authorized: true, value: await performClaimedDelivery() };
+      if (!guarded.authorized) {
+        if (guarded.reason === 'wake_claim_lost') {
+          const error = new Error('Wake claim was lost before callback admission');
+          error.code = 'WAKE_DELIVERY_CLAIM_LOST';
+          return claimLostOutcome(error);
+        }
+        if (guarded.reason === 'trigger_dispatch_busy' &&
+            typeof this.store.deferBusyWakeDelivery === 'function') {
+          const at = this.now();
+          const deferred = await this.store.deferBusyWakeDelivery(wakeId, {
+            workerId: this.workerId,
+            attemptCount: claim.attemptCount,
+            now: at.toISOString(),
+            nextAttemptAt: new Date(at.getTime() +
+              Math.max(1000, this.retryBaseDelayMs)).toISOString(),
+          });
+          return {
+            status: 'retry_scheduled',
+            wake: persistedQueued,
+            delivery: deferred,
+          };
+        }
+        const error = new Error('Trigger authorization revoked before host dispatch');
+        error.code = guarded.reason === 'trigger_dispatch_busy'
+          ? 'EVENT_INTELLIGENCE_DISPATCH_BUSY_UNSUPPORTED'
+          : 'EVENT_INTELLIGENCE_HOST_DISPATCH_REVOKED';
+        throw error;
+      }
+      return guarded.value;
     } catch (error) {
       if (error?.code === 'WAKE_DELIVERY_CLAIM_LOST') {
         return claimLostOutcome(error);
       }
+      // The claim generation must remain monotonic for ABA fencing, but
+      // contention-only claims never reached the host and must not inflate
+      // exponential failure backoff or consume the DLQ attempt budget.
+      const hostAttempt = Math.max(1,
+        claim.attemptCount - Number(claim.dispatchContentions || 0));
       const delay = retryDelayMs(
-        claim.attemptCount,
+        hostAttempt,
         this.retryBaseDelayMs,
         this.retryMaxDelayMs,
       );

@@ -47,8 +47,8 @@ function event(sourceEventId, data = { slot: 7, tag: 'okay' }) {
 integration('PG source candidate numeric-eq prefilter is fail-open and never drops complex/lifecycle/tenant behavior', async () => {
   const prefix = 'ei_numeric_eq_' + randomBytes(5).toString('hex');
   const pool = new Pool({ connectionString: url, max: 4 });
-  const store = new PostgresEventStore({ pool, tablePrefix: prefix, scopeId: 'tenant-A' });
-  const other = new PostgresEventStore({ pool, tablePrefix: prefix, scopeId: 'tenant-B' });
+  const store = new PostgresEventStore({ pool: pool, dispatchPoolIdentity: pool, tablePrefix: prefix, scopeId: 'tenant-A' });
+  const other = new PostgresEventStore({ pool: pool, dispatchPoolIdentity: pool, tablePrefix: prefix, scopeId: 'tenant-B' });
   const tables = ['metadata', 'leases', 'history', 'records', 'counters'];
   try {
     await Promise.all([store.init(), other.init()]);

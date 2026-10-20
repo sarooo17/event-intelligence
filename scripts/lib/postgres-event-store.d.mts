@@ -55,6 +55,12 @@ export interface PostgresEventStoreOptions {
   ownsPool?: boolean;
   /** Only after a verified backup and operator approval; never auto-adopts data. */
   adoptUnversionedSchema?: boolean;
+  /** Explicit ACTUAL max connections for pg-compatible wrappers without pool.options.max.
+   * Must be >= 2; never configure above the underlying pool's real limit. */
+  dispatchPoolMax?: number;
+  /** REQUIRED for EVERY fenced PG dispatch store, native pg.Pool or wrapper.
+   * Pass the SAME underlying physical pool object for all shared aliases. */
+  dispatchPoolIdentity?: object;
 }
 
 export declare const MAX_POSTGRES_TABLE_PREFIX_BYTES: number;
@@ -77,6 +83,8 @@ export declare class PostgresEventStore {
   readonly scopeId: string;
   readonly tablePrefix: string;
   readonly ownsPool: boolean;
+  readonly dispatchPoolMax: number | null;
+  readonly dispatchPoolIdentity: object | null;
   readonly adoptUnversionedSchema: boolean;
   storeCapabilities(): EventIntelligenceStoreCapabilities;
   init(): Promise<Record<string, number>>;
@@ -87,6 +95,24 @@ export declare class PostgresEventStore {
   latestWake(wakeId: string): Promise<any | null>;
   getWakeDelivery(wakeId: string): Promise<any | null>;
   listDueWakeDeliveries(nowIso?: string): Promise<any[]>;
+  /** Bounded, scoped authoritative repair of matched records lacking a wake-delivery. */
+  listOrphanedMatchedWakeCandidates(options?: {
+    afterMatchId?: string;
+    limit?: number;
+  }): Promise<any[]>;
+  /** Operator-only online migration for pre-existing populated PG stores. */
+  migrateOrphanRecoveryIndexes(): Promise<{ ok: true; indexes: string[] }>;
+  /** Refuse unindexed recurring historical scans; fail closed. */
+  assertOrphanRecoveryIndexes(): Promise<void>;
+  /** Session-scoped transactional-revocation fence across the real host callback. */
+  withTriggerDispatchFence<T>(
+    triggerId: string,
+    version: string,
+    at: string,
+    operation: () => Promise<T>,
+    /** Claim generation is revalidated under an additional wake session fence. */
+    options?: { wakeId?: string | null; workerId?: string | null; attemptCount?: number | null },
+  ): Promise<{ authorized: false; reason: string } | { authorized: true; value: T }>;
   ensureWakeDelivery(input: any): Promise<any>;
   claimWakeDelivery(wakeId: string, options: {
     workerId: string;
@@ -99,6 +125,13 @@ export declare class PostgresEventStore {
     attemptCount: number;
     runtimeReceiptId: string;
     now?: string;
+  }): Promise<any | null>;
+  /** Retry a contended trigger fence without spending host-failure attempts. */
+  deferBusyWakeDelivery(wakeId: string, options: {
+    workerId: string;
+    attemptCount: number;
+    now?: string;
+    nextAttemptAt?: string;
   }): Promise<any | null>;
   failWakeDelivery(wakeId: string, options: {
     workerId: string;

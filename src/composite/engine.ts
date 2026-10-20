@@ -268,6 +268,9 @@ export class CompositeTriggerEngine {
       firedWakeId: wakeId,
       updatedAt: this.now().toISOString(),
     });
+    let lifecycleFinalized = false;
+    let lifecycleCompleted = false;
+    let finalizedFireCount: number | null = null;
     if (this.store.compareAndAppendTriggerMatch) {
       const transition = await this.store.compareAndAppendTriggerMatch(
         fired,
@@ -282,17 +285,39 @@ export class CompositeTriggerEngine {
         );
       }
       fired = transition.record ?? fired;
+      lifecycleFinalized = transition.lifecycleFinalized === true;
+      lifecycleCompleted = transition.lifecycleCompleted === true;
+      finalizedFireCount = transition.fireCount ?? null;
     } else {
       await this.store.appendTriggerMatch(fired);
     }
     await this.support.cancelDeadlinesForMatch(matchId);
     await this.support.auditMatch(fired, 'trigger.fired', { wakeId });
 
-    await this.support.advanceLifecycleAfterEffect(
-      fired,
-      'wake',
-      wakeId,
-    );
+    if (lifecycleFinalized) {
+      // PostgreSQL updated trigger_state and the fired match in ONE durable
+      // transaction, before returning. Never increment fireCount a second
+      // time after that atomic transition; a crash here is recoverable.
+      if (lifecycleCompleted) {
+        const definition = this.store.getTrigger
+          ? await this.store.getTrigger(fired.triggerId, fired.triggerVersion)
+          : (await this.store.listTriggers()).find(candidate =>
+              candidate.triggerId === fired.triggerId &&
+              candidate.version === fired.triggerVersion);
+        if (definition) {
+          const lifecycle = definition.lifecycle ?? {};
+          await this.support.auditTriggerLifecycle(definition,
+            'trigger.completed', {
+              reason: lifecycle.oneShot ? 'one_shot'
+                : lifecycle.completeOnGoal ? 'complete_on_goal' : 'max_firings',
+              fireCount: finalizedFireCount,
+              effectKind: 'wake', effectId: wakeId,
+            });
+        }
+      }
+    } else {
+      await this.support.advanceLifecycleAfterEffect(fired, 'wake', wakeId);
+    }
 
     return fired;
   }

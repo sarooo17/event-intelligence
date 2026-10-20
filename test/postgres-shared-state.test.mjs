@@ -31,7 +31,7 @@ function pool() {
 
 function store(dbPool, scopeId = 'default') {
   return new PostgresEventStore({
-    pool: dbPool,
+    pool: dbPool, dispatchPoolIdentity: dbPool,
     scopeId,
     tablePrefix: prefix,
   });
@@ -571,7 +571,7 @@ integrationTest('nonempty unversioned store demands explicit operator adoption',
     );
     assert.equal(Number(count.rows[0].n), 1);
     const adopted = new PostgresEventStore({
-      pool: dbPool,
+      pool: dbPool, dispatchPoolIdentity: dbPool,
       tablePrefix: prefix,
       adoptUnversionedSchema: true,
     });

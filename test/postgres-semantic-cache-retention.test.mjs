@@ -13,7 +13,7 @@ function id() {
 }
 
 function store(pool, prefix, scopeId) {
-  return new PostgresEventStore({ pool, tablePrefix: prefix, scopeId });
+  return new PostgresEventStore({ pool: pool, dispatchPoolIdentity: pool, tablePrefix: prefix, scopeId });
 }
 
 integrationTest('PostgreSQL retention prunes only old tenant semantic cache, never audited/durable state', async () => {

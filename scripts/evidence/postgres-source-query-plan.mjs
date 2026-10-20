@@ -187,7 +187,7 @@ try {
   stage = 'setup';
   const scopeId = 'candidate-plan-tenant-a';
   const store = new PostgresEventStore({
-    pool, scopeId, tablePrefix: PREFIX,
+    pool: pool, dispatchPoolIdentity: pool, scopeId, tablePrefix: PREFIX,
   });
   await store.init();
   for (let i = 0; i < triggers; i++) {

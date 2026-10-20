@@ -67,7 +67,7 @@ integration('PostgreSQL worker pool loss after wake, before MCP cursor ack repla
     return { runtimeReceiptId: 'host-receipt-' + packet.trigger_match_id };
   };
   const make = pool => {
-    const store = new PostgresEventStore({ pool, scopeId, tablePrefix: prefix });
+    const store = new PostgresEventStore({ pool: pool, dispatchPoolIdentity: pool, scopeId, tablePrefix: prefix });
     const engine = new CompositeTriggerEngine(store);
     const coordinator = new CompositeWakeCoordinator({
       store, triggerEngine: engine,

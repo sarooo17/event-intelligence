@@ -2,6 +2,7 @@ import * as z from 'zod/v4';
 import { mcpGapSnapshot } from '../../dist/src/composite/gapFingerprint.js';
 import { safeMcpSourceArguments } from './mcp-safe-arguments.mjs';
 import { randomUUID } from 'node:crypto';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { verifyAuditProofWindow } from './audit-proof-window.mjs';
 export { verifyAuditProofWindow } from './audit-proof-window.mjs';
 import {
@@ -25,10 +26,81 @@ import {
   normalizeEventScopeId,
 } from './persistent-event-store.mjs';
 
+// Context is scoped to one fenced async callback, never persisted or shared
+// with unrelated tenant/host requests. It allows the lifecycle finalizer to
+// reuse its own trigger authorization lock without deadlocking itself.
+const dispatchContext = new AsyncLocalStorage();
+const poolFenceSlots = new WeakMap();
+
+function quarantinedDispatchPoolError() {
+  const error = new Error(
+    'PostgreSQL dispatch pool has an uncertain session; recycle the physical pool before further host dispatch',
+  );
+  error.code = 'EVENT_INTELLIGENCE_DISPATCH_POOL_QUARANTINED';
+  return error;
+}
+
+function poisonPoolFenceCapacity(pool) {
+  // An uncertain PG advisory unlock may strand an entire session. Even if
+  // one connection remains, there may NOT be enough capacity for store I/O
+  // under a fenced host callback. Invalidate the shared admission identity
+  // and wake all queued continuations with an explicit fail-closed error.
+  const state = poolFenceSlots.get(pool);
+  if (!state) return;
+  state.poisoned = true;
+  for (const waiter of state.waiters.splice(0)) {
+    waiter.reject(quarantinedDispatchPoolError());
+  }
+}
+
+async function withPoolFenceCapacity(pool, capacity, run) {
+  let state = poolFenceSlots.get(pool);
+  if (!state) {
+    state = { active: 0, waiters: [], capacity, poisoned: false };
+    poolFenceSlots.set(pool, state);
+  }
+  if (state.poisoned) throw quarantinedDispatchPoolError();
+  if (state.capacity !== capacity) {
+    // Multiple scope stores can share the same underlying pool. Reject
+    // conflicting configured limits instead of silently over-admitting.
+    const error = new Error('Conflicting fenced dispatch capacity for shared PostgreSQL pool');
+    error.code = 'EVENT_INTELLIGENCE_DISPATCH_POOL_CAPACITY_MISMATCH';
+    throw error;
+  }
+  // Admit at most floor(maxPool/2) fenced continuations per shared
+  // pool. Contending lifecycle mutations use nonblocking try-lock/retry
+  // and never pin all remaining PostgreSQL connections.
+  if (state.active >= capacity) {
+    // Directly transfer the releasing holder's slot to the oldest waiter,
+    // without ever over-admitting. A poisoned gate rejects queued work.
+    await new Promise((resolve, reject) => state.waiters.push({ resolve, reject }));
+  } else {
+    state.active++;
+  }
+  try {
+    // The session may have been quarantined while this caller was queued.
+    if (state.poisoned) throw quarantinedDispatchPoolError();
+    return await run();
+  } finally {
+    if (state.poisoned) {
+      for (const waiter of state.waiters.splice(0)) {
+        waiter.reject(quarantinedDispatchPoolError());
+      }
+      state.active--;
+    } else {
+      const next = state.waiters.shift();
+      if (next) next.resolve();
+      else state.active--;
+    }
+  }
+}
+
 const POSTGRES_OBJECT_SUFFIXES = Object.freeze([
   '_records',
   '_records_kind_idx',
   '_records_age_idx',
+  '_records_orphan_status_idx',
+  '_records_wake_match_idx',
   '_history',
   '_history_scope_kind_idx',
   '_history_key_idx',
@@ -114,12 +186,28 @@ export class PostgresEventStore {
     tablePrefix = 'event_intelligence',
     ownsPool = false,
     adoptUnversionedSchema = false,
+    dispatchPoolMax = null,
+    dispatchPoolIdentity = null,
   } = {}) {
     if (!pool || typeof pool.query !== 'function' || typeof pool.connect !== 'function') {
       throw new Error(
         'PostgresEventStore requires a pg-compatible pool with query() and connect()',
       );
     }
+    if (dispatchPoolMax !== null &&
+        (!Number.isSafeInteger(dispatchPoolMax) || dispatchPoolMax < 2)) {
+      const error = new Error('dispatchPoolMax must be an integer >= 2 when provided');
+      error.code = 'EVENT_INTELLIGENCE_DISPATCH_POOL_TOO_SMALL';
+      throw error;
+    }
+    // For pg.Pool, options.max is authoritative. Pool wrappers without
+    // options.max must explicitly assert their actual limit before dispatch.
+    if (dispatchPoolIdentity !== null &&
+        (typeof dispatchPoolIdentity !== 'object' || !dispatchPoolIdentity)) {
+      throw new TypeError('dispatchPoolIdentity must be an object representing the physical pool');
+    }
+    this.dispatchPoolMax = dispatchPoolMax;
+    this.dispatchPoolIdentity = dispatchPoolIdentity;
     this.pool = pool;
     this.scopeId = normalizeEventScopeId(scopeId);
     // Validate the full length before ident() rejects 64+ characters
@@ -285,6 +373,20 @@ export class PostgresEventStore {
             'CREATE INDEX IF NOT EXISTS "' + this.tablePrefix +
             '_records_age_idx" ON ' + this.records +
             ' (scope_id, kind, updated_at, record_key)',
+          );
+          // Only empty installations may build the orphan-repair indexes
+          // synchronously. Existing populated databases need an explicit
+          // operator-initiated CONCURRENTLY migration after init().
+          await client.query(
+            'CREATE INDEX IF NOT EXISTS "' + this.tablePrefix +
+            '_records_orphan_status_idx" ON ' + this.records +
+            " (scope_id, record_key) WHERE kind = 'trigger_match'" +
+            " AND (payload->>'status') = 'matched'",
+          );
+          await client.query(
+            'CREATE INDEX IF NOT EXISTS "' + this.tablePrefix +
+            '_records_wake_match_idx" ON ' + this.records +
+            " (scope_id, (payload->>'matchId')) WHERE kind = 'wake_delivery'",
           );
         }
       });
@@ -555,6 +657,8 @@ export class PostgresEventStore {
       tablePrefix: this.tablePrefix,
       ownsPool: false,
       adoptUnversionedSchema: this.adoptUnversionedSchema,
+      dispatchPoolMax: this.dispatchPoolMax,
+      dispatchPoolIdentity: this.dispatchPoolIdentity,
     });
     scoped.initialized = this.initialized;
     if (!scoped.initialized) await scoped.init();
@@ -614,6 +718,145 @@ export class PostgresEventStore {
 
   getWakeDelivery(wakeId) {
     return this.get('wake_delivery', wakeId);
+  }
+
+  /**
+   * Bounded, scope-local scan of durable Pattern matches which may have
+   * survived a process crash before ANY wake_delivery was inserted.
+   * Match selection is anchored by the existing (scope,kind,key) PK.
+   * The coordinator remains the authority for exact-target wake id,
+   * transactional claim, receipt and dedup. Never delete an orphan here.
+   */
+  async assertOrphanRecoveryIndexes() {
+    const suffixes = ['_records_orphan_status_idx', '_records_wake_match_idx'];
+    const result = await this.pool.query(
+      'SELECT idx.relname AS name, tbl.relname AS table_name, ' +
+      'i.indisvalid AS valid, i.indisready AS ready, ' +
+      'am.amname AS method, i.indnkeyatts AS keys, ' +
+      'pg_get_indexdef(i.indexrelid, 1, true) AS key1, ' +
+      'pg_get_indexdef(i.indexrelid, 2, true) AS key2, ' +
+      'pg_get_expr(i.indpred, i.indrelid) AS predicate ' +
+      'FROM pg_class idx JOIN pg_index i ON i.indexrelid=idx.oid ' +
+      'JOIN pg_class tbl ON tbl.oid=i.indrelid ' +
+      'JOIN pg_am am ON am.oid=idx.relam ' +
+      'JOIN pg_namespace ns ON ns.oid=idx.relnamespace ' +
+      'WHERE ns.nspname=current_schema() AND idx.relname=ANY($1)',
+      [suffixes.map(suffix => this.tablePrefix + suffix)],
+    );
+    const present = new Map(result.rows.map(row => [row.name, row]));
+    // Normalize only PostgreSQL's cosmetic casts, whitespace and brackets.
+    // Compare ALL predicate atoms, not just substrings: an extra restrictive
+    // condition makes a partial index unusable for the exact recovery query.
+    const normalize = value => String(value ?? '')
+      .replace(/::text/g, '').replace(/\s+/g, '').replace(/[()]/g, '');
+    const atoms = value => normalize(value).split('AND').sort().join('AND');
+    const schemas = [
+      { suffix: suffixes[0], key2: 'record_key',
+        predicate: "kind='trigger_match'ANDpayload->>'status'='matched'" },
+      { suffix: suffixes[1], key2: "payload->>'matchId'",
+        predicate: "kind='wake_delivery'" },
+    ];
+    for (const expected of schemas) {
+      const row = present.get(this.tablePrefix + expected.suffix);
+      if (!row || row.valid !== true || row.ready !== true ||
+          row.method !== 'btree' || row.table_name !== this.tablePrefix + '_records' ||
+          Number(row.keys) !== 2 || normalize(row.key1) !== 'scope_id' ||
+          normalize(row.key2) !== normalize(expected.key2) ||
+          atoms(row.predicate) !== atoms(expected.predicate)) {
+        const error = new Error(
+          'PG orphan reconciliation needs both verified scoped expression indexes; ' +
+          'run store.migrateOrphanRecoveryIndexes() explicitly after store.init(). ' +
+          'Do not repeatedly scan historical matches without indexes.',
+        );
+        error.code = 'EVENT_INTELLIGENCE_ORPHAN_RECOVERY_INDEX_REQUIRED';
+        throw error;
+      }
+    }
+  }
+
+  /**
+   * Explicit, nonblocking online operator migration for populated PG stores.
+   * No CREATE INDEX on production startup; a durable claim prevents two
+   * operators starting concurrent index creation on the same prefix.
+   */
+  async migrateOrphanRecoveryIndexes() {
+    if (!this.initialized) {
+      const error = new Error('Initialize store before orphan index migration');
+      error.code = 'EVENT_INTELLIGENCE_ORPHAN_MIGRATION_NOT_INITIALIZED';
+      throw error;
+    }
+    const component = 'orphan-recovery-index-migration';
+    const claim = randomUUID();
+    const inserted = await this.tx(client => client.query(
+      'INSERT INTO ' + this.metadata +
+      ' (component, version, adopted_from) VALUES ($1, 1, $2)' +
+      ' ON CONFLICT (component) DO NOTHING RETURNING component',
+      [component, claim],
+    ));
+    if (inserted.rows.length !== 1) {
+      const error = new Error('Orphan index migration has an outstanding operator claim');
+      error.code = 'EVENT_INTELLIGENCE_ORPHAN_MIGRATION_BUSY';
+      throw error;
+    }
+    let verified = false;
+    try {
+      const statements = [
+        ['_records_orphan_status_idx',
+          " (scope_id, record_key) WHERE kind = 'trigger_match'" +
+          " AND (payload->>'status') = 'matched'"],
+        ['_records_wake_match_idx',
+          " (scope_id, (payload->>'matchId')) WHERE kind = 'wake_delivery'"],
+      ];
+      for (const [suffix, ddl] of statements) {
+        const name = this.tablePrefix + suffix;
+        const existing = await this.pool.query(
+          'SELECT 1 FROM pg_class idx JOIN pg_namespace ns' +
+          ' ON ns.oid=idx.relnamespace' +
+          ' WHERE ns.nspname=current_schema() AND idx.relname=$1',
+          [name],
+        );
+        if (!existing.rows.length) {
+          await this.pool.query(
+            'CREATE INDEX CONCURRENTLY IF NOT EXISTS "' + name +
+            '" ON ' + this.records + ddl,
+          );
+        }
+      }
+      await this.assertOrphanRecoveryIndexes();
+      verified = true;
+      return { ok: true, indexes: statements.map(([suffix]) => this.tablePrefix + suffix) };
+    } finally {
+      // An interrupted CONCURRENTLY build may still be running (or have
+      // left an invalid index). Leave the claim until operator diagnosis.
+      if (verified) await this.pool.query(
+        'DELETE FROM ' + this.metadata +
+        ' WHERE component=$1 AND adopted_from=$2',
+        [component, claim],
+      );
+    }
+  }
+
+  async listOrphanedMatchedWakeCandidates({
+    afterMatchId = '',
+    limit = 32,
+  } = {}) {
+    if (typeof afterMatchId !== 'string' ||
+        !Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
+      throw new TypeError('orphan match scan requires a string cursor and limit 1..100');
+    }
+    await this.assertOrphanRecoveryIndexes();
+    const result = await this.pool.query(
+      'SELECT m.payload FROM ' + this.records + ' AS m' +
+      " WHERE m.scope_id=$1 AND m.kind='trigger_match' AND m.record_key>$2" +
+      " AND (m.payload->>'status')='matched'" +
+      ' AND NOT EXISTS (' +
+      ' SELECT 1 FROM ' + this.records + ' AS d' +
+      " WHERE d.scope_id=m.scope_id AND d.kind='wake_delivery'" +
+      " AND (d.payload->>'matchId')=m.record_key" +
+      ' ) ORDER BY m.record_key LIMIT $3',
+      [this.scopeId, afterMatchId, limit],
+    );
+    return result.rows.map(row => parseTriggerMatchRecord(row.payload));
   }
 
   async listDueWakeDeliveries(nowIso = new Date().toISOString()) {
@@ -681,6 +924,14 @@ export class PostgresEventStore {
       throw new Error('Wake delivery claim requires wakeId and workerId');
     }
     return this.tx(async (client) => {
+      // The dispatch callback holds the matching session lock from its
+      // final claim check until host/receipt/firing finish. Reclaim MUST NOT
+      // race a live callback even if its time lease has elapsed.
+      const active = await client.query(
+        'SELECT pg_try_advisory_xact_lock(hashtextextended($1,0)) AS acquired',
+        [this.tablePrefix + ':' + this.scopeId + ':wake-dispatch:' + wakeId],
+      );
+      if (active.rows[0]?.acquired !== true) return null;
       const current = await this.get('wake_delivery', wakeId, client, true);
       if (!current || ['delivered', 'dead_letter'].includes(current.status)) return null;
       const nowMs = Date.parse(now);
@@ -734,6 +985,38 @@ export class PostgresEventStore {
     });
   }
 
+  /**
+   * A trigger-level dispatch fence may be busy while a DIFFERENT wake's
+   * host callback runs. Preserve the claim generation (anti-ABA) but
+   * release it with a short retry date and WITHOUT spending an actual
+   * host-attempt budget. This is a scheduling delay, not a delivery error.
+   */
+  async deferBusyWakeDelivery(wakeIdInput, {
+    workerId,
+    attemptCount,
+    now = new Date().toISOString(),
+    nextAttemptAt = new Date(Date.parse(now) + 1000).toISOString(),
+  } = {}) {
+    const wakeId = String(wakeIdInput || '');
+    return this.tx(async client => {
+      const current = await this.get('wake_delivery', wakeId, client, true);
+      if (!current) return null;
+      assertWakeClaimGeneration(current, { workerId, attemptCount, wakeId });
+      const record = {
+        ...current,
+        status: 'retry_pending',
+        leaseOwner: null,
+        leaseUntil: null,
+        nextAttemptAt: String(nextAttemptAt),
+        lastError: 'trigger_dispatch_busy',
+        dispatchContentions: Number(current.dispatchContentions || 0) + 1,
+        updatedAt: String(now),
+      };
+      await this.upsert('wake_delivery', wakeId, record, client);
+      return record;
+    });
+  }
+
   async failWakeDelivery(wakeIdInput, {
     workerId,
     attemptCount,
@@ -747,8 +1030,14 @@ export class PostgresEventStore {
       const current = await this.get('wake_delivery', wakeId, client, true);
       if (!current) return null;
       assertWakeClaimGeneration(current, { workerId, attemptCount, wakeId });
+      // attemptCount is the strictly monotonic ownership generation;
+      // dispatch-contention claims never reached the host and must NOT
+      // count toward retry/DLQ limits.
+      const actualHostAttempts =
+        Number(current.attemptCount || 0) -
+        Number(current.dispatchContentions || 0);
       const terminal =
-        Number(current.attemptCount || 0) >= Math.max(1, Number(maxAttempts) || 5);
+        actualHostAttempts >= Math.max(1, Number(maxAttempts) || 5);
       const record = {
         ...current,
         status: terminal ? 'dead_letter' : 'retry_pending',
@@ -900,30 +1189,291 @@ export class PostgresEventStore {
       throw new Error('Invalid trigger lifecycle status: ' + status);
     }
     const key = String(triggerId) + '@' + String(version);
-    return this.tx(async (client) => {
-      await this.lock(client, 'trigger-state', key);
-      const previous = await this.get('trigger_state', key, client) ??
-        defaultTriggerState(triggerId, version);
-      const next = {
-        triggerId: String(triggerId),
-        version: String(version),
-        status,
-        updatedAt: new Date().toISOString(),
-        actor,
-        owner: metadata.owner ?? previous.owner ?? null,
-        connectionIds: Array.isArray(metadata.connectionIds)
-          ? metadata.connectionIds.map(String)
-          : previous.connectionIds ?? [],
-        fireCount: Number.isInteger(metadata.fireCount)
-          ? metadata.fireCount
-          : previous.fireCount ?? 0,
-        lastFiredAt: metadata.lastFiredAt !== undefined
-          ? metadata.lastFiredAt
-          : previous.lastFiredAt ?? null,
-        revision: Number(previous.revision || 0) + 1,
-      };
-      await this.upsert('trigger_state', key, next, client);
-      return next;
+    const lockKey = this.tablePrefix + ':' + this.scopeId + ':trigger-state:' + key;
+    // Lifecycle mutations must never occupy ALL pool connections while
+    // waiting for an in-flight host callback's session lock. A blocking
+    // pg_advisory_xact_lock could deadlock if that callback needs the
+    // same pool to hydrate/commit its durable receipt. Try non-blocking,
+    // ROLLBACK and release the client before a bounded retry.
+    const retryUntil = Date.now() + 30000;
+    for (;;) {
+      try {
+        return await this.tx(async client => {
+          const context = dispatchContext.getStore();
+          const lifecycleReentrant =
+            context?.store === this && context.key === key &&
+            actor?.principal_id === 'event-intelligence:lifecycle';
+          if (!lifecycleReentrant) {
+            const attempt = await client.query(
+              'SELECT pg_try_advisory_xact_lock(hashtextextended($1,0)) AS acquired',
+              [lockKey],
+            );
+            if (attempt.rows[0]?.acquired !== true) {
+              const error = new Error('Lifecycle mutation waits for fenced host callback');
+              error.code = 'EVENT_INTELLIGENCE_TRIGGER_STATE_LOCK_BUSY';
+              throw error;
+            }
+          }
+          const previous = await this.get('trigger_state', key, client) ??
+            defaultTriggerState(triggerId, version);
+          if (actor?.principal_id === 'event-intelligence:lifecycle' &&
+              previous.status !== 'active') return previous;
+          const next = {
+            triggerId: String(triggerId),
+            version: String(version),
+            status,
+            updatedAt: new Date().toISOString(),
+            actor,
+            owner: metadata.owner ?? previous.owner ?? null,
+            connectionIds: Array.isArray(metadata.connectionIds)
+              ? metadata.connectionIds.map(String)
+              : previous.connectionIds ?? [],
+            fireCount: Number.isInteger(metadata.fireCount)
+              ? metadata.fireCount
+              : previous.fireCount ?? 0,
+            lastFiredAt: metadata.lastFiredAt !== undefined
+              ? metadata.lastFiredAt
+              : previous.lastFiredAt ?? null,
+            // Durable dispatch reservations survive pause/restart and are
+            // only cleared by the matching lifecycle finalization.
+            dispatchReservations:
+              actor?.principal_id === 'event-intelligence:lifecycle' &&
+              Array.isArray(metadata.dispatchReservations)
+                ? metadata.dispatchReservations.map(String)
+                : (Array.isArray(previous.dispatchReservations)
+                  ? previous.dispatchReservations.map(String) : []),
+            revision: Number(previous.revision || 0) + 1,
+          };
+          await this.upsert('trigger_state', key, next, client);
+          return next;
+        });
+      } catch (error) {
+        if (error?.code !== 'EVENT_INTELLIGENCE_TRIGGER_STATE_LOCK_BUSY') {
+          throw error;
+        }
+        if (Date.now() >= retryUntil) {
+          const timeout = new Error(
+            'Trigger mutation could not acquire dispatch fence; retry later',
+          );
+          timeout.code = 'EVENT_INTELLIGENCE_TRIGGER_MUTATION_RETRY_REQUIRED';
+          throw timeout;
+        }
+        await new Promise(resolve => setTimeout(resolve, 25));
+      }
+    }
+  }
+
+  /**
+   * Fence the ACTUAL external host callback against concurrent pause/delete
+   * commits. This session advisory lock has the SAME key as the transaction
+   * lock in setTriggerState(). Revocation cannot commit until the callback
+   * returns; a post-revocation attempt re-reads status under the lock.
+   * Requires a session-preserving PostgreSQL connection (not transaction
+   * pooling PgBouncer) and >=2 pool slots for callbacks that use the store.
+   */
+  async withTriggerDispatchFence(triggerId, version, at, operation, {
+    wakeId = null, workerId = null, attemptCount = null,
+  } = {}) {
+    if (typeof operation !== 'function') throw new TypeError('dispatch callback required');
+    const key = String(triggerId) + '@' + String(version);
+    const exposedMax = this.pool.options?.max;
+    const maxPool = this.dispatchPoolMax ?? exposedMax;
+    if (!Number.isSafeInteger(maxPool) || maxPool < 2) {
+      const error = new Error(
+        'Fenced PG dispatch requires a verified pool limit >=2; ' +
+        'set dispatchPoolMax for pool wrappers without options.max',
+      );
+      error.code = Number.isSafeInteger(maxPool)
+        ? 'EVENT_INTELLIGENCE_DISPATCH_POOL_TOO_SMALL'
+        : 'EVENT_INTELLIGENCE_DISPATCH_POOL_SIZE_UNKNOWN';
+      throw error;
+    }
+    if (Number.isSafeInteger(exposedMax) && maxPool > exposedMax) {
+      const error = new Error('dispatchPoolMax exceeds PostgreSQL pool options.max');
+      error.code = 'EVENT_INTELLIGENCE_DISPATCH_POOL_CAPACITY_MISMATCH';
+      throw error;
+    }
+    // Wrapper identity is not necessarily pool identity: multiple wrappers
+    // can share ONE physical max=2 pool. They must pass the same underlying
+    // pool object as dispatchPoolIdentity, or admission queues can each
+    // occupy one session and deadlock during callback DB I/O.
+    // No structural check can prove a pool object is the underlying physical
+    // pool: wrappers can forward options.max and have separate JS identities.
+    // Require an explicit stable identity for EVERY dispatch-capable store,
+    // including direct pg.Pool clients, so wrappers cannot split the gate.
+    if (!this.dispatchPoolIdentity) {
+      const error = new Error(
+        'Fenced PostgreSQL dispatch requires dispatchPoolIdentity for the physical connection pool',
+      );
+      error.code = 'EVENT_INTELLIGENCE_DISPATCH_POOL_IDENTITY_REQUIRED';
+      throw error;
+    }
+    const capacityIdentity = this.dispatchPoolIdentity;
+    const observedAt = Date.now();
+    const atMs = Date.parse(at);
+    if (!Number.isFinite(atMs)) throw new TypeError('dispatch time must be valid ISO');
+    const lockKey = this.tablePrefix + ':' + this.scopeId + ':trigger-state:' + key;
+
+    // At most floor(max/2) concurrent fenced continuations. A competing
+    // pause/delete uses a nonblocking advisory try-lock and releases the
+    // connection during retry, so the callback always has a free slot.
+    const capacity = Math.max(1, Math.floor(maxPool / 2));
+    return withPoolFenceCapacity(capacityIdentity, capacity, async () => {
+      const client = await this.pool.connect();
+      let locked = false;
+      let wakeLocked = false;
+      const wakeLockKey = this.tablePrefix + ':' + this.scopeId +
+        ':wake-dispatch:' + String(wakeId);
+      try {
+        // Never let another callback sit idle while HOLDING a pool client
+        // waiting for this advisory lock. A loser retries via the normal
+        // durable wake delivery schedule.
+        const attempt = await client.query(
+          'SELECT pg_try_advisory_lock(hashtextextended($1, 0)) AS acquired',
+          [lockKey],
+        );
+        if (attempt.rows[0]?.acquired !== true) {
+          return { authorized: false, reason: 'trigger_dispatch_busy' };
+        }
+        locked = true;
+        // The claim may have expired and been reclaimed while waiting in
+        // withPoolFenceCapacity. Acquire the SAME advisory key that every
+        // PostgreSQL claim transaction try-locks, then check the authoritative
+        // generation/owner/lease BEFORE any external host effect.
+        // Keeping the session lock through receipt and markFired prevents a
+        // successor from reclaiming mid-callback even after the time lease.
+        if (workerId !== null || attemptCount !== null) {
+          if (typeof wakeId !== 'string' || !wakeId ||
+              typeof workerId !== 'string' || !workerId ||
+              !Number.isSafeInteger(attemptCount) || attemptCount < 1) {
+            throw new TypeError('fenced claimed dispatch requires wakeId, workerId and attemptCount');
+          }
+          const wakeFence = await client.query(
+            'SELECT pg_try_advisory_lock(hashtextextended($1,0)) AS acquired',
+            [wakeLockKey],
+          );
+          if (wakeFence.rows[0]?.acquired !== true) {
+            return { authorized: false, reason: 'wake_claim_lost' };
+          }
+          wakeLocked = true;
+          const owned = await this.get('wake_delivery', wakeId, client);
+          const effectiveClaimAt = atMs + Math.max(0, Date.now() - observedAt);
+          if (owned?.status !== 'claimed' ||
+              owned.leaseOwner !== workerId ||
+              owned.attemptCount !== attemptCount ||
+              !owned.leaseUntil ||
+              Date.parse(owned.leaseUntil) <= effectiveClaimAt) {
+            return { authorized: false, reason: 'wake_claim_lost' };
+          }
+        }
+        const raw = await this.get('trigger', key, client);
+        const state = await this.get('trigger_state', key, client) ??
+          defaultTriggerState(triggerId, version);
+        const definition = raw ? parseCompositeTriggerDefinition(raw) : null;
+        const lifecycle = definition?.lifecycle ?? {};
+        const expiresAt = lifecycle.expiresAt
+          ? Date.parse(lifecycle.expiresAt) : Number.POSITIVE_INFINITY;
+        const leaseUntil = lifecycle.leaseUntil
+          ? Date.parse(lifecycle.leaseUntil) : Number.POSITIVE_INFINITY;
+        const count = state.fireCount ?? 0;
+        const pending = Array.isArray(state.dispatchReservations)
+          ? state.dispatchReservations : [];
+        const cap = lifecycle.oneShot === true || lifecycle.completeOnGoal === true
+          ? 1
+          : (lifecycle.maxFirings === undefined
+            ? Number.POSITIVE_INFINITY : lifecycle.maxFirings);
+        const alreadyReserved = typeof wakeId === 'string' && pending.includes(wakeId);
+        // Revalidate wall-clock authorization AFTER the admission queue and
+        // session-lock acquisition, not at the original call entry. Preserve
+        // virtual test-clock semantics by adding actual elapsed waiting time.
+        const effectiveAtMs = atMs + Math.max(0, Date.now() - observedAt);
+        if (!definition?.target || state.status !== 'active' ||
+            effectiveAtMs > Math.min(expiresAt, leaseUntil) ||
+            (Number.isFinite(cap) && count + pending.length >= cap &&
+              !alreadyReserved)) {
+          return { authorized: false, reason: 'trigger_not_active_at_dispatch' };
+        }
+        // Commit the right to execute a bounded trigger BEFORE calling the
+        // external host. A worker crash releases its session lock, but a
+        // durable reservation for that wake remains, blocking other wake
+        // IDs from consuming the same one-shot / maxFirings slot.
+        if (Number.isFinite(cap) && !alreadyReserved) {
+          if (typeof wakeId !== 'string' || !wakeId) {
+            const error = new Error('Bounded host dispatch requires durable wake identity');
+            error.code = 'EVENT_INTELLIGENCE_DISPATCH_WAKE_ID_REQUIRED';
+            throw error;
+          }
+          await client.query('BEGIN');
+          try {
+            const previous = await this.get('trigger_state', key, client, true) ??
+              defaultTriggerState(triggerId, version);
+            const original = Array.isArray(previous.dispatchReservations)
+              ? previous.dispatchReservations : [];
+            if (previous.status !== 'active' ||
+                (previous.fireCount ?? 0) + original.length >= cap) {
+              await client.query('ROLLBACK');
+              return { authorized: false, reason: 'trigger_not_active_at_dispatch' };
+            }
+            await this.upsert('trigger_state', key, {
+              ...previous,
+              dispatchReservations: [...original, wakeId],
+              revision: Number(previous.revision || 0) + 1,
+              updatedAt: new Date().toISOString(),
+            }, client);
+            await client.query('COMMIT');
+          } catch (error) {
+            try { await client.query('ROLLBACK'); } catch {}
+            throw error;
+          }
+        }
+        // The callback includes durable receipt and lifecycle finalization.
+        // If execution crashes before markFired, the SAME wake can retry
+        // while a DIFFERENT wake is fenced by the persisted reservation.
+        const value = await dispatchContext.run({ store: this, key }, operation);
+        return { authorized: true, value };
+      } finally {
+        if (locked || wakeLocked) {
+          try {
+            if (wakeLocked) {
+              const unlocked = await client.query(
+                'SELECT pg_advisory_unlock(hashtextextended($1,0)) AS released',
+                [wakeLockKey],
+              );
+              if (unlocked.rows[0]?.released !== true) {
+                throw new Error('Wake dispatch session advisory unlock failed');
+              }
+            }
+            if (locked) {
+              const unlocked = await client.query(
+                'SELECT pg_advisory_unlock(hashtextextended($1, 0)) AS released',
+                [lockKey],
+              );
+              if (unlocked.rows[0]?.released !== true) {
+                throw new Error('Trigger dispatch session advisory unlock failed');
+              }
+            }
+            client.release();
+          } catch (error) {
+            // Generic PostgresPoolLike wrappers may silently IGNORE the
+            // release(error) destruction hint. Returning a possibly
+            // session-locked client would poison future trigger dispatches.
+            // Quarantine this checked-out connection instead: no release()
+            // call, so the pool CANNOT reuse it. Poison the shared physical
+            // admission gate too: a max=2 pool now has only one usable slot,
+            // which cannot support a host callback that performs store I/O.
+            // Every queued/new dispatch is rejected until pool replacement.
+            poisonPoolFenceCapacity(capacityIdentity);
+            const uncertain = new Error(
+              'Fenced PostgreSQL advisory unlock failed: quarantine session and recycle pool',
+              { cause: error },
+            );
+            uncertain.code = 'EVENT_INTELLIGENCE_DISPATCH_SESSION_QUARANTINED';
+            throw uncertain;
+          }
+        } else {
+          client.release();
+        }
+      }
     });
   }
 
@@ -1020,28 +1570,97 @@ export class PostgresEventStore {
   ) {
     const record = parseTriggerMatchRecord(input);
     const expected = new Set(expectedStatuses.map(String));
-    return this.tx(async (client) => {
-      await this.lock(client, 'trigger-match', record.matchId);
-      const current = await this.get(
-        'trigger_match',
-        record.matchId,
-        client,
-      );
-      if (!current || !expected.has(current.status)) {
-        return {
-          applied: false,
-          record: current ? parseTriggerMatchRecord(current) : null,
-        };
+    const isFiredWake = record.status === 'fired' &&
+      typeof record.firedWakeId === 'string' && record.firedWakeId;
+    const key = String(record.triggerId) + '@' + String(record.triggerVersion);
+    const lockKey = this.tablePrefix + ':' + this.scopeId + ':trigger-state:' + key;
+    const deadline = Date.now() + 15000;
+
+    // The match transition and its RESERVED firing-count/lifecycle update
+    // MUST commit in the SAME transaction. If SIGKILL occurs, PostgreSQL
+    // commits either BOTH or NEITHER; no fired match can strand a reserved
+    // slot or leave its fireCount permanently stale.
+    for (;;) {
+      try {
+        return await this.tx(async (client) => {
+          const ctx = dispatchContext.getStore();
+          const ownsFencedSession = isFiredWake &&
+            ctx?.store === this && ctx.key === key;
+          if (isFiredWake && !ownsFencedSession) {
+            const lock = await client.query(
+              'SELECT pg_try_advisory_xact_lock(hashtextextended($1,0)) AS acquired',
+              [lockKey],
+            );
+            if (lock.rows[0]?.acquired !== true) {
+              const error = new Error('Trigger state is held by a dispatch fence');
+              error.code = 'EVENT_INTELLIGENCE_TRIGGER_STATE_LOCK_BUSY';
+              throw error;
+            }
+          }
+          await this.lock(client, 'trigger-match', record.matchId);
+          const current = await this.get('trigger_match', record.matchId, client);
+          if (!current || !expected.has(current.status)) {
+            return {
+              applied: false,
+              record: current ? parseTriggerMatchRecord(current) : null,
+              lifecycleFinalized: false,
+            };
+          }
+          let lifecycleFinalized = false;
+          let lifecycleCompleted = false;
+          let fireCount = null;
+          if (isFiredWake) {
+            const state = await this.get('trigger_state', key, client, true) ??
+              defaultTriggerState(record.triggerId, record.triggerVersion);
+            const reserved = Array.isArray(state.dispatchReservations)
+              ? state.dispatchReservations : [];
+            if (reserved.includes(record.firedWakeId)) {
+              const raw = await this.get('trigger', key, client);
+              const definition = raw ? parseCompositeTriggerDefinition(raw) : null;
+              if (!definition) throw new Error('Reserved trigger definition vanished');
+              const lifecycle = definition.lifecycle ?? {};
+              fireCount = Number(state.fireCount ?? 0) + 1;
+              lifecycleCompleted =
+                lifecycle.oneShot === true ||
+                lifecycle.completeOnGoal === true ||
+                (lifecycle.maxFirings !== undefined &&
+                  fireCount >= lifecycle.maxFirings);
+              await this.upsert('trigger_state', key, {
+                ...state,
+                // An intervening administrative pause/delete is never undone.
+                status: state.status === 'active'
+                  ? (lifecycleCompleted ? 'completed' : 'active')
+                  : state.status,
+                actor: {
+                  type: 'system',
+                  principal_id: 'event-intelligence:lifecycle',
+                },
+                fireCount,
+                lastFiredAt: new Date().toISOString(),
+                dispatchReservations: reserved.filter(
+                  wakeId => wakeId !== record.firedWakeId),
+                updatedAt: new Date().toISOString(),
+                revision: Number(state.revision || 0) + 1,
+              }, client);
+              lifecycleFinalized = true;
+            }
+          }
+          await this.appendHistory('trigger_match_history',
+            record.matchId, record, client);
+          await this.upsert('trigger_match', record.matchId, record, client);
+          return { applied: true, record, lifecycleFinalized,
+            lifecycleCompleted, fireCount };
+        });
+      } catch (error) {
+        if (error?.code !== 'EVENT_INTELLIGENCE_TRIGGER_STATE_LOCK_BUSY') throw error;
+        if (Date.now() >= deadline) {
+          const timeout = new Error('Fired match finalization must retry after dispatch');
+          timeout.code = 'EVENT_INTELLIGENCE_TRIGGER_MUTATION_RETRY_REQUIRED';
+          throw timeout;
+        }
+        await new Promise(resolve => setTimeout(resolve, 25));
       }
-      await this.appendHistory(
-        'trigger_match_history',
-        record.matchId,
-        record,
-        client,
-      );
-      await this.upsert('trigger_match', record.matchId, record, client);
-      return { applied: true, record };
-    });
+    }
   }
 
   async listTriggerMatches(triggerId) {

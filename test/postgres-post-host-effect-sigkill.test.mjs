@@ -106,7 +106,7 @@ integration('actual SIGKILL AFTER durable host effect BEFORE EI receipt reconcil
   const reported = [];
   try {
     const store = new PostgresEventStore({
-      pool, tablePrefix: prefix, scopeId,
+      pool: pool, dispatchPoolIdentity: pool, tablePrefix: prefix, scopeId,
     });
     await store.init();
     // Independent, operator-owned fixture tables. EI has no access to
@@ -207,7 +207,7 @@ integration('actual SIGKILL AFTER durable host effect BEFORE EI receipt reconcil
     const verifierPool = new Pool({ connectionString: url, max: 2 });
     try {
       const independent = new PostgresEventStore({
-        pool: verifierPool, tablePrefix: prefix, scopeId,
+        pool: verifierPool, dispatchPoolIdentity: verifierPool, tablePrefix: prefix, scopeId,
       });
       await independent.init();
       for (const wakeId of reported) {

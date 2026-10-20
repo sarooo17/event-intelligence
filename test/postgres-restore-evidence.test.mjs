@@ -21,7 +21,7 @@ const tables = Object.freeze({
 });
 const iso = '2026-10-09T12:00:00.000Z';
 function store(pool, tablePrefix, scopeId = 'tenant-A') {
-  return new PostgresEventStore({ pool, tablePrefix, scopeId });
+  return new PostgresEventStore({ pool: pool, dispatchPoolIdentity: pool, tablePrefix, scopeId });
 }
 function definition(id) {
   return {

@@ -144,7 +144,7 @@ try {
     connectionTimeoutMillis: 5000,
   });
   stage = 'setup';
-  const store = new PostgresEventStore({ pool, scopeId, tablePrefix: prefix });
+  const store = new PostgresEventStore({ pool: pool, dispatchPoolIdentity: pool, scopeId, tablePrefix: prefix });
   await store.init();
   const engine = new CompositeTriggerEngine(store);
   for (let i = 0; i < triggers; i++) {
@@ -337,7 +337,7 @@ try {
   pool = null;
   recoveredPool = new Pool({ connectionString: process.env.POSTGRES_URL, max: 3 });
   const recovered = new PostgresEventStore({
-    pool: recoveredPool, scopeId, tablePrefix: prefix,
+    pool: recoveredPool, dispatchPoolIdentity: recoveredPool, scopeId, tablePrefix: prefix,
   });
   await recovered.init();
   assert.equal((await recovered.listTriggers()).length, triggers);

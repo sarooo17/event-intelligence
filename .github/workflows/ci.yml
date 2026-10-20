@@ -2,6 +2,8 @@ name: CI
 
 on:
   pull_request:
+    # Title edits can opt into the separately gated [match-chaos] job.
+    types: [opened, synchronize, reopened, ready_for_review, edited]
   push:
     branches: [main]
 
@@ -73,3 +75,78 @@ jobs:
         env:
           EI_PG_BENCHMARK_CONFIRM: YES_ISOLATED
         run: node scripts/evidence/postgres-durable-scale.mjs --profile smoke --wakes 4 --concurrency 2
+
+  pg-os-matched-contenders:
+    # Explicit expensive evidence; no extra PostgreSQL runner on ordinary PRs.
+    if: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.title, '[match-chaos]') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: event_intelligence
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d event_intelligence"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      POSTGRES_URL: postgresql://postgres:postgres@127.0.0.1:5432/event_intelligence
+      EI_MATCH_KILL_ROUNDS: '12'
+      EI_MATCH_KILL_EVIDENCE_OUT: os-matched-contenders.json
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install compiled test and pin PostgreSQL driver
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm install --no-save --ignore-scripts --no-audit --no-fund pg@8.16.3
+          npm run build
+      - name: Capture exact benchmark source and hardware
+        shell: bash
+        run: |
+          {
+            echo "source-head-sha=$(git rev-parse HEAD)"
+            echo "run-id=$GITHUB_RUN_ID"
+            echo "run-attempt=$GITHUB_RUN_ATTEMPT"
+            echo "rounds=$EI_MATCH_KILL_ROUNDS"
+            node -p "'pg-driver=' + require('pg/package.json').version"
+            node --version
+            uname -a
+            lscpu
+            free -m
+          } > os-matched-contenders-host.txt
+      - name: Real OS SIGKILL then two independent competing PG worker processes
+        shell: bash
+        run: |
+          set -o pipefail
+          node --test test/postgres-os-matched-contenders.test.mjs 2>&1 |
+            tee os-matched-contenders-test.log
+      - name: Mark failure as incomplete rather than an invented passing report
+        if: always()
+        shell: bash
+        run: |
+          if [ ! -s "$EI_MATCH_KILL_EVIDENCE_OUT" ]; then
+            printf '{"schema":"ei-postgres-os-matched-contenders-v1","status":"incomplete","requestedRounds":%s,"committedUniqueMatches":null,"recoveredDurableReceipts":null}\n' "$EI_MATCH_KILL_ROUNDS" > "$EI_MATCH_KILL_EVIDENCE_OUT"
+          fi
+      - name: Archive raw matched-to-wake chaos evidence, including failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ei-pg-matched-contenders-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            os-matched-contenders.json
+            os-matched-contenders-test.log
+            os-matched-contenders-host.txt
+          if-no-files-found: warn
+          retention-days: 90

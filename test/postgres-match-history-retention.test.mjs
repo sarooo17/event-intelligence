@@ -42,9 +42,9 @@ integration('PG16 operator match-history compaction prunes only exact adjacent r
   const prefix = 'ei_revret_' + randomBytes(5).toString('hex');
   const poolA = new Pool({ connectionString: url, max: 4 });
   const poolB = new Pool({ connectionString: url, max: 4 });
-  const a = new PostgresEventStore({ pool: poolA, tablePrefix: prefix, scopeId: 'tenant-A' });
-  const contender = new PostgresEventStore({ pool: poolB, tablePrefix: prefix, scopeId: 'tenant-A' });
-  const b = new PostgresEventStore({ pool: poolB, tablePrefix: prefix, scopeId: 'tenant-B' });
+  const a = new PostgresEventStore({ pool: poolA, dispatchPoolIdentity: poolA, tablePrefix: prefix, scopeId: 'tenant-A' });
+  const contender = new PostgresEventStore({ pool: poolB, dispatchPoolIdentity: poolB, tablePrefix: prefix, scopeId: 'tenant-A' });
+  const b = new PostgresEventStore({ pool: poolB, dispatchPoolIdentity: poolB, tablePrefix: prefix, scopeId: 'tenant-B' });
   const finishedId = 'terminal-with-runs';
   const activeId = 'still-matched';
   const historyTable = '"' + prefix + '_history"';

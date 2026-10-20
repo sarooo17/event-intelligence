@@ -65,7 +65,7 @@ integrationTest('pg_dump + pg_restore preserves trigger, audit chain, wake recei
   let createdDatabase = false;
   try {
     const source = new PostgresEventStore({
-      pool: sourcePool, tablePrefix, scopeId: 'tenant-logical',
+      pool: sourcePool, dispatchPoolIdentity: sourcePool, tablePrefix, scopeId: 'tenant-logical',
     });
     await source.init();
     await source.putTrigger(definition());
@@ -156,7 +156,7 @@ integrationTest('pg_dump + pg_restore preserves trigger, audit chain, wake recei
     restoredUrl.pathname = '/' + restoredDatabase;
     targetPool = new Pool({ connectionString: restoredUrl.toString(), max: 3 });
     const target = new PostgresEventStore({
-      pool: targetPool, tablePrefix, scopeId: 'tenant-logical',
+      pool: targetPool, dispatchPoolIdentity: targetPool, tablePrefix, scopeId: 'tenant-logical',
     });
     await target.init();
     const restoredGap = await target.getMcpClientState(

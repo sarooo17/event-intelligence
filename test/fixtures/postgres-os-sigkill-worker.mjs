@@ -22,7 +22,7 @@ try {
     connectionTimeoutMillis: 4000, query_timeout: 4000,
     statement_timeout: 4000,
   });
-  const store = new PostgresEventStore({ pool, tablePrefix, scopeId });
+  const store = new PostgresEventStore({ pool: pool, dispatchPoolIdentity: pool, tablePrefix, scopeId });
   stage = 'init';
   await store.init();
   stage = 'claim';
