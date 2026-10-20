@@ -202,3 +202,40 @@ integration('fenced callback with same-store lookup and another waiter does not 
   const outcomes = await Promise.all([first, second]);
   assert.deepEqual(outcomes.map(x => x.authorized), [true, true]);
 }, { max: 3 }));
+
+integration('pool fairness enforces bounded capacity even when many fenced callbacks queue', async () => fixture(async ({ store }) => {
+  for (let i = 0; i < 8; i++) await store.putTrigger(trigger('capacity-' + i));
+  let active = 0, maximum = 0, completed = 0;
+  let releaseFirst;
+  let firstEntered;
+  const firstStarted = new Promise(resolve => { firstEntered = resolve; });
+  const firstMayExit = new Promise(resolve => { releaseFirst = resolve; });
+  const operation = i => store.withTriggerDispatchFence(
+    'capacity-' + i, '1', new Date().toISOString(), async () => {
+      active++;
+      maximum = Math.max(maximum, active);
+      if (i === 0) {
+        firstEntered();
+        await firstMayExit;
+      } else {
+        // On a max=2 PostgreSQL pool exactly ONE connection must stay
+        // reserved for this callback's own store query. A semaphore
+        // handoff can never admit a later entrant before the queued one.
+        assert.ok(await store.getTrigger('capacity-' + i, '1'));
+      }
+      await new Promise(resolve => setImmediate(resolve));
+      completed++;
+      active--;
+      return i;
+    },
+  );
+  const first = operation(0);
+  await firstStarted;
+  const rest = Array.from({ length: 7 }, (_, i) => operation(i + 1));
+  releaseFirst();
+  const out = await Promise.all([first, ...rest]);
+  assert.equal(maximum, 1,
+    'bounded admission must never give the second of two pool slots to a fence waiter');
+  assert.equal(completed, 8);
+  assert.deepEqual(out.map(x => x.value), [0,1,2,3,4,5,6,7]);
+}, { max: 2 }));
