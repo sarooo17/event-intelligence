@@ -53,12 +53,21 @@ const require=createRequire(import.meta.url);
 
 let interruptedSignal=null;
 let killActiveCohort=null;
+let publishedPath=null;
 // Detached POSIX cohorts do not inherit the terminal's process group.
 // Forward operator cancellation to the *entire* descendant group and then
 // await its close before releasing the runner/temporary evidence files.
 function interrupt(signal) {
   interruptedSignal??=signal;
+  process.exitCode=signal==='SIGINT'?130:143;
   killActiveCohort?.();
+  // A late signal after successful publication must not leave behind a
+  // success artifact with a zero-exit or interrupted parent process.
+  if(publishedPath) {
+    const abandoned=publishedPath;
+    publishedPath=null;
+    void rm(abandoned,{force:true}).catch(()=>{process.exitCode=1;});
+  }
 }
 process.on('SIGINT',()=>interrupt('SIGINT'));
 process.on('SIGTERM',()=>interrupt('SIGTERM'));
@@ -240,18 +249,26 @@ async function main() {
     cohorts:records,
     productionSloCertified:false,
   };
-  // Never create a success-shaped artifact if ANY cohort or its cleanup failed.
+  // Report stays in memory until ALL awaited temporary evidence cleanup.
+  return {result,out,rounds:cohorts*rounds};
+}
+try{
+  const completed=await main();
+  if(temp) {
+    await rm(temp,{recursive:true,force:true});
+    temp=null;
+  }
   assertNotInterrupted();
-  await writeFile(out,JSON.stringify(result,null,2)+'\n',{flag:'wx'});
+  await writeFile(completed.out,JSON.stringify(completed.result,null,2)+'\n',
+    {flag:'wx'});
+  publishedPath=completed.out;
   if(interruptedSignal) {
-    await rm(out,{force:true});
+    await rm(publishedPath,{force:true});
+    publishedPath=null;
     assertNotInterrupted();
   }
   process.stdout.write(JSON.stringify({status:'completed',
-    totalKillRecoveryRounds:cohorts*rounds,out})+'\n');
-}
-try{
-  await main();
+    totalKillRecoveryRounds:completed.rounds,out:completed.out})+'\n');
 }catch(error){
   fail(String(error?.message??error).replace(/postgres(?:ql)?:\/\/\S+/gi,'[redacted-postgres-url]'));
 }finally{
