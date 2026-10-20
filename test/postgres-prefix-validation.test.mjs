@@ -24,7 +24,7 @@ test('every emitted PostgreSQL identifier fits inside the 63-byte ceiling', () =
   assert.equal(MAX_POSTGRES_TABLE_PREFIX_BYTES, expected,
     'prefix limit must be derived from the longest emitted object suffix');
   const prefix = 'a'.repeat(MAX_POSTGRES_TABLE_PREFIX_BYTES);
-  const db = new PostgresEventStore({pool,tablePrefix:prefix});
+  const db = new PostgresEventStore({pool: pool, dispatchPoolIdentity: pool,tablePrefix:prefix});
   assert.equal(db.tablePrefix, prefix);
   for (const suffix of suffixes) {
     assert.ok(Buffer.byteLength(prefix + suffix) <= max, suffix);
@@ -38,12 +38,12 @@ test('every emitted PostgreSQL identifier fits inside the 63-byte ceiling', () =
 test('overlong PostgreSQL prefixes fail at construction, not silently truncated', () => {
   for(const length of [MAX_POSTGRES_TABLE_PREFIX_BYTES+1,55,63,64,128]){
     assert.throws(
-      () => new PostgresEventStore({pool,tablePrefix:'x'.repeat(length)}),
+      () => new PostgresEventStore({pool: pool, dispatchPoolIdentity: pool,tablePrefix:'x'.repeat(length)}),
       (error) => error.code === 'EVENT_INTELLIGENCE_POSTGRES_PREFIX_TOO_LONG',
     );
   }
   assert.throws(
-    () => new PostgresEventStore({pool,tablePrefix:'not valid'}),
+    () => new PostgresEventStore({pool: pool, dispatchPoolIdentity: pool,tablePrefix:'not valid'}),
     /safe PostgreSQL identifier/,
   );
 });
