@@ -209,3 +209,123 @@ test('wake hydration rechecks tenant when transfer precedes final lookup', async
   release();
   await assert.rejects(pending,notVisible);
 });
+
+
+test('wake envelope is denied when owner transfer commits during asynchronous hydration', async () => {
+  const triggerId='shared-name', matchId='match-secret';
+  let currentOwner=alice, listCalls=0, buildCalled=0;
+  let entered, release;
+  const started=new Promise(resolve=>{entered=resolve;});
+  const blocked=new Promise(resolve=>{release=resolve;});
+  const guard=createOwnerReadGuard({
+    owner:alice,
+    triggerControl:{
+      async listTriggers({owner}){
+        listCalls++;
+        return sameIdentity(owner,currentOwner)
+          ? [{definition:{triggerId,version:'1'},state:{owner:currentOwner}}]
+          : [];
+      },
+    },
+    store:{
+      async latestWake(){return {subscriptionId:'trigger:shared-name',sourceEventId:matchId};},
+      async getWakeDelivery(){return {matchId,triggerId,triggerVersion:'1'};},
+      async listTriggerMatches(){
+        return [{matchId,triggerId,triggerVersion:'1'}];
+      },
+    },
+  });
+  const envelope={evidence:{privateToken:'FORBIDDEN-AFTER-REVOKE'}};
+  const work=guard.withAuthorizedWakeResult('wake-1', async () => {
+    buildCalled++;
+    entered();
+    await blocked;
+    return envelope;
+  });
+  await started;
+  currentOwner=bob;
+  release();
+  await assert.rejects(work, error=>{
+    notVisible(error);
+    assert.equal(error.message.includes('FORBIDDEN-AFTER-REVOKE'),false);
+    assert.equal(String(error.cause??'').includes('FORBIDDEN-AFTER-REVOKE'),false);
+    return true;
+  });
+  assert.equal(buildCalled,1);
+  assert.equal(listCalls,3,
+    'initial wake-owner read, match-version read and final post-hydration check');
+});
+
+test('inspector result cannot escape after same-principal tenant transfer during inspection', async () => {
+  const triggerId='shared-name';
+  let currentOwner=alice, buildCalled=0;
+  let entered, release;
+  const started=new Promise(resolve=>{entered=resolve;});
+  const blocked=new Promise(resolve=>{release=resolve;});
+  const guard=createOwnerReadGuard({
+    owner:alice,
+    triggerControl:{
+      async listTriggers({owner}){
+        return sameIdentity(owner,currentOwner)
+          ? [{definition:{triggerId,version:'1'},state:{owner:currentOwner}}]
+          : [];
+      },
+    },
+    store:{
+      async latestWake(){return null;},
+      async listTriggerMatches(){return [];},
+    },
+  });
+  const pending=guard.withAuthorizedTriggerResult('shared-name','1',async (owned)=>{
+    assert.equal(owned.definition.version,'1');
+    buildCalled++;
+    entered();
+    await blocked;
+    return {evidence:{secret:'FOREIGN-TENANT-INSPECT'}};
+  });
+  await started;
+  currentOwner=aliceOtherTenant;
+  release();
+  await assert.rejects(pending,notVisible);
+  assert.equal(buildCalled,1);
+});
+
+test('the final owner snapshot authorizes already-started reads, not retroactive cancellation',async()=>{
+  const triggerId='shared-name', matchId='snapshot-read';
+  let currentOwner=alice,lookups=0,finalCaptured,releaseFinal;
+  const seen=new Promise(resolve=>{finalCaptured=resolve;});
+  const pendingFinal=new Promise(resolve=>{releaseFinal=resolve;});
+  const guard=createOwnerReadGuard({
+    owner:alice,
+    triggerControl:{
+      async listTriggers({owner}){
+        lookups++;
+        const captured=sameIdentity(owner,currentOwner)
+          ? [{definition:{triggerId,version:'1'},state:{owner:currentOwner}}]
+          : [];
+        if(lookups===3){
+          finalCaptured();
+          await pendingFinal;
+        }
+        return captured;
+      },
+    },
+    store:{
+      async latestWake(){return {subscriptionId:'trigger:shared-name',sourceEventId:matchId};},
+      async getWakeDelivery(){return {matchId,triggerId,triggerVersion:'1'};},
+      async listTriggerMatches(){return [{matchId,triggerId,triggerVersion:'1'}];},
+    },
+  });
+  const pending=guard.withAuthorizedWakeResult('wake-snapshot',async()=>({id:'authorized-before-revocation'}));
+  await seen;
+  // Owner transfer commits AFTER the last owner-query snapshot. Current
+  // contract permits already-authorized reads to complete; issue #235
+  // still needs an atomic fence if stronger cancellation is desired.
+  currentOwner=bob;
+  releaseFinal();
+  assert.deepEqual(await pending,{id:'authorized-before-revocation'});
+  await assert.rejects(
+    ()=>guard.withAuthorizedWakeResult('wake-snapshot',async()=>({secret:'no'})),
+    notVisible,
+  );
+});
