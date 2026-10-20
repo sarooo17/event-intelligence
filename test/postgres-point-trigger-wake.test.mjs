@@ -35,10 +35,10 @@ integration('PG indexed trigger lookup serves matched consumer and coordinator w
   const tablePrefix = 'ei_point_wake_' + randomBytes(5).toString('hex');
   const pool = new Pool({ connectionString: url, max: 4 });
   const isolated = new PostgresEventStore({
-    pool, tablePrefix, scopeId: 'perf-tenant-A',
+    pool: pool, dispatchPoolIdentity: pool, tablePrefix, scopeId: 'perf-tenant-A',
   });
   const neighbor = new PostgresEventStore({
-    pool, tablePrefix, scopeId: 'perf-tenant-B',
+    pool: pool, dispatchPoolIdentity: pool, tablePrefix, scopeId: 'perf-tenant-B',
   });
   const suffixes = ['metadata', 'leases', 'history', 'records', 'counters'];
   let deliveries = 0;
