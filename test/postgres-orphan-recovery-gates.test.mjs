@@ -829,4 +829,10 @@ integration('PG wake deliveries reject an absent producer version instead of sil
     'invalid producer version must not be persisted');
   const accepted=await store.ensureWakeDelivery({...base,triggerVersion:'1'});
   assert.equal(accepted.triggerVersion,'1');
+  const retry=await store.ensureWakeDelivery({
+    ...base,triggerVersion:undefined,
+  });
+  assert.equal(retry.wakeId,base.wakeId);
+  assert.equal(retry.triggerVersion,'1',
+    'idempotent retry of a durable wake never requires a new producer version');
 }));
