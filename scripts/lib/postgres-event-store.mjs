@@ -156,6 +156,7 @@ export class PostgresEventStore {
     ownsPool = false,
     adoptUnversionedSchema = false,
     dispatchPoolMax = null,
+    dispatchPoolIdentity = null,
   } = {}) {
     if (!pool || typeof pool.query !== 'function' || typeof pool.connect !== 'function') {
       throw new Error(
@@ -170,7 +171,12 @@ export class PostgresEventStore {
     }
     // For pg.Pool, options.max is authoritative. Pool wrappers without
     // options.max must explicitly assert their actual limit before dispatch.
+    if (dispatchPoolIdentity !== null &&
+        (typeof dispatchPoolIdentity !== 'object' || !dispatchPoolIdentity)) {
+      throw new TypeError('dispatchPoolIdentity must be an object representing the physical pool');
+    }
     this.dispatchPoolMax = dispatchPoolMax;
+    this.dispatchPoolIdentity = dispatchPoolIdentity;
     this.pool = pool;
     this.scopeId = normalizeEventScopeId(scopeId);
     // Validate the full length before ident() rejects 64+ characters
@@ -621,6 +627,7 @@ export class PostgresEventStore {
       ownsPool: false,
       adoptUnversionedSchema: this.adoptUnversionedSchema,
       dispatchPoolMax: this.dispatchPoolMax,
+      dispatchPoolIdentity: this.dispatchPoolIdentity,
     });
     scoped.initialized = this.initialized;
     if (!scoped.initialized) await scoped.init();
@@ -1245,6 +1252,18 @@ export class PostgresEventStore {
       error.code = 'EVENT_INTELLIGENCE_DISPATCH_POOL_CAPACITY_MISMATCH';
       throw error;
     }
+    // Wrapper identity is not necessarily pool identity: multiple wrappers
+    // can share ONE physical max=2 pool. They must pass the same underlying
+    // pool object as dispatchPoolIdentity, or admission queues can each
+    // occupy one session and deadlock during callback DB I/O.
+    if (!Number.isSafeInteger(exposedMax) && !this.dispatchPoolIdentity) {
+      const error = new Error(
+        'Wrapped PostgreSQL dispatch requires dispatchPoolIdentity shared by all wrappers of the physical pool',
+      );
+      error.code = 'EVENT_INTELLIGENCE_DISPATCH_POOL_IDENTITY_REQUIRED';
+      throw error;
+    }
+    const capacityIdentity = this.dispatchPoolIdentity ?? this.pool;
     const observedAt = Date.now();
     const atMs = Date.parse(at);
     if (!Number.isFinite(atMs)) throw new TypeError('dispatch time must be valid ISO');
@@ -1254,7 +1273,7 @@ export class PostgresEventStore {
     // pause/delete uses a nonblocking advisory try-lock and releases the
     // connection during retry, so the callback always has a free slot.
     const capacity = Math.max(1, Math.floor(maxPool / 2));
-    return withPoolFenceCapacity(this.pool, capacity, async () => {
+    return withPoolFenceCapacity(capacityIdentity, capacity, async () => {
       const client = await this.pool.connect();
       let locked = false;
       try {
