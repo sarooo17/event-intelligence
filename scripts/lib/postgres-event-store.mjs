@@ -922,6 +922,38 @@ export class PostgresEventStore {
     });
   }
 
+  /**
+   * A trigger-level dispatch fence may be busy while a DIFFERENT wake's
+   * host callback runs. Preserve the claim generation (anti-ABA) but
+   * release it with a short retry date and WITHOUT spending an actual
+   * host-attempt budget. This is a scheduling delay, not a delivery error.
+   */
+  async deferBusyWakeDelivery(wakeIdInput, {
+    workerId,
+    attemptCount,
+    now = new Date().toISOString(),
+    nextAttemptAt = new Date(Date.parse(now) + 1000).toISOString(),
+  } = {}) {
+    const wakeId = String(wakeIdInput || '');
+    return this.tx(async client => {
+      const current = await this.get('wake_delivery', wakeId, client, true);
+      if (!current) return null;
+      assertWakeClaimGeneration(current, { workerId, attemptCount, wakeId });
+      const record = {
+        ...current,
+        status: 'retry_pending',
+        leaseOwner: null,
+        leaseUntil: null,
+        nextAttemptAt: String(nextAttemptAt),
+        lastError: 'trigger_dispatch_busy',
+        dispatchContentions: Number(current.dispatchContentions || 0) + 1,
+        updatedAt: String(now),
+      };
+      await this.upsert('wake_delivery', wakeId, record, client);
+      return record;
+    });
+  }
+
   async failWakeDelivery(wakeIdInput, {
     workerId,
     attemptCount,
@@ -935,8 +967,14 @@ export class PostgresEventStore {
       const current = await this.get('wake_delivery', wakeId, client, true);
       if (!current) return null;
       assertWakeClaimGeneration(current, { workerId, attemptCount, wakeId });
+      // attemptCount is the strictly monotonic ownership generation;
+      // dispatch-contention claims never reached the host and must NOT
+      // count toward retry/DLQ limits.
+      const actualHostAttempts =
+        Number(current.attemptCount || 0) -
+        Number(current.dispatchContentions || 0);
       const terminal =
-        Number(current.attemptCount || 0) >= Math.max(1, Number(maxAttempts) || 5);
+        actualHostAttempts >= Math.max(1, Number(maxAttempts) || 5);
       const record = {
         ...current,
         status: terminal ? 'dead_letter' : 'retry_pending',
