@@ -74,5 +74,37 @@ export function createOwnerReadGuard({ triggerControl, store, owner }) {
     return match;
   }
 
-  return Object.freeze({ assertTrigger, assertWake });
+  /**
+   * Do not return a prepared inspector result after the configured owner has
+   * lost access during an asynchronous read. The final owner lookup is the
+   * read's authorization snapshot: a transfer committed BEFORE it is denied.
+   * A transfer committing AFTER that snapshot can still race the return;
+   * this is deliberately NOT a cross-worker atomic revocation fence (#235).
+   */
+  async function withAuthorizedTriggerResult(triggerId, version, build) {
+    if (typeof build !== 'function') throw new TypeError('authorized read callback required');
+    const owned = await assertTrigger(triggerId, version);
+    const result = await build(owned);
+    await assertTrigger(owned.definition.triggerId, owned.definition.version);
+    return result;
+  }
+
+  /**
+   * The initial check protects access to evidence, the final check protects
+   * the result returned to the MCP caller when ownership changes DURING
+   * activation hydration. A final authorization snapshot is not a guarantee
+   * that already-authorized reads can be retroactively canceled.
+   */
+  async function withAuthorizedWakeResult(wakeId, build) {
+    if (typeof build !== 'function') throw new TypeError('authorized wake callback required');
+    const match = await assertWake(wakeId);
+    const result = await build(match);
+    await assertTrigger(match.triggerId, match.triggerVersion);
+    return result;
+  }
+
+  return Object.freeze({
+    assertTrigger, assertWake,
+    withAuthorizedTriggerResult, withAuthorizedWakeResult,
+  });
 }
