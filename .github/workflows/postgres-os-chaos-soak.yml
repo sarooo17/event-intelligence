@@ -13,7 +13,7 @@ on:
       - scripts/lib/composite-event-consumer.mjs
       - scripts/lib/composite-wake-coordinator.mjs
       - scripts/lib/wake-retry-scheduler.mjs
-      - src/composite/**
+      - 'src/**'
       - package.json
       - package-lock.json
       - .github/workflows/postgres-os-chaos-soak.yml
