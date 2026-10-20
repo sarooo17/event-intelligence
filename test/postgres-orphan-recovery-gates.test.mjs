@@ -550,16 +550,34 @@ integration('wrapped PostgreSQL pools fail closed without capacity and run safel
   ), error => error?.code === 'EVENT_INTELLIGENCE_DISPATCH_POOL_SIZE_UNKNOWN');
   assert.equal(unsafeHostCalls, 0, 'unknown pool capacity cannot execute host effect');
 
+  const sizeOnly = new PostgresEventStore({ ...settings, dispatchPoolMax:2 });
+  await assert.rejects(() => sizeOnly.withTriggerDispatchFence(
+    'wrapped-pool-one', '1', new Date().toISOString(),
+    async () => { unsafeHostCalls++; return 'missing-identity'; },
+  ), error => error?.code === 'EVENT_INTELLIGENCE_DISPATCH_POOL_IDENTITY_REQUIRED');
+  assert.equal(unsafeHostCalls, 0);
+
   const configured = new PostgresEventStore({
-    ...settings, dispatchPoolMax:2,
+    ...settings, dispatchPoolMax:2, dispatchPoolIdentity:pool,
   });
-  assert.equal((await configured.forScope('other-scope')).dispatchPoolMax, 2,
+  const secondWrapper = {
+    query:(...args) => pool.query(...args),
+    connect:(...args) => pool.connect(...args),
+  };
+  const configuredSecond = new PostgresEventStore({
+    ...settings, pool:secondWrapper, dispatchPoolMax:2,
+    dispatchPoolIdentity:pool,
+  });
+  const scoped = await configured.forScope('other-scope');
+  assert.equal(scoped.dispatchPoolMax, 2,
     'capacity configuration must survive scope-store construction');
+  assert.equal(scoped.dispatchPoolIdentity, pool,
+    'scoped store must retain exact physical admission identity');
   let firstEntered, releaseFirst;
   const entered = new Promise(resolve => { firstEntered = resolve; });
   const blocked = new Promise(resolve => { releaseFirst = resolve; });
   let active = 0, maxActive = 0;
-  const run = (id, wait) => configured.withTriggerDispatchFence(
+  const run = (onStore, id, wait) => onStore.withTriggerDispatchFence(
     id, '1', new Date().toISOString(), async () => {
       active++;
       maxActive = Math.max(active, maxActive);
@@ -567,19 +585,21 @@ integration('wrapped PostgreSQL pools fail closed without capacity and run safel
         firstEntered();
         await blocked;
       }
-      assert.ok(await configured.getTrigger(id, '1'),
+      assert.ok(await onStore.getTrigger(id, '1'),
         'fenced callback must retain a free PG connection');
       active--;
       return id;
     },
   );
-  const a = run('wrapped-pool-one', true);
+  const a = run(configured, 'wrapped-pool-one', true);
   await entered;
-  const b = run('wrapped-pool-two', false);
+  const b = run(configuredSecond, 'wrapped-pool-two', false);
+  const c = run(store, 'wrapped-pool-two', false);
   releaseFirst();
-  const responses = await Promise.all([a,b]);
-  assert.deepEqual(responses.map(row => row.authorized), [true,true]);
-  assert.equal(maxActive, 1, 'max=2 wrapper must admit only one fenced callback');
+  const responses = await Promise.all([a,b,c]);
+  assert.deepEqual(responses.map(row => row.authorized), [true,true,true]);
+  assert.equal(maxActive, 1,
+    'two distinct wrappers AND the native pool must share one max=2 admission gate');
 
   const exaggerated = new PostgresEventStore({
     pool, tablePrefix:prefix, scopeId:'scope-recovery', dispatchPoolMax:3,
