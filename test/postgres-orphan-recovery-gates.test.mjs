@@ -740,3 +740,49 @@ integration('wake session fence blocks lease-expiry reclaim across independent P
     await otherPool.end();
   }
 }, {max:2}));
+
+
+integration('uncertain PostgreSQL unlock quarantines session even when wrapper ignores release errors', async () => fixture(async ({store,pool,prefix}) => {
+  await store.putTrigger(trigger('quarantine-release'));
+  let checkedOut = null;
+  let unsafeReleases = 0;
+  const wrapper = {
+    query:(...args) => pool.query(...args),
+    async connect() {
+      const raw = await pool.connect();
+      checkedOut = raw;
+      return {
+        query:(sql, params) => {
+          if (String(sql).includes('pg_advisory_unlock(')) {
+            return Promise.reject(new Error('injected-uncertain-unlock'));
+          }
+          return raw.query(sql, params);
+        },
+        // Deliberately ignores release(error): permitted by old
+        // PostgresPoolClient contract, but unsafe for session locks.
+        release() { unsafeReleases++; raw.release(); },
+      };
+    },
+  };
+  const target = new PostgresEventStore({
+    pool:wrapper, dispatchPoolIdentity:pool, dispatchPoolMax:2,
+    tablePrefix:prefix,scopeId:'scope-recovery',
+  });
+  try {
+    await assert.rejects(() => target.withTriggerDispatchFence(
+      'quarantine-release','1',new Date().toISOString(),
+      async () => 'effect-finished',
+    ), error => error?.code === 'EVENT_INTELLIGENCE_DISPATCH_SESSION_QUARANTINED' &&
+      error?.cause?.message === 'injected-uncertain-unlock');
+    assert.equal(unsafeReleases,0,
+      'unknown wrapper release() must NEVER return uncertain locked session to pool');
+    assert.ok(checkedOut);
+    const freeSlot = await pool.query('SELECT 1 AS ok');
+    assert.equal(freeSlot.rows[0].ok,1,
+      'quarantining one session must leave the remaining max=2 slot usable');
+  } finally {
+    // Explicit TEST cleanup: destroy the deliberately quarantined physical
+    // PG connection, otherwise the pool's normal end() would await checkout.
+    checkedOut?.release(new Error('test discard quarantined session'));
+  }
+}, {max:2}));
