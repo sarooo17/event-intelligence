@@ -32,12 +32,35 @@ import {
 const dispatchContext = new AsyncLocalStorage();
 const poolFenceSlots = new WeakMap();
 
+function quarantinedDispatchPoolError() {
+  const error = new Error(
+    'PostgreSQL dispatch pool has an uncertain session; recycle the physical pool before further host dispatch',
+  );
+  error.code = 'EVENT_INTELLIGENCE_DISPATCH_POOL_QUARANTINED';
+  return error;
+}
+
+function poisonPoolFenceCapacity(pool) {
+  // An uncertain PG advisory unlock may strand an entire session. Even if
+  // one connection remains, there may NOT be enough capacity for store I/O
+  // under a fenced host callback. Invalidate the shared admission identity
+  // and wake all queued continuations with an explicit fail-closed error.
+  const state = poolFenceSlots.get(pool);
+  if (!state) return;
+  state.poisoned = true;
+  for (const waiter of state.waiters.splice(0)) {
+    waiter.reject(quarantinedDispatchPoolError());
+  }
+}
+
 async function withPoolFenceCapacity(pool, capacity, run) {
   let state = poolFenceSlots.get(pool);
   if (!state) {
-    state = { active: 0, waiters: [], capacity };
+    state = { active: 0, waiters: [], capacity, poisoned: false };
     poolFenceSlots.set(pool, state);
-  } else if (state.capacity !== capacity) {
+  }
+  if (state.poisoned) throw quarantinedDispatchPoolError();
+  if (state.capacity !== capacity) {
     // Multiple scope stores can share the same underlying pool. Reject
     // conflicting configured limits instead of silently over-admitting.
     const error = new Error('Conflicting fenced dispatch capacity for shared PostgreSQL pool');
@@ -48,19 +71,27 @@ async function withPoolFenceCapacity(pool, capacity, run) {
   // pool. Contending lifecycle mutations use nonblocking try-lock/retry
   // and never pin all remaining PostgreSQL connections.
   if (state.active >= capacity) {
-    // The releasing holder transfers its reserved slot directly to the
-    // oldest waiter. Do NOT increment active on wake-up: a fresh entrant
-    // could otherwise race a queued waiter and over-admit callbacks.
-    await new Promise(resolve => state.waiters.push(resolve));
+    // Directly transfer the releasing holder's slot to the oldest waiter,
+    // without ever over-admitting. A poisoned gate rejects queued work.
+    await new Promise((resolve, reject) => state.waiters.push({ resolve, reject }));
   } else {
     state.active++;
   }
   try {
+    // The session may have been quarantined while this caller was queued.
+    if (state.poisoned) throw quarantinedDispatchPoolError();
     return await run();
   } finally {
-    const next = state.waiters.shift();
-    if (next) next();
-    else state.active--;
+    if (state.poisoned) {
+      for (const waiter of state.waiters.splice(0)) {
+        waiter.reject(quarantinedDispatchPoolError());
+      }
+      state.active--;
+    } else {
+      const next = state.waiters.shift();
+      if (next) next.resolve();
+      else state.active--;
+    }
   }
 }
 
@@ -1427,8 +1458,11 @@ export class PostgresEventStore {
             // release(error) destruction hint. Returning a possibly
             // session-locked client would poison future trigger dispatches.
             // Quarantine this checked-out connection instead: no release()
-            // call, so the pool CANNOT reuse it. The operator must recycle
-            // the pool/process after this exceptional session failure.
+            // call, so the pool CANNOT reuse it. Poison the shared physical
+            // admission gate too: a max=2 pool now has only one usable slot,
+            // which cannot support a host callback that performs store I/O.
+            // Every queued/new dispatch is rejected until pool replacement.
+            poisonPoolFenceCapacity(capacityIdentity);
             const uncertain = new Error(
               'Fenced PostgreSQL advisory unlock failed: quarantine session and recycle pool',
               { cause: error },
