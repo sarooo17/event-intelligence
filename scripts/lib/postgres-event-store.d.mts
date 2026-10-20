@@ -102,6 +102,7 @@ export declare class PostgresEventStore {
     version: string,
     at: string,
     operation: () => Promise<T>,
+    options?: { wakeId?: string | null },
   ): Promise<{ authorized: false; reason: string } | { authorized: true; value: T }>;
   ensureWakeDelivery(input: any): Promise<any>;
   claimWakeDelivery(wakeId: string, options: {
@@ -115,6 +116,13 @@ export declare class PostgresEventStore {
     attemptCount: number;
     runtimeReceiptId: string;
     now?: string;
+  }): Promise<any | null>;
+  /** Retry a contended trigger fence without spending host-failure attempts. */
+  deferBusyWakeDelivery(wakeId: string, options: {
+    workerId: string;
+    attemptCount: number;
+    now?: string;
+    nextAttemptAt?: string;
   }): Promise<any | null>;
   failWakeDelivery(wakeId: string, options: {
     workerId: string;
