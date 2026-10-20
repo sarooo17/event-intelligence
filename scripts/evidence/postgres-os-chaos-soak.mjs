@@ -25,6 +25,55 @@ function fail(message) {
   })+'\n');
   process.exitCode=1;
 }
+function checkoutSourceSha() {
+  const sha = spawnSync('git',['rev-parse','HEAD'],{
+    encoding:'utf8',timeout:5000,
+  });
+  const head=sha.stdout?.trim();
+  if (sha.status!==0 || !/^[0-9a-f]{40}$/.test(head??'')) {
+    throw new Error('cannot verify exact local Git checkout SHA');
+  }
+  // The user-supplied SHA is never the source of truth. It can only
+  // attest to the Git tree which was actually checked out.
+  if (process.env.SOAK_SOURCE_SHA && process.env.SOAK_SOURCE_SHA!==head) {
+    throw new Error('expected source SHA does not match local Git checkout');
+  }
+  const dirty = spawnSync('git',['status','--porcelain','--untracked-files=no'],{
+    encoding:'utf8',timeout:5000,
+  });
+  if (dirty.status!==0 || dirty.stdout?.trim()) {
+    throw new Error('tracked Git checkout is dirty; cannot attest source SHA');
+  }
+  return head;
+}
+
+function validateRoundEvidence(data,rounds) {
+  assert.equal(data.evidence?.length,rounds);
+  const matches=new Set(),wakes=new Set(),victims=new Set();
+  for(let round=0;round<rounds;round++) {
+    const row=data.evidence[round];
+    assert.equal(row?.round,round,'missing/reordered crash recovery round');
+    assert.equal(row.signal,'SIGKILL');
+    assert.ok(Number.isSafeInteger(row.killedPid)&&row.killedPid>0);
+    assert.ok(Array.isArray(row.successorPids) &&
+      row.successorPids.length===2 &&
+      row.successorPids.every(x=>Number.isSafeInteger(x)&&x>0) &&
+      new Set(row.successorPids).size===2 &&
+      !row.successorPids.includes(row.killedPid));
+    assert.equal(row.attempts,1);
+    assert.equal(row.effects,1);
+    assert.equal(row.deliveryGeneration,1);
+    assert.ok(typeof row.matchId==='string'&&row.matchId.length>0);
+    assert.ok(typeof row.wakeId==='string'&&row.wakeId.length>0);
+    assert.equal(row.receiptId,'fixture-external:'+row.wakeId);
+    assert.equal(matches.has(row.matchId),false,'replayed logical match');
+    assert.equal(wakes.has(row.wakeId),false,'replayed wake id');
+    matches.add(row.matchId);
+    wakes.add(row.wakeId);
+    victims.add(row.killedPid);
+  }
+}
+
 let temp=null;
 async function main() {
   const cohorts=integerArg('cohorts',1,12);
@@ -42,6 +91,7 @@ async function main() {
   }
   if(process.platform==='win32')
     throw new Error('real SIGKILL process chaos requires POSIX runner');
+  const verifiedSourceSha=checkoutSourceSha();
   temp=await mkdtemp(path.join(tmpdir(),'ei-pg-os-soak-'));
   const records=[];
   const start=performance.now();
@@ -74,7 +124,7 @@ async function main() {
     assert.equal(data.externalHostAttempts,rounds);
     assert.equal(data.externalHostEffects,rounds);
     assert.equal(data.observedDuplicateHostAttempts,0);
-    assert.equal(data.evidence?.length,rounds);
+    validateRoundEvidence(data,rounds);
     assert.ok(Number.isFinite(data.totalWallMs)&&data.totalWallMs>0);
     records.push({cohort:index+1,rounds,
       observedHostEffects:data.externalHostEffects,
@@ -89,7 +139,7 @@ async function main() {
   const result={
     schema:'ei-postgres-os-chaos-soak-v1',
     status:'completed',
-    sourceCommitSha:process.env.SOAK_SOURCE_SHA??process.env.GITHUB_SHA??null,
+    sourceCommitSha:verifiedSourceSha,
     hardware:{
       platform:process.platform,
       cpuModel:cpus()[0]?.model??'unknown',
