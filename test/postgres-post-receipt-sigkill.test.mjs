@@ -105,7 +105,7 @@ integration('actual SIGKILL after committed EI delivery receipt before wake appe
   const live = new Set();
   const exits = new Set();
   try {
-    const store = new PostgresEventStore({ pool, tablePrefix: prefix, scopeId });
+    const store = new PostgresEventStore({ pool: pool, dispatchPoolIdentity: pool, tablePrefix: prefix, scopeId });
     await store.init();
     await hostPool.query(
       'CREATE TABLE ' + effects +
