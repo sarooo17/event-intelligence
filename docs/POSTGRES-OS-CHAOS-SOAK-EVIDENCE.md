@@ -33,6 +33,12 @@ The workflow pins checkout to `pull_request.head.sha` or manual run's
 `github.sha`, uses a read-only token, a disposable PostgreSQL 16 service,
 real SIGKILL processes, a per-cohort upper time limit, and produces the
 immutable `postgres-os-chaos-soak-<run-id>` JSON artifact on success.
+The runner independently reads `git rev-parse HEAD`, rejects dirty
+tracked checkouts and refuses a mismatched `SOAK_SOURCE_SHA` rather than
+trusting caller-provided provenance. Each raw per-round record (victim
+SIGKILL PID, two distinct successor PIDs, match/wake IDs, exact receipt,
+host attempts/effects, monotonic generation) is validated, not merely
+counted. Local execution therefore requires a clean Git checkout.
 
 Local, against a **disposable PostgreSQL database only**:
 
