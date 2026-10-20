@@ -51,6 +51,21 @@ function checkoutSourceSha() {
 
 const require=createRequire(import.meta.url);
 
+let interruptedSignal=null;
+let killActiveCohort=null;
+// Detached POSIX cohorts do not inherit the terminal's process group.
+// Forward operator cancellation to the *entire* descendant group and then
+// await its close before releasing the runner/temporary evidence files.
+function interrupt(signal) {
+  interruptedSignal??=signal;
+  killActiveCohort?.();
+}
+process.on('SIGINT',()=>interrupt('SIGINT'));
+process.on('SIGTERM',()=>interrupt('SIGTERM'));
+function assertNotInterrupted() {
+  if(interruptedSignal)throw new Error('runner interrupted by '+interruptedSignal);
+}
+
 /** Isolated POSIX process group: kill the full node:test worker tree on
  * timeout, maxBuffer overflow OR any failed child exit, not just its leader. */
 function runCohort({rounds,artifact,timeoutMs,index}) {
@@ -72,6 +87,8 @@ function runCohort({rounds,artifact,timeoutMs,index}) {
       try{process.kill(-child.pid,'SIGKILL');}
       catch(error){if(error?.code!=='ESRCH')failed??='group-reap-failed';}
     };
+    killActiveCohort=killAll;
+    if(interruptedSignal)killAll();
     const timer=setTimeout(()=>{
       failed??='cohort-timeout';
       killAll();
@@ -79,8 +96,10 @@ function runCohort({rounds,artifact,timeoutMs,index}) {
     const finish=error=>{
       if(settled)return;
       settled=true;clearTimeout(timer);
-      if(error){killAll();reject(new Error(
-        'cohort '+(index+1)+' failed: '+error+
+      if(killActiveCohort===killAll)killActiveCohort=null;
+      const reason=error??(interruptedSignal?'runner-interrupted-'+interruptedSignal:null);
+      if(reason){killAll();reject(new Error(
+        'cohort '+(index+1)+' failed: '+reason+
         '; no completion artifact may be trusted'));
       }else resolve();
     };
@@ -161,13 +180,16 @@ async function main() {
       (build.error?.code??build.signal??build.status));
   }
   const postgres=await verifyPostgres16();
+  assertNotInterrupted();
   temp=await mkdtemp(path.join(tmpdir(),'ei-pg-os-soak-'));
   const records=[];
   const start=performance.now();
   for(let index=0;index<cohorts;index++) {
+    assertNotInterrupted();
     const artifact=path.join(temp,'cohort-'+index+'.json');
     await runCohort({rounds,artifact,
       timeoutMs:perCohortMinutes*60*1000,index});
+    assertNotInterrupted();
     const data=JSON.parse(await readFile(artifact,'utf8'));
     assert.equal(data.schema,'ei-postgres-os-matched-contenders-v1');
     assert.equal(data.rounds,rounds);
@@ -219,7 +241,12 @@ async function main() {
     productionSloCertified:false,
   };
   // Never create a success-shaped artifact if ANY cohort or its cleanup failed.
+  assertNotInterrupted();
   await writeFile(out,JSON.stringify(result,null,2)+'\n',{flag:'wx'});
+  if(interruptedSignal) {
+    await rm(out,{force:true});
+    assertNotInterrupted();
+  }
   process.stdout.write(JSON.stringify({status:'completed',
     totalKillRecoveryRounds:cohorts*rounds,out})+'\n');
 }
