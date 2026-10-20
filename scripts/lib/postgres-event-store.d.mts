@@ -55,6 +55,9 @@ export interface PostgresEventStoreOptions {
   ownsPool?: boolean;
   /** Only after a verified backup and operator approval; never auto-adopts data. */
   adoptUnversionedSchema?: boolean;
+  /** Explicit ACTUAL max connections for pg-compatible wrappers without pool.options.max.
+   * Must be >= 2; never configure above the underlying pool's real limit. */
+  dispatchPoolMax?: number;
 }
 
 export declare const MAX_POSTGRES_TABLE_PREFIX_BYTES: number;
@@ -77,6 +80,7 @@ export declare class PostgresEventStore {
   readonly scopeId: string;
   readonly tablePrefix: string;
   readonly ownsPool: boolean;
+  readonly dispatchPoolMax: number | null;
   readonly adoptUnversionedSchema: boolean;
   storeCapabilities(): EventIntelligenceStoreCapabilities;
   init(): Promise<Record<string, number>>;
