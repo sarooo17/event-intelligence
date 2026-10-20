@@ -93,6 +93,31 @@ export declare class PostgresEventStore {
 
   appendWake(record: any): Promise<any>;
   latestWake(wakeId: string): Promise<any | null>;
+  /**
+   * Operator-only and dry-run by default. Prunes interior exact duplicate
+   * historical wake snapshots only after an immutable delivered receipt;
+   * retains queued/delivered transitions, audit, MCP keys and the last wake.
+   */
+  compactDeliveredWakeDuplicateHistory(options: {
+    wakeId: string;
+    before: string;
+    maxRows?: number;
+    maxHistoryRows?: number;
+    maxScanMs?: number;
+    dryRun?: boolean;
+  }): Promise<{
+    ok: true;
+    strategy: 'delivered-wake-adjacent-duplicate-retention';
+    scopeId: string;
+    wakeId: string;
+    dryRun: boolean;
+    maxHistoryRows: number;
+    maxScanMs: number;
+    eligible: number;
+    deleted: number;
+    capped: boolean;
+    skipped?: 'not_durably_delivered' | 'latest_wake_not_delivered';
+  }>;
   getWakeDelivery(wakeId: string): Promise<any | null>;
   listDueWakeDeliveries(nowIso?: string): Promise<any[]>;
   /** Bounded, scoped authoritative repair of matched records lacking a wake-delivery. */
