@@ -40,9 +40,10 @@
       "status": "partial",
       "threat": "Foreign owner or tenant discovers trigger/match/receipt",
       "evidence": [
-        "test/postgres-inspector-restart.test.mjs"
+        "test/postgres-inspector-restart.test.mjs",
+        "test/mcp-owner-read-guard.test.mjs"
       ],
-      "residual": "Low-level inspector requires prior host policy; complete surface-wide adversarial multi-tenant audit is pending."
+      "residual": "Owner-rebind during wake-hydration lookup is covered by deterministic negative tests: a second authoritative check rejects stale principals/tenant switches. End-to-end cross-worker atomic owner revocation and every inspector/tool surface are NOT independently verified; host policy remains required."
     },
     {
       "id": "event-json-ingress",
