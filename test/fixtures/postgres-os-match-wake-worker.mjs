@@ -148,6 +148,9 @@ try {
   ack({
     type: 'failed', stage,
     code: typeof error?.code === 'string' ? error.code : 'EI_OS_MATCH_FIXTURE_FAILURE',
+    // Test fixture only: propagate bounded diagnostics for an unexpected
+    // scheduler/fence failure instead of masking its root cause behind IPC.
+    detail: error instanceof Error ? error.message.slice(0, 240) : 'unknown error',
   });
   process.exitCode = 1;
   await Promise.allSettled([storePool?.end(), hostPool?.end()].filter(Boolean));
