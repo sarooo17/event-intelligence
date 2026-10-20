@@ -32,11 +32,21 @@ Important distinctions:
 * Exact cross-worker revocation races, queued activation cancellation,
   multi-tenant fuzzing, operator retention/audit export, large body/rate
   quotas and independent review still need evidence.
-* **Unsolved final authorization snapshot race (#235):** a trigger owner transfer
-  can commit AFTER the guard's last owner query snapshots its result but
-  BEFORE the old principal receives a hydrated wake response. PR #232 tests
-  only transfers committed before this final snapshot; that is a partial
-  negative regression, **not** an atomic revocation guarantee.
+* **Final owner authorization snapshot (#235):** the standalone MCP
+  `wakeHydrate` and `inspect` tools now perform an additional owner/version
+  check AFTER constructing their activation/inspection response and BEFORE
+  handing it to the MCP server. A revocation/tenant transfer committed before
+  this final query's snapshot fails closed with nondisclosing not-found. This
+  protects the asynchronous hydration window that previously followed the
+  last check.
+* **Still unresolved (#235):** a transfer that commits AFTER the last owner
+  query snapshots its result can race the response return. The narrow
+  read-consistency contract here treats the final authoritative query snapshot
+  as the authorization linearization point: a read already authorized there
+  may finish, even if revocation commits before transport delivery. This is
+  NOT an atomic cross-worker cancellation mechanism, does not cancel queued
+  wake jobs and is not sufficient to close #45 or #235. A stronger
+  owner-revision/read-write fence and independent PG16 evidence remain open.
 
 Use this matrix with the v1 readiness ledger before publishing. Never
 place exploit reproductions, secrets or private vulnerability details in

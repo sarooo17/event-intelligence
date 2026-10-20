@@ -43,7 +43,7 @@
         "test/postgres-inspector-restart.test.mjs",
         "test/mcp-owner-read-guard.test.mjs"
       ],
-      "residual": "The owner is checked again after matched evidence lookup, rejecting transfers completed before that final query's authorization snapshot. A transfer committing AFTER the final query snapshots ownership (even before its promise resolves) can still return a previously authorized result; there is no atomic host-wide owner-revision fence. Host cancellation/revocation and all read surfaces require independent security review."
+      "residual": "Standalone MCP wakeHydrate and inspect now reauthorize after constructing results, denying a tenant/owner transfer committed before final lookup. A transfer committed AFTER the final authorization query snapshot may still allow that previously authorized read to finish; cross-worker revocation/cancellation linearization and other read surfaces remain pending under #235/#45."
     },
     {
       "id": "event-json-ingress",
