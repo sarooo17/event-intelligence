@@ -27,7 +27,7 @@ async function fixture(body, { max = 6 } = {}) {
   const prefix = 'ei_orphan_gates_' + randomBytes(5).toString('hex');
   const pool = new Pool({ connectionString: pgUrl, max,
     query_timeout: 5000, statement_timeout: 5000 });
-  const store = new PostgresEventStore({ pool, tablePrefix: prefix, scopeId: 'scope-recovery' });
+  const store = new PostgresEventStore({ pool, dispatchPoolIdentity:pool, tablePrefix: prefix, scopeId: 'scope-recovery' });
   try {
     await store.init();
     return await body({ store, pool, prefix });
@@ -267,7 +267,7 @@ integration('one-shot slot remains durably reserved when worker dies after host 
   });
   try {
     const reopened = new PostgresEventStore({
-      pool: secondPool, tablePrefix: prefix, scopeId: 'scope-recovery',
+      pool: secondPool, dispatchPoolIdentity:secondPool, tablePrefix: prefix, scopeId: 'scope-recovery',
     });
     await reopened.init();
     assert.equal((await invoke(reopened, 'wake-different')).authorized, false);
