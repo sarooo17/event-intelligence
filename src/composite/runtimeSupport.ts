@@ -143,6 +143,15 @@ export class CompositeTriggerRuntimeSupport {
 
     const previousCount = triggerState?.fireCount ?? 0;
     const fireCount = previousCount + 1;
+    const reservations = (triggerState as
+      (typeof triggerState & { dispatchReservations?: string[] }) | null
+    )?.dispatchReservations;
+    // Clear ONLY this delivered wake's durable reservation when lifecycle
+    // finalization commits. If a process died between external effect and
+    // markFired, its reservation persists across restarts for safe replay.
+    const remainingReservations = Array.isArray(reservations)
+      ? reservations.filter(id => effectKind !== 'wake' || id !== effectId)
+      : undefined;
     const lifecycle = definition.lifecycle ?? {};
     const complete =
       lifecycle.oneShot === true ||
@@ -167,6 +176,8 @@ export class CompositeTriggerRuntimeSupport {
         connectionIds: triggerState?.connectionIds ?? [],
         fireCount,
         lastFiredAt: effectAt,
+        ...(remainingReservations !== undefined
+          ? { dispatchReservations: remainingReservations } : {}),
       },
     );
 
