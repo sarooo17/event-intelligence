@@ -113,3 +113,63 @@ test('malformed profile shapes fail closed instead of throwing before manual rev
     assert.ok(result.missing.includes('steady-burst-fault-profile-matrix'));
   }
 });
+
+test('duplicate-rate budget is always in [0,1], including when throughput is valid',()=>{
+  for(const rate of [-1,2,Number.POSITIVE_INFINITY,Number.NaN,'0.5',null]) {
+    const input=sample();
+    input.preRegisteredSloBudgets.maxDuplicateEffectRate=rate;
+    const result=assessPostgresProductionSloEvidence(input);
+    assert.equal(result.status,'blocked',String(rate));
+    assert.ok(result.missing.includes('pre-registered-max-duplicate-rate'),
+      String(rate));
+  }
+  for(const rate of [0,0.02,1]){
+    const input=sample();
+    input.preRegisteredSloBudgets.maxDuplicateEffectRate=rate;
+    assert.equal(assessPostgresProductionSloEvidence(input).status,
+      'eligible-for-independent-review');
+  }
+});
+
+test('untrusted timestamps must be valid explicit ISO strings with timezone',()=>{
+  for(const invalid of [0,1,20261020,null,{},'', '2026-10-20',
+    '2026-02-30T10:00:00Z','2026-13-01T10:00:00Z',
+    '2026-10-20T25:00:00Z','2026-10-20T10:00:00+14:30']) {
+    for(const key of ['registeredAt','observedAt']) {
+      const input=sample();
+      if(key==='registeredAt')input.preRegisteredSloBudgets.registeredAt=invalid;
+      else input.observedAt=invalid;
+      const result=assessPostgresProductionSloEvidence(input);
+      assert.equal(result.status,'blocked',key+':'+String(invalid));
+      assert.ok(result.missing.includes('pre-registered-before-measurement'));
+    }
+  }
+  const input=sample();
+  input.preRegisteredSloBudgets.registeredAt='2026-10-19T14:00:00+02:00';
+  assert.equal(assessPostgresProductionSloEvidence(input).status,
+    'eligible-for-independent-review');
+});
+
+test('raw benchmark evidence requires complete anchored GitHub Actions run URL',()=>{
+  const invalid=[
+    'https://github.com/o/actions/runs/123',
+    'https://github.com/o/r/actions/runs/123/malicious',
+    'https://github.com/o/r/actions/runs/123?faked=1',
+    'https://github.com/o/r/actions/runs/0',
+    'https://github.com/o/r/issues/123',
+    'http://github.com/o/r/actions/runs/123',
+    'https://github.com/o/r/actions/runs/123#faked',
+  ];
+  for(const url of invalid){
+    const input=sample();
+    input.profiles[0].rawArtifactUrl=url;
+    const result=assessPostgresProductionSloEvidence(input);
+    assert.equal(result.status,'blocked',url);
+    assert.ok(result.missing.includes('steady:raw-public-run-artifact'),url);
+  }
+  const input=sample();
+  input.profiles[0].rawArtifactUrl=
+    'https://github.com/owner/repository/actions/runs/12345/attempts/2';
+  assert.equal(assessPostgresProductionSloEvidence(input).status,
+    'eligible-for-independent-review');
+});
