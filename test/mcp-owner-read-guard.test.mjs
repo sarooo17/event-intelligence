@@ -329,3 +329,109 @@ test('the final owner snapshot authorizes already-started reads, not retroactive
     notVisible,
   );
 });
+
+
+test('failed wake hydration cannot leak builder error after cross-owner revocation', async () => {
+  const triggerId = 'shared-name', matchId = 'revoked-wake-match';
+  let currentOwner = alice, entered, release, lookups = 0;
+  const started = new Promise(resolve => { entered = resolve; });
+  const blocked = new Promise(resolve => { release = resolve; });
+  const guard = createOwnerReadGuard({
+    owner: alice,
+    triggerControl: {
+      async listTriggers({ owner }) {
+        lookups++;
+        return sameIdentity(owner, currentOwner)
+          ? [{definition:{triggerId,version:'1'},state:{owner:currentOwner}}]
+          : [];
+      },
+    },
+    store: {
+      async latestWake() {
+        return {subscriptionId:'trigger:shared-name',sourceEventId:matchId};
+      },
+      async getWakeDelivery() {
+        return {matchId,triggerId,triggerVersion:'1'};
+      },
+      async listTriggerMatches() {
+        return [{matchId,triggerId,triggerVersion:'1'}];
+      },
+    },
+  });
+  const pending = guard.withAuthorizedWakeResult('wake-revoked-error', async () => {
+    entered();
+    await blocked;
+    // This error would be serialized by stdio errorResult() unless the
+    // owner guard replaces it with nondisclosing not-found after revocation.
+    throw new Error('SECRET-TENANT-A-PAYLOAD-IN-EXCEPTION');
+  });
+  await started;
+  currentOwner = bob;
+  release();
+  await assert.rejects(pending, error => {
+    notVisible(error);
+    const diagnostics = JSON.stringify([
+      error.message,error.stack,error.cause,
+      Object.getOwnPropertyDescriptors(error),
+    ]);
+    assert.equal(diagnostics.includes('SECRET-TENANT-A-PAYLOAD'), false);
+    return true;
+  });
+  assert.equal(lookups, 3,
+    'owner must be checked after a builder REJECTION as well as success');
+});
+
+test('failed inspector cannot leak builder exception across tenant reassignment', async () => {
+  let currentOwner = alice, entered, release, lookups = 0;
+  const started = new Promise(resolve => { entered = resolve; });
+  const blocked = new Promise(resolve => { release = resolve; });
+  const guard = createOwnerReadGuard({
+    owner: alice,
+    triggerControl:{
+      async listTriggers({owner}) {
+        lookups++;
+        return sameIdentity(owner,currentOwner)
+          ? [{definition:{triggerId:'shared-name',version:'1'},state:{owner:currentOwner}}]
+          : [];
+      },
+    },
+    store:{
+      async latestWake(){return null;},
+      async listTriggerMatches(){return [];},
+    },
+  });
+  const pending = guard.withAuthorizedTriggerResult('shared-name','1',async()=>{
+    entered();
+    await blocked;
+    throw new Error('SECRET-FROM-OTHER-TENANT-INSPECTOR');
+  });
+  await started;
+  currentOwner = aliceOtherTenant;
+  release();
+  await assert.rejects(pending, error => {
+    notVisible(error);
+    assert.equal(JSON.stringify(Object.getOwnPropertyDescriptors(error))
+      .includes('SECRET-FROM-OTHER-TENANT'),false);
+    return true;
+  });
+  assert.equal(lookups,2,'failed inspector needs post-failure owner check');
+});
+
+test('builder errors remain visible to current owner when authorization is unchanged', async () => {
+  const {guard} = fixture({
+    wake:{subscriptionId:'trigger:shared-name',sourceEventId:'match-owned'},
+    delivery:{matchId:'match-owned',triggerId:'shared-name',triggerVersion:'1'},
+    match:{matchId:'match-owned',triggerId:'shared-name',triggerVersion:'1'},
+  });
+  const permittedFailure = new Error('owned builder service unavailable');
+  await assert.rejects(
+    () => guard.withAuthorizedWakeResult('wake-owned-error',
+      async () => { throw permittedFailure; }),
+    error => error === permittedFailure,
+  );
+  await assert.rejects(
+    () => guard.withAuthorizedTriggerResult('shared-name','1',
+      async () => { throw permittedFailure; }),
+    error => error === permittedFailure,
+  );
+});
