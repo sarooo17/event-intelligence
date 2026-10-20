@@ -38,6 +38,17 @@ function evidenceTimestamp(value) {
   return Date.parse(value);
 }
 
+// Reject URL dot segments BEFORE parsing or using a public artifact link:
+ // WHATWG URL normalizes /owner/../ to a different resource.
+function canonicalGitHubActionsRunUrl(value) {
+  if (typeof value !== 'string') return false;
+  const match = /^https:\/\/github\.com\/([A-Za-z0-9-]{1,39})\/([A-Za-z0-9_.-]{1,100})\/actions\/runs\/[1-9]\d*(?:\/attempts\/[1-9]\d*)?$/.exec(value);
+  if (!match) return false;
+  const [, owner, repository] = match;
+  return !owner.startsWith('-') && !owner.endsWith('-') &&
+    repository !== '.' && repository !== '..';
+}
+
 function percentileSeries(value) {
   return value && Number.isSafeInteger(value.samples) && value.samples >= 1000 &&
     [value.p50Ms, value.p95Ms, value.p99Ms, value.maxMs].every(
@@ -117,8 +128,7 @@ export function assessPostgresProductionSloEvidence(report) {
         p.postgresServiceResourcesMeasured !== true) {
       missing.push(name + ':provider-host-db-attribution');
     }
-    if (typeof p.rawArtifactUrl !== 'string' ||
-        !/^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/actions\/runs\/[1-9]\d*(?:\/attempts\/[1-9]\d*)?$/.test(p.rawArtifactUrl)) {
+    if (!canonicalGitHubActionsRunUrl(p.rawArtifactUrl)) {
       missing.push(name + ':raw-public-run-artifact');
     }
     for (const metric of METRICS) {
