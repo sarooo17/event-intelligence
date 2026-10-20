@@ -130,10 +130,15 @@ If an advisory unlock query fails, EI **quarantines** that checked-out PG
 session without calling the wrapper's `release()`. A compatible wrapper can
 ignore `release(error)`, so recycling an uncertain session could retain an
 undetected advisory lock and block future dispatch or lifecycle mutations.
-Quarantine deliberately reduces available pool capacity and requires the
-operator to recycle the pool/process; it does not silently reuse the suspect
+Quarantine deliberately reduces available pool capacity and **poisons the
+shared physical pool admission gate**: all queued callbacks are rejected
+and every new fenced dispatch fails before host effects with
+`EVENT_INTELLIGENCE_DISPATCH_POOL_QUARANTINED`. The operator must recycle the
+pool/process; there is no attempt to dynamically lower the safe capacity of
+an existing session-constrained pool, and no silent reuse of the suspect
 connection. PG16 injects an unlock error through a wrapper whose
-`release()` ignores errors and verifies that method is never invoked.
+`release()` ignores errors, confirms that method is never invoked, and
+proves an already queued callback plus a fresh dispatch both fail closed.
 
 
 Long callbacks hold a PG connection and delay lifecycle revocations;
