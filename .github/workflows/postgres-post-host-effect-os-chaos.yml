@@ -10,6 +10,7 @@ on:
       - 'scripts/lib/**'
       - package.json
       - package-lock.json
+      - tsconfig.json
       - .github/workflows/postgres-post-host-effect-os-chaos.yml
   workflow_dispatch:
     inputs:
