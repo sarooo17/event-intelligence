@@ -176,6 +176,8 @@ integration('one-shot simultaneous matched wakes serialize host plus durable lif
   const current = await store.getTriggerState('one-shot-race', '1');
   assert.equal(current.status, 'completed');
   assert.equal(current.fireCount, 1);
+  assert.deepEqual(current.dispatchReservations, [],
+    'successful one-shot finalization must clear its durable wake reservation');
   assert.equal(await store.verifyAudit(), true);
 }, { max: 3 }));
 
@@ -239,3 +241,108 @@ integration('pool fairness enforces bounded capacity even when many fenced callb
   assert.equal(completed, 8);
   assert.deepEqual(out.map(x => x.value), [0,1,2,3,4,5,6,7]);
 }, { max: 2 }));
+
+integration('one-shot slot remains durably reserved when worker dies after host callback but before markFired', async () => fixture(async ({ store, prefix }) => {
+  await store.putTrigger(trigger('reserved-one-shot', { oneShot: true }));
+  let effects = 0;
+  const invoke = (onStore, wakeId) => onStore.withTriggerDispatchFence(
+    'reserved-one-shot', '1', new Date().toISOString(),
+    async () => { effects++; return 'host-effect'; }, { wakeId },
+  );
+  const first = await invoke(store, 'wake-original');
+  assert.equal(first.authorized, true);
+  assert.equal(effects, 1);
+  const saved = await store.getTriggerState('reserved-one-shot', '1');
+  assert.equal(saved.fireCount, 0, 'simulates a real crash before markFired');
+  assert.deepEqual(saved.dispatchReservations, ['wake-original']);
+  const replacement = await invoke(store, 'wake-different');
+  assert.equal(replacement.authorized, false);
+  assert.equal(effects, 1, 'different wake must not execute second one-shot effect');
+
+  // Reopen a genuinely separate PostgreSQL pool; this tests persistence,
+  // rather than relying on advisory lock state in the original connection.
+  const secondPool = new Pool({
+    connectionString: pgUrl, max: 2, query_timeout: 5000,
+    statement_timeout: 5000,
+  });
+  try {
+    const reopened = new PostgresEventStore({
+      pool: secondPool, tablePrefix: prefix, scopeId: 'scope-recovery',
+    });
+    await reopened.init();
+    assert.equal((await invoke(reopened, 'wake-different')).authorized, false);
+    // Recovery of the SAME wake retains its reserved right to attempt host
+    // receipt reconciliation after OS death; host must dedup by wake ID.
+    const resume = await reopened.withTriggerDispatchFence(
+      'reserved-one-shot', '1', new Date().toISOString(),
+      async () => {
+        await reopened.setTriggerState(
+          'reserved-one-shot', '1', 'completed',
+          { type:'system', principal_id:'event-intelligence:lifecycle' },
+          { fireCount:1, dispatchReservations:[] },
+        );
+        return 'reconciled-receipt';
+      }, { wakeId:'wake-original' },
+    );
+    assert.equal(resume.authorized, true);
+    assert.equal(resume.value, 'reconciled-receipt');
+    const finalState = await reopened.getTriggerState('reserved-one-shot', '1');
+    assert.equal(finalState.status, 'completed');
+    assert.equal(finalState.fireCount, 1);
+    assert.deepEqual(finalState.dispatchReservations, []);
+    assert.equal((await invoke(reopened, 'wake-different')).authorized, false);
+    assert.equal(effects, 1);
+  } finally {
+    await secondPool.end();
+  }
+}));
+
+integration('busy delivery claims keep monotonic generations without consuming host-failure limit', async () => fixture(async ({ store }) => {
+  const wakeId = 'busy-retry-test';
+  const start = Date.parse('2026-10-18T12:00:00Z');
+  const when = i => new Date(start + i * 1000).toISOString();
+  await store.ensureWakeDelivery({
+    wakeId, matchId:'busy-match', triggerId:'busy-trigger',
+    triggerVersion:'1', runtime:'fixture-host', now:when(0),
+  });
+  for (let i = 0; i < 6; i++) {
+    const claim = await store.claimWakeDelivery(wakeId, {
+      workerId:'busy-owner', now:when(i * 2), leaseMs:30000,
+    });
+    assert.ok(claim, 'each idle-generation claim must be independently fenced');
+    assert.equal(claim.attemptCount, i + 1);
+    const deferred = await store.deferBusyWakeDelivery(wakeId, {
+      workerId:'busy-owner', attemptCount:claim.attemptCount,
+      now:when(i * 2), nextAttemptAt:when(i * 2 + 1),
+    });
+    assert.equal(deferred.status, 'retry_pending');
+    assert.equal(deferred.dispatchContentions, i + 1);
+    assert.equal(deferred.attemptCount, i + 1,
+      'generation is never rolled backwards or reused');
+  }
+  const claim = await store.claimWakeDelivery(wakeId, {
+    workerId:'busy-owner', now:when(13), leaseMs:30000,
+  });
+  assert.equal(claim.attemptCount, 7);
+  const genuinelyFailed = await store.failWakeDelivery(wakeId, {
+    workerId:'busy-owner', attemptCount:7,
+    error:new Error('real host failure'), now:when(13),
+    nextAttemptAt:when(14), maxAttempts:5,
+  });
+  assert.equal(genuinelyFailed.status, 'retry_pending',
+    'six contention-only claims cannot spend all five real host attempts');
+  assert.equal(genuinelyFailed.dispatchContentions, 6);
+  assert.equal(genuinelyFailed.attemptCount, 7);
+  const claimedAgain = await store.claimWakeDelivery(wakeId, {
+    workerId:'new-owner', now:when(15), leaseMs:30000,
+  });
+  await assert.rejects(
+    () => store.deferBusyWakeDelivery(wakeId, {
+      workerId:'stale-owner', attemptCount:7,
+      now:when(15), nextAttemptAt:when(16),
+    }),
+    error => error?.code === 'WAKE_DELIVERY_CLAIM_LOST',
+    'monotonic attempt generation prevents stale wake release',
+  );
+  assert.equal(claimedAgain.attemptCount, 8);
+}));
