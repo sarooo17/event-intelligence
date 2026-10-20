@@ -619,6 +619,11 @@ test('JSONL restart must not fabricate version 1 for an unversioned legacy wake'
       wakeId:id,matchId,triggerId:'shared-name',triggerVersion:'1',
       runtime:'fixture',now:new Date().toISOString(),
     });
+    const legacyRetry=await source.ensureWakeDelivery({
+      wakeId:id,matchId,triggerId:'shared-name',runtime:'fixture',
+      // Older caller retries a SAME known wake without producer version.
+    });
+    assert.equal(legacyRetry.triggerVersion,'1');
     const file=source.files.wakeDeliveries;
     const lines=(await readFile(file,'utf8')).trim().split('\n');
     const legacy=JSON.parse(lines.at(-1));
