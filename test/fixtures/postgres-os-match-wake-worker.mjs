@@ -32,7 +32,7 @@ try {
     connectionString: POSTGRES_URL, max: 3, query_timeout: 5000,
     statement_timeout: 5000, connectionTimeoutMillis: 5000,
   });
-  const store = new PostgresEventStore({ pool: storePool, tablePrefix, scopeId });
+  const store = new PostgresEventStore({ pool: storePool, dispatchPoolIdentity: storePool, tablePrefix, scopeId });
   stage = 'store-init';
   await store.init();
   const engine = new CompositeTriggerEngine(store);
