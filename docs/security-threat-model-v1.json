@@ -43,7 +43,7 @@
         "test/postgres-inspector-restart.test.mjs",
         "test/mcp-owner-read-guard.test.mjs"
       ],
-      "residual": "Owner-rebind during wake-hydration lookup is covered by deterministic negative tests: a second authoritative check rejects stale principals/tenant switches. End-to-end cross-worker atomic owner revocation and every inspector/tool surface are NOT independently verified; host policy remains required."
+      "residual": "The owner is checked again after matched evidence lookup, rejecting transfers completed before that final query's authorization snapshot. A transfer committing AFTER the final query snapshots ownership (even before its promise resolves) can still return a previously authorized result; there is no atomic host-wide owner-revision fence. Host cancellation/revocation and all read surfaces require independent security review."
     },
     {
       "id": "event-json-ingress",
