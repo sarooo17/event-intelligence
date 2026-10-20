@@ -58,6 +58,9 @@ export interface PostgresEventStoreOptions {
   /** Explicit ACTUAL max connections for pg-compatible wrappers without pool.options.max.
    * Must be >= 2; never configure above the underlying pool's real limit. */
   dispatchPoolMax?: number;
+  /** REQUIRED with wrapper pools: the SAME underlying physical pool object must be
+   * supplied by every wrapper/store sharing its connections, including direct users. */
+  dispatchPoolIdentity?: object;
 }
 
 export declare const MAX_POSTGRES_TABLE_PREFIX_BYTES: number;
@@ -81,6 +84,7 @@ export declare class PostgresEventStore {
   readonly tablePrefix: string;
   readonly ownsPool: boolean;
   readonly dispatchPoolMax: number | null;
+  readonly dispatchPoolIdentity: object | null;
   readonly adoptUnversionedSchema: boolean;
   storeCapabilities(): EventIntelligenceStoreCapabilities;
   init(): Promise<Record<string, number>>;
