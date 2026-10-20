@@ -173,7 +173,8 @@ test('wake hydration rechecks owner when transfer commits before final lookup be
       'secret must not occur in enumerable or non-enumerable error details');
     return true;
   });
-  assert.equal(listed,2,'owner must be queried AGAIN after matched evidence lookup');
+  assert.equal(listed,3,
+    'revoked owner is rechecked on exact match version and again on the pinned initial version before propagating denial');
   const newGuard = createOwnerReadGuard({owner:bob,triggerControl:control,store});
   assert.equal((await newGuard.assertWake('wake-under-transfer')).matchId,matchId);
 });
