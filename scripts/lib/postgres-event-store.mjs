@@ -1089,16 +1089,18 @@ export class PostgresEventStore {
     matchId,
     before,
     maxRows = 100,
+    maxHistoryRows = 10000,
     dryRun = true,
   } = {}) {
     if (typeof matchId !== 'string' || !matchId.trim() ||
         !z.iso.datetime({ offset: true }).safeParse(before).success ||
         Date.parse(before) > Date.now() ||
         !Number.isSafeInteger(maxRows) || maxRows < 1 || maxRows > 1000 ||
-        typeof dryRun !== 'boolean') {
+        !Number.isSafeInteger(maxHistoryRows) || maxHistoryRows < 3 ||
+        maxHistoryRows > 100000 || typeof dryRun !== 'boolean') {
       const error = new TypeError(
         'Match history compaction needs matchId, past offset-aware ISO cutoff, ' +
-        'maxRows 1..1000 and boolean dryRun',
+        'maxRows 1..1000, maxHistoryRows 3..100000 and boolean dryRun',
       );
       error.code = 'EVENT_INTELLIGENCE_MATCH_HISTORY_RETENTION_INVALID';
       throw error;
@@ -1117,9 +1119,23 @@ export class PostgresEventStore {
         };
       }
       // LAG+LEAD must examine *all* revisions of this ONE match before
-      // applying cutoff and maxRows. Filtering first could erase a boundary
-      // witness of an older-vs-newer transition. The key index confines the
-      // scan to the selected scope, kind and matchId.
+      // applying cutoff and maxRows. Reject over-budget histories BEFORE
+      // deletion, without either a full COUNT(*) or an unlimited window
+      // materialization. This index-backed bounded OFFSET probes at most
+      // maxHistoryRows + 1 history_id entries under the per-match writer lock.
+      const overBudget = await client.query(
+        'SELECT history_id FROM ' + this.history +
+        ' WHERE scope_id=$1 AND kind=$2 AND record_key=$3' +
+        ' ORDER BY history_id OFFSET $4 LIMIT 1',
+        [this.scopeId, 'trigger_match_history', matchId, maxHistoryRows],
+      );
+      if (overBudget.rows.length) {
+        const error = new Error(
+          'Match history exceeds operator scan budget; no revisions compacted',
+        );
+        error.code = 'EVENT_INTELLIGENCE_MATCH_HISTORY_SCAN_BUDGET_EXCEEDED';
+        throw error;
+      }
       const candidatesSql =
         'WITH ordered AS (' +
         ' SELECT history_id, created_at, payload,' +
@@ -1153,7 +1169,7 @@ export class PostgresEventStore {
       const count = result.rows.length;
       return {
         ok: true, strategy: 'terminal-match-adjacent-duplicate-retention',
-        scopeId: this.scopeId, matchId, dryRun,
+        scopeId: this.scopeId, matchId, dryRun, maxHistoryRows,
         eligible: count, deleted: dryRun ? 0 : count,
         capped: count === maxRows,
       };

@@ -157,6 +157,8 @@ export declare class PostgresEventStore {
     matchId: string;
     before: string;
     maxRows?: number;
+    /** Maximum indexed revision count to inspect before failing closed (3..100000). */
+    maxHistoryRows?: number;
     dryRun?: boolean;
   }): Promise<{
     ok: true;
@@ -164,6 +166,7 @@ export declare class PostgresEventStore {
     scopeId: string;
     matchId: string;
     dryRun: boolean;
+    maxHistoryRows?: number;
     eligible: number;
     deleted: number;
     capped: boolean;
