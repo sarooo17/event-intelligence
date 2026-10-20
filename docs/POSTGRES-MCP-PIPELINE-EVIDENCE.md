@@ -88,3 +88,42 @@ partition churn, host crash after delivery before receipt, long-running
 chaos/failover, full provider-to-wake latency distributions and
 audited RPO/RTO and production SLOs. Existing 1k/10k/100k PostgreSQL
 registration results must not be relabeled as active CEP capacity.
+
+
+## Opt-in repeated occurrence / rate-controlled sampling (#47)
+
+The existing 1k/10k/100k trigger-population experiments are **unchanged**.
+For a SMALL (≤64-trigger) disposable profile, the new opt-in mode runs
+many **different event IDs** against reused active triggers to collect
+more real PostgreSQL ingest→match→wake latency samples.
+
+```sh
+EI_PG_PIPELINE_CONFIRM=YES_ISOLATED \
+EI_PG_PIPELINE_REPEAT_CONFIRM=YES_ISOLATED_REPEAT \
+POSTGRES_URL='postgresql://.../disposable_test_db' \
+  node scripts/evidence/postgres-mcp-ingest-wake.mjs \
+  --triggers 16 --events 1200 --sources 4 --noise 4 --replays 10 \
+  --repeat-matches --rate 2 > repeated-pg-latencies.json
+```
+
+The monotonic clock paces at **no more than the requested events/s**;
+slower database operations reduce achieved throughput rather than
+silently making measured latency shorter. Every event is uniquely
+identified, replay is exact source-ID replay, noise IDs cannot collide
+with measured events, and a fresh independent PG pool checks **all**
+durable receipts after reopen. Standard PG16 CI adds a low-cost 8
+trigger/24 event opt-in smoke, including at least three rounds per
+trigger and independent receipt verification.
+
+Safety: explicit `EI_PG_PIPELINE_REPEAT_CONFIRM=YES_ISOLATED_REPEAT`;
+≤64 triggers, ≤5000 matching events and rate 1–1000 events/s. Without
+the explicit repeat flag, the original `--events <= --triggers` guard
+still applies, as do the existing expensive large-population confirmation
+requirements. No customer tables are used or migrated.
+
+**Not a production SLO:** sequential single-worker ingestion, local
+in-process host, missing provider wire time, and absent DB fault/partition
+rebalance. A large sample count may produce a useful synthetic local
+p99 but **cannot** satisfy the production SLO evidence contract or #47
+until multi-worker, multi-rate, real-provider/host and fault evidence
+are collected and independently reviewed.
