@@ -108,7 +108,7 @@ integration('real SIGKILL before EI event persistence replays from durable provi
   const recoveredWakes = new Set();
   try {
     const store = new PostgresEventStore({
-      pool: storePool, scopeId, tablePrefix: prefix,
+      pool: storePool, dispatchPoolIdentity: storePool, scopeId, tablePrefix: prefix,
     });
     await store.init();
     await new CompositeTriggerEngine(store).register(definition());
