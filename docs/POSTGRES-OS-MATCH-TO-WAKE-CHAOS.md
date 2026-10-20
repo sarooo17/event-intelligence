@@ -112,6 +112,20 @@ and direct native-pool dispatch through one FIFO single-callback gate.
 fenced callbacks while the remainder stay available for callback I/O
 and nonblocking trigger-state mutation attempts. Session loss in the middle of an
 external callback and external idempotency remain integration risks.
+Claimed wake dispatch also has a **per-wake PostgreSQL session advisory
+fence**, separate from the per-trigger lifecycle fence. After waiting for
+pool admission and obtaining the trigger lock, EI checks the *current*
+durable wake lease owner, claim generation and effective deadline under the
+wake lock before calling the host. Reclaims acquire the matching transaction
+try-lock; they cannot overtake an already-entered host callback even if its
+lease clock expires while the callback runs. A stale generation waiting
+behind an unrelated callback is rejected as `claim_lost` without invoking
+the external host. This guarantee relies on **every claiming writer**
+using `PostgresEventStore.claimWakeDelivery()` and session-preserving
+connections; an external writer that directly modifies rows bypasses this
+advisory protocol. Real PG16 tests use distinct pools to cover both stale
+claims after admission wait and attempted mid-callback reclaim.
+
 Long callbacks hold a PG connection and delay lifecycle revocations;
 this is not a guaranteed distributed external-host atomic transaction.
 The host must still implement durable receipt idempotency after crash. Missing runtime coordinators remain
