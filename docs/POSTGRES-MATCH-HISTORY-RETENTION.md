@@ -6,13 +6,26 @@ This is **not general append-only history TTL** and does not yet complete the
 retention/compaction acceptance in #47. It provides a narrowly scoped,
 operator-invoked, *dry-run by default* operation:
 `PostgresEventStore.compactTerminalMatchDuplicateHistory({ matchId, before,
-maxRows, maxHistoryRows, dryRun })`. `before` must be an offset-aware ISO
+maxRows, maxHistoryRows, maxScanMs, dryRun })`. `before` must be an offset-aware ISO
 timestamp no later than the current clock time; `maxRows` ranges 1–1000
 (default 100). `maxHistoryRows` is the maximum indexed revision count the
 operator permits scanning (3–100000, default 10000). Histories exceeding
 this ceiling fail closed with `EVENT_INTELLIGENCE_MATCH_HISTORY_SCAN_BUDGET_EXCEEDED`
 **before** any destructive SQL; a scan-budget failure is not truncation
 or silent partial compaction.
+
+**Physical SQL time guard:** PostgreSQL `OFFSET` counts only visible rows:
+dead index tuples left behind by repeated compaction or delayed VACUUM
+can still require extra work. `maxScanMs` (100–30000 ms, default 2000)
+sets a transaction-local `statement_timeout` for EACH statement under the
+writer fence (including advisory lock acquisition, count probe, window
+selection and DELETE). A statement timeout aborts the entire transaction
+and is surfaced as `EVENT_INTELLIGENCE_MATCH_HISTORY_TIME_BUDGET_EXCEEDED`,
+with **no committed deletion**. This is a finite per-statement wall-clock
+budget, NOT a count of physical index tuples read nor a universal p99 SLA.
+Operators should monitor vacuum/index health and use conservative budgets
+rather than treating a successful visible-row OFFSET as a guarantee of
+bounded heap or index I/O.
 
 Only `trigger_match_history` rows for the *given tenant scope and match ID*
 are eligible. The durable current `trigger_match` row must have
