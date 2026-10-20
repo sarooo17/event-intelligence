@@ -5,6 +5,8 @@ on:
     branches: [main]
     paths:
       - scripts/evidence/postgres-os-chaos-soak.mjs
+      - scripts/evidence/postgres-os-chaos-evidence.mjs
+      - test/postgres-os-chaos-evidence.test.mjs
       - test/postgres-os-matched-contenders.test.mjs
       - test/fixtures/postgres-os-match-wake-worker.mjs
       - scripts/lib/postgres-event-store.mjs
