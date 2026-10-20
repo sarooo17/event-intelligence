@@ -32,6 +32,11 @@ Important distinctions:
 * Exact cross-worker revocation races, queued activation cancellation,
   multi-tenant fuzzing, operator retention/audit export, large body/rate
   quotas and independent review still need evidence.
+* **Unsolved final authorization snapshot race (#235):** a trigger owner transfer
+  can commit AFTER the guard's last owner query snapshots its result but
+  BEFORE the old principal receives a hydrated wake response. PR #232 tests
+  only transfers committed before this final snapshot; that is a partial
+  negative regression, **not** an atomic revocation guarantee.
 
 Use this matrix with the v1 readiness ledger before publishing. Never
 place exploit reproductions, secrets or private vulnerability details in
