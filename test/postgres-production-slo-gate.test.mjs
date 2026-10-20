@@ -67,7 +67,8 @@ test('existing synthetic PG event-to-wake benchmark cannot masquerade as product
   assert.equal(result.status,'blocked');
   assert.ok(result.missing.includes('report-schema'));
   assert.ok(result.missing.includes('self-certification-forbidden'));
-  assert.ok(result.missing.some(x=>x.startsWith('steady:')));
+  assert.ok(result.missing.includes('profile:steady'),
+    'the synthetic report lacks the required steady workload entirely');
   assert.equal(result.productionSloCertified,false);
 });
 
