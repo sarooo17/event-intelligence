@@ -100,3 +100,15 @@ test('retrospective budgets and incomplete resource attribution cannot clear gua
     'fault-injected:measured-1000-sample-tail:hostEffect',
   ])assert.ok(result.missing.includes(expected),expected);
 });
+
+
+test('malformed profile shapes fail closed instead of throwing before manual review',()=>{
+  for(const profiles of [null,{},'invalid',[],[{name:'steady'}]]) {
+    const report=sample();
+    report.profiles=profiles;
+    const result=assessPostgresProductionSloEvidence(report);
+    assert.equal(result.status,'blocked');
+    assert.equal(result.productionSloCertified,false);
+    assert.ok(result.missing.includes('steady-burst-fault-profile-matrix'));
+  }
+});
