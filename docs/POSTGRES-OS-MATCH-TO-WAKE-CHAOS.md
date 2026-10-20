@@ -62,14 +62,20 @@ Only the matching internal system-lifecycle finalizer may reenter its
 own advisory fence, avoiding a self-deadlock. A concurrent user pause
 waits until already-authorized work has finished, or commits before
 the final guarded check and suppresses the effect. A pool-wide local
-admission gate reserves **at least two connections** for callback
+admission gate reserves **at least one connection** for callback
 lookups/management mutations, rather than exhausting the pool with
 competing lock waiters; same-trigger lock contention is fail-closed
-and re-enters the existing durable retry protocol.
+and re-enters the existing durable retry protocol. FIFO admission
+hands each reserved slot directly to its next waiter so a newly arriving
+callback cannot over-admit an already-full pool. A real PG16 regression
+confirms eight queued callbacks on a pool of two never use both slots
+for the fencing sessions simultaneously.
 
 **Operational constraint:** this mechanism requires direct,
 session-preserving PostgreSQL (not PgBouncer transaction-pooling) and a
-pool of **at least three connections**. Session loss in the middle of an
+pool of **at least two connections**; `floor(maxPool/2)` slots can hold
+fenced callbacks while the remainder stay available for callback I/O
+and nonblocking trigger-state mutation attempts. Session loss in the middle of an
 external callback and external idempotency remain integration risks.
 Long callbacks hold a PG connection and delay lifecycle revocations;
 this is not a guaranteed distributed external-host atomic transaction.
