@@ -129,7 +129,8 @@ try {
     const outcomes = candidates.filter(row => row.matchId === persistedMatchId);
     if (outcomes.length > 1 || (outcomes.length === 1 &&
         !['wake_delivered', 'delivery_in_progress'].includes(outcomes[0].status))) {
-      throw new Error('scheduler produced multiple or invalid matching outcomes');
+      throw new Error('scheduler produced multiple or invalid matching outcomes: ' +
+        JSON.stringify(outcomes.map(row => ({status:row.status, matchId:row.matchId}))));
     }
     // When another contender has already claimed and begun delivery, the
     // second scheduler can correctly observe NO eligible work: claimed
