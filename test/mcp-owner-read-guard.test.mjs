@@ -189,8 +189,8 @@ test('wake hydration rechecks owner when transfer commits before final lookup be
       'secret must not occur in enumerable or non-enumerable error details');
     return true;
   });
-  assert.equal(listed,3,
-    'revoked owner is rechecked on exact match version and again on the pinned initial version before propagating denial');
+  assert.equal(listed,2,
+    'a final authorization denial is already safe and must NOT be queried again');
   const newGuard = createOwnerReadGuard({owner:bob,triggerControl:control,store});
   assert.equal((await newGuard.assertWake('wake-under-transfer')).matchId,matchId);
 });
@@ -531,4 +531,75 @@ test('negative error-leak oracle detects nested and non-enumerable Error causes'
   assert.match(observable,/stack:/);
   nested.cause.cause = nested;
   assert.match(errorDiagnostics(nested),/\[circular\]/);
+});
+
+
+test('wake with missing durable producer version is denied BEFORE any evidence read', async()=>{
+  const matchId='v1-private-match',triggerId='shared-name';
+  for (const mode of ['missing-method','missing-record','missing-version']) {
+    let reads=0;
+    const store={
+      async latestWake() {
+        return {subscriptionId:'trigger:'+triggerId,sourceEventId:matchId};
+      },
+      async listTriggerMatches(){
+        reads++;
+        throw new Error('SECRET-V1-MATCH-EVIDENCE');
+      },
+      ...(mode==='missing-record' ? {async getWakeDelivery(){return null;}} : {}),
+      ...(mode==='missing-version' ? {async getWakeDelivery(){
+        return {matchId,triggerId,triggerVersion:''};
+      }} : {}),
+    };
+    const guard=createOwnerReadGuard({
+      owner:alice,
+      triggerControl:{
+        async listTriggers({owner}){
+          // The caller retains v2, while the wake may have originated from
+          // transferred v1; a latest-owned-version fallback would be unsafe.
+          return sameIdentity(owner,alice)
+            ? [{definition:{triggerId,version:'2'},state:{owner:alice}}]
+            : [];
+        },
+      },
+      store,
+    });
+    await assert.rejects(()=>guard.assertWake('v1-unpinned'),notVisible);
+    assert.equal(reads,0,'unversioned wake must never read evidence: '+mode);
+  }
+});
+
+test('final owner denial cannot be replaced by a third authorization query error',async()=>{
+  let lookups=0, revoke;
+  const released=new Promise(resolve=>{revoke=resolve;});
+  const guard=createOwnerReadGuard({
+    owner:alice,
+    triggerControl:{
+      async listTriggers({owner}){
+        lookups++;
+        if (lookups>=3) throw new Error('SECRET-AUTH-BACKEND-ERROR');
+        if(lookups===2) return [];
+        return [{definition:{triggerId:'shared-name',version:'1'},state:{owner:alice}}];
+      },
+    },
+    store:{
+      async latestWake() {
+        return {subscriptionId:'trigger:shared-name',sourceEventId:'m'};
+      },
+      async getWakeDelivery() {
+        return {matchId:'m',triggerId:'shared-name',triggerVersion:'1'};
+      },
+      async listTriggerMatches() {
+        revoke();
+        return [{matchId:'m',triggerId:'shared-name',triggerVersion:'1'}];
+      },
+    },
+  });
+  await assert.rejects(()=>guard.assertWake('revoke-before-final-query'),error=>{
+    notVisible(error);
+    assert.equal(errorDiagnostics(error).includes('SECRET-AUTH-BACKEND'),false);
+    return true;
+  });
+  await released;
+  assert.equal(lookups,2,'must not re-query after definitive authorization denial');
 });
