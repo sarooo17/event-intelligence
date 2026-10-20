@@ -435,3 +435,72 @@ test('builder errors remain visible to current owner when authorization is uncha
     error => error === permittedFailure,
   );
 });
+
+
+test('failed matched-evidence read cannot return sensitive error after revocation', async () => {
+  let ownerNow = alice, entered, release, checks = 0;
+  const started = new Promise(resolve => { entered = resolve; });
+  const gate = new Promise(resolve => { release = resolve; });
+  const guard = createOwnerReadGuard({
+    owner:alice,
+    triggerControl:{
+      async listTriggers({owner}) {
+        checks++;
+        return sameIdentity(owner,ownerNow)
+          ? [{definition:{triggerId:'shared-name',version:'1'},state:{owner:ownerNow}}]
+          : [];
+      },
+    },
+    store:{
+      async latestWake() {
+        return {subscriptionId:'trigger:shared-name',sourceEventId:'match-error'};
+      },
+      async getWakeDelivery() {
+        return {matchId:'match-error',triggerId:'shared-name',triggerVersion:'1'};
+      },
+      async listTriggerMatches() {
+        entered();
+        await gate;
+        throw new Error('SECRET-PROVIDER-EVIDENCE-IN-DATABASE-ERROR');
+      },
+    },
+  });
+  const pending = guard.assertWake('wake-error-evidence');
+  await started;
+  ownerNow = bob;
+  release();
+  await assert.rejects(pending,error=>{
+    notVisible(error);
+    assert.equal(JSON.stringify([
+      error.message,error.stack,error.cause,
+      Object.getOwnPropertyDescriptors(error),
+    ]).includes('SECRET-PROVIDER-EVIDENCE'),false);
+    return true;
+  });
+  assert.equal(checks,2,'failed post-auth evidence read must recheck pinned owner');
+});
+
+test('matched-evidence service error is preserved while original owner retains access', async()=>{
+  const secret = new Error('owned PostgreSQL read interrupted');
+  const guard=createOwnerReadGuard({
+    owner:alice,
+    triggerControl:{
+      async listTriggers({owner}) {
+        return sameIdentity(owner,alice)
+          ? [{definition:{triggerId:'shared-name',version:'1'},state:{owner:alice}}]
+          : [];
+      },
+    },
+    store:{
+      async latestWake() {
+        return {subscriptionId:'trigger:shared-name',sourceEventId:'m'};
+      },
+      async getWakeDelivery() {
+        return {matchId:'m',triggerId:'shared-name',triggerVersion:'1'};
+      },
+      async listTriggerMatches(){throw secret;},
+    },
+  });
+  await assert.rejects(()=>guard.assertWake('wake-owned-service-error'),
+    error=>error===secret);
+});
