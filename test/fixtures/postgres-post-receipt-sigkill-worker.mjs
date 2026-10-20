@@ -30,7 +30,7 @@ try {
     query_timeout: 5000, statement_timeout: 5000,
     connectionTimeoutMillis: 5000,
   });
-  const store = new PostgresEventStore({ pool, tablePrefix: prefix, scopeId });
+  const store = new PostgresEventStore({ pool: pool, dispatchPoolIdentity: pool, tablePrefix: prefix, scopeId });
   stage = 'init';
   await store.init();
   const match = (await store.listTriggerMatches(triggerId))
