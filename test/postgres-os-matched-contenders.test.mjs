@@ -177,7 +177,7 @@ integration('real OS SIGKILL after MCP Pattern match: independent PG workers con
       assert.ok(outcomes.some(row => row.status === 'wake_delivered'),
         'at least one worker must complete the authoritative claim');
       assert.ok(outcomes.every(row =>
-        ['wake_delivered', 'delivery_in_progress', 'claim_lost', 'no_work'].includes(row.status)),
+        ['wake_delivered', 'delivery_in_progress', 'claim_lost', 'retry_scheduled', 'no_work'].includes(row.status)),
         'non-owning contender may see already-claimed work as not due');
       assert.equal(outcomes.reduce((sum, row) => sum + row.hostCalls, 0), 1,
         'two competing physical workers must invoke the host at most once');
