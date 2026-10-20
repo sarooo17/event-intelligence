@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { fork } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
+import { writeFile } from 'node:fs/promises';
 import test from 'node:test';
 import { PostgresEventStore } from '../scripts/lib/postgres-event-store.mjs';
 import { CompositeTriggerEngine } from '../dist/src/composite/engine.js';
@@ -11,7 +12,13 @@ const Pool = pg?.Pool ?? pg?.default?.Pool;
 const integration = url && process.platform !== 'win32' ? test : test.skip;
 const fixture = new URL('./fixtures/postgres-post-host-effect-worker.mjs', import.meta.url);
 const origin = Date.parse('2026-10-18T14:00:00.000Z');
-const rounds = 3;
+const configuredRounds = process.env.EI_EFFECT_KILL_ROUNDS ?? '3';
+if (!/^[1-9]\\d*$/.test(configuredRounds) ||
+    !Number.isSafeInteger(Number(configuredRounds)) ||
+    Number(configuredRounds) > 30) {
+  throw new TypeError('EI_EFFECT_KILL_ROUNDS must be a decimal integer in 1..30');
+}
+const rounds = Number(configuredRounds);
 function iso(ms) { return new Date(ms).toISOString(); }
 
 function launch(env, children, childExits) {
@@ -93,7 +100,7 @@ function event(round) {
 }
 
 integration('actual SIGKILL AFTER durable host effect BEFORE EI receipt reconciles exactly one host effect per wake', {
-  timeout: 90000,
+  timeout: Math.max(90000, rounds * 15000),
 }, async () => {
   const prefix = 'ei_effect_' + randomBytes(5).toString('hex');
   const scopeId = 'post-effect-scope';
@@ -104,6 +111,9 @@ integration('actual SIGKILL AFTER durable host effect BEFORE EI receipt reconcil
   const children = new Set();
   const childExits = new Set();
   const reported = [];
+  const roundsEvidence = [];
+  const started = process.hrtime.bigint();
+  let completedEvidence = null;
   try {
     const store = new PostgresEventStore({
       pool: pool, dispatchPoolIdentity: pool, tablePrefix: prefix, scopeId,
@@ -203,6 +213,13 @@ integration('actual SIGKILL AFTER durable host effect BEFORE EI receipt reconcil
       assert.equal(fired.status, 'fired');
       assert.equal(fired.firedWakeId, committed.wakeId);
       reported.push(committed.wakeId);
+      roundsEvidence.push({
+        round, matchId, wakeId: committed.wakeId,
+        victimPid: committed.pid, successorPid: reconciled.pid,
+        signal: killed.signal, attempts: attempts.rows.length,
+        effects: effects.rows.length, claimGeneration: record.attemptCount,
+        receiptId: record.runtimeReceiptId,
+      });
     }
     const verifierPool = new Pool({ connectionString: url, max: 2 });
     try {
@@ -227,6 +244,22 @@ integration('actual SIGKILL AFTER durable host effect BEFORE EI receipt reconcil
     } finally {
       await verifierPool.end();
     }
+    completedEvidence = {
+      schema: 'ei-postgres-post-host-effect-os-chaos-v1',
+      status: 'completed',
+      rounds,
+      killedAfterHostEffectBeforeEiReceipt: rounds,
+      recoveredDurableReceipts: reported.length,
+      uniqueHostEffects: rounds,
+      hostAttempts: 2 * rounds,
+      // Two at-least-once attempts per wake are deliberate; the host
+      // idempotency ledger guarantees only one actual external effect.
+      duplicateHostAttempts: rounds,
+      totalWallMs: Number(process.hrtime.bigint() - started) / 1e6,
+      evidence: roundsEvidence,
+      limitations: 'single isolated PostgreSQL service and database-backed fixture host ledger; no real external API, WAN, partition, failover or production SLO',
+      productionSloCertified: false,
+    };
   } finally {
     try {
       // SIGKILL only requests termination. The independent child backends
@@ -264,5 +297,11 @@ integration('actual SIGKILL AFTER durable host effect BEFORE EI receipt reconcil
       // always close the parent PG sockets so node --test can terminate.
       await Promise.allSettled([pool.end(), host.end()]);
     }
+  }
+  // No success-shaped artifact is written until all children are reaped,
+  // both database stores are cleaned and independent receipt checks pass.
+  if (completedEvidence && process.env.EI_EFFECT_KILL_EVIDENCE_OUT) {
+    await writeFile(process.env.EI_EFFECT_KILL_EVIDENCE_OUT,
+      JSON.stringify(completedEvidence, null, 2) + '\\n', { flag: 'wx' });
   }
 });
