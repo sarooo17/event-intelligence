@@ -17,6 +17,7 @@ on:
       - 'src/**'
       - package.json
       - package-lock.json
+      - tsconfig.json
       - .github/workflows/postgres-os-chaos-soak.yml
   workflow_dispatch:
     inputs:
