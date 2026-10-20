@@ -1709,6 +1709,9 @@ export class PostgresEventStore {
     before,
     maxRows = 100,
     maxHistoryRows = 10000,
+    // Visible-row OFFSET cannot cap dead index tuple traversal; bound
+    // physical SQL execution TIME for each query while under writer lock.
+    maxScanMs = 2000,
     dryRun = true,
   } = {}) {
     if (typeof matchId !== 'string' || !matchId.trim() ||
@@ -1716,15 +1719,27 @@ export class PostgresEventStore {
         Date.parse(before) > Date.now() ||
         !Number.isSafeInteger(maxRows) || maxRows < 1 || maxRows > 1000 ||
         !Number.isSafeInteger(maxHistoryRows) || maxHistoryRows < 3 ||
-        maxHistoryRows > 100000 || typeof dryRun !== 'boolean') {
+        maxHistoryRows > 100000 ||
+        !Number.isSafeInteger(maxScanMs) || maxScanMs < 100 || maxScanMs > 30000 ||
+        typeof dryRun !== 'boolean') {
       const error = new TypeError(
         'Match history compaction needs matchId, past offset-aware ISO cutoff, ' +
-        'maxRows 1..1000, maxHistoryRows 3..100000 and boolean dryRun',
+        'maxRows 1..1000, maxHistoryRows 3..100000, maxScanMs 100..30000 and boolean dryRun',
       );
       error.code = 'EVENT_INTELLIGENCE_MATCH_HISTORY_RETENTION_INVALID';
       throw error;
     }
-    return this.tx(async (client) => {
+    try {
+    return await this.tx(async (client) => {
+      // Physical PostgreSQL work is NOT proportional to OFFSET visible rows
+      // when dead index entries await VACUUM. Fail closed after at most
+      // maxScanMs per SQL statement, including lock acquisition and window
+      // scan, rather than holding the match writer fence indefinitely.
+      // Transaction-local setting rolls back automatically on commit/abort.
+      await client.query(
+        "SELECT set_config('statement_timeout', $1, true)",
+        [String(maxScanMs) + 'ms'],
+      );
       // The same advisory lock serializes appendTriggerMatch and markFired
       // across separate PostgreSQL pools. No writer can interleave between
       // candidate selection and deletion. Lock current row as well.
@@ -1740,8 +1755,9 @@ export class PostgresEventStore {
       // LAG+LEAD must examine *all* revisions of this ONE match before
       // applying cutoff and maxRows. Reject over-budget histories BEFORE
       // deletion, without either a full COUNT(*) or an unlimited window
-      // materialization. This index-backed bounded OFFSET probes at most
-      // maxHistoryRows + 1 history_id entries under the per-match writer lock.
+      // materialization. OFFSET caps VISIBLE rows only, not physical index
+      // tuple traversal; the SQL statement timeout above supplies the
+      // independent bounded-time guard under the match writer fence.
       const overBudget = await client.query(
         'SELECT history_id FROM ' + this.history +
         ' WHERE scope_id=$1 AND kind=$2 AND record_key=$3' +
@@ -1788,11 +1804,25 @@ export class PostgresEventStore {
       const count = result.rows.length;
       return {
         ok: true, strategy: 'terminal-match-adjacent-duplicate-retention',
-        scopeId: this.scopeId, matchId, dryRun, maxHistoryRows,
+        scopeId: this.scopeId, matchId, dryRun, maxHistoryRows, maxScanMs,
         eligible: count, deleted: dryRun ? 0 : count,
         capped: count === maxRows,
       };
     });
+    } catch (error) {
+      // SQLSTATE 57014 identifies query cancellation even when
+      // lc_messages localizes PostgreSQL diagnostics. The operator's own
+      // transaction-local timeout was installed for all covered statements;
+      // do not key policy semantics on English server message text.
+      if (error?.code === '57014') {
+        const bounded = new Error(
+          'Match-history retention exceeded operator SQL time budget; no history was modified',
+        );
+        bounded.code = 'EVENT_INTELLIGENCE_MATCH_HISTORY_TIME_BUDGET_EXCEEDED';
+        throw bounded;
+      }
+      throw error;
+    }
   }
 
   async appendMcpOccurrence(serverId, eventInput, subscriptionIdInput = null) {
