@@ -46,7 +46,7 @@ function canonicalGitHubActionsRunUrl(value) {
   if (!match) return false;
   const [, owner, repository] = match;
   return !owner.startsWith('-') && !owner.endsWith('-') &&
-    repository !== '.' && repository !== '..';
+    !owner.includes('--') && repository !== '.' && repository !== '..';
 }
 
 function percentileSeries(value) {
