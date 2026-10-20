@@ -30,6 +30,24 @@ jobs:
         if: github.event_name != 'pull_request'
         run: npm run check
 
+      # A PR could previously pass the package/public-release workflow even
+      # if CI's adversarial security tests failed. Run a focused, explicit
+      # set of trust-boundary regressions ON EVERY PR and release push.
+      # These enforce existing EI boundaries; they are not host OAuth/policy
+      # or an independent security signoff (issue #45 remains blocked).
+      - name: Build security conformance fixture
+        run: npm run build
+
+      - name: P0 security authority and adversarial ingress release gate
+        run: |
+          node --test \
+            test/security-threat-boundary-matrix.test.mjs \
+            test/mcp-owner-read-guard.test.mjs \
+            test/mcp-revoked-session-fencing.test.mjs \
+            test/untrusted-event-own-path-security.test.mjs \
+            test/mcp-occurrence-ingress-security.test.mjs \
+            test/semantic-scope-budget-conformance.test.mjs
+
       - name: CEP compiled production mutation release gate
         if: github.event_name != 'pull_request'
         run: node scripts/evidence/cep-production-mutation-report.mjs --out cep-production-mutation-evidence.json
