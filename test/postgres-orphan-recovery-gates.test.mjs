@@ -557,6 +557,23 @@ integration('wrapped PostgreSQL pools fail closed without capacity and run safel
   ), error => error?.code === 'EVENT_INTELLIGENCE_DISPATCH_POOL_IDENTITY_REQUIRED');
   assert.equal(unsafeHostCalls, 0);
 
+  const forwarded = { ...wrapper, options:pool.options };
+  const forwardedWithoutIdentity = new PostgresEventStore({
+    ...settings, pool:forwarded, dispatchPoolMax:2,
+  });
+  await assert.rejects(() => forwardedWithoutIdentity.withTriggerDispatchFence(
+    'wrapped-pool-one', '1', new Date().toISOString(),
+    async () => { unsafeHostCalls++; return 'forwarded-unsafe'; },
+  ), error => error?.code === 'EVENT_INTELLIGENCE_DISPATCH_POOL_IDENTITY_REQUIRED');
+  const nativeWithoutIdentity = new PostgresEventStore({
+    pool, tablePrefix:prefix, scopeId:'scope-recovery',
+  });
+  await assert.rejects(() => nativeWithoutIdentity.withTriggerDispatchFence(
+    'wrapped-pool-one', '1', new Date().toISOString(),
+    async () => { unsafeHostCalls++; return 'native-unsafe'; },
+  ), error => error?.code === 'EVENT_INTELLIGENCE_DISPATCH_POOL_IDENTITY_REQUIRED');
+  assert.equal(unsafeHostCalls, 0);
+
   const configured = new PostgresEventStore({
     ...settings, dispatchPoolMax:2, dispatchPoolIdentity:pool,
   });
@@ -566,6 +583,10 @@ integration('wrapped PostgreSQL pools fail closed without capacity and run safel
   };
   const configuredSecond = new PostgresEventStore({
     ...settings, pool:secondWrapper, dispatchPoolMax:2,
+    dispatchPoolIdentity:pool,
+  });
+  const configuredForwarded = new PostgresEventStore({
+    ...settings, pool:forwarded, dispatchPoolMax:2,
     dispatchPoolIdentity:pool,
   });
   const scoped = await configured.forScope('other-scope');
@@ -595,9 +616,10 @@ integration('wrapped PostgreSQL pools fail closed without capacity and run safel
   await entered;
   const b = run(configuredSecond, 'wrapped-pool-two', false);
   const c = run(store, 'wrapped-pool-two', false);
+  const d = run(configuredForwarded, 'wrapped-pool-two', false);
   releaseFirst();
-  const responses = await Promise.all([a,b,c]);
-  assert.deepEqual(responses.map(row => row.authorized), [true,true,true]);
+  const responses = await Promise.all([a,b,c,d]);
+  assert.deepEqual(responses.map(row => row.authorized), [true,true,true,true]);
   assert.equal(maxActive, 1,
     'two distinct wrappers AND the native pool must share one max=2 admission gate');
 
