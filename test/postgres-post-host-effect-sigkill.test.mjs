@@ -13,7 +13,7 @@ const integration = url && process.platform !== 'win32' ? test : test.skip;
 const fixture = new URL('./fixtures/postgres-post-host-effect-worker.mjs', import.meta.url);
 const origin = Date.parse('2026-10-18T14:00:00.000Z');
 const configuredRounds = process.env.EI_EFFECT_KILL_ROUNDS ?? '3';
-if (!/^[1-9]\\d*$/.test(configuredRounds) ||
+if (!/^[1-9]\d*$/.test(configuredRounds) ||
     !Number.isSafeInteger(Number(configuredRounds)) ||
     Number(configuredRounds) > 30) {
   throw new TypeError('EI_EFFECT_KILL_ROUNDS must be a decimal integer in 1..30');
@@ -302,6 +302,6 @@ integration('actual SIGKILL AFTER durable host effect BEFORE EI receipt reconcil
   // both database stores are cleaned and independent receipt checks pass.
   if (completedEvidence && process.env.EI_EFFECT_KILL_EVIDENCE_OUT) {
     await writeFile(process.env.EI_EFFECT_KILL_EVIDENCE_OUT,
-      JSON.stringify(completedEvidence, null, 2) + '\\n', { flag: 'wx' });
+      JSON.stringify(completedEvidence, null, 2) + '\n', { flag: 'wx' });
   }
 });
