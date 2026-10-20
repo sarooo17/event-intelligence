@@ -86,7 +86,20 @@ for the fencing sessions simultaneously.
 
 **Operational constraint:** this mechanism requires direct,
 session-preserving PostgreSQL (not PgBouncer transaction-pooling) and a
-pool of **at least two connections**; `floor(maxPool/2)` slots can hold
+pool of **at least two connections**. The capacity must be **known**:
+standard `pg.Pool` exposes `pool.options.max`, whereas compatible wrappers
+that omit this field **must** pass `dispatchPoolMax` to
+`new PostgresEventStore({ pool, dispatchPoolMax: actualPoolMaximum })`.
+This is an explicit operator assertion of the wrapper's **real** connection
+limit, not an arbitrary performance tuning knob. An unknown/invalid limit
+fails closed **before host dispatch** instead of silently assuming 10;
+values greater than a visible `pool.options.max` are rejected. Stores
+sharing one pool must use consistent admission capacity. Never set
+`dispatchPoolMax` above the actual hidden pool size or a callback that
+uses the same pool can deadlock. A real PG16 max=2 wrapper regression
+exercises both the fail-closed path and FIFO single-callback admission.
+
+`floor(maxPool/2)` slots can hold
 fenced callbacks while the remainder stay available for callback I/O
 and nonblocking trigger-state mutation attempts. Session loss in the middle of an
 external callback and external idempotency remain integration risks.
