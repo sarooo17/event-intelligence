@@ -27,13 +27,13 @@ integration('PostgreSQL bounded audit proofs verify across restart, tenants and 
   const poolA = new Pool({ connectionString: url, max: 4 });
   const poolB = new Pool({ connectionString: url, max: 4 });
   const a = new PostgresEventStore({
-    pool: poolA, tablePrefix: prefix, scopeId: 'audit-tenant-A',
+    pool: poolA, dispatchPoolIdentity: poolA, tablePrefix: prefix, scopeId: 'audit-tenant-A',
   });
   const reader = new PostgresEventStore({
-    pool: poolB, tablePrefix: prefix, scopeId: 'audit-tenant-A',
+    pool: poolB, dispatchPoolIdentity: poolB, tablePrefix: prefix, scopeId: 'audit-tenant-A',
   });
   const other = new PostgresEventStore({
-    pool: poolB, tablePrefix: prefix, scopeId: 'audit-tenant-B',
+    pool: poolB, dispatchPoolIdentity: poolB, tablePrefix: prefix, scopeId: 'audit-tenant-B',
   });
   try {
     await Promise.all([a.init(), reader.init(), other.init()]);
