@@ -12,7 +12,7 @@ const Pool = pg?.Pool ?? pg?.default?.Pool;
 integration('PG16 signature manifest rejects old/unknown candidate identities atomically', async () => {
   const pool = new Pool({ connectionString: url, max: 3 });
   const prefix = 'ei_signature_' + randomBytes(5).toString('hex');
-  const store = new PostgresEventStore({ pool, tablePrefix: prefix });
+  const store = new PostgresEventStore({ pool: pool, dispatchPoolIdentity: pool, tablePrefix: prefix });
   const metadata = '"' + prefix + '_metadata"';
   const records = '"' + prefix + '_records"';
   const suffixes = ['metadata', 'counters', 'leases', 'history', 'records'];
@@ -32,14 +32,14 @@ integration('PG16 signature manifest rejects old/unknown candidate identities at
     const before = await pool.query(
       'SELECT count(*)::int AS n FROM ' + records + " WHERE kind = 'trigger'");
     assert.equal(before.rows[0]?.n, 1);
-    const reopen = new PostgresEventStore({ pool, tablePrefix: prefix });
+    const reopen = new PostgresEventStore({ pool: pool, dispatchPoolIdentity: pool, tablePrefix: prefix });
     await reopen.init();
     assert.equal((await reopen.listTriggers()).length, 1);
 
     await pool.query('DELETE FROM ' + metadata + ' WHERE component = $1',
       [PATTERN_V2_SIGNATURE_COMPONENT]);
     await assert.rejects(
-      new PostgresEventStore({ pool, tablePrefix: prefix }).init(),
+      new PostgresEventStore({ pool: pool, dispatchPoolIdentity: pool, tablePrefix: prefix }).init(),
       error => error?.code === 'EVENT_INTELLIGENCE_PATTERN_V2_SIGNATURE_INCOMPATIBLE',
     );
     const after = await pool.query(
@@ -53,12 +53,12 @@ integration('PG16 signature manifest rejects old/unknown candidate identities at
     await pool.query('INSERT INTO ' + metadata + ' (component, version) VALUES ($1, $2)',
       [PATTERN_V2_SIGNATURE_COMPONENT, 999]);
     await assert.rejects(
-      new PostgresEventStore({ pool, tablePrefix: prefix }).init(),
+      new PostgresEventStore({ pool: pool, dispatchPoolIdentity: pool, tablePrefix: prefix }).init(),
       error => error?.code === 'EVENT_INTELLIGENCE_PATTERN_V2_SIGNATURE_INCOMPATIBLE',
     );
     await pool.query('UPDATE ' + metadata + ' SET version = $2 WHERE component = $1',
       [PATTERN_V2_SIGNATURE_COMPONENT, PATTERN_V2_SIGNATURE_CONTRACT_VERSION]);
-    const restored = new PostgresEventStore({ pool, tablePrefix: prefix });
+    const restored = new PostgresEventStore({ pool: pool, dispatchPoolIdentity: pool, tablePrefix: prefix });
     await restored.init();
     assert.equal((await restored.listTriggers()).length, 1);
 
@@ -73,7 +73,7 @@ integration('PG16 signature manifest rejects old/unknown candidate identities at
     await pool.query('DELETE FROM ' + metadata + ' WHERE component = $1',
       [PATTERN_V2_SIGNATURE_COMPONENT]);
     await assert.rejects(
-      new PostgresEventStore({ pool, tablePrefix: prefix }).init(),
+      new PostgresEventStore({ pool: pool, dispatchPoolIdentity: pool, tablePrefix: prefix }).init(),
       error => error?.code === 'EVENT_INTELLIGENCE_PATTERN_V2_SIGNATURE_INCOMPATIBLE',
       'old wake delivery alone must prohibit unmarked signature adoption',
     );
