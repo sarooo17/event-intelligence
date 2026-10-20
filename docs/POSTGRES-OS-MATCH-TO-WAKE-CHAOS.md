@@ -87,11 +87,14 @@ for the fencing sessions simultaneously.
 **Operational constraint:** this mechanism requires direct,
 session-preserving PostgreSQL (not PgBouncer transaction-pooling) and a
 pool of **at least two connections**. The capacity must be **known**:
-standard `pg.Pool` exposes `pool.options.max`, whereas compatible wrappers
-that omit this field **must** pass both `dispatchPoolMax` **and**
-`dispatchPoolIdentity`:
-`new PostgresEventStore({ pool: wrapper, dispatchPoolMax: actualPoolMaximum,
-dispatchPoolIdentity: underlyingPhysicalPool })`.
+standard `pg.Pool` exposes `pool.options.max`, but ALL fenced-dispatch
+stores (including native pools and wrappers that forward `options.max`)
+**must explicitly pass** `dispatchPoolIdentity`:
+`new PostgresEventStore({ pool, dispatchPoolIdentity: pool })`.
+Wrappers must use the same underlying physical pool object:
+`new PostgresEventStore({ pool: wrapper, dispatchPoolIdentity: underlyingPhysicalPool,
+dispatchPoolMax: actualPoolMaximum })`. The additional `dispatchPoolMax`
+is mandatory when the wrapper does not expose the native `options.max`.
 The capacity is an explicit assertion of the wrapper's **real** connection
 limit, not an arbitrary performance tuning knob; identity must be the
 **exact same object** for every wrapper or direct store sharing those
