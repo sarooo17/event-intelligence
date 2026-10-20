@@ -30,23 +30,32 @@ jobs:
         if: github.event_name != 'pull_request'
         run: npm run check
 
-      # A PR could previously pass the package/public-release workflow even
-      # if CI's adversarial security tests failed. Run a focused, explicit
-      # set of trust-boundary regressions ON EVERY PR and release push.
-      # These enforce existing EI boundaries; they are not host OAuth/policy
-      # or an independent security signoff (issue #45 remains blocked).
+      # Run ALL non-Postgres evidence declared in
+      # docs/security-threat-model-v1.json on PRs too, not merely the files'
+      # existence check. Real PG proof runs in the dedicated service job.
+      # Runtime/transport OAuth and host approvals still require operator
+      # review: #45 is NOT completed by this test gate alone.
       - name: Build security conformance fixture
         run: npm run build
 
-      - name: P0 security authority and adversarial ingress release gate
+      - name: P0 complete non-Postgres security boundary evidence gate
         run: |
           node --test \
             test/security-threat-boundary-matrix.test.mjs \
-            test/mcp-owner-read-guard.test.mjs \
-            test/mcp-revoked-session-fencing.test.mjs \
-            test/untrusted-event-own-path-security.test.mjs \
             test/mcp-occurrence-ingress-security.test.mjs \
-            test/semantic-scope-budget-conformance.test.mjs
+            test/mcp-revoked-session-fencing.test.mjs \
+            test/host-registry-shutdown-contract.test.mjs \
+            test/neutral-facade-conformance.test.mjs \
+            test/mcp-owner-read-guard.test.mjs \
+            test/untrusted-event-own-path-security.test.mjs \
+            test/mcp-gap-atomic-finality-race.test.mjs \
+            test/derived-events.test.mjs \
+            test/trigger-explain-bounds.test.mjs \
+            test/semantic-scope-budget-conformance.test.mjs \
+            test/activation-provenance-security.test.mjs \
+            test/observability-redaction-adversarial.test.mjs \
+            test/observability-own-data-security.test.mjs \
+            test/release-manifest-parity.test.mjs
 
       - name: CEP compiled production mutation release gate
         if: github.event_name != 'pull_request'
@@ -79,3 +88,45 @@ jobs:
 
       - name: Build Docker image
         run: docker build -t mcp-event-intelligence:release-check .
+
+  postgres-security-evidence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: event_intelligence
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d event_intelligence"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      POSTGRES_URL: postgresql://postgres:postgres@127.0.0.1:5432/event_intelligence
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install bounded release evidence dependencies
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm install --no-save --ignore-scripts --no-audit --no-fund pg@8
+          npm run build
+      - name: PostgreSQL dump and restore CLI for independent provenance proof
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y postgresql-client
+          pg_dump --version
+          pg_restore --version
+      - name: P0 real PostgreSQL security boundaries (never skip)
+        run: |
+          set -eu
+          test -n "$POSTGRES_URL"
+          node --test \
+            test/postgres-inspector-restart.test.mjs \
+            test/postgres-logical-dump-restore.test.mjs
