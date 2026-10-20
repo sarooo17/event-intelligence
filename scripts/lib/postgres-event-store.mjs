@@ -889,15 +889,22 @@ export class PostgresEventStore {
     const wakeId = String(input.wakeId || '');
     const matchId = String(input.matchId || '');
     const runtime = String(input.runtime || '');
-    if (!wakeId || !matchId || !runtime) {
-      throw new Error('Wake delivery requires wakeId, matchId and runtime');
+    // Preserve retry idempotence for earlier clients that omit version
+    // on an ALREADY persisted wake. Never use an unpinned version to
+    // create a new record.
+    const existing = wakeId ? await this.getWakeDelivery(wakeId) : null;
+    if (existing) return existing;
+    const triggerVersion = typeof input.triggerVersion === 'string' &&
+      input.triggerVersion.trim() ? input.triggerVersion : '';
+    if (!wakeId || !matchId || !runtime || !triggerVersion) {
+      throw new Error('Wake delivery requires wakeId, matchId, runtime and explicit triggerVersion');
     }
     const now = String(input.now ?? new Date().toISOString());
     const record = {
       wakeId,
       matchId,
       triggerId: String(input.triggerId || ''),
-      triggerVersion: String(input.triggerVersion || '1'),
+      triggerVersion,
       runtime,
       status: 'pending',
       attemptCount: 0,

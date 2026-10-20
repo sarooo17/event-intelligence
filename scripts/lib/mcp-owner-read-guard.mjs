@@ -51,25 +51,43 @@ export function createOwnerReadGuard({ triggerControl, store, owner }) {
       ? await store.getWakeDelivery(wakeId)
       : null;
 
-    // Check ownership before looking up matched-event evidence.
-    await assertTrigger(triggerId, delivery?.triggerVersion || undefined);
-
-    // All wake/delivery/match references must agree, even if a colliding
-    // match ID or corrupted subscription points to another trigger.
-    if (delivery && (
-      delivery.matchId !== wake.sourceEventId ||
-      (delivery.triggerId && delivery.triggerId !== triggerId)
-    )) {
+    // Without a durable wake-delivery version there is no safe way to
+    // authorize matched evidence before reading it: an owner could retain
+    // trigger v2 after losing v1, while this wake belongs to v1. Fail
+    // CLOSED rather than selecting the latest owned trigger version.
+    if (typeof delivery?.triggerVersion !== 'string' ||
+        !delivery.triggerVersion ||
+        delivery.matchId !== wake.sourceEventId ||
+        (delivery.triggerId && delivery.triggerId !== triggerId)) {
       throw notFound();
     }
-    const matches = await store.listTriggerMatches(triggerId);
-    const match = matches.find((entry) =>
-      entry?.matchId === wake.sourceEventId &&
-      entry.triggerId === triggerId &&
-      (!delivery?.triggerVersion ||
-        entry.triggerVersion === delivery.triggerVersion)
-    );
+    // Pin exactly the version that produced this wake.
+    const initiallyOwned = await assertTrigger(triggerId, delivery.triggerVersion);
+    let match;
+    try {
+      // Any matched-evidence read failure may carry sensitive SQL/provider
+      // diagnostics. On errors ONLY, recheck the pinned owner before allowing
+      // those diagnostics to propagate.
+      const matches = await store.listTriggerMatches(triggerId);
+      match = matches.find((entry) =>
+        entry?.matchId === wake.sourceEventId &&
+        entry.triggerId === triggerId &&
+        entry.triggerVersion === delivery.triggerVersion
+      );
+    } catch (error) {
+      await assertTrigger(
+        initiallyOwned.definition.triggerId,
+        initiallyOwned.definition.version,
+      );
+      throw error;
+    }
+    // A missing match is already a safely redacted denial; do not perform
+    // another authorization read that could replace not-found with backend
+    // diagnostics or disclose owner existence.
     if (!match) throw notFound();
+    // Authorization denials from THIS last lookup must not be captured by
+    // the evidence-error handler: its extra query could overwrite an
+    // established safe not-found with an internal storage exception.
     await assertTrigger(triggerId, match.triggerVersion);
     return match;
   }
@@ -84,9 +102,16 @@ export function createOwnerReadGuard({ triggerControl, store, owner }) {
   async function withAuthorizedTriggerResult(triggerId, version, build) {
     if (typeof build !== 'function') throw new TypeError('authorized read callback required');
     const owned = await assertTrigger(triggerId, version);
-    const result = await build(owned);
-    await assertTrigger(owned.definition.triggerId, owned.definition.version);
-    return result;
+    try {
+      // Await INSIDE try so that rejection also reaches finally.
+      return await build(owned);
+    } finally {
+      // A builder can reject with an error carrying sensitive details.
+      // If owner/tenant access was revoked during that rejected read,
+      // the final owner check MUST replace the builder error with the
+      // same nondisclosing not-found response used for successful reads.
+      await assertTrigger(owned.definition.triggerId, owned.definition.version);
+    }
   }
 
   /**
@@ -98,9 +123,13 @@ export function createOwnerReadGuard({ triggerControl, store, owner }) {
   async function withAuthorizedWakeResult(wakeId, build) {
     if (typeof build !== 'function') throw new TypeError('authorized wake callback required');
     const match = await assertWake(wakeId);
-    const result = await build(match);
-    await assertTrigger(match.triggerId, match.triggerVersion);
-    return result;
+    try {
+      return await build(match);
+    } finally {
+      // Do not expose hydration/host errors after the last authorized
+      // owner has transferred. This runs for success AND rejection.
+      await assertTrigger(match.triggerId, match.triggerVersion);
+    }
   }
 
   return Object.freeze({

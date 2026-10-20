@@ -229,7 +229,11 @@ export class PersistentEventStore {
         wakeId: String(raw.wakeId),
         matchId: raw.matchId ? String(raw.matchId) : '',
         triggerId: String(raw.triggerId || ''),
-        triggerVersion: String(raw.triggerVersion || '1'),
+        // Legacy wake delivery rows without an actual producer version must
+        // NOT silently become v1 during restore. The stdio owner guard must
+        // refuse their evidence instead of authorizing whichever v1 exists.
+        triggerVersion: typeof raw.triggerVersion === 'string' && raw.triggerVersion.trim()
+          ? raw.triggerVersion : '',
         runtime: String(raw.runtime),
         status,
         attemptCount:
@@ -528,18 +532,23 @@ export class PersistentEventStore {
       const wakeId = String(input.wakeId || '');
       const matchId = String(input.matchId || '');
       const runtime = String(input.runtime || '');
-      if (!wakeId || !matchId || !runtime) {
-        throw new Error('Wake delivery requires wakeId, matchId and runtime');
-      }
+      // Keep old retry clients idempotent: once an authoritative delivery
+      // already exists, its persisted version wins regardless of omitted
+      // creation fields on an older caller's retry.
       const existing = this.#wakeDeliveries.get(wakeId);
       if (existing) return existing;
+      const triggerVersion = typeof input.triggerVersion === 'string' &&
+        input.triggerVersion.trim() ? input.triggerVersion : '';
+      if (!wakeId || !matchId || !runtime || !triggerVersion) {
+        throw new Error('Wake delivery requires wakeId, matchId, runtime and explicit triggerVersion');
+      }
 
       const now = String(input.now ?? new Date().toISOString());
       const record = {
         wakeId,
         matchId,
         triggerId: String(input.triggerId || ''),
-        triggerVersion: String(input.triggerVersion || '1'),
+        triggerVersion,
         runtime,
         status: 'pending',
         attemptCount: 0,
