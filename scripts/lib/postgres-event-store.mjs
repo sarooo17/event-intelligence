@@ -1419,28 +1419,97 @@ export class PostgresEventStore {
   ) {
     const record = parseTriggerMatchRecord(input);
     const expected = new Set(expectedStatuses.map(String));
-    return this.tx(async (client) => {
-      await this.lock(client, 'trigger-match', record.matchId);
-      const current = await this.get(
-        'trigger_match',
-        record.matchId,
-        client,
-      );
-      if (!current || !expected.has(current.status)) {
-        return {
-          applied: false,
-          record: current ? parseTriggerMatchRecord(current) : null,
-        };
+    const isFiredWake = record.status === 'fired' &&
+      typeof record.firedWakeId === 'string' && record.firedWakeId;
+    const key = String(record.triggerId) + '@' + String(record.triggerVersion);
+    const lockKey = this.tablePrefix + ':' + this.scopeId + ':trigger-state:' + key;
+    const deadline = Date.now() + 15000;
+
+    // The match transition and its RESERVED firing-count/lifecycle update
+    // MUST commit in the SAME transaction. If SIGKILL occurs, PostgreSQL
+    // commits either BOTH or NEITHER; no fired match can strand a reserved
+    // slot or leave its fireCount permanently stale.
+    for (;;) {
+      try {
+        return await this.tx(async (client) => {
+          const ctx = dispatchContext.getStore();
+          const ownsFencedSession = isFiredWake &&
+            ctx?.store === this && ctx.key === key;
+          if (isFiredWake && !ownsFencedSession) {
+            const lock = await client.query(
+              'SELECT pg_try_advisory_xact_lock(hashtextextended($1,0)) AS acquired',
+              [lockKey],
+            );
+            if (lock.rows[0]?.acquired !== true) {
+              const error = new Error('Trigger state is held by a dispatch fence');
+              error.code = 'EVENT_INTELLIGENCE_TRIGGER_STATE_LOCK_BUSY';
+              throw error;
+            }
+          }
+          await this.lock(client, 'trigger-match', record.matchId);
+          const current = await this.get('trigger_match', record.matchId, client);
+          if (!current || !expected.has(current.status)) {
+            return {
+              applied: false,
+              record: current ? parseTriggerMatchRecord(current) : null,
+              lifecycleFinalized: false,
+            };
+          }
+          let lifecycleFinalized = false;
+          let lifecycleCompleted = false;
+          let fireCount = null;
+          if (isFiredWake) {
+            const state = await this.get('trigger_state', key, client, true) ??
+              defaultTriggerState(record.triggerId, record.triggerVersion);
+            const reserved = Array.isArray(state.dispatchReservations)
+              ? state.dispatchReservations : [];
+            if (reserved.includes(record.firedWakeId)) {
+              const raw = await this.get('trigger', key, client);
+              const definition = raw ? parseCompositeTriggerDefinition(raw) : null;
+              if (!definition) throw new Error('Reserved trigger definition vanished');
+              const lifecycle = definition.lifecycle ?? {};
+              fireCount = Number(state.fireCount ?? 0) + 1;
+              lifecycleCompleted =
+                lifecycle.oneShot === true ||
+                lifecycle.completeOnGoal === true ||
+                (lifecycle.maxFirings !== undefined &&
+                  fireCount >= lifecycle.maxFirings);
+              await this.upsert('trigger_state', key, {
+                ...state,
+                // An intervening administrative pause/delete is never undone.
+                status: state.status === 'active'
+                  ? (lifecycleCompleted ? 'completed' : 'active')
+                  : state.status,
+                actor: {
+                  type: 'system',
+                  principal_id: 'event-intelligence:lifecycle',
+                },
+                fireCount,
+                lastFiredAt: new Date().toISOString(),
+                dispatchReservations: reserved.filter(
+                  wakeId => wakeId !== record.firedWakeId),
+                updatedAt: new Date().toISOString(),
+                revision: Number(state.revision || 0) + 1,
+              }, client);
+              lifecycleFinalized = true;
+            }
+          }
+          await this.appendHistory('trigger_match_history',
+            record.matchId, record, client);
+          await this.upsert('trigger_match', record.matchId, record, client);
+          return { applied: true, record, lifecycleFinalized,
+            lifecycleCompleted, fireCount };
+        });
+      } catch (error) {
+        if (error?.code !== 'EVENT_INTELLIGENCE_TRIGGER_STATE_LOCK_BUSY') throw error;
+        if (Date.now() >= deadline) {
+          const timeout = new Error('Fired match finalization must retry after dispatch');
+          timeout.code = 'EVENT_INTELLIGENCE_TRIGGER_MUTATION_RETRY_REQUIRED';
+          throw timeout;
+        }
+        await new Promise(resolve => setTimeout(resolve, 25));
       }
-      await this.appendHistory(
-        'trigger_match_history',
-        record.matchId,
-        record,
-        client,
-      );
-      await this.upsert('trigger_match', record.matchId, record, client);
-      return { applied: true, record };
-    });
+    }
   }
 
   async listTriggerMatches(triggerId) {
