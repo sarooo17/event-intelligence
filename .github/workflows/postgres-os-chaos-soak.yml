@@ -45,6 +45,7 @@ jobs:
     env:
       POSTGRES_URL: postgresql://postgres:postgres@127.0.0.1:5432/event_intelligence
       EI_PG_CHAOS_SOAK_CONFIRM: YES_DISPOSABLE_PG
+      SOAK_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       SOAK_COHORTS: ${{ github.event_name == 'workflow_dispatch' && inputs.cohorts || '1' }}
       SOAK_ROUNDS: ${{ github.event_name == 'workflow_dispatch' && inputs.rounds || '3' }}
     steps:
