@@ -116,7 +116,14 @@ export interface CompositeTriggerStore {
   compareAndAppendTriggerMatch?(
     record: TriggerMatchRecord,
     options: { expectedStatuses: string[] },
-  ): Promise<{ applied: boolean; record: TriggerMatchRecord | null }>;
+  ): Promise<{
+    applied: boolean;
+    record: TriggerMatchRecord | null;
+    /** PostgreSQL can atomically finalize trigger_state with the fired CAS. */
+    lifecycleFinalized?: boolean;
+    lifecycleCompleted?: boolean;
+    fireCount?: number | null;
+  }>;
   listTriggerMatches(triggerId?: string):
     | TriggerMatchRecord[]
     | Promise<TriggerMatchRecord[]>;
