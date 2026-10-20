@@ -35,8 +35,14 @@ const poolFenceSlots = new WeakMap();
 async function withPoolFenceCapacity(pool, capacity, run) {
   let state = poolFenceSlots.get(pool);
   if (!state) {
-    state = { active: 0, waiters: [] };
+    state = { active: 0, waiters: [], capacity };
     poolFenceSlots.set(pool, state);
+  } else if (state.capacity !== capacity) {
+    // Multiple scope stores can share the same underlying pool. Reject
+    // conflicting configured limits instead of silently over-admitting.
+    const error = new Error('Conflicting fenced dispatch capacity for shared PostgreSQL pool');
+    error.code = 'EVENT_INTELLIGENCE_DISPATCH_POOL_CAPACITY_MISMATCH';
+    throw error;
   }
   // Admit at most floor(maxPool/2) fenced continuations per shared
   // pool. Contending lifecycle mutations use nonblocking try-lock/retry
@@ -149,12 +155,22 @@ export class PostgresEventStore {
     tablePrefix = 'event_intelligence',
     ownsPool = false,
     adoptUnversionedSchema = false,
+    dispatchPoolMax = null,
   } = {}) {
     if (!pool || typeof pool.query !== 'function' || typeof pool.connect !== 'function') {
       throw new Error(
         'PostgresEventStore requires a pg-compatible pool with query() and connect()',
       );
     }
+    if (dispatchPoolMax !== null &&
+        (!Number.isSafeInteger(dispatchPoolMax) || dispatchPoolMax < 2)) {
+      const error = new Error('dispatchPoolMax must be an integer >= 2 when provided');
+      error.code = 'EVENT_INTELLIGENCE_DISPATCH_POOL_TOO_SMALL';
+      throw error;
+    }
+    // For pg.Pool, options.max is authoritative. Pool wrappers without
+    // options.max must explicitly assert their actual limit before dispatch.
+    this.dispatchPoolMax = dispatchPoolMax;
     this.pool = pool;
     this.scopeId = normalizeEventScopeId(scopeId);
     // Validate the full length before ident() rejects 64+ characters
@@ -604,6 +620,7 @@ export class PostgresEventStore {
       tablePrefix: this.tablePrefix,
       ownsPool: false,
       adoptUnversionedSchema: this.adoptUnversionedSchema,
+      dispatchPoolMax: this.dispatchPoolMax,
     });
     scoped.initialized = this.initialized;
     if (!scoped.initialized) await scoped.init();
@@ -1211,10 +1228,21 @@ export class PostgresEventStore {
   async withTriggerDispatchFence(triggerId, version, at, operation, { wakeId = null } = {}) {
     if (typeof operation !== 'function') throw new TypeError('dispatch callback required');
     const key = String(triggerId) + '@' + String(version);
-    const maxPool = Number(this.pool.options?.max ?? 10);
+    const exposedMax = this.pool.options?.max;
+    const maxPool = this.dispatchPoolMax ?? exposedMax;
     if (!Number.isSafeInteger(maxPool) || maxPool < 2) {
-      const error = new Error('Fenced PG dispatch requires >=2 pool connections');
-      error.code = 'EVENT_INTELLIGENCE_DISPATCH_POOL_TOO_SMALL';
+      const error = new Error(
+        'Fenced PG dispatch requires a verified pool limit >=2; ' +
+        'set dispatchPoolMax for pool wrappers without options.max',
+      );
+      error.code = Number.isSafeInteger(maxPool)
+        ? 'EVENT_INTELLIGENCE_DISPATCH_POOL_TOO_SMALL'
+        : 'EVENT_INTELLIGENCE_DISPATCH_POOL_SIZE_UNKNOWN';
+      throw error;
+    }
+    if (Number.isSafeInteger(exposedMax) && maxPool > exposedMax) {
+      const error = new Error('dispatchPoolMax exceeds PostgreSQL pool options.max');
+      error.code = 'EVENT_INTELLIGENCE_DISPATCH_POOL_CAPACITY_MISMATCH';
       throw error;
     }
     const observedAt = Date.now();
