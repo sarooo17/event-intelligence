@@ -115,3 +115,26 @@ integration('post-host uncertainty is NOT silently classified as no-host pool ad
   assert.equal(durable.attemptCount,1);
   assert.equal(durable.dispatchContentions??0,0);
 }));
+
+
+integration('nested host quarantine code after callback entry MUST spend host-attempt budget',async()=>fixture(async({store,engine,match})=>{
+  let hostCalls=0;
+  const nestedQuarantine=new Error('nested downstream PG gate rejected the adapter');
+  nestedQuarantine.code='EVENT_INTELLIGENCE_DISPATCH_POOL_QUARANTINED';
+  const coordinator=new CompositeWakeCoordinator({
+    store,triggerEngine:engine,workerId:'entered-host-quarantine',
+    maxAttempts:1,deliverer:async()=>{
+      hostCalls++;
+      throw nestedQuarantine;
+    },
+  });
+  const result=await coordinator.deliverMatched(match);
+  assert.equal(hostCalls,1,'the outer host effect path was actually entered');
+  assert.equal(result.status,'dead_letter',
+    'nested host error cannot evade the normal host/DLQ attempt budget');
+  const durable=await store.getWakeDelivery(result.wake.wakeId);
+  assert.equal(durable.status,'dead_letter');
+  assert.equal(durable.attemptCount,1);
+  assert.equal(durable.dispatchContentions??0,0);
+  assert.equal(await store.verifyAudit(),true);
+}));
