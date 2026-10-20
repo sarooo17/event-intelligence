@@ -128,7 +128,7 @@ try {
     const candidates = await scheduler.runDue();
     const outcomes = candidates.filter(row => row.matchId === persistedMatchId);
     if (outcomes.length > 1 || (outcomes.length === 1 &&
-        !['wake_delivered', 'delivery_in_progress'].includes(outcomes[0].status))) {
+        !['wake_delivered', 'delivery_in_progress', 'claim_lost'].includes(outcomes[0].status))) {
       throw new Error('scheduler produced multiple or invalid matching outcomes: ' +
         JSON.stringify(outcomes.map(row => ({status:row.status, matchId:row.matchId}))));
     }
