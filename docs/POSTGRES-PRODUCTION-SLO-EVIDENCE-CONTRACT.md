@@ -27,12 +27,16 @@ in-process host and absent provider transport cannot satisfy this contract.
    duplicate-host-effect counts, both host and provider measured contributions
    and PostgreSQL-service resource use. A local fake host or replay-only
    harness cannot claim remote network/host measurements.
-4. Call `assessPostgresProductionSloEvidence(report)`. A valid report returns
+4. Compare observed **verified durable wake throughput** (verified wakes / measured
+   duration), measured per-metric p99, and duplicate host effects / verified
+   wakes against the budgets frozen in step 1. Missing or exceeded budgets
+   block review eligibility. The submitted aggregates are still untrusted
+   declarations: a reviewer must recalculate them from retained raw samples.
+5. Call `assessPostgresProductionSloEvidence(report)`. A valid report returns
    `eligible-for-independent-review`, **never `certified`**. The checker
    does not fetch artifacts or attest honesty. An independent reviewer must
-   inspect raw measurement series, source provenance, budget timestamps,
-   error rates, relevant real-world infrastructure and actual p99 vs frozen
-   budgets. Even a complete JSON report does NOT check #47/#21 automatically.
+   inspect raw measurement series, recompute aggregates and budgets, verify
+   source provenance, timestamps, error rates and real-world infrastructure. Even a complete JSON report does NOT check #47/#21 automatically.
 
 ## Current evidence and limitations
 
@@ -43,8 +47,9 @@ in-process host and absent provider transport cannot satisfy this contract.
 - `scripts/evidence/postgres-durable-scale.mjs` reports actual PostgreSQL
   registration/list/wake operations, but not multi-rate external E2E traffic.
 - This validator fails closed for absent/malformed profile matrix, missing
-  network/host/DB attribution, unregistered budgets, insufficient p99
-  samples, missing loss/duplicate accounting and missing fault categories.
+  network/host/DB attribution, unregistered or **exceeded** p99, durable wake
+  throughput and duplicate-effect budgets, insufficient p99 samples, missing
+  loss/duplicate accounting and missing fault categories.
 - A report claiming `productionSloCertified: true` is **rejected**:
   a human/independent performance signoff is mandatory, and the v1 release
   readiness ledger remains blocked until that verification exists.
