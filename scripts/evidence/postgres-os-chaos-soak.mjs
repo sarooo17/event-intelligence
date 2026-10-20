@@ -150,6 +150,16 @@ async function main() {
     if(error?.code!=='ENOENT')throw error;
   }
   const verifiedSourceSha=checkoutSourceSha();
+  // dist is ignored by git: a clean checkout alone cannot attest to the
+  // generated engine the process-chaos fixture imports. Regenerate it from
+  // the verified source before observing any recovery evidence.
+  const build=spawnSync('npm',['run','build'],{
+    encoding:'utf8',timeout:180000,maxBuffer:4*1024*1024,
+  });
+  if(build.error || build.status!==0) {
+    throw new Error('verified source build failed: '+
+      (build.error?.code??build.signal??build.status));
+  }
   const postgres=await verifyPostgres16();
   temp=await mkdtemp(path.join(tmpdir(),'ei-pg-os-soak-'));
   const records=[];
