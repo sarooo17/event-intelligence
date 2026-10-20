@@ -769,17 +769,46 @@ integration('uncertain PostgreSQL unlock quarantines session even when wrapper i
     tablePrefix:prefix,scopeId:'scope-recovery',
   });
   try {
-    await assert.rejects(() => target.withTriggerDispatchFence(
-      'quarantine-release','1',new Date().toISOString(),
-      async () => 'effect-finished',
-    ), error => error?.code === 'EVENT_INTELLIGENCE_DISPATCH_SESSION_QUARANTINED' &&
+    let entered, release;
+    const started = new Promise(resolve => { entered = resolve; });
+    const blocker = new Promise(resolve => { release = resolve; });
+    let forbiddenEffects = 0;
+    // The holder deliberately pauses inside its host callback, so another
+    // store sharing the same physical pool can queue BEFORE unlock fails.
+    const first = target.withTriggerDispatchFence(
+      'quarantine-release','1',new Date().toISOString(), async () => {
+        entered();
+        await blocker;
+        return 'effect-finished';
+      },
+    );
+    await started;
+    const queued = store.withTriggerDispatchFence(
+      'quarantine-release','1',new Date().toISOString(), async () => {
+        forbiddenEffects++;
+        return 'forbidden-queued-effect';
+      },
+    );
+    release();
+    await assert.rejects(first, error =>
+      error?.code === 'EVENT_INTELLIGENCE_DISPATCH_SESSION_QUARANTINED' &&
       error?.cause?.message === 'injected-uncertain-unlock');
+    await assert.rejects(queued, error =>
+      error?.code === 'EVENT_INTELLIGENCE_DISPATCH_POOL_QUARANTINED');
+    await assert.rejects(() => store.withTriggerDispatchFence(
+      'quarantine-release','1',new Date().toISOString(), async () => {
+        forbiddenEffects++;
+        return 'forbidden-fresh-effect';
+      },
+    ), error => error?.code === 'EVENT_INTELLIGENCE_DISPATCH_POOL_QUARANTINED');
+    assert.equal(forbiddenEffects,0,
+      'queued and fresh callbacks must not consume the final usable pool slot');
     assert.equal(unsafeReleases,0,
       'unknown wrapper release() must NEVER return uncertain locked session to pool');
     assert.ok(checkedOut);
     const freeSlot = await pool.query('SELECT 1 AS ok');
     assert.equal(freeSlot.rows[0].ok,1,
-      'quarantining one session must leave the remaining max=2 slot usable');
+      'pool still has an ordinary DB slot, but host dispatch MUST fail closed');
   } finally {
     // Explicit TEST cleanup: destroy the deliberately quarantined physical
     // PG connection, otherwise the pool's normal end() would await checkout.
