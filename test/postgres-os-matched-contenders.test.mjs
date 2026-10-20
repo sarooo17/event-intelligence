@@ -70,7 +70,8 @@ function spawn(mode, round, prefix, children, exits, workerId, matchId = '') {
     };
     const inspect = value => {
       if (value?.type === 'failed') {
-        settle(new Error('OS matched worker failure: ' + value.stage + '/' + value.code));
+        settle(new Error('OS matched worker failure: ' + value.stage + '/' +
+          value.code + (typeof value.detail === 'string' ? ': ' + value.detail : '')));
       } else if (value?.type !== type) {
         settle(new Error('unexpected OS IPC: expected ' + type + ', got ' + value?.type));
       } else {
