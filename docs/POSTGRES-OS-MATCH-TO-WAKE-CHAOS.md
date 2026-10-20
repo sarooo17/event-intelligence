@@ -126,6 +126,16 @@ connections; an external writer that directly modifies rows bypasses this
 advisory protocol. Real PG16 tests use distinct pools to cover both stale
 claims after admission wait and attempted mid-callback reclaim.
 
+If an advisory unlock query fails, EI **quarantines** that checked-out PG
+session without calling the wrapper's `release()`. A compatible wrapper can
+ignore `release(error)`, so recycling an uncertain session could retain an
+undetected advisory lock and block future dispatch or lifecycle mutations.
+Quarantine deliberately reduces available pool capacity and requires the
+operator to recycle the pool/process; it does not silently reuse the suspect
+connection. PG16 injects an unlock error through a wrapper whose
+`release()` ignores errors and verifies that method is never invoked.
+
+
 Long callbacks hold a PG connection and delay lifecycle revocations;
 this is not a guaranteed distributed external-host atomic transaction.
 The host must still implement durable receipt idempotency after crash. Missing runtime coordinators remain
