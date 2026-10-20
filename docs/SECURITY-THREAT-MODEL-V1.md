@@ -44,9 +44,11 @@ Important distinctions:
   read-consistency contract here treats the final authoritative query snapshot
   as the authorization linearization point: a read already authorized there
   may finish, even if revocation commits before transport delivery. This is
-  NOT an atomic cross-worker cancellation mechanism, does not cancel queued
-  wake jobs and is not sufficient to close #45 or #235. A stronger
-  owner-revision/read-write fence and independent PG16 evidence remain open.
+  NOT an atomic cross-worker cancellation mechanism and does not cancel
+  queued wake jobs. Real independent-pool PostgreSQL 16 ordering tests now
+  cover the FINAL authorization query snapshot under #235; they do NOT
+  establish a stronger no-response-after-revocation-commit guarantee.
+  Parent #45 and independent security signoff remain open.
 
 Use this matrix with the v1 readiness ledger before publishing. Never
 place exploit reproductions, secrets or private vulnerability details in
@@ -55,3 +57,50 @@ public issues; follow `SECURITY.md` private reporting process.
 **Compatibility:** documentation and a test verifying evidence inventory;
 no runtime behavior changes, no additional OAuth/provider policy code,
 no new security guarantee and no npm publication.
+
+## Owner read vs owner-transfer order — explicit contract (#235)
+
+The standalone stdio MCP read authority is the **trusted configured owner**
+(type, principal ID and tenant ID) compared with the authoritative persisted
+owner of the **specific trigger version in the selected store scope**. Model
+arguments, events and evidence text never establish identity.
+
+**Linearization point:** for a requested trigger version the *last* successful
+owner-filtered `listTriggers({owner})` snapshot, including its persisted
+`getTriggerState(triggerId,version)` read. In PostgreSQL 16, that is the
+statement snapshot of the authoritative trigger-state SELECT. A successful
+read can complete *after* a concurrent transfer has committed **if and only
+if** the final authorization snapshot happened **before** that transfer.
+This is standard linearizable-read ordering for overlapping read and
+revocation operations; it is **not** a promise of retroactive cancellation
+of reads already admitted, and not a guarantee that no evidence can ever
+arrive after a revocation commit.
+
+A transfer committed **before** the final authorization query must deny
+with the same nondisclosing not-found as a missing trigger. A transfer
+committed after the query snapshot may allow the already-authorized read
+to finish; a *new* read must deny. The initial authorization guards
+evidence access and the final authorization guards returned results. A
+versionless wake producer is **not** authorized by selecting a newer owned
+version; the explicit version-pinning and failed-builder error-redaction
+corrections are tracked separately in PR #239 and must merge successfully
+before any #45 signoff.
+
+**Independent multi-pool evidence:** real PG16 barrier tests in
+`test/postgres-owner-revocation-snapshot.test.mjs` make the final SELECT
+capture an old row in pool A, commit owner/tenant transfer through an
+independent pool B, then release the SQL result to the MCP guard and prove
+the already-authorized inspect and wake reads can finish. A separate
+barrier commits first and shows the final query rejects; post-transfer
+fresh reads are denied, with no tenant enumeration in error fields.
+
+**Remaining host responsibilities:** token/session revocation, OAuth and
+permissions for external effects, and cancellation of already queued
+work remain host-owned. EI does not atomically prevent an HTTP/stdio
+transport from delivering a response after a later revocation, and
+cannot lock owner changes in a separate host authority database. If a
+host requires **strict no-result-after-revoke-commit**, it must add a
+shared versioned authority/fence coupled to transport delivery; that
+stronger contract is *not provided by this standalone owner-read path*.
+No cross-worker in-memory locks or invented provider credentials have
+been added. Independent review and security release CI remain necessary.
