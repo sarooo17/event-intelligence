@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
 import {spawnSync} from 'node:child_process';
+import {mkdtemp,readFile,rm,writeFile} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 
 const runner='scripts/evidence/postgres-os-chaos-soak.mjs';
@@ -43,4 +46,23 @@ test('even with confirmation, missing PG URL rejects without publishing success'
   });
   assert.equal(result.status,1);
   assert.equal(JSON.parse(result.stderr).status,'failed');
+});
+
+
+test('an existing successful output is refused BEFORE a new cohort starts',async()=>{
+  const dir=await mkdtemp(path.join(tmpdir(),'ei-soak-stale-'));
+  try{
+    const out=path.join(dir,'previous-success.json');
+    const unchanged='{"status":"completed","sourceCommitSha":"OLD_RUN"}\n';
+    await writeFile(out,unchanged);
+    const result=run(['--out',out,'--rounds','2'],{
+      EI_PG_CHAOS_SOAK_CONFIRM:'YES_DISPOSABLE_PG',
+    });
+    assert.equal(result.status,1);
+    const failure=JSON.parse(result.stderr);
+    assert.equal(failure.status,'failed');
+    assert.match(failure.reason,/output artifact already exists/);
+    assert.equal(await readFile(out,'utf8'),unchanged,
+      'never overwrite or treat an earlier success as the new run');
+  }finally{await rm(dir,{recursive:true,force:true});}
 });
