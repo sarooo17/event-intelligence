@@ -6,6 +6,14 @@ on:
     paths:
       - scripts/evidence/postgres-os-chaos-soak.mjs
       - test/postgres-os-matched-contenders.test.mjs
+      - test/fixtures/postgres-os-match-wake-worker.mjs
+      - scripts/lib/postgres-event-store.mjs
+      - scripts/lib/composite-event-consumer.mjs
+      - scripts/lib/composite-wake-coordinator.mjs
+      - scripts/lib/wake-retry-scheduler.mjs
+      - src/composite/**
+      - package.json
+      - package-lock.json
       - .github/workflows/postgres-os-chaos-soak.yml
   workflow_dispatch:
     inputs:
@@ -28,7 +36,8 @@ permissions:
 jobs:
   os-crash-soak:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    # 12 cohorts x 15 min max + dependency setup and artifact upload.
+    timeout-minutes: 210
     services:
       postgres:
         image: postgres:16-alpine
