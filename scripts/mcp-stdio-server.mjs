@@ -151,13 +151,15 @@ function registerReadTools(server, runtime, env) {
     },
     async (input) => {
       try {
-        const owned = await ownerGuard.assertTrigger(input.triggerId, input.version);
-        return jsonResult(await runtime.triggerInspector.inspect({
-          ...input,
-          // Never let Inspector select a newer, foreign-owned version when
-          // the caller omits the version. The authorization is version-bound.
-          version: owned.definition.version,
-        }), 'inspect');
+        return await ownerGuard.withAuthorizedTriggerResult(
+          input.triggerId, input.version, async (owned) =>
+            jsonResult(await runtime.triggerInspector.inspect({
+              ...input,
+              // Never let Inspector select a newer, foreign-owned version when
+              // the caller omits the version. The authorization is version-bound.
+              version: owned.definition.version,
+            }), 'inspect'),
+        );
       } catch (error) {
         return errorResult(error);
       }
@@ -210,8 +212,13 @@ function registerReadTools(server, runtime, env) {
     },
     async ({ wakeId }) => {
       try {
-        await ownerGuard.assertWake(wakeId);
-        return jsonResult(await runtime.activationHydrator.hydrateWake(wakeId), 'wakeHydrate');
+        return await ownerGuard.withAuthorizedWakeResult(
+          wakeId,
+          async () => jsonResult(
+            await runtime.activationHydrator.hydrateWake(wakeId),
+            'wakeHydrate',
+          ),
+        );
       } catch (error) {
         return errorResult(error);
       }
