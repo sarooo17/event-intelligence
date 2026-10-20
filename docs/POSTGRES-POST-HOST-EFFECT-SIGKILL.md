@@ -64,8 +64,10 @@ POSTGRES_URL='postgresql://<disposable-test-database>' \
 node --test test/postgres-post-host-effect-sigkill.test.mjs
 ```
 
-The JSON file is created exclusively after every recovery, independent
-receipt verification, worker reap and database cleanup succeeds. Existing
+The JSON file is staged and atomically linked into place exclusively after
+every recovery, independent receipt verification, worker reap and database
+cleanup succeeds. The node:test abort signal additionally blocks publishing
+any completed artifact after a test deadline or cancellation. Existing
 output paths fail closed; a failed process must not publish a new completed
 artifact. Each round retains distinct wake/match IDs, victim/successor
 process IDs, SIGKILL confirmation, receipt, claim generation, host attempts
