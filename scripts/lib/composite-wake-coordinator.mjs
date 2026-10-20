@@ -442,8 +442,13 @@ export class CompositeWakeCoordinator {
       if (error?.code === 'WAKE_DELIVERY_CLAIM_LOST') {
         return claimLostOutcome(error);
       }
+      // The claim generation must remain monotonic for ABA fencing, but
+      // contention-only claims never reached the host and must not inflate
+      // exponential failure backoff or consume the DLQ attempt budget.
+      const hostAttempt = Math.max(1,
+        claim.attemptCount - Number(claim.dispatchContentions || 0));
       const delay = retryDelayMs(
-        claim.attemptCount,
+        hostAttempt,
         this.retryBaseDelayMs,
         this.retryMaxDelayMs,
       );
