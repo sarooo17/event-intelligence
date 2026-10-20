@@ -42,14 +42,19 @@ async function withPoolFenceCapacity(pool, capacity, run) {
   // pool. Contending lifecycle mutations use nonblocking try-lock/retry
   // and never pin all remaining PostgreSQL connections.
   if (state.active >= capacity) {
+    // The releasing holder transfers its reserved slot directly to the
+    // oldest waiter. Do NOT increment active on wake-up: a fresh entrant
+    // could otherwise race a queued waiter and over-admit callbacks.
     await new Promise(resolve => state.waiters.push(resolve));
+  } else {
+    state.active++;
   }
-  state.active++;
   try {
     return await run();
   } finally {
-    state.active--;
-    state.waiters.shift()?.();
+    const next = state.waiters.shift();
+    if (next) next();
+    else state.active--;
   }
 }
 
