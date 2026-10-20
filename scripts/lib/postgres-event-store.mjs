@@ -683,8 +683,14 @@ export class PostgresEventStore {
   }
 
   async appendWake(record) {
-    await this.appendHistory('wake', record.wakeId, record);
-    return record;
+    if (!record?.wakeId) throw new TypeError('Wake requires wakeId');
+    // Keep all writers on the same PG transaction fence used by delivered
+    // receipt materialization and operator-only history compaction.
+    return this.tx(async (client) => {
+      await this.lock(client, 'wake-delivered-history', String(record.wakeId));
+      await this.appendHistory('wake', record.wakeId, record, client);
+      return record;
+    });
   }
 
   latestWake(wakeId) {
@@ -714,6 +720,123 @@ export class PostgresEventStore {
       await this.appendHistory('wake', record.wakeId, record, client);
       return { wake: record, appended: true };
     });
+  }
+
+  /**
+   * Opt-in terminal wake history compaction (#47).
+   * No MCP occurrence, trigger match, dedup key, receipt, audit or distinct
+   * wake transition may be removed. Dry-run by default. The per-wake
+   * advisory lock fences BOTH appendWake and appendDeliveredWakeIfMissing
+   * across independent PostgreSQL pools while the bounded window is read
+   * and any deletions commit.
+   */
+  async compactDeliveredWakeDuplicateHistory({
+    wakeId, before, maxRows = 100, maxHistoryRows = 10000,
+    maxScanMs = 2000, dryRun = true,
+  } = {}) {
+    if (typeof wakeId !== 'string' || !wakeId.trim() ||
+        !z.iso.datetime({ offset: true }).safeParse(before).success ||
+        Date.parse(before) > Date.now() ||
+        !Number.isSafeInteger(maxRows) || maxRows < 1 || maxRows > 1000 ||
+        !Number.isSafeInteger(maxHistoryRows) ||
+        maxHistoryRows < 3 || maxHistoryRows > 100000 ||
+        !Number.isSafeInteger(maxScanMs) ||
+        maxScanMs < 100 || maxScanMs > 30000 ||
+        typeof dryRun !== 'boolean') {
+      const error = new TypeError(
+        'Wake history compaction needs wakeId, past offset-aware ISO cutoff, ' +
+        'maxRows 1..1000, maxHistoryRows 3..100000, maxScanMs 100..30000 and boolean dryRun',
+      );
+      error.code = 'EVENT_INTELLIGENCE_WAKE_HISTORY_RETENTION_INVALID';
+      throw error;
+    }
+    try {
+      return await this.tx(async (client) => {
+        // Abort the complete transaction if a dead-tuple index traversal or
+        // advisory lock wait consumes the per-statement operator time budget.
+        await client.query("SELECT set_config('statement_timeout', $1, true)",
+          [String(maxScanMs) + 'ms']);
+        await this.lock(client, 'wake-delivered-history', wakeId);
+        const delivery = await this.get('wake_delivery', wakeId, client, true);
+        // A pending, dead-letter or unreceipted wake can still be retried or
+        // reconstructed. Never compact it, even if snapshots appear equal.
+        if (delivery?.status !== 'delivered' ||
+            typeof delivery.runtimeReceiptId !== 'string' ||
+            !delivery.runtimeReceiptId) {
+          return {
+            ok: true, strategy: 'delivered-wake-adjacent-duplicate-retention',
+            scopeId: this.scopeId, wakeId, dryRun, maxHistoryRows, maxScanMs,
+            eligible: 0, deleted: 0, capped: false,
+            skipped: 'not_durably_delivered',
+          };
+        }
+        // Preserve both the first and last witnesses, and every transition,
+        // even if a different state reappears later. Never delete last wake.
+        const latest = await client.query(
+          'SELECT payload FROM ' + this.history +
+          ' WHERE scope_id=$1 AND kind=$2 AND record_key=$3' +
+          ' ORDER BY history_id DESC LIMIT 1',
+          [this.scopeId, 'wake', wakeId],
+        );
+        if (latest.rows[0]?.payload?.status !== 'delivered') {
+          return {
+            ok: true, strategy: 'delivered-wake-adjacent-duplicate-retention',
+            scopeId: this.scopeId, wakeId, dryRun, maxHistoryRows, maxScanMs,
+            eligible: 0, deleted: 0, capped: false,
+            skipped: 'latest_wake_not_delivered',
+          };
+        }
+        const overBudget = await client.query(
+          'SELECT history_id FROM ' + this.history +
+          ' WHERE scope_id=$1 AND kind=$2 AND record_key=$3' +
+          ' ORDER BY history_id OFFSET $4 LIMIT 1',
+          [this.scopeId, 'wake', wakeId, maxHistoryRows],
+        );
+        if (overBudget.rows.length) {
+          const error = new Error(
+            'Wake history exceeds operator scan budget; no revisions compacted');
+          error.code = 'EVENT_INTELLIGENCE_WAKE_HISTORY_SCAN_BUDGET_EXCEEDED';
+          throw error;
+        }
+        const sql =
+          'WITH ordered AS (' +
+          ' SELECT history_id, created_at, payload,' +
+          ' LAG(payload) OVER (ORDER BY history_id) AS previous_payload,' +
+          ' LEAD(payload) OVER (ORDER BY history_id) AS next_payload' +
+          ' FROM ' + this.history +
+          ' WHERE scope_id=$1 AND kind=$2 AND record_key=$3' +
+          '), candidates AS (' +
+          ' SELECT history_id FROM ordered' +
+          ' WHERE created_at < $4::timestamptz' +
+          ' AND payload = previous_payload AND payload = next_payload' +
+          ' ORDER BY history_id LIMIT $5' +
+          ') ';
+        const params = [this.scopeId, 'wake', wakeId, before, maxRows];
+        const selected = dryRun
+          ? await client.query(sql + 'SELECT history_id FROM candidates', params)
+          : await client.query(
+            sql + 'DELETE FROM ' + this.history + ' h USING candidates c' +
+            ' WHERE h.history_id=c.history_id AND h.scope_id=$1' +
+            ' AND h.kind=$2 AND h.record_key=$3 RETURNING h.history_id',
+            params,
+          );
+        const count = selected.rows.length;
+        return {
+          ok: true, strategy: 'delivered-wake-adjacent-duplicate-retention',
+          scopeId: this.scopeId, wakeId, dryRun, maxHistoryRows, maxScanMs,
+          eligible: count, deleted: dryRun ? 0 : count,
+          capped: count === maxRows,
+        };
+      });
+    } catch (error) {
+      if (error?.code === '57014') {
+        const bounded = new Error(
+          'Wake history retention exceeded operator SQL time budget; no history was modified');
+        bounded.code = 'EVENT_INTELLIGENCE_WAKE_HISTORY_TIME_BUDGET_EXCEEDED';
+        throw bounded;
+      }
+      throw error;
+    }
   }
 
   getWakeDelivery(wakeId) {
