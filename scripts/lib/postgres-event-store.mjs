@@ -1133,6 +1133,12 @@ export class PostgresEventStore {
             lastFiredAt: metadata.lastFiredAt !== undefined
               ? metadata.lastFiredAt
               : previous.lastFiredAt ?? null,
+            // Durable dispatch reservations survive pause/restart and are
+            // only cleared by the matching lifecycle finalization.
+            dispatchReservations: Array.isArray(metadata.dispatchReservations)
+              ? metadata.dispatchReservations.map(String)
+              : (Array.isArray(previous.dispatchReservations)
+                ? previous.dispatchReservations.map(String) : []),
             revision: Number(previous.revision || 0) + 1,
           };
           await this.upsert('trigger_state', key, next, client);
@@ -1162,7 +1168,7 @@ export class PostgresEventStore {
    * Requires a session-preserving PostgreSQL connection (not transaction
    * pooling PgBouncer) and >=2 pool slots for callbacks that use the store.
    */
-  async withTriggerDispatchFence(triggerId, version, at, operation) {
+  async withTriggerDispatchFence(triggerId, version, at, operation, { wakeId = null } = {}) {
     if (typeof operation !== 'function') throw new TypeError('dispatch callback required');
     const key = String(triggerId) + '@' + String(version);
     const maxPool = Number(this.pool.options?.max ?? 10);
@@ -1204,15 +1210,55 @@ export class PostgresEventStore {
         const leaseUntil = lifecycle.leaseUntil
           ? Date.parse(lifecycle.leaseUntil) : Number.POSITIVE_INFINITY;
         const count = state.fireCount ?? 0;
+        const pending = Array.isArray(state.dispatchReservations)
+          ? state.dispatchReservations : [];
+        const cap = lifecycle.oneShot === true || lifecycle.completeOnGoal === true
+          ? 1
+          : (lifecycle.maxFirings === undefined
+            ? Number.POSITIVE_INFINITY : lifecycle.maxFirings);
+        const alreadyReserved = typeof wakeId === 'string' && pending.includes(wakeId);
         if (!definition?.target || state.status !== 'active' ||
             atMs > Math.min(expiresAt, leaseUntil) ||
-            (lifecycle.oneShot === true && count >= 1) ||
-            (lifecycle.maxFirings !== undefined && count >= lifecycle.maxFirings)) {
+            (Number.isFinite(cap) && count + pending.length >= cap &&
+              !alreadyReserved)) {
           return { authorized: false, reason: 'trigger_not_active_at_dispatch' };
         }
-        // The callback includes ALL durable receipt/lifecycle finalization,
-        // not just the external HTTP/host side effect. One-shot and max-fire
-        // counters are therefore committed BEFORE the next match can pass.
+        // Commit the right to execute a bounded trigger BEFORE calling the
+        // external host. A worker crash releases its session lock, but a
+        // durable reservation for that wake remains, blocking other wake
+        // IDs from consuming the same one-shot / maxFirings slot.
+        if (Number.isFinite(cap) && !alreadyReserved) {
+          if (typeof wakeId !== 'string' || !wakeId) {
+            const error = new Error('Bounded host dispatch requires durable wake identity');
+            error.code = 'EVENT_INTELLIGENCE_DISPATCH_WAKE_ID_REQUIRED';
+            throw error;
+          }
+          await client.query('BEGIN');
+          try {
+            const previous = await this.get('trigger_state', key, client, true) ??
+              defaultTriggerState(triggerId, version);
+            const original = Array.isArray(previous.dispatchReservations)
+              ? previous.dispatchReservations : [];
+            if (previous.status !== 'active' ||
+                (previous.fireCount ?? 0) + original.length >= cap) {
+              await client.query('ROLLBACK');
+              return { authorized: false, reason: 'trigger_not_active_at_dispatch' };
+            }
+            await this.upsert('trigger_state', key, {
+              ...previous,
+              dispatchReservations: [...original, wakeId],
+              revision: Number(previous.revision || 0) + 1,
+              updatedAt: new Date().toISOString(),
+            }, client);
+            await client.query('COMMIT');
+          } catch (error) {
+            try { await client.query('ROLLBACK'); } catch {}
+            throw error;
+          }
+        }
+        // The callback includes durable receipt and lifecycle finalization.
+        // If execution crashes before markFired, the SAME wake can retry
+        // while a DIFFERENT wake is fenced by the persisted reservation.
         const value = await dispatchContext.run({ store: this, key }, operation);
         return { authorized: true, value };
       } finally {
