@@ -6,8 +6,13 @@ This is **not general append-only history TTL** and does not yet complete the
 retention/compaction acceptance in #47. It provides a narrowly scoped,
 operator-invoked, *dry-run by default* operation:
 `PostgresEventStore.compactTerminalMatchDuplicateHistory({ matchId, before,
-maxRows, dryRun })`. `before` must be an offset-aware ISO timestamp no later
-than the current clock time; `maxRows` ranges 1–1000 (default 100).
+maxRows, maxHistoryRows, dryRun })`. `before` must be an offset-aware ISO
+timestamp no later than the current clock time; `maxRows` ranges 1–1000
+(default 100). `maxHistoryRows` is the maximum indexed revision count the
+operator permits scanning (3–100000, default 10000). Histories exceeding
+this ceiling fail closed with `EVENT_INTELLIGENCE_MATCH_HISTORY_SCAN_BUDGET_EXCEEDED`
+**before** any destructive SQL; a scan-budget failure is not truncation
+or silent partial compaction.
 
 Only `trigger_match_history` rows for the *given tenant scope and match ID*
 are eligible. The durable current `trigger_match` row must have
@@ -24,9 +29,14 @@ lock with match append/finalization, locks the current match row, and selects
 and deletes in a single transaction. It uses the existing
 `(scope_id,kind,record_key,history_id)` index, with no schema migration or
 DDL. Different pools for the same match serialize and cannot double-count
-removed history. Maximum deleted rows per call are capped, but computing
-window boundaries scans the selected match's history; operators must
-consider per-match size and database work budget.
+removed history. Maximum deleted rows per call are capped. Before evaluating LAG/LEAD,
+a scope-local indexed `ORDER BY history_id OFFSET maxHistoryRows LIMIT 1`
+probe verifies the full match revision stream fits the chosen scan ceiling,
+under the same per-match lock. Only within-budget streams enter the window.
+This avoids an unbounded history materialization for high-cardinality or
+maliciously large match streams; it does **not** establish a cluster-wide
+retention performance SLO. Operators may raise the explicit ceiling (up
+to 100000) only after reviewing database cost.
 
 **Never touched:** original provider/MCP occurrence logs and dedup keys,
 event/derived evidence, the current trigger definition/state/buffers,
@@ -44,9 +54,12 @@ lossless forensic reconstruction of every append attempt.
    and a conservative `maxRows`. The preview reports `eligible` but
    `deleted: 0`. Another worker might append between preview and apply,
    so treat it as advisory.
-3. Explicitly call the same method with `dryRun: false` to thin only
+3. If the preview reports a scan-budget exceedance, no changes were made:
+   investigate the match history and operator budget rather than bypassing
+   the ceiling implicitly.
+4. Explicitly call the same method with `dryRun: false` to thin only
    interior adjacent duplicates. Repeat bounded batches if needed.
-4. Re-check `listTriggerMatchHistory`,
+5. Re-check `listTriggerMatchHistory`,
    `getRecentTriggerMatchHistory`, authoritative fired match, receipt,
    host dedup, tenant boundaries and `verifyAudit()` if required by
    the deployment's policy. No background job is installed.
