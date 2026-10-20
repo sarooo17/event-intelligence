@@ -165,6 +165,8 @@ test('raw benchmark evidence requires complete anchored GitHub Actions run URL',
     'https://github.com/../r/actions/runs/123',
     'https://github.com/-owner/r/actions/runs/123',
     'https://github.com/owner-/r/actions/runs/123',
+    'https://github.com/invalid--owner/repo/actions/runs/123',
+    'https://github.com/owner---three/repo/actions/runs/123',
     'https://github.com/o/./r/actions/runs/123',
     'https://github.com/o/%2e%2e/actions/runs/123',
   ];
