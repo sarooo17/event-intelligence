@@ -88,16 +88,22 @@ for the fencing sessions simultaneously.
 session-preserving PostgreSQL (not PgBouncer transaction-pooling) and a
 pool of **at least two connections**. The capacity must be **known**:
 standard `pg.Pool` exposes `pool.options.max`, whereas compatible wrappers
-that omit this field **must** pass `dispatchPoolMax` to
-`new PostgresEventStore({ pool, dispatchPoolMax: actualPoolMaximum })`.
-This is an explicit operator assertion of the wrapper's **real** connection
-limit, not an arbitrary performance tuning knob. An unknown/invalid limit
-fails closed **before host dispatch** instead of silently assuming 10;
-values greater than a visible `pool.options.max` are rejected. Stores
-sharing one pool must use consistent admission capacity. Never set
-`dispatchPoolMax` above the actual hidden pool size or a callback that
-uses the same pool can deadlock. A real PG16 max=2 wrapper regression
-exercises both the fail-closed path and FIFO single-callback admission.
+that omit this field **must** pass both `dispatchPoolMax` **and**
+`dispatchPoolIdentity`:
+`new PostgresEventStore({ pool: wrapper, dispatchPoolMax: actualPoolMaximum,
+dispatchPoolIdentity: underlyingPhysicalPool })`.
+The capacity is an explicit assertion of the wrapper's **real** connection
+limit, not an arbitrary performance tuning knob; identity must be the
+**exact same object** for every wrapper or direct store sharing those
+physical connections. A wrapper missing either property fails closed
+**before host dispatch**, never assuming a capacity of 10 or that each
+wrapper owns independent connections. A configured size greater than
+visible `pool.options.max`, or conflicting gate capacities for one identity,
+is rejected. Never declare a maximum larger than the actual hidden
+pool size or provide inconsistent physical identities: a callback using
+the same pool could deadlock. Real PG16 max=2 regressions exercise
+missing-configuration failure, two separate wrappers sharing the pool
+and direct native-pool dispatch through one FIFO single-callback gate.
 
 `floor(maxPool/2)` slots can hold
 fenced callbacks while the remainder stay available for callback I/O
