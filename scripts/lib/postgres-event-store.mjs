@@ -889,15 +889,17 @@ export class PostgresEventStore {
     const wakeId = String(input.wakeId || '');
     const matchId = String(input.matchId || '');
     const runtime = String(input.runtime || '');
-    if (!wakeId || !matchId || !runtime) {
-      throw new Error('Wake delivery requires wakeId, matchId and runtime');
+    const triggerVersion = typeof input.triggerVersion === 'string' &&
+      input.triggerVersion.trim() ? input.triggerVersion : '';
+    if (!wakeId || !matchId || !runtime || !triggerVersion) {
+      throw new Error('Wake delivery requires wakeId, matchId, runtime and explicit triggerVersion');
     }
     const now = String(input.now ?? new Date().toISOString());
     const record = {
       wakeId,
       matchId,
       triggerId: String(input.triggerId || ''),
-      triggerVersion: String(input.triggerVersion || '1'),
+      triggerVersion,
       runtime,
       status: 'pending',
       attemptCount: 0,
