@@ -1173,10 +1173,12 @@ export class PostgresEventStore {
               : previous.lastFiredAt ?? null,
             // Durable dispatch reservations survive pause/restart and are
             // only cleared by the matching lifecycle finalization.
-            dispatchReservations: Array.isArray(metadata.dispatchReservations)
-              ? metadata.dispatchReservations.map(String)
-              : (Array.isArray(previous.dispatchReservations)
-                ? previous.dispatchReservations.map(String) : []),
+            dispatchReservations:
+              actor?.principal_id === 'event-intelligence:lifecycle' &&
+              Array.isArray(metadata.dispatchReservations)
+                ? metadata.dispatchReservations.map(String)
+                : (Array.isArray(previous.dispatchReservations)
+                  ? previous.dispatchReservations.map(String) : []),
             revision: Number(previous.revision || 0) + 1,
           };
           await this.upsert('trigger_state', key, next, client);
