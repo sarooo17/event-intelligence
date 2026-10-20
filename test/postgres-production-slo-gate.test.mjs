@@ -159,6 +159,14 @@ test('raw benchmark evidence requires complete anchored GitHub Actions run URL',
     'https://github.com/o/r/issues/123',
     'http://github.com/o/r/actions/runs/123',
     'https://github.com/o/r/actions/runs/123#faked',
+    'https://github.com/o/../actions/runs/123',
+    'https://github.com/o/./actions/runs/123',
+    'https://github.com/./r/actions/runs/123',
+    'https://github.com/../r/actions/runs/123',
+    'https://github.com/-owner/r/actions/runs/123',
+    'https://github.com/owner-/r/actions/runs/123',
+    'https://github.com/o/./r/actions/runs/123',
+    'https://github.com/o/%2e%2e/actions/runs/123',
   ];
   for(const url of invalid){
     const input=sample();
