@@ -789,12 +789,13 @@ integration('uncertain PostgreSQL unlock quarantines session even when wrapper i
         return 'forbidden-queued-effect';
       },
     );
+    const queuedChecked = assert.rejects(queued, error =>
+      error?.code === 'EVENT_INTELLIGENCE_DISPATCH_POOL_QUARANTINED');
     release();
     await assert.rejects(first, error =>
       error?.code === 'EVENT_INTELLIGENCE_DISPATCH_SESSION_QUARANTINED' &&
       error?.cause?.message === 'injected-uncertain-unlock');
-    await assert.rejects(queued, error =>
-      error?.code === 'EVENT_INTELLIGENCE_DISPATCH_POOL_QUARANTINED');
+    await queuedChecked;
     await assert.rejects(() => store.withTriggerDispatchFence(
       'quarantine-release','1',new Date().toISOString(), async () => {
         forbiddenEffects++;
