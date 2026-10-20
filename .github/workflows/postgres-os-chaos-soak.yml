@@ -13,6 +13,7 @@ on:
       - scripts/lib/composite-event-consumer.mjs
       - scripts/lib/composite-wake-coordinator.mjs
       - scripts/lib/wake-retry-scheduler.mjs
+      - 'scripts/lib/**'
       - 'src/**'
       - package.json
       - package-lock.json
