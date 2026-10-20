@@ -89,7 +89,7 @@ async function main() {
   const result={
     schema:'ei-postgres-os-chaos-soak-v1',
     status:'completed',
-    sourceCommitSha:process.env.GITHUB_SHA??null,
+    sourceCommitSha:process.env.SOAK_SOURCE_SHA??process.env.GITHUB_SHA??null,
     hardware:{
       platform:process.platform,
       cpuModel:cpus()[0]?.model??'unknown',
