@@ -51,27 +51,43 @@ export function createOwnerReadGuard({ triggerControl, store, owner }) {
       ? await store.getWakeDelivery(wakeId)
       : null;
 
-    // Check ownership before looking up matched-event evidence.
-    await assertTrigger(triggerId, delivery?.triggerVersion || undefined);
-
-    // All wake/delivery/match references must agree, even if a colliding
-    // match ID or corrupted subscription points to another trigger.
-    if (delivery && (
-      delivery.matchId !== wake.sourceEventId ||
-      (delivery.triggerId && delivery.triggerId !== triggerId)
-    )) {
-      throw notFound();
-    }
-    const matches = await store.listTriggerMatches(triggerId);
-    const match = matches.find((entry) =>
-      entry?.matchId === wake.sourceEventId &&
-      entry.triggerId === triggerId &&
-      (!delivery?.triggerVersion ||
-        entry.triggerVersion === delivery.triggerVersion)
+    // Bind the exact initially owned version so a failed matched-evidence
+    // read cannot fall back to a different version still owned by the
+    // principal after a concurrent transfer of THIS version.
+    const initiallyOwned = await assertTrigger(
+      triggerId, delivery?.triggerVersion || undefined,
     );
-    if (!match) throw notFound();
-    await assertTrigger(triggerId, match.triggerVersion);
-    return match;
+    try {
+      // All wake/delivery/match references must agree, even if a colliding
+      // match ID or corrupted subscription points to another trigger.
+      if (delivery && (
+        delivery.matchId !== wake.sourceEventId ||
+        (delivery.triggerId && delivery.triggerId !== triggerId)
+      )) {
+        throw notFound();
+      }
+      const matches = await store.listTriggerMatches(triggerId);
+      const match = matches.find((entry) =>
+        entry?.matchId === wake.sourceEventId &&
+        entry.triggerId === triggerId &&
+        (!delivery?.triggerVersion ||
+          entry.triggerVersion === delivery.triggerVersion)
+      );
+      if (!match) throw notFound();
+      await assertTrigger(triggerId, match.triggerVersion);
+      return match;
+    } catch (error) {
+      // A rejected store.listTriggerMatches() may contain sensitive SQL,
+      // provider or matched-event details. Re-check the pinned owner before
+      // propagating ANY error from this post-authorization evidence phase.
+      // If transferred, notFound replaces the original error; if still
+      // authorized, preserve the real error for operator diagnostics.
+      await assertTrigger(
+        initiallyOwned.definition.triggerId,
+        initiallyOwned.definition.version,
+      );
+      throw error;
+    }
   }
 
   /**
