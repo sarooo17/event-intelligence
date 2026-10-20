@@ -139,7 +139,7 @@ async function main() {
     const startMemory = process.memoryUsage();
     const runStarted = performance.now();
     phase = 'initialization';
-    const store = new PostgresEventStore({ pool, tablePrefix: prefix });
+    const store = new PostgresEventStore({ pool: pool, dispatchPoolIdentity: pool, tablePrefix: prefix });
     await store.init();
     record.runtime.postgresVersion = (
       await pool.query('SHOW server_version')
