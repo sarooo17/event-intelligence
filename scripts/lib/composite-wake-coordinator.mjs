@@ -411,17 +411,29 @@ export class CompositeWakeCoordinator {
       const guarded = typeof this.store.withTriggerDispatchFence === 'function'
         ? await this.store.withTriggerDispatchFence(
             match.triggerId, match.triggerVersion,
-            this.now().toISOString(), performClaimedDelivery,
+            this.now().toISOString(), performClaimedDelivery, { wakeId },
           )
         : { authorized: true, value: await performClaimedDelivery() };
       if (!guarded.authorized) {
-        const error = new Error(
-          guarded.reason === 'trigger_dispatch_busy'
-            ? 'Trigger delivery is busy on another worker'
-            : 'Trigger authorization revoked before host dispatch',
-        );
+        if (guarded.reason === 'trigger_dispatch_busy' &&
+            typeof this.store.deferBusyWakeDelivery === 'function') {
+          const at = this.now();
+          const deferred = await this.store.deferBusyWakeDelivery(wakeId, {
+            workerId: this.workerId,
+            attemptCount: claim.attemptCount,
+            now: at.toISOString(),
+            nextAttemptAt: new Date(at.getTime() +
+              Math.max(1000, this.retryBaseDelayMs)).toISOString(),
+          });
+          return {
+            status: 'retry_scheduled',
+            wake: persistedQueued,
+            delivery: deferred,
+          };
+        }
+        const error = new Error('Trigger authorization revoked before host dispatch');
         error.code = guarded.reason === 'trigger_dispatch_busy'
-          ? 'EVENT_INTELLIGENCE_DISPATCH_BUSY'
+          ? 'EVENT_INTELLIGENCE_DISPATCH_BUSY_UNSUPPORTED'
           : 'EVENT_INTELLIGENCE_HOST_DISPATCH_REVOKED';
         throw error;
       }
