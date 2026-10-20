@@ -147,4 +147,5 @@ jobs:
           test -n "$POSTGRES_URL"
           node --test \
             test/postgres-inspector-restart.test.mjs \
-            test/postgres-logical-dump-restore.test.mjs
+            test/postgres-logical-dump-restore.test.mjs \
+            test/postgres-owner-revocation-snapshot.test.mjs

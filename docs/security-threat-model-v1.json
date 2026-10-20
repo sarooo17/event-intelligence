@@ -41,9 +41,10 @@
       "threat": "Foreign owner or tenant discovers trigger/match/receipt",
       "evidence": [
         "test/postgres-inspector-restart.test.mjs",
-        "test/mcp-owner-read-guard.test.mjs"
+        "test/mcp-owner-read-guard.test.mjs",
+        "test/postgres-owner-revocation-snapshot.test.mjs"
       ],
-      "residual": "Standalone MCP wakeHydrate and inspect now reauthorize after constructing results, denying a tenant/owner transfer committed before final lookup. A transfer committed AFTER the final authorization query snapshot may still allow that previously authorized read to finish; cross-worker revocation/cancellation linearization and other read surfaces remain pending under #235/#45."
+      "residual": "Real PG16 multi-pool barriers validate standalone MCP owner/tenant authorization at the final authoritative trigger-version state SELECT: a transfer committed before the final snapshot denies and a read already authorized by an earlier final snapshot may finish after transfer. This is the documented read linearization policy, NOT strict response cancellation after revocation commit. Host-global revision fencing, queued wake cancellation, independent security signoff and other read surfaces remain outside this proof (#45)."
     },
     {
       "id": "event-json-ingress",
