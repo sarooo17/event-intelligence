@@ -57,6 +57,22 @@ function notVisible(error) {
   return true;
 }
 
+// JSON.stringify(Error) hides non-enumerable message/stack and often nested
+// Error causes. The negative oracle must inspect descriptors recursively,
+// without invoking getters or looping forever on cyclic cause chains.
+function errorDiagnostics(value, seen = new WeakSet()) {
+  if (value === null || typeof value !== 'object') return String(value);
+  if (seen.has(value)) return '[circular]';
+  seen.add(value);
+  return Reflect.ownKeys(value).map(key => {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    return String(key) + ':' +
+      ('value' in descriptor
+        ? errorDiagnostics(descriptor.value, seen)
+        : '[accessor]');
+  }).join('|');
+}
+
 test('trigger reads never reveal foreign owner or other-tenant definitions', async () => {
   const {guard} = fixture();
   assert.equal((await guard.assertTrigger('shared-name', '1')).definition.version, '1');
@@ -371,10 +387,7 @@ test('failed wake hydration cannot leak builder error after cross-owner revocati
   release();
   await assert.rejects(pending, error => {
     notVisible(error);
-    const diagnostics = JSON.stringify([
-      error.message,error.stack,error.cause,
-      Object.getOwnPropertyDescriptors(error),
-    ]);
+    const diagnostics = errorDiagnostics(error);
     assert.equal(diagnostics.includes('SECRET-TENANT-A-PAYLOAD'), false);
     return true;
   });
@@ -411,7 +424,7 @@ test('failed inspector cannot leak builder exception across tenant reassignment'
   release();
   await assert.rejects(pending, error => {
     notVisible(error);
-    assert.equal(JSON.stringify(Object.getOwnPropertyDescriptors(error))
+    assert.equal(errorDiagnostics(error)
       .includes('SECRET-FROM-OTHER-TENANT'),false);
     return true;
   });
@@ -472,10 +485,7 @@ test('failed matched-evidence read cannot return sensitive error after revocatio
   release();
   await assert.rejects(pending,error=>{
     notVisible(error);
-    assert.equal(JSON.stringify([
-      error.message,error.stack,error.cause,
-      Object.getOwnPropertyDescriptors(error),
-    ]).includes('SECRET-PROVIDER-EVIDENCE'),false);
+    assert.equal(errorDiagnostics(error).includes('SECRET-PROVIDER-EVIDENCE'),false);
     return true;
   });
   assert.equal(checks,2,'failed post-auth evidence read must recheck pinned owner');
@@ -504,4 +514,21 @@ test('matched-evidence service error is preserved while original owner retains a
   });
   await assert.rejects(()=>guard.assertWake('wake-owned-service-error'),
     error=>error===secret);
+});
+
+
+test('negative error-leak oracle detects nested and non-enumerable Error causes',()=>{
+  const nested = new Error('top-level innocuous', {
+    cause: new Error('SECRET-TENANT-A-PAYLOAD'),
+  });
+  Object.defineProperty(nested,'privateDiagnostic',{
+    configurable:true,enumerable:false,
+    value:{ inner: new Error('SECRET-FROM-OTHER-TENANT') },
+  });
+  const observable = errorDiagnostics(nested);
+  assert.match(observable,/SECRET-TENANT-A-PAYLOAD/);
+  assert.match(observable,/SECRET-FROM-OTHER-TENANT/);
+  assert.match(observable,/stack:/);
+  nested.cause.cause = nested;
+  assert.match(errorDiagnostics(nested),/\[circular\]/);
 });
