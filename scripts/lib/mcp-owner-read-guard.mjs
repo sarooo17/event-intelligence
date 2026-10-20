@@ -84,9 +84,16 @@ export function createOwnerReadGuard({ triggerControl, store, owner }) {
   async function withAuthorizedTriggerResult(triggerId, version, build) {
     if (typeof build !== 'function') throw new TypeError('authorized read callback required');
     const owned = await assertTrigger(triggerId, version);
-    const result = await build(owned);
-    await assertTrigger(owned.definition.triggerId, owned.definition.version);
-    return result;
+    try {
+      // Await INSIDE try so that rejection also reaches finally.
+      return await build(owned);
+    } finally {
+      // A builder can reject with an error carrying sensitive details.
+      // If owner/tenant access was revoked during that rejected read,
+      // the final owner check MUST replace the builder error with the
+      // same nondisclosing not-found response used for successful reads.
+      await assertTrigger(owned.definition.triggerId, owned.definition.version);
+    }
   }
 
   /**
@@ -98,9 +105,13 @@ export function createOwnerReadGuard({ triggerControl, store, owner }) {
   async function withAuthorizedWakeResult(wakeId, build) {
     if (typeof build !== 'function') throw new TypeError('authorized wake callback required');
     const match = await assertWake(wakeId);
-    const result = await build(match);
-    await assertTrigger(match.triggerId, match.triggerVersion);
-    return result;
+    try {
+      return await build(match);
+    } finally {
+      // Do not expose hydration/host errors after the last authorized
+      // owner has transferred. This runs for success AND rejection.
+      await assertTrigger(match.triggerId, match.triggerVersion);
+    }
   }
 
   return Object.freeze({
