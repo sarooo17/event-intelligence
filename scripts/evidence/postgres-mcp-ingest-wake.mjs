@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { performance } from 'node:perf_hooks';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { PostgresEventStore } from '../lib/postgres-event-store.mjs';
 import { CompositeEventConsumer } from '../lib/composite-event-consumer.mjs';
 import { CompositeWakeCoordinator } from '../lib/composite-wake-coordinator.mjs';
@@ -106,9 +107,20 @@ try {
   if (sourceCount > triggers) {
     fail('--sources cannot exceed --triggers: each named source must have at least one registered definition');
   }
-  // Distinguish eligible active trigger population from sampled events.
-  // 1000 eligible definitions scanning 16 events does NOT mean 1000 matches.
-  const events = numberArg('events', triggers, triggers);
+  // A separate operator-confirmed mode REUSES a small active trigger
+  // population across many distinct MCP event IDs. It is intended for
+  // measurable tail samples and rate pacing, never a silent replacement
+  // for the existing 1k/10k/100k *distinct trigger* profiles.
+  const repeated = process.argv.includes('--repeat-matches');
+  if (repeated && (triggers > 64 ||
+      process.env.EI_PG_PIPELINE_REPEAT_CONFIRM !== 'YES_ISOLATED_REPEAT')) {
+    fail('--repeat-matches requires <=64 triggers and EI_PG_PIPELINE_REPEAT_CONFIRM=YES_ISOLATED_REPEAT');
+  }
+  if (!repeated && process.argv.includes('--rate')) {
+    fail('--rate is permitted only with --repeat-matches');
+  }
+  const events = numberArg('events', triggers, repeated ? 5000 : triggers);
+  const requestedRate = repeated ? numberArg('rate', 10, 1000) : null;
   const noise = numberArg('noise', 4, 64);
   const replays = numberArg('replays', 2, events);
   // A 1000x1000 event/trigger accidental run is materially different
@@ -130,6 +142,7 @@ try {
   // across event-name partitions. This is a *bounded sample*, not a claim
   // about 100k simultaneous fired events or all names being sampled.
   const slotFor = index => {
+    if (repeated) return index % triggers;
     const base = Math.floor(index * triggers / events);
     return triggers > 1000
       ? Math.min(triggers - 1, base + (index % sourceCount))
@@ -245,13 +258,24 @@ try {
   const baselineCpu = process.cpuUsage();
   const baselineMemory = process.memoryUsage();
   const matched = new Set();
+  const matchedTriggerDefinitions = new Set();
   const wakeIds = new Set();
   const expectedReceipts = new Map();
   const originalDeliveriesByIndex = new Map();
   stage = 'measured-ingest-match-wake';
   const started = performance.now();
+  let lastEventStart = null;
   for (let i = 0; i < events; i++) {
+    // No catch-up burst: schedule each subsequent start relative to the
+    // ACTUAL previous event start, not to the original wall-clock target.
+    // An over-budget database operation cannot cause several overdue events
+    // to be issued back-to-back at a rate above the declared limit.
+    if (repeated && lastEventStart !== null) {
+      const remaining = lastEventStart + 1000 / requestedRate - performance.now();
+      if (remaining > 0) await sleep(remaining);
+    }
     const begin = performance.now();
+    if (repeated) lastEventStart = begin;
     matchedAt = null;
     const result = await consumer.ingestMcpOccurrence({
       event: occurrence(i, slotFor(i), baseEpoch, sourceCount),
@@ -268,6 +292,7 @@ try {
     assert.equal(match.triggerId, 'pipeline-slot-' + slotFor(i));
     assert.ok(!matched.has(match.matchId), 'duplicate logical match ID');
     matched.add(match.matchId);
+    matchedTriggerDefinitions.add(match.triggerId);
     assert.ok(result.deliveries[0].wakeId);
     wakeIds.add(result.deliveries[0].wakeId);
     assert.equal(result.deliveries[0].runtimeReceiptId,
@@ -306,7 +331,8 @@ try {
 
   stage = 'noise-and-replay';
   for (let i = 0; i < noise; i++) {
-    const event = occurrence(triggers + i, -1, baseEpoch, sourceCount);
+    // Noise IDs must not collide with ANY measured occurrence.
+    const event = occurrence(triggers + events + i, -1, baseEpoch, sourceCount);
     const result = await consumer.ingestMcpOccurrence({
       event, serverId: 'synthetic-mcp-source',
       provider: 'benchmark-fixture', traceId: 'noise-' + i,
@@ -362,10 +388,15 @@ try {
       triggers, activeEligibleTriggerDefinitions: triggers,
       distinctEventNames: sourceCount,
       matchingMcpOccurrences: events,
-      distinctMatchedTriggerDefinitions: matched.size,
-      selection: 'evenly-spaced unique slots across entire registered population; event names distributed by slot modulo sources',
+      distinctMatchedTriggerDefinitions: matchedTriggerDefinitions.size,
+      selection: repeated
+        ? 'round-robin reuse of existing registered trigger slots; one distinct source-event ID per occurrence'
+        : 'evenly-spaced unique slots across entire registered population; event names distributed by slot modulo sources',
       noiseMcpOccurrences: noise,
       replayedMcpOccurrences: replays, scopeCount: 1, concurrency: 1,
+      repeatedDistinctOccurrencesAcrossExistingTriggers: repeated,
+      requestedMatchingEventsPerSecond: requestedRate,
+      pacingMode: repeated ? 'monotonic-rate-cap' : 'unpaced-sampled',
       source: 'in-process synthetic MCP occurrence',
       host: 'in-process counted callback with durable PG receipt',
     },
