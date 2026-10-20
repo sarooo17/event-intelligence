@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { fork } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { stat, writeFile } from 'node:fs/promises';
+import { link, rm, stat, writeFile } from 'node:fs/promises';
 import test from 'node:test';
 import { PostgresEventStore } from '../scripts/lib/postgres-event-store.mjs';
 import { CompositeTriggerEngine } from '../dist/src/composite/engine.js';
@@ -101,7 +101,7 @@ function event(round) {
 
 integration('actual SIGKILL AFTER durable host effect BEFORE EI receipt reconciles exactly one host effect per wake', {
   timeout: Math.max(90000, rounds * 15000),
-}, async () => {
+}, async t => {
   const outputPath = process.env.EI_EFFECT_KILL_EVIDENCE_OUT;
   if (outputPath) {
     // Fail before exercising any host effect if a previous successful run
@@ -311,8 +311,29 @@ integration('actual SIGKILL AFTER durable host effect BEFORE EI receipt reconcil
   }
   // No success-shaped artifact is written until all children are reaped,
   // both database stores are cleaned and independent receipt checks pass.
-  if (completedEvidence && process.env.EI_EFFECT_KILL_EVIDENCE_OUT) {
-    await writeFile(process.env.EI_EFFECT_KILL_EVIDENCE_OUT,
-      JSON.stringify(completedEvidence, null, 2) + '\n', { flag: 'wx' });
+  const out = process.env.EI_EFFECT_KILL_EVIDENCE_OUT;
+  if (completedEvidence && out) {
+    // A timed-out node:test callback can keep running asynchronously.
+    // Never publish an apparently successful artifact after cancellation.
+    // Stage in the same directory then publish with an exclusive hard link:
+    // final JSON is either complete or absent, never partially overwritten.
+    const staging = out + '.partial-' + process.pid + '-' +
+      randomBytes(6).toString('hex');
+    let published = false;
+    try {
+      t.signal.throwIfAborted();
+      await writeFile(staging,
+        JSON.stringify(completedEvidence, null, 2) + '\n',
+        { flag: 'wx', signal: t.signal });
+      t.signal.throwIfAborted();
+      await link(staging, out);
+      published = true;
+      t.signal.throwIfAborted();
+    } catch (error) {
+      if (published && t.signal.aborted) await rm(out, { force: true });
+      throw error;
+    } finally {
+      await rm(staging, { force: true });
+    }
   }
 });
