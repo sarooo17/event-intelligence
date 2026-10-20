@@ -893,6 +893,14 @@ export class PostgresEventStore {
       throw new Error('Wake delivery claim requires wakeId and workerId');
     }
     return this.tx(async (client) => {
+      // The dispatch callback holds the matching session lock from its
+      // final claim check until host/receipt/firing finish. Reclaim MUST NOT
+      // race a live callback even if its time lease has elapsed.
+      const active = await client.query(
+        'SELECT pg_try_advisory_xact_lock(hashtextextended($1,0)) AS acquired',
+        [this.tablePrefix + ':' + this.scopeId + ':wake-dispatch:' + wakeId],
+      );
+      if (active.rows[0]?.acquired !== true) return null;
       const current = await this.get('wake_delivery', wakeId, client, true);
       if (!current || ['delivered', 'dead_letter'].includes(current.status)) return null;
       const nowMs = Date.parse(now);
@@ -1232,7 +1240,9 @@ export class PostgresEventStore {
    * Requires a session-preserving PostgreSQL connection (not transaction
    * pooling PgBouncer) and >=2 pool slots for callbacks that use the store.
    */
-  async withTriggerDispatchFence(triggerId, version, at, operation, { wakeId = null } = {}) {
+  async withTriggerDispatchFence(triggerId, version, at, operation, {
+    wakeId = null, workerId = null, attemptCount = null,
+  } = {}) {
     if (typeof operation !== 'function') throw new TypeError('dispatch callback required');
     const key = String(triggerId) + '@' + String(version);
     const exposedMax = this.pool.options?.max;
@@ -1280,6 +1290,9 @@ export class PostgresEventStore {
     return withPoolFenceCapacity(capacityIdentity, capacity, async () => {
       const client = await this.pool.connect();
       let locked = false;
+      let wakeLocked = false;
+      const wakeLockKey = this.tablePrefix + ':' + this.scopeId +
+        ':wake-dispatch:' + String(wakeId);
       try {
         // Never let another callback sit idle while HOLDING a pool client
         // waiting for this advisory lock. A loser retries via the normal
@@ -1292,6 +1305,36 @@ export class PostgresEventStore {
           return { authorized: false, reason: 'trigger_dispatch_busy' };
         }
         locked = true;
+        // The claim may have expired and been reclaimed while waiting in
+        // withPoolFenceCapacity. Acquire the SAME advisory key that every
+        // PostgreSQL claim transaction try-locks, then check the authoritative
+        // generation/owner/lease BEFORE any external host effect.
+        // Keeping the session lock through receipt and markFired prevents a
+        // successor from reclaiming mid-callback even after the time lease.
+        if (workerId !== null || attemptCount !== null) {
+          if (typeof wakeId !== 'string' || !wakeId ||
+              typeof workerId !== 'string' || !workerId ||
+              !Number.isSafeInteger(attemptCount) || attemptCount < 1) {
+            throw new TypeError('fenced claimed dispatch requires wakeId, workerId and attemptCount');
+          }
+          const wakeFence = await client.query(
+            'SELECT pg_try_advisory_lock(hashtextextended($1,0)) AS acquired',
+            [wakeLockKey],
+          );
+          if (wakeFence.rows[0]?.acquired !== true) {
+            return { authorized: false, reason: 'wake_claim_lost' };
+          }
+          wakeLocked = true;
+          const owned = await this.get('wake_delivery', wakeId, client);
+          const effectiveClaimAt = atMs + Math.max(0, Date.now() - observedAt);
+          if (owned?.status !== 'claimed' ||
+              owned.leaseOwner !== workerId ||
+              owned.attemptCount !== attemptCount ||
+              !owned.leaseUntil ||
+              Date.parse(owned.leaseUntil) <= effectiveClaimAt) {
+            return { authorized: false, reason: 'wake_claim_lost' };
+          }
+        }
         const raw = await this.get('trigger', key, client);
         const state = await this.get('trigger_state', key, client) ??
           defaultTriggerState(triggerId, version);
@@ -1358,15 +1401,29 @@ export class PostgresEventStore {
         const value = await dispatchContext.run({ store: this, key }, operation);
         return { authorized: true, value };
       } finally {
-        if (locked) {
+        if (locked || wakeLocked) {
           try {
-            await client.query(
-              'SELECT pg_advisory_unlock(hashtextextended($1, 0))',
-              [lockKey],
-            );
+            if (wakeLocked) {
+              const unlocked = await client.query(
+                'SELECT pg_advisory_unlock(hashtextextended($1,0)) AS released',
+                [wakeLockKey],
+              );
+              if (unlocked.rows[0]?.released !== true) {
+                throw new Error('Wake dispatch session advisory unlock failed');
+              }
+            }
+            if (locked) {
+              const unlocked = await client.query(
+                'SELECT pg_advisory_unlock(hashtextextended($1, 0)) AS released',
+                [lockKey],
+              );
+              if (unlocked.rows[0]?.released !== true) {
+                throw new Error('Trigger dispatch session advisory unlock failed');
+              }
+            }
             client.release();
           } catch (error) {
-            // Do not return an uncertain SESSION-locked connection to pool.
+            // Do not return a session with uncertain held advisory locks.
             client.release(error);
             throw error;
           }
