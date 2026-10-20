@@ -1,0 +1,72 @@
+name: PostgreSQL Post-Host-Effect SIGKILL Evidence
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - test/postgres-post-host-effect-sigkill.test.mjs
+      - test/fixtures/postgres-post-host-effect-worker.mjs
+      - 'src/**'
+      - 'scripts/lib/**'
+      - package.json
+      - package-lock.json
+      - .github/workflows/postgres-post-host-effect-os-chaos.yml
+  workflow_dispatch:
+    inputs:
+      rounds:
+        description: "Independent post-host-effect SIGKILL/recovery rounds"
+        type: choice
+        options: ['10', '20', '30']
+        default: '20'
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  post-host-effect-sigkill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: event_intelligence
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d event_intelligence"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      POSTGRES_URL: postgresql://postgres:postgres@127.0.0.1:5432/event_intelligence
+      EI_EFFECT_KILL_ROUNDS: ${{ github.event_name == 'workflow_dispatch' && inputs.rounds || '3' }}
+      EI_EFFECT_KILL_EVIDENCE_OUT: postgres-post-host-effect-os-chaos.json
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify checked-out source
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install exact PG16 test driver and compile runtime
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm install --no-save --ignore-scripts --no-audit --no-fund pg@8.16.3
+          npm run build
+      - name: Execute real OS effect-before-receipt crash recovery
+        run: node --test test/postgres-post-host-effect-sigkill.test.mjs
+      - name: Retain verified cleanup-safe raw evidence
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: postgres-post-host-effect-os-chaos-${{ github.run_id }}
+          path: postgres-post-host-effect-os-chaos.json
+          if-no-files-found: error
