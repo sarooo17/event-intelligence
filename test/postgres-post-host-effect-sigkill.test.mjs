@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { fork } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { writeFile } from 'node:fs/promises';
+import { stat, writeFile } from 'node:fs/promises';
 import test from 'node:test';
 import { PostgresEventStore } from '../scripts/lib/postgres-event-store.mjs';
 import { CompositeTriggerEngine } from '../dist/src/composite/engine.js';
@@ -102,6 +102,17 @@ function event(round) {
 integration('actual SIGKILL AFTER durable host effect BEFORE EI receipt reconciles exactly one host effect per wake', {
   timeout: Math.max(90000, rounds * 15000),
 }, async () => {
+  const outputPath = process.env.EI_EFFECT_KILL_EVIDENCE_OUT;
+  if (outputPath) {
+    // Fail before exercising any host effect if a previous successful run
+    // already owns this path. Never make an unsuccessful rerun look fresh.
+    try {
+      await stat(outputPath);
+      throw new Error('evidence output already exists; choose a fresh path');
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error;
+    }
+  }
   const prefix = 'ei_effect_' + randomBytes(5).toString('hex');
   const scopeId = 'post-effect-scope';
   const effectsTable = '"' + prefix + '_host_effects"';
