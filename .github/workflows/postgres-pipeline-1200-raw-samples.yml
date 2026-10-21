@@ -9,6 +9,13 @@ on:
       - 'scripts/lib/postgres-event-store.mjs'
       - 'scripts/lib/composite-event-consumer.mjs'
       - 'scripts/lib/composite-wake-coordinator.mjs'
+      - 'src/composite/**'
+      - 'src/patternV2/**'
+      - 'src/mcpEvents/**'
+      - 'src/intelligenceProtocol/**'
+      - 'src/protocol/ownPath.ts'
+      - 'scripts/lib/generic-runtime-wake.mjs'
+      - 'scripts/lib/pattern-v2-signature-contract.mjs'
   workflow_dispatch:
 
 permissions:
