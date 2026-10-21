@@ -183,3 +183,43 @@ test('raw benchmark evidence requires complete anchored GitHub Actions run URL',
   assert.equal(assessPostgresProductionSloEvidence(input).status,
     'eligible-for-independent-review');
 });
+
+test('measured p99 above its pre-registered budget is not eligible for signoff',()=>{
+  const report=sample();
+  report.profiles[0].latency.matchToWake.p99Ms=181;
+  report.profiles[0].latency.matchToWake.maxMs=300;
+  const result=assessPostgresProductionSloEvidence(report);
+  assert.equal(result.status,'blocked');
+  assert.ok(result.missing.includes('steady:p99-over-budget:matchToWake'));
+  assert.equal(result.productionSloCertified,false);
+});
+
+test('wake throughput must use durable verified receipts, not requested or event rates',()=>{
+  const report=sample();
+  report.preRegisteredSloBudgets.minVerifiedWakeRatePerSecond=11;
+  // Raw provider rate claims cannot hide the observed 6000/600=10 wakes/s.
+  report.profiles[1].observedEventRatePerSecond=99;
+  const result=assessPostgresProductionSloEvidence(report);
+  assert.equal(result.status,'blocked');
+  assert.ok(result.missing.includes('burst:verified-wake-throughput-below-budget'));
+});
+
+test('actual duplicate host-effect rate cannot exceed registered allowance',()=>{
+  const report=sample();
+  report.profiles[2].duplicateHostEffects=1;
+  const result=assessPostgresProductionSloEvidence(report);
+  assert.equal(result.status,'blocked');
+  assert.ok(result.missing.includes('fault-injected:duplicate-host-effect-rate-over-budget'));
+  report.preRegisteredSloBudgets.maxDuplicateEffectRate=0.001;
+  const withinBudget=assessPostgresProductionSloEvidence(report);
+  assert.equal(withinBudget.status,'eligible-for-independent-review');
+});
+
+test('exactly-at-budget measured rate and p99 are admissible, not certified',()=>{
+  const report=sample();
+  report.preRegisteredSloBudgets.minVerifiedWakeRatePerSecond=10;
+  report.preRegisteredSloBudgets.latencyP99MaxMs.matchToWake=42;
+  const result=assessPostgresProductionSloEvidence(report);
+  assert.equal(result.status,'eligible-for-independent-review');
+  assert.equal(result.productionSloCertified,false);
+});

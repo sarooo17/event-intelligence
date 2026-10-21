@@ -123,6 +123,33 @@ export function assessPostgresProductionSloEvidence(report) {
         p.duplicateHostEffects < 0) {
       missing.push(name + ':durable-wake-and-duplicate-accounting');
     }
+    // A complete report can still violate its *pre-registered* objective.
+    // This gate is not a certification, but it must not describe a known
+    // failed budget as eligible for independent production signoff.
+    if (positive(budgets?.minVerifiedWakeRatePerSecond) &&
+        Number.isSafeInteger(p.verifiedWakes) && p.verifiedWakes >= 0 &&
+        positive(p.durationSeconds) &&
+        p.verifiedWakes / p.durationSeconds <
+          budgets.minVerifiedWakeRatePerSecond) {
+      missing.push(name + ':verified-wake-throughput-below-budget');
+    }
+    if (typeof maximumDuplicateRate === 'number' &&
+        Number.isFinite(maximumDuplicateRate) &&
+        maximumDuplicateRate >= 0 && maximumDuplicateRate <= 1 &&
+        Number.isSafeInteger(p.duplicateHostEffects) &&
+        p.duplicateHostEffects >= 0 &&
+        Number.isSafeInteger(p.verifiedWakes) && p.verifiedWakes > 0 &&
+        p.duplicateHostEffects / p.verifiedWakes > maximumDuplicateRate) {
+      missing.push(name + ':duplicate-host-effect-rate-over-budget');
+    }
+    for (const metric of METRICS) {
+      const observedP99 = p.latency?.[metric]?.p99Ms;
+      const limit = budgets?.latencyP99MaxMs?.[metric];
+      if (percentileSeries(p.latency?.[metric]) && positive(limit) &&
+          observedP99 > limit) {
+        missing.push(name + ':p99-over-budget:' + metric);
+      }
+    }
     if (p.providerTransportMeasured !== true ||
         p.externalHostEffectMeasured !== true ||
         p.postgresServiceResourcesMeasured !== true) {
