@@ -2,6 +2,8 @@ import { randomUUID, createHash, createPrivateKey, createPublicKey, sign, verify
 import { constants } from 'node:fs';
 import { open, rm, lstat, link } from 'node:fs/promises';
 import { dirname } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
+import { assertAuditJsonNumberPrecision } from './audit-precision-safety.mjs';
 import { verifyAuditProofWindow } from './audit-proof-window.mjs';
 
 const SCHEMA='event-intelligence.postgres-audit-bundle.v1';
@@ -27,8 +29,19 @@ const bounds=(pageSize,maxBytes)=>
 
 /** Independent auditor must provide a separately authenticated checkpoint. */
 export async function verifyPostgresAuditArchiveBundle(bundle,{
-  trustedCheckpoint,
+  trustedCheckpoint,rawArchiveBytes,
 }={}){
+  // Require the ORIGINAL unparsed artifact, not just a JSON.parse object:
+  // JSON.parse can round 9007199254740993 to 9007199254740992 and make a
+  // modified audit payload pass existing canonical-hash validation.
+  if(!Buffer.isBuffer(rawArchiveBytes) ||
+      rawArchiveBytes.length<2 || rawArchiveBytes.length>MAX_BYTES)return false;
+  try{
+    const rawText=rawArchiveBytes.toString('utf8');
+    assertAuditJsonNumberPrecision(rawText);
+    const parsed=JSON.parse(rawText);
+    if(!isDeepStrictEqual(parsed,bundle))return false;
+  }catch{return false;}
   if(!sameCheckpoint(bundle?.checkpoint,trustedCheckpoint) ||
       bundle.schema!==SCHEMA || !Array.isArray(bundle.pages) ||
       !bounds(bundle.pageSize,bundle.maxBytes))return false;
@@ -138,9 +151,10 @@ export async function verifyPostgresAuditArchiveBundleFile(filePath,{
       if(!bytesRead)break;
       chunks.push(Buffer.from(chunk.subarray(0,bytesRead)));
     }
+    const archiveBytes=Buffer.concat(chunks,length);
     return verifyPostgresAuditArchiveBundle(
-      JSON.parse(Buffer.concat(chunks,length).toString('utf8')),
-      {trustedCheckpoint},
+      JSON.parse(archiveBytes.toString('utf8')),
+      {trustedCheckpoint,rawArchiveBytes:archiveBytes},
     );
   }catch{return false;}
   finally{if(fd)await fd.close();}
@@ -202,7 +216,7 @@ export async function signPostgresAuditArchiveWitness({
   let parsed;
   try{parsed=JSON.parse(archiveBytes.toString('utf8'));}
   catch{throw new Error('Invalid audit archive content');}
-  if(!await verifyPostgresAuditArchiveBundle(parsed,{trustedCheckpoint})){
+  if(!await verifyPostgresAuditArchiveBundle(parsed,{trustedCheckpoint,rawArchiveBytes:archiveBytes})){
     throw new Error('Refusing to sign unverified or incomplete audit archive');
   }
   const privateKey=createPrivateKey(privateKeyPem);
@@ -235,7 +249,7 @@ export async function verifyPostgresAuditArchiveWitness({
       Buffer.from(witness.signature,'base64')))return false;
     return verifyPostgresAuditArchiveBundle(
       JSON.parse(archiveBytes.toString('utf8')),
-      {trustedCheckpoint:witness.checkpoint},
+      {trustedCheckpoint:witness.checkpoint,rawArchiveBytes:archiveBytes},
     );
   }catch{return false;}
 }
