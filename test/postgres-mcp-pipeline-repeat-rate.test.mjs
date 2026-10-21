@@ -1,5 +1,10 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { verifyPostgresPipelineRawEvidence, sha256OfRawEvidence } from
+  '../scripts/lib/postgres-pipeline-raw-evidence.mjs';
 import test from 'node:test';
 
 const integration = process.env.POSTGRES_URL ? test : test.skip;
@@ -43,9 +48,13 @@ test('repeating PG profiles require explicit opt-in and reject unsafe configurat
 });
 
 integration('real PG16 repeated matching: 24 distinct events across 8 triggers retain exactly 24 receipts and no false noise/replay matches',()=>{
+  const dir=mkdtempSync(join(tmpdir(),'ei-pg-raw-'));
+  const outputPath=join(dir,'raw.json');
+  try {
   const result=run([
     '--triggers','8','--events','24','--sources','2',
     '--noise','3','--replays','3','--repeat-matches','--rate','1000',
+    '--raw-evidence-out',outputPath,
   ],{},60000);
   assert.equal(result.status,0,result.stderr);
   const out=JSON.parse(result.stdout);
@@ -70,4 +79,16 @@ integration('real PG16 repeated matching: 24 distinct events across 8 triggers r
     assert.ok(out.metrics[key].p99Ms>=0);
   }
   assert.equal(out.evidence.productionSloCertified,false);
+  const raw=JSON.parse(readFileSync(outputPath,'utf8'));
+  assert.equal(raw.events.length,24);
+  assert.ok(raw.postgres.after.isolatedTableBytes >=
+    raw.postgres.before.isolatedTableBytes);
+  assert.equal(out.evidence.rawSamples.samples,24);
+  assert.equal(out.evidence.rawSamples.sha256,sha256OfRawEvidence(raw));
+  const verdict=verifyPostgresPipelineRawEvidence(out,raw);
+  assert.equal(verdict.ok,true,verdict.failures.join(','));
+  assert.equal(verdict.productionSloCertified,false);
+  } finally {
+    rmSync(dir,{recursive:true,force:true});
+  }
 });
