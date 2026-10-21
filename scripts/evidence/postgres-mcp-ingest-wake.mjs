@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
+import { writeFile } from 'node:fs/promises';
+import { verifyPostgresPipelineRawEvidence, sha256OfRawEvidence, PG_PIPELINE_RAW_SCHEMA } from '../lib/postgres-pipeline-raw-evidence.mjs';
 import { createRequire } from 'node:module';
 import { performance } from 'node:perf_hooks';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -97,11 +99,19 @@ let recoveredPool = null;
 let stage = 'configuration';
 const failed = [];
 let record = null;
+let rawEvidence = null;
+let rawOutputPath = null;
 try {
   if (process.env.EI_PG_PIPELINE_CONFIRM !== 'YES_ISOLATED') {
     fail('set EI_PG_PIPELINE_CONFIRM=YES_ISOLATED for disposable PostgreSQL tables');
   }
   if (!process.env.POSTGRES_URL) fail('POSTGRES_URL is required');
+  rawOutputPath = arg('raw-evidence-out', null);
+  if (rawOutputPath !== null &&
+      (typeof rawOutputPath !== 'string' || !rawOutputPath.trim() ||
+        rawOutputPath.startsWith('--'))) {
+    fail('--raw-evidence-out requires a nonempty fresh filesystem path');
+  }
   const triggers = numberArg('triggers', 8, 100000);
   const sourceCount = numberArg('sources', 1, 32);
   if (sourceCount > triggers) {
@@ -217,7 +227,37 @@ try {
     return candidates;
   };
 
+  const readPostgresStats = async () => {
+    // Scope is DATABASE WIDE. Do not present these as process CPU,
+    // query-specific time, or EI-exclusive statistics on shared systems.
+    await pool.query('SELECT pg_stat_clear_snapshot()');
+    const result = await pool.query(
+      'SELECT xact_commit,xact_rollback,blks_read,blks_hit,' +
+      'tup_inserted,tup_updated,tup_deleted,temp_bytes,deadlocks' +
+      ' FROM pg_stat_database WHERE datname=current_database()',
+    );
+    assert.equal(result.rows.length,1);
+    const observed={};
+    for(const [key,value] of Object.entries(result.rows[0])) {
+      const n=Number(value);
+      assert.ok(Number.isSafeInteger(n) && n>=0,'unsafe PG counter '+key);
+      observed[key]=n;
+    }
+    let total=0;
+    for(const table of TABLES) {
+      const relation='"'+prefix+'_'+table+'"';
+      const size=await pool.query(
+        'SELECT pg_total_relation_size($1::regclass)::bigint AS bytes',[relation]);
+      const n=Number(size.rows[0]?.bytes);
+      assert.ok(Number.isSafeInteger(n) && n>=0);
+      total+=n;
+    }
+    observed.isolatedTableBytes=total;
+    return observed;
+  };
   const measurements = { ingestToMatch: [], matchToWake: [], ingestToWake: [] };
+  const rawSamples=[];
+  const pgCountersBefore=rawOutputPath ? await readPostgresStats() : null;
   const measuredHostCallbackMs = [];
   const hostReceipts = new Map();
   let hostCalls = 0;
@@ -304,6 +344,18 @@ try {
       wakeId: result.deliveries[0].wakeId,
       receiptId: result.deliveries[0].runtimeReceiptId,
     });
+    if(rawOutputPath) {
+      rawSamples.push({
+        index:i,slot:slotFor(i),
+        matchId:match.matchId,wakeId:result.deliveries[0].wakeId,
+        receiptId:result.deliveries[0].runtimeReceiptId,
+        candidateDefinitions:observedCandidateCounts.at(-1),
+        ingestToMatchMs:matchedAt-begin,
+        matchToWakeMs:end-matchedAt,
+        ingestToWakeMs:end-begin,
+        hostCallbackMs:measuredHostCallbackMs.at(-1),
+      });
+    }
     measurements.ingestToMatch.push(matchedAt - begin);
     measurements.matchToWake.push(end - matchedAt);
     measurements.ingestToWake.push(end - begin);
@@ -323,6 +375,7 @@ try {
       'large single direct numeric-equality fixtures must use safe PG prefilter');
   }
   const measuredWall = performance.now() - started;
+  const pgCountersAfter = rawOutputPath ? await readPostgresStats() : null;
   const measuredCpu = process.cpuUsage(baselineCpu);
   const measuredMemory = process.memoryUsage();
   assert.equal(hostCalls, events);
@@ -374,6 +427,22 @@ try {
     assert.equal(saved.attemptCount, 1);
   }
   assert.equal(hostCalls, events);
+  if(rawOutputPath) {
+    rawEvidence = {
+      schema: PG_PIPELINE_RAW_SCHEMA,
+      scopeId, sourceCommitSha: process.env.BENCH_SOURCE_COMMIT ??
+        process.env.GITHUB_SHA ?? null,
+      measurementKind:'in-process-synthetic-source-and-local-host',
+      providerTransportMeasured:false,externalHostEffectMeasured:false,
+      postgresServiceCpuMeasured:false,
+      measuredDurationMs:measuredWall,
+      postgres:{
+        statement:'pg_stat_database counters are DB-wide, not EI-exclusive; PG service CPU not measured',
+        before:pgCountersBefore,after:pgCountersAfter,
+      },
+      events:rawSamples,
+    };
+  }
   record = {
     schema: SCHEMA, status: 'completed', measuredAt: new Date().toISOString(),
     runtime: {
@@ -450,6 +519,10 @@ try {
       storeOperationProfileIsInclusive: true,
       transportLatencyIncluded: false, hostExecutionLatencyIncluded: false,
       productionSloCertified: false,
+      rawSamples: rawOutputPath
+        ? {schema:PG_PIPELINE_RAW_SCHEMA,sha256:sha256OfRawEvidence(rawEvidence),
+          samples:rawSamples.length,mode:'operator-file-exact-checked-out-commit'}
+        : null,
     },
   };
 } catch (error) {
@@ -469,6 +542,18 @@ try {
   for (const candidate of new Set([pool, recoveredPool].filter(Boolean))) {
     try { await candidate.end(); }
     catch (error) { failed.push(cleanError(error, 'pool-close')); }
+  }
+}
+if (!failed.length && rawOutputPath) {
+  try {
+    const assessed=verifyPostgresPipelineRawEvidence(record,rawEvidence);
+    assert.equal(assessed.ok,true,
+      'raw PG pipeline sample validation failed: '+assessed.failures.join(','));
+    await writeFile(rawOutputPath,JSON.stringify(rawEvidence)+'\n',{
+      flag:'wx',mode:0o600,
+    });
+  } catch(error) {
+    failed.push(cleanError(error,'raw-evidence-export'));
   }
 }
 if (failed.length) {
