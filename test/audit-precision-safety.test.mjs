@@ -24,6 +24,14 @@ test('raw audit JSON numeric precision policy rejects unrepresentable and rounde
     '{"counter":1.0000000000000001e-10}',
     '{"counter":-9007199254740993}',
     '{"counter":2.00000000000000001}',
+    '{"counter":3e-324}',
+    '{"counter":4e-324}',
+    '{"counter":1.1e-323}',
+    '{"counter":2.1e-323}',
+    '{"counter":3.1e-323}',
+    '{"counter":4.9e-324}',
+    '{"counter":0.00000000000000000010000000000000001}',
+    '{"counter":-3e-324}',
   ];
   for(const raw of unsafe){
     assert.throws(()=>assertAuditJsonNumberPrecision(raw),
@@ -34,4 +42,13 @@ test('raw audit JSON numeric precision policy rejects unrepresentable and rounde
     JSON.parse('{"v":2.0000000000000001}').v);
   assert.equal(JSON.parse('{"v":9007199254740992}').v,
     JSON.parse('{"v":9007199254740993}').v);
+  assert.equal(JSON.parse('{"v":3e-324}').v,
+    JSON.parse('{"v":4e-324}').v);
+  assert.equal(JSON.parse('{"v":1.1e-323}').v,
+    JSON.parse('{"v":1e-323}').v);
+  // Equivalent exact decimal spellings remain valid; unsafe distinct
+  // values rounding into the same float are rejected instead.
+  assert.doesNotThrow(()=>assertAuditJsonNumberPrecision(
+    '{"x":300e-2,"y":3.000,"z":3,"small":5e-324}'));
+
 });
