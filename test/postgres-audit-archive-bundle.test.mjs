@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {randomBytes} from 'node:crypto';
+import {randomBytes,generateKeyPairSync} from 'node:crypto';
 import {mkdtemp,readFile,writeFile,rm,readdir,stat} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
@@ -9,6 +9,8 @@ import {
   writePostgresAuditArchiveBundle,
   verifyPostgresAuditArchiveBundle,
   verifyPostgresAuditArchiveBundleFile,
+  signPostgresAuditArchiveWitness,
+  verifyPostgresAuditArchiveWitness,
 } from '../scripts/lib/postgres-audit-archive-bundle.mjs';
 
 const url=process.env.POSTGRES_URL;
@@ -61,6 +63,42 @@ integration('PG16 audit bundle verifies whole externally pinned chain, survives 
     assert.equal(await verifyPostgresAuditArchiveBundleFile(path,{
       trustedCheckpoint:pinned,
     }),true);
+    const rawBytes=await readFile(path);
+    const keys=generateKeyPairSync('ed25519');
+    const privateKeyPem=keys.privateKey.export({type:'pkcs8',format:'pem'}).toString();
+    const trustedPublicKeyPem=keys.publicKey.export({type:'spki',format:'pem'}).toString();
+    const signed=await signPostgresAuditArchiveWitness({
+      archiveBytes:rawBytes,trustedCheckpoint:pinned,
+      privateKeyPem,keyId:'operator-offhost-2026-01',
+    });
+    const verifySigned=(witness=signed,bytes=rawBytes,pub=trustedPublicKeyPem,
+      expectedScopeId='audit-A')=>verifyPostgresAuditArchiveWitness({
+        witness,archiveBytes:bytes,trustedPublicKeyPem:pub,
+        expectedKeyId:'operator-offhost-2026-01',expectedScopeId,
+      });
+    assert.equal(await verifySigned(),true);
+    assert.equal(await verifySigned(signed,rawBytes,trustedPublicKeyPem,'audit-B'),false);
+    const swappedKey=generateKeyPairSync('ed25519');
+    assert.equal(await verifySigned(signed,rawBytes,
+      swappedKey.publicKey.export({type:'spki',format:'pem'}).toString()),false);
+    assert.equal(await verifySigned({...signed,archiveBytes:signed.archiveBytes+1}),false);
+    assert.equal(await verifySigned({...signed,
+      checkpoint:{...pinned,endSequence:999}}),false);
+    assert.equal(await verifySigned({...signed,
+      archiveSha256:'0'.repeat(64)}),false);
+    assert.equal(await verifySigned({...signed,
+      signature:'A'.repeat(86)+'=='}),false);
+    const changedBytes=Buffer.from(rawBytes);
+    changedBytes[changedBytes.length-2] ^= 1;
+    assert.equal(await verifySigned(signed,changedBytes),false);
+    await assert.rejects(()=>signPostgresAuditArchiveWitness({
+      archiveBytes:rawBytes,trustedCheckpoint:{...pinned,headHash:'0'.repeat(64)},
+      privateKeyPem,keyId:'operator-offhost-2026-01',
+    }),/unverified or incomplete/);
+    await assert.rejects(()=>signPostgresAuditArchiveWitness({
+      archiveBytes:rawBytes,trustedCheckpoint:pinned,
+      privateKeyPem:'not-a-key',keyId:'',
+    }),TypeError);
     const original=await readFile(path,'utf8');
     const bundle=JSON.parse(original);
     assert.equal(bundle.pages.length,3);
@@ -125,6 +163,8 @@ integration('PG16 audit bundle verifies whole externally pinned chain, survives 
     assert.equal(await verifyPostgresAuditArchiveBundleFile(path,{
       trustedCheckpoint:pinned,
     }),true,'archived chain independent from later corrupt database');
+    assert.equal(await verifySigned(),true,
+      'off-database signed archive must remain authentic after live database corruption');
   }finally{
     try{
       for(const suffix of ['metadata','leases','history','records','counters']){
