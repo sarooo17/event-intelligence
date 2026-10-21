@@ -116,6 +116,30 @@ integration('PG16 audit bundle verifies whole externally pinned chain, survives 
     }),TypeError);
     const original=await readFile(path,'utf8');
     const bundle=JSON.parse(original);
+    // Inject extra serialized record fields without updating the audit
+    // chain. A non-strict Zod parse alone would drop them and accept hash.
+    const uncommitted=structuredClone(bundle);
+    uncommitted.pages[0].records[0].spoofedOperator='attacker';
+    const spoofedBytes=Buffer.from(JSON.stringify(uncommitted)+'\n');
+    assert.equal(await verifyPostgresAuditArchiveBundle(uncommitted,{
+      trustedCheckpoint:pinned,rawArchiveBytes:spoofedBytes,
+    }),false,'unknown top-level audit bytes were never hash committed');
+    await assert.rejects(()=>signPostgresAuditArchiveWitness({
+      archiveBytes:spoofedBytes,trustedCheckpoint:pinned,
+      privateKeyPem,keyId:'operator-offhost-2026-01',
+    }),/unverified or incomplete/);
+    const mutable=Buffer.from(rawBytes);
+    const signing=signPostgresAuditArchiveWitness({
+      archiveBytes:mutable,trustedCheckpoint:pinned,
+      privateKeyPem,keyId:'operator-offhost-2026-01',
+    });
+    // In-flight caller mutation after first await must NOT change the
+    // bytes that the signer proved and signed.
+    queueMicrotask(()=>{mutable[mutable.length-2] ^= 1;});
+    const copyWitness=await signing;
+    assert.equal(await verifySigned(copyWitness,rawBytes),true,
+      'witness must commit to immutable input snapshot, not caller-owned Buffer');
+    assert.equal(await verifySigned(copyWitness,mutable),false);
     assert.equal(bundle.pages.length,3);
     assert.deepEqual(bundle.pages.map(p=>p.records.length),[2,2,1]);
     assert.equal(await verifyPostgresAuditArchiveBundle(bundle,{
@@ -165,6 +189,24 @@ integration('PG16 audit bundle verifies whole externally pinned chain, survives 
     assert.equal((await other.listAudit()).length,1);
     const archivedBefore=JSON.parse(original).pages[1].records[0];
     assert.equal(archivedBefore.details.counter,2);
+    // Unknown top-level fields also must not be silently stripped by
+    // audit parsing before checkpoint/signature verification.
+    await poolA.query(
+      'UPDATE "'+prefix+'_history" SET payload='+
+      "jsonb_set(payload,'{spoofedOperator}','\"attacker\"'::jsonb) "+
+      "WHERE scope_id=$1 AND kind='audit' AND payload->>'sequence'='2'",
+      ['audit-A'],
+    );
+    await assert.rejects(()=>reader.getAuditCheckpoint(),
+      e=>e.code==='EVENT_INTELLIGENCE_AUDIT_UNCOMMITTED_FIELDS');
+    await assert.rejects(()=>reader.getAuditProofWindow({
+      checkpoint:pinned,afterSequence:1,limit:2,
+    }),e=>e.code==='EVENT_INTELLIGENCE_AUDIT_UNCOMMITTED_FIELDS');
+    await poolA.query(
+      'UPDATE "'+prefix+'_history" SET payload=payload-$1 '+
+      "WHERE scope_id=$2 AND kind='audit' AND payload->>'sequence'='2'",
+      ['spoofedOperator','audit-A'],
+    );
     // A DB numeric lexeme can also be rewritten without changing its
     // parsed IEEE-754 Number. Snapshotting must fail closed BEFORE parse.
     await poolA.query(
