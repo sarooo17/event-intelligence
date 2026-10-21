@@ -127,3 +127,43 @@ rebalance. A large sample count may produce a useful synthetic local
 p99 but **cannot** satisfy the production SLO evidence contract or #47
 until multi-worker, multi-rate, real-provider/host and fault evidence
 are collected and independently reviewed.
+
+## Per-event raw evidence and PostgreSQL service counters (#47)
+
+The opt-in `--raw-evidence-out /path/to/new-file.json` flag writes a **separate
+exclusive local artifact**, only after successful durable receipt verification
+through an independently reopened PostgreSQL pool and successful cleanup.
+An existing path fails closed and is never overwritten. The success JSON
+includes SHA-256 of the raw artifact's exact JSON bytes, its sample count,
+source commit and measurement scope. All benchmark CI jobs now upload the
+source-pinned raw artifact and independently recheck its per-event summaries
+before publishing success.
+
+Each occurrence has index, selected trigger slot, unique match/wake/receipt
+identities, actual PostgreSQL candidate-definition count and measured
+`ingestToMatchMs`, `matchToWakeMs`, `ingestToWakeMs` and
+`hostCallbackMs`. The separate verifier recomputes every p50/p95/p99/max
+and checks stage conservation, uniqueness, candidate counts and matched
+persisted receipts against the main JSON report; changing a percentile,
+identity, host time or candidate count fails. The schema is
+`event-intelligence.postgres-pipeline-raw-samples.v1`.
+
+It also captures **before/after** PostgreSQL `pg_stat_database` counters:
+transactions, block cache reads/hits, inserted/updated/deleted tuples,
+temporary bytes and deadlocks; and actual isolated-prefix table bytes using
+`pg_total_relation_size`. These counters are **database-wide**, not
+EI-exclusive on a shared DB, and may lag the latest transaction due to
+PostgreSQL asynchronous statistics reporting. The workload measures Node
+process CPU/RSS separately. It does **not** measure PostgreSQL server
+process CPU/RSS, per-query service time, host service CPU or provider
+transport latency. A completed artifact must never be relabeled as
+production SLO evidence.
+
+These are still bounded **in-process synthetic provider / local host**
+runs, usually only 8/16 events in CI. The production gate requires
+independent ≥600-second steady, burst and fault campaigns with ≥1000
+latency samples per stage, genuine provider transport and remote host
+effect, multiple workers and partitions, PostgreSQL service resource
+attribution, and pre-registered performance budgets. The new raw series
+makes the available PG pipeline measurements independently auditable;
+it does **not** satisfy those remaining #47 criteria by itself.
