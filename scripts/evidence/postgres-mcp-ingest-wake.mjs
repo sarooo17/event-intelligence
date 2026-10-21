@@ -128,6 +128,19 @@ try {
       process.env.BENCH_SOURCE_COMMIT!==actual) {
       fail('raw benchmark provenance differs from actual Git HEAD');
     }
+    // HEAD alone does not identify the code actually executed from a local
+    // dirty checkout. Reject all tracked modifications and any untracked
+    // executable inputs under the project source/helper entrypoint roots.
+    const tracked=spawnSync('git',['diff','HEAD','--quiet','--'],{
+      encoding:'utf8',timeout:5000,
+    });
+    const sourceFiles=spawnSync('git',[
+      'ls-files','--others','--exclude-standard','--','src','scripts','bin',
+    ],{encoding:'utf8',timeout:5000});
+    if(tracked.status!==0 || sourceFiles.status!==0 ||
+      sourceFiles.stdout.trim()) {
+      fail('raw evidence provenance requires a clean tracked checkout and no untracked executable files');
+    }
     benchmarkSourceCommit=actual;
   }
   const triggers = numberArg('triggers', 8, 100000);
