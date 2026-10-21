@@ -222,7 +222,7 @@ export async function signPostgresAuditArchiveWitness({
   const snapshot=Buffer.from(archiveBytes);
   let parsed;
   try{parsed=parseUnambiguousAuditArchiveJson(snapshot).parsed;}
-  catch{throw new Error('Invalid audit archive content');}
+  catch{throw new Error('Invalid or ambiguous signed audit archive content');}
   if(!await verifyPostgresAuditArchiveBundle(parsed,{trustedCheckpoint,rawArchiveBytes:snapshot})){
     throw new Error('Refusing to sign unverified or incomplete audit archive');
   }
