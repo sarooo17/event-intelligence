@@ -139,9 +139,7 @@ link and fsyncs its parent directory before reporting success. An existing
 path fails closed and is never overwritten. The success JSON
 includes SHA-256 of the **actual saved file bytes** (not a reserialized
 JSON object), its sample count,
-source commit and measurement scope. All benchmark CI jobs now upload the
-source-pinned raw artifact and independently recheck its per-event summaries
-before publishing success.
+source commit and measurement scope. **Both jobs in `postgres-mcp-pipeline-evidence.yml`** now upload a\nsource-pinned raw artifact and independently recheck its per-event summaries\nbefore publishing success. The separate 1,200-sample workflow does the same;\nother active 1k/10k/100k benchmark workflows still publish their original\naggregate-only artifacts and are not implied to export raw per-event data.
 
 Each occurrence has index, selected trigger slot, unique match/wake/receipt
 identities, actual PostgreSQL candidate-definition count and measured
