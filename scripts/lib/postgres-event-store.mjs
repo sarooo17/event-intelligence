@@ -1946,7 +1946,7 @@ export class PostgresEventStore {
       deleted: rows.reduce((sum, row) => sum + row.deleted, 0),
       rows,
       excludes: ['mcp_occurrence','mcp_occurrence_key','audit',
-        'wake_delivery','trigger_match','nonterminal_snapshots'],
+        'wake_delivery','trigger_match','nonterminal_keys'],
     };
   }
 
