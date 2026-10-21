@@ -79,7 +79,7 @@ jobs:
             const raw=JSON.parse(readFileSync("pg-1200-raw-samples.json","utf8"));
             const proof=verifyPostgresPipelineRawEvidence(summary,raw);
             if(!proof.ok || raw.events.length!==1200 ||
-              summary.evidence.rawSamples.sha256!==sha256OfRawEvidence(raw) ||
+              summary.evidence.rawSamples.sha256!==sha256OfRawEvidence(readFileSync("pg-1200-raw-samples.json")) ||
               summary.evidence.persistedReceiptsCheckedAfterPoolReopen!==1200 ||
               summary.runtime.commit!==process.env.BENCH_SOURCE_COMMIT ||
               summary.metrics.duplicateHostSideEffects!==0) {
