@@ -91,6 +91,21 @@ integration('PG16 audit bundle verifies whole externally pinned chain, survives 
     const changedBytes=Buffer.from(rawBytes);
     changedBytes[changedBytes.length-2] ^= 1;
     assert.equal(await verifySigned(signed,changedBytes),false);
+    // Exact regression from Codex: JSON.parse sees the same Number for
+    // two distinct decimal strings, but audit byte verification MUST fail.
+    const losslessOriginal=rawBytes.toString('utf8');
+    const roundedReplacement=losslessOriginal.replace(
+      '"counter":2','"counter":2.0000000000000001');
+    assert.notEqual(roundedReplacement,losslessOriginal);
+    assert.deepEqual(JSON.parse(roundedReplacement),
+      JSON.parse(losslessOriginal),'JS parse cannot detect this mutation');
+    const roundedBytes=Buffer.from(roundedReplacement);
+    assert.equal(await verifySigned(signed,roundedBytes),false);
+    assert.equal(await verifyPostgresAuditArchiveBundle(
+      JSON.parse(roundedReplacement),{
+        trustedCheckpoint:pinned,rawArchiveBytes:roundedBytes,
+      }),false,'reject rounded numeric token even when parsed proof is identical');
+
     await assert.rejects(()=>signPostgresAuditArchiveWitness({
       archiveBytes:rawBytes,trustedCheckpoint:{...pinned,headHash:'0'.repeat(64)},
       privateKeyPem,keyId:'operator-offhost-2026-01',
@@ -104,7 +119,7 @@ integration('PG16 audit bundle verifies whole externally pinned chain, survives 
     assert.equal(bundle.pages.length,3);
     assert.deepEqual(bundle.pages.map(p=>p.records.length),[2,2,1]);
     assert.equal(await verifyPostgresAuditArchiveBundle(bundle,{
-      trustedCheckpoint:pinned,
+      trustedCheckpoint:pinned,rawArchiveBytes:rawBytes,
     }),true);
     for(const modify of [
       b=>{b.pages[0].records[0].details.counter=999;},
@@ -118,7 +133,7 @@ integration('PG16 audit bundle verifies whole externally pinned chain, survives 
       const fake=structuredClone(bundle);
       modify(fake);
       assert.equal(await verifyPostgresAuditArchiveBundle(fake,{
-        trustedCheckpoint:pinned,
+        trustedCheckpoint:pinned,rawArchiveBytes:rawBytes,
       }),false);
     }
     await assert.rejects(()=>writePostgresAuditArchiveBundle(reader,{
@@ -150,6 +165,25 @@ integration('PG16 audit bundle verifies whole externally pinned chain, survives 
     assert.equal((await other.listAudit()).length,1);
     const archivedBefore=JSON.parse(original).pages[1].records[0];
     assert.equal(archivedBefore.details.counter,2);
+    // A DB numeric lexeme can also be rewritten without changing its
+    // parsed IEEE-754 Number. Snapshotting must fail closed BEFORE parse.
+    await poolA.query(
+      'UPDATE "'+prefix+'_history" SET payload='+
+      "jsonb_set(payload,'{details,counter}','2.0000000000000001'::jsonb) "+
+      "WHERE scope_id=$1 AND kind='audit' AND payload->>'sequence'='2'",
+      ['audit-A'],
+    );
+    await assert.rejects(()=>reader.getAuditProofWindow({
+      checkpoint:pinned,afterSequence:1,limit:2,
+    }),e=>e.code==='EVENT_INTELLIGENCE_AUDIT_PRECISION_UNSAFE');
+    await assert.rejects(()=>reader.getAuditCheckpoint(),
+      e=>e.code==='EVENT_INTELLIGENCE_AUDIT_PRECISION_UNSAFE');
+    await poolA.query(
+      'UPDATE "'+prefix+'_history" SET payload='+
+      "jsonb_set(payload,'{details,counter}','2'::jsonb) "+
+      "WHERE scope_id=$1 AND kind='audit' AND payload->>'sequence'='2'",
+      ['audit-A'],
+    );
     // Alter the live stored history AFTER writing the durable archive.
     await poolA.query(
       'UPDATE "'+prefix+'_history" SET payload='+
