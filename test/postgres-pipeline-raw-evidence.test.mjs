@@ -41,6 +41,8 @@ function fixture(){
       hostCallback:q(events.map(x=>x.hostCallbackMs)),
       matchedCount:4,durableWakeCount:4,hostSideEffects:4,
       duplicateHostSideEffects:0,
+      measuredWallMs:1000,
+      measuredMatchingEventsPerSecond:4,
     },
     evidence:{persistedReceiptsCheckedAfterPoolReopen:4,
       transportLatencyIncluded:false,hostExecutionLatencyIncluded:false,
@@ -52,6 +54,7 @@ function fixture(){
     measurementKind:'in-process-synthetic-source-and-local-host',
     providerTransportMeasured:false,externalHostEffectMeasured:false,
     postgresServiceCpuMeasured:false,
+    measuredDurationMs:1000,
     postgres:{
       statement:'pg_stat_database counters are DB-wide, not EI-exclusive; PG service CPU not measured',
       before:stats,after:{...stats,xact_commit:120}},
@@ -67,6 +70,11 @@ test('raw PG pipeline verifier recomputes all four percentile streams and durabl
 test('raw PG pipeline proof rejects tampered tails, missing receipts and false source/host attribution',()=>{
   const mutations=[
     ({summary})=>{summary.metrics.ingestToWake.p99Ms=100;},
+    ({summary})=>{summary.metrics.measuredWallMs=1;},
+    ({summary})=>{summary.metrics.measuredMatchingEventsPerSecond=4000;},
+    ({raw})=>{raw.measuredDurationMs=1;},
+    ({raw})=>{raw.measuredDurationMs=0;},
+    ({raw})=>{raw.measuredDurationMs=Number.NaN;},
     ({raw})=>{raw.events[3].hostCallbackMs=999;},
     ({raw})=>{raw.events[1].wakeId='wake-0';},
     ({raw})=>{raw.events[1].receiptId='fake-but-unique';},
