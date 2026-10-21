@@ -1,0 +1,95 @@
+name: PostgreSQL Independent Worker Chaos Acceptance
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/postgres-worker-chaos-acceptance.yml'
+      - 'scripts/evidence/postgres-worker-chaos-aggregate.mjs'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pg-worker-chaos-acceptance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: event_intelligence
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d event_intelligence"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      POSTGRES_URL: postgresql://postgres:postgres@127.0.0.1:5432/event_intelligence
+      EI_PG_CHAOS_SOAK_CONFIRM: YES_DISPOSABLE_PG
+      EI_EFFECT_KILL_ROUNDS: '20'
+      EI_EFFECT_KILL_EVIDENCE_OUT: pg-host-effect-gap.json
+      SOAK_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify checkout identity
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Exact driver setup and runtime compilation
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm install --no-save --ignore-scripts --no-audit --no-fund pg@8.16.3
+          npm run build
+      - name: Run 4 x 10 independent SIGKILL matched-recovery rounds
+        run: |
+          set -euo pipefail
+          node scripts/evidence/postgres-os-chaos-soak.mjs \
+            --cohorts 4 --rounds 10 --max-cohort-minutes 15 \
+            --out pg-match-os-chaos.json | tee pg-match-os-chaos.tap
+      - name: Run 20 independent host effect-before-receipt SIGKILL rounds
+        run: |
+          set -euo pipefail
+          node --test test/postgres-post-host-effect-sigkill.test.mjs \
+            | tee pg-host-effect-gap.tap
+      - name: Run 12 independent-pool partition lease/rebalance rounds
+        run: |
+          set -euo pipefail
+          node --test test/postgres-rebalance-reconnect.test.mjs \
+            | tee pg-rebalance.tap
+      - name: Run 4 physical PostgreSQL backend kill/recovery rounds
+        run: |
+          set -euo pipefail
+          node --test test/postgres-backend-termination-recovery.test.mjs \
+            | tee pg-backend-termination.tap
+      - name: Verify raw evidence and emit fail-closed composite manifest
+        run: |
+          node scripts/evidence/postgres-worker-chaos-aggregate.mjs \
+            pg-match-os-chaos.json pg-host-effect-gap.json \
+            pg-rebalance.tap pg-backend-termination.tap \
+            pg-worker-chaos-acceptance.json
+      - name: Retain source-pinned raw evidence and TAP logs
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pg-worker-chaos-acceptance-${{ github.run_id }}
+          if-no-files-found: error
+          retention-days: 90
+          path: |
+            pg-worker-chaos-acceptance.json
+            pg-match-os-chaos.json
+            pg-match-os-chaos.tap
+            pg-host-effect-gap.json
+            pg-host-effect-gap.tap
+            pg-rebalance.tap
+            pg-backend-termination.tap
