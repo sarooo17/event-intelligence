@@ -62,7 +62,10 @@ const sha=spawnSync('git',['rev-parse','HEAD'],{encoding:'utf8',timeout:5000});
 assert.equal(sha.status,0);
 const sourceSha=sha.stdout.trim();
 assert.match(sourceSha,/^[0-9a-f]{40}$/);
-if(process.env.GITHUB_SHA) assert.equal(sourceSha,process.env.GITHUB_SHA);
+// Pull request workflows expose a *merge-ref* GITHUB_SHA, not the
+// pinned pull_request.head.sha checked out and actually tested here.
+// SOAK_SOURCE_SHA is the workflow's expected exact checked-out head.
+if(process.env.SOAK_SOURCE_SHA) assert.equal(sourceSha,process.env.SOAK_SOURCE_SHA);
 assert.equal(os.sourceCommitSha,sourceSha);
 assert.equal(os.postgres.driverVersion,'8.16.3');
 const report={
