@@ -28,6 +28,38 @@ export declare function verifyAuditProofWindow(
   },
 ): Promise<boolean>;
 
+/** Independently validates a pinned MCP occurrence archive page. */
+export declare function verifyMcpOccurrenceArchiveWindow(
+  proof: McpOccurrenceArchiveWindow,
+  options: {
+    trustedCheckpoint: McpOccurrenceArchiveCheckpoint;
+    trustedAfterSequence: number;
+    trustedPreviousHash: string;
+    trustedLimit: number;
+  },
+): boolean;
+
+export interface McpOccurrenceArchiveCheckpoint {
+  schema: 'event-intelligence.mcp-occurrence-archive.v1';
+  scopeId: string;
+  genesisHash: string;
+  endSequence: number;
+  headHash: string;
+}
+
+export interface McpOccurrenceArchiveWindow {
+  schema: 'event-intelligence.mcp-occurrence-archive.v1';
+  scopeId: string;
+  afterSequence: number;
+  previousHash: string;
+  limit: number;
+  /** Lossless original PG JSONB::text payloads. Do not JSON.parse/serialize for signing. */
+  records: string[];
+  endSequence: number;
+  headHash: string;
+  hasMore: boolean;
+}
+
 import type { EventIntelligenceStoreCapabilities } from '../host-integration.d.mts';
 
 export interface PostgresQueryResult<Row = any> {
@@ -239,6 +271,20 @@ export declare class PostgresEventStore {
     sequence: number | null;
     event: any;
   }>;
+  /** Operator-only; freezes and hashes <=10000 scoped source occurrences without deletion. */
+  getMcpOccurrenceArchiveCheckpoint(options?: {
+    maxOccurrences?: number;
+    maxScanMs?: number;
+  }): Promise<McpOccurrenceArchiveCheckpoint>;
+  /** Read-only page against a checkpoint pinned by the operator outside PostgreSQL. */
+  getMcpOccurrenceArchiveWindow(options: {
+    checkpoint: McpOccurrenceArchiveCheckpoint;
+    afterSequence?: number;
+    /** Hash validated from the preceding page; mandatory for non-genesis pages. */
+    previousHash?: string;
+    limit?: number;
+    maxScanMs?: number;
+  }): Promise<McpOccurrenceArchiveWindow>;
   latestMcpEventSequence(): Promise<number>;
   listMcpOccurrencesAfter(sequence: number): Promise<any[]>;
   getMcpClientState(connectionId: string, eventName: string, args?: Record<string, unknown>): Promise<any | null>;
