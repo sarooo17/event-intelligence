@@ -58,3 +58,51 @@ cross-tenant isolation, empty/complete chain, offline tamper/truncation
 detection, source database corruption *after* exporting a valid archive
 and appends after the pinned checkpoint. It asserts the full historical
 database chain and other tenant records are untouched.
+
+## Optional independently signed archival witness
+
+An off-database auditor may use the exported Ed25519 functions to issue
+a detached cryptographic witness over the **exact file bytes** and the
+original complete scope/genesis/terminal checkpoint. The signing private
+key must be held by the operator or separate signing service; **never**
+in the EI/ERP application workers or PostgreSQL storage. The trusted
+public key and its expected identifier/scope must be pinned out of band,
+not read from the archive itself:
+
+```js
+import {readFile} from 'node:fs/promises';
+import {
+  signPostgresAuditArchiveWitness,
+  verifyPostgresAuditArchiveWitness,
+} from 'mcp-event-intelligence/storage/postgres/audit-archive';
+
+const archiveBytes=await readFile('/secure/exports/audit-chain.json');
+const witness=await signPostgresAuditArchiveWitness({
+  archiveBytes,trustedCheckpoint,privateKeyPem:offlineSigningKey,
+  keyId:'operator-offhost-2026-01',
+});
+const accepted=await verifyPostgresAuditArchiveWitness({
+  witness,archiveBytes,trustedPublicKeyPem:trustedOperatorPublicKey,
+  expectedKeyId:'operator-offhost-2026-01',expectedScopeId:'my-tenant',
+});
+if(!accepted)throw new Error('Reject unsigned/tampered archive');
+```
+
+The signer recomputes the **entire** bounded audit proof from the supplied
+raw bytes before signing. The verifier checks the Ed25519 signature
+against its independent external key, exact archive byte length/hash,
+expected key ID and scope, and the original complete audit chain. These
+checks detect content replacement, a wrong tenant, forged receipt, wrong
+checkpoint, wrong public key and missing/altered audit pages. The witness
+never embeds the public key or generates a signing key on behalf of an
+operator.
+
+**This is signing, not remote durability or immutable storage.** A
+privileged operator can still erase both the local archive and its
+signature. The private key must be protected and its trusted ownership
+established externally; the signature proves who signed the committed
+bytes, not when or whether every provider event was originally ingested.
+Off-host versioned WORM upload, independently retained checkpoints,
+provider replay floors, audit-prefix continuation and tested restore
+still block authorizing any physical deletion. No auto-signing, auto-upload,
+auto-retention or pruner is enabled by this API.
