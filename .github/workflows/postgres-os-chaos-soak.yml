@@ -1,0 +1,94 @@
+name: PostgreSQL OS Crash-Recovery Soak Evidence
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - scripts/evidence/postgres-os-chaos-soak.mjs
+      - scripts/evidence/postgres-os-chaos-evidence.mjs
+      - test/postgres-os-chaos-evidence.test.mjs
+      - test/postgres-os-matched-contenders.test.mjs
+      - test/fixtures/postgres-os-match-wake-worker.mjs
+      - scripts/lib/postgres-event-store.mjs
+      - scripts/lib/composite-event-consumer.mjs
+      - scripts/lib/composite-wake-coordinator.mjs
+      - scripts/lib/wake-retry-scheduler.mjs
+      - 'scripts/lib/**'
+      - 'src/**'
+      - package.json
+      - package-lock.json
+      - tsconfig.json
+      - .github/workflows/postgres-os-chaos-soak.yml
+  workflow_dispatch:
+    inputs:
+      cohorts:
+        description: "Independent disposable-database cohorts (4, 8 or 12)"
+        type: choice
+        options: ['4', '8', '12']
+        default: '8'
+        required: true
+      rounds:
+        description: "Real worker SIGKILL recovery rounds per cohort"
+        type: choice
+        options: ['10', '20', '30']
+        default: '30'
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  os-crash-soak:
+    runs-on: ubuntu-latest
+    # 12 cohorts x 15 min max + dependency setup and artifact upload.
+    timeout-minutes: 210
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: event_intelligence
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d event_intelligence"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      POSTGRES_URL: postgresql://postgres:postgres@127.0.0.1:5432/event_intelligence
+      EI_PG_CHAOS_SOAK_CONFIRM: YES_DISPOSABLE_PG
+      SOAK_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      SOAK_COHORTS: ${{ github.event_name == 'workflow_dispatch' && inputs.cohorts || '1' }}
+      SOAK_ROUNDS: ${{ github.event_name == 'workflow_dispatch' && inputs.rounds || '3' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify exact source snapshot
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install pinned EI and PG16 fixture dependencies
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm install --no-save --ignore-scripts --no-audit --no-fund pg@8.16.3
+          npm run build
+      - name: Run independent real OS SIGKILL recovery cohorts
+        run: |
+          node scripts/evidence/postgres-os-chaos-soak.mjs \
+            --cohorts "$SOAK_COHORTS" \
+            --rounds "$SOAK_ROUNDS" \
+            --max-cohort-minutes 15 \
+            --out postgres-os-chaos-soak.json
+      - name: Retain immutable successful recovery and environment evidence
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: postgres-os-chaos-soak-${{ github.run_id }}
+          path: postgres-os-chaos-soak.json
+          if-no-files-found: error
