@@ -3,7 +3,9 @@ import { mcpGapSnapshot } from '../../dist/src/composite/gapFingerprint.js';
 import { safeMcpSourceArguments } from './mcp-safe-arguments.mjs';
 import { randomUUID } from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { isDeepStrictEqual } from 'node:util';
 import { verifyAuditProofWindow } from './audit-proof-window.mjs';
+import { assertAuditJsonNumberPrecision } from './audit-precision-safety.mjs';
 import { mcpArchiveGenesis, mcpArchiveRecordHash, verifyMcpOccurrenceArchiveWindow } from './mcp-occurrence-archive.mjs';
 export { verifyMcpOccurrenceArchiveWindow } from './mcp-occurrence-archive.mjs';
 export { verifyAuditProofWindow } from './audit-proof-window.mjs';
@@ -2686,8 +2688,25 @@ export class PostgresEventStore {
   async getAuditCheckpoint() {
     return this.tx(async (client) => {
       await this.lock(client, 'audit', 'chain');
-      const records = (await this.historyList('audit', undefined, client))
-        .map(parseAuditRecord);
+      // pg's JSONB parser would round numbers beyond IEEE-754 precision
+      // before canonical AuditChain hashing, letting two different stored
+      // byte sequences produce the same digest. Reject lossy lexemes first.
+      const source = await client.query(
+        'SELECT payload::text AS raw FROM ' + this.history +
+        ' WHERE scope_id=$1 AND kind=$2 ORDER BY history_id ASC',
+        [this.scopeId, 'audit'],
+      );
+      const records = source.rows.map(({raw}) => {
+        assertAuditJsonNumberPrecision(raw);
+        const value=JSON.parse(raw);
+        const record=parseAuditRecord(value);
+        if(!isDeepStrictEqual(value,record)) {
+          const error=new Error('Uncommitted audit record fields prevent checkpoint');
+          error.code='EVENT_INTELLIGENCE_AUDIT_UNCOMMITTED_FIELDS';
+          throw error;
+        }
+        return record;
+      });
       if (!await new AuditChain(records).verify()) {
         const error = new Error('Cannot checkpoint a damaged audit chain');
         error.code = 'EVENT_INTELLIGENCE_AUDIT_PROOF_CHAIN_INVALID';
@@ -2726,23 +2745,34 @@ export class PostgresEventStore {
     }
     return this.tx(async (client) => {
       await this.lock(client, 'audit', 'chain');
+      const parseSafeAuditJson = raw => {
+        assertAuditJsonNumberPrecision(raw);
+        const value=JSON.parse(raw);
+        const record=parseAuditRecord(value);
+        if(!isDeepStrictEqual(value,record)) {
+          const error=new Error('Uncommitted audit fields in proof page');
+          error.code='EVENT_INTELLIGENCE_AUDIT_UNCOMMITTED_FIELDS';
+          throw error;
+        }
+        return record;
+      };
       let terminalHistoryId = null;
       if (checkpoint.endSequence >= 0) {
         const first = await client.query(
-          'SELECT payload FROM ' + this.history +
+          'SELECT payload::text AS raw FROM ' + this.history +
           ' WHERE scope_id=$1 AND kind=$2 ORDER BY history_id ASC LIMIT 1',
           [this.scopeId, 'audit'],
         );
         const terminal = await client.query(
-          'SELECT history_id, payload FROM ' + this.history +
+          'SELECT history_id, payload::text AS raw FROM ' + this.history +
           ' WHERE scope_id=$1 AND kind=$2' +
           " AND (payload->>'sequence')::bigint=$3" +
           ' ORDER BY history_id ASC LIMIT 1',
           [this.scopeId, 'audit', checkpoint.endSequence],
         );
         if (!first.rows.length || !terminal.rows.length ||
-            parseAuditRecord(first.rows[0].payload).hash !== checkpoint.firstHash ||
-            parseAuditRecord(terminal.rows[0].payload).hash !== checkpoint.headHash) {
+            parseSafeAuditJson(first.rows[0].raw).hash !== checkpoint.firstHash ||
+            parseSafeAuditJson(terminal.rows[0].raw).hash !== checkpoint.headHash) {
           const error = new Error('Stored audit snapshot no longer matches checkpoint');
           error.code = 'EVENT_INTELLIGENCE_AUDIT_PROOF_CHECKPOINT_MISMATCH';
           throw error;
@@ -2753,7 +2783,7 @@ export class PostgresEventStore {
       let previousHistoryId = null;
       if (afterSequence >= 0) {
         const prev = await client.query(
-          'SELECT history_id, payload FROM ' + this.history +
+          'SELECT history_id, payload::text AS raw FROM ' + this.history +
           ' WHERE scope_id=$1 AND kind=$2' +
           " AND (payload->>'sequence')::bigint=$3" +
           ' ORDER BY history_id ASC LIMIT 1',
@@ -2764,7 +2794,7 @@ export class PostgresEventStore {
           error.code = 'EVENT_INTELLIGENCE_AUDIT_PROOF_ANCHOR_MISSING';
           throw error;
         }
-        previousHash = parseAuditRecord(prev.rows[0].payload).hash;
+        previousHash = parseSafeAuditJson(prev.rows[0].raw).hash;
         previousHistoryId = prev.rows[0].history_id;
       }
       // Do NOT page by untrusted JSON sequence fields: a damaged sequence
@@ -2782,14 +2812,14 @@ export class PostgresEventStore {
         }
         args.push(limit + 1);
         const rows = await client.query(
-          'SELECT payload FROM ' + this.history +
+          'SELECT payload::text AS raw FROM ' + this.history +
           ' WHERE ' + conditions.join(' AND ') +
           ' ORDER BY history_id ASC LIMIT ' +
           (previousHistoryId === null ? '$4' : '$5'),
           args,
         );
         records = rows.rows.slice(0, limit).map(row =>
-          parseAuditRecord(row.payload)
+          parseSafeAuditJson(row.raw)
         );
         hasMore = rows.rows.length > limit;
       }
