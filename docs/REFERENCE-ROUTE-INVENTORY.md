@@ -82,6 +82,7 @@ grant an agent a tool or permission.
 | `mcp-event-intelligence/observability` | Optional structured observability hooks |
 | `mcp-event-intelligence/conformance` | Host conformance utilities |
 | `mcp-event-intelligence/storage/postgres` | PostgreSQL-backed authoritative store |
+| `mcp-event-intelligence/storage/postgres/archive` | Offline, operator-controlled PostgreSQL source archive bundle writer/verifier; no runtime tools, signing or pruning |
 | `mcp-event-intelligence/diagnostics` | Read-only integration doctor utilities |
 
 This table is checked against **all** `package.json#exports` keys in CI.
