@@ -1,4 +1,6 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import { open, link, rm } from 'node:fs/promises';
+import { dirname } from 'node:path';
 
 export const PG_PIPELINE_RAW_SCHEMA = 'event-intelligence.postgres-pipeline-raw-samples.v1';
 const metrics = Object.freeze([
@@ -33,7 +35,9 @@ export function verifyPostgresPipelineRawEvidence(summary,raw) {
   check(Number.isSafeInteger(count) && count>0 && count<=5000 &&
     rows.length===count,'sample-count');
   check(raw?.scopeId && typeof raw.scopeId==='string','scope');
-  check(raw?.sourceCommitSha===summary?.runtime?.commit,'source-commit');
+  check(typeof raw?.sourceCommitSha==='string' &&
+    /^[0-9a-f]{40}$/.test(raw.sourceCommitSha) &&
+    raw.sourceCommitSha===summary?.runtime?.commit,'source-commit');
   check(raw?.measurementKind==='in-process-synthetic-source-and-local-host',
     'scope-must-not-claim-remote-transport');
   check(raw?.providerTransportMeasured===false &&
@@ -62,6 +66,21 @@ export function verifyPostgresPipelineRawEvidence(summary,raw) {
   }
   check(matches.size===count && wakes.size===count &&
     receipts.size===count,'unique-durable-identity-count');
+  // Separate proof collected from a freshly reopened PostgreSQL pool.
+  // A unique receipt string in the original event is not proof of durable
+  // storage. Compare every id/status/claim generation against those reads.
+  const reread=Array.isArray(raw?.reopenedReceipts)?raw.reopenedReceipts:[];
+  check(reread.length===count,'reopened-receipt-count');
+  for(let i=0;i<rows.length;i++) {
+    const saved=reread[i],sample=rows[i];
+    check(saved?.wakeId===sample?.wakeId &&
+      saved?.receiptId===sample?.receiptId &&
+      saved?.status==='delivered' &&
+      saved?.attemptCount===1,'reopened-receipt:'+i);
+  }
+  check(reopenedReceiptDigest(reread)===
+    summary?.evidence?.rawSamples?.reopenedReceiptDigest,
+    'reopened-receipt-digest');
   check(summary?.metrics?.matchedCount===count &&
     summary?.metrics?.durableWakeCount===count &&
     summary?.metrics?.hostSideEffects===count &&
@@ -101,6 +120,47 @@ export function verifyPostgresPipelineRawEvidence(summary,raw) {
     productionSloCertified:false});
 }
 
-export function sha256OfRawEvidence(raw) {
-  return createHash('sha256').update(JSON.stringify(raw)+'\n').digest('hex');
+/** Digest the exact bytes of the saved artifact, never parsed/reformatted JSON. */
+export function sha256OfRawEvidence(bytes) {
+  if (!Buffer.isBuffer(bytes) && typeof bytes!=='string') {
+    throw new TypeError('Raw evidence digest requires saved bytes or text');
+  }
+  return createHash('sha256').update(bytes).digest('hex');
+}
+export function reopenedReceiptDigest(receipts) {
+  return createHash('sha256').update(JSON.stringify(receipts)).digest('hex');
+}
+
+/** Private, exclusive and POSIX crash-durable publication. */
+export async function publishPostgresPipelineRawEvidence(destination,bytes) {
+  if(typeof destination!=='string' || !destination.trim() ||
+    !Buffer.isBuffer(bytes) || !bytes.length) {
+    throw new TypeError('A fresh evidence path and raw Buffer are required');
+  }
+  const staging=destination+'.partial-'+randomUUID();
+  let file=null,published=false;
+  try {
+    file=await open(staging,'wx',0o600);
+    await file.writeFile(bytes);
+    await file.sync();
+    await file.close();
+    file=null;
+    await link(staging,destination); // EEXIST always fails, no replacement
+    published=true;
+    await rm(staging);
+    const dir=await open(dirname(destination),'r');
+    try { await dir.sync(); } finally { await dir.close(); }
+  } catch(error) {
+    if(published) {
+      try {
+        await rm(destination,{force:true});
+        const dir=await open(dirname(destination),'r');
+        try { await dir.sync(); } finally { await dir.close(); }
+      } catch { /* Preserve original failure; operation did NOT succeed. */ }
+    }
+    throw error;
+  } finally {
+    if(file)await file.close();
+    await rm(staging,{force:true});
+  }
 }
