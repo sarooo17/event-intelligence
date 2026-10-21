@@ -4,6 +4,7 @@ import { open, rm, lstat, link } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { assertAuditJsonNumberPrecision } from './audit-precision-safety.mjs';
+import { parseUnambiguousAuditArchiveJson } from './audit-archive-json-integrity.mjs';
 import { verifyAuditProofWindow } from './audit-proof-window.mjs';
 
 const SCHEMA='event-intelligence.postgres-audit-bundle.v1';
@@ -40,9 +41,8 @@ export async function verifyPostgresAuditArchiveBundle(bundle,{
     // Freeze both the original bytes and verified object BEFORE awaiting
     // chained SHA256 checks. Neither caller can mutate the proof in-flight.
     const snapshot=Buffer.from(rawArchiveBytes);
-    const rawText=snapshot.toString('utf8');
-    assertAuditJsonNumberPrecision(rawText);
-    const parsed=JSON.parse(rawText);
+    const {text,parsed}=parseUnambiguousAuditArchiveJson(snapshot);
+    assertAuditJsonNumberPrecision(text);
     if(!isDeepStrictEqual(parsed,bundle))return false;
     bundle=parsed;
   }catch{return false;}
@@ -157,7 +157,7 @@ export async function verifyPostgresAuditArchiveBundleFile(filePath,{
     }
     const archiveBytes=Buffer.concat(chunks,length);
     return verifyPostgresAuditArchiveBundle(
-      JSON.parse(archiveBytes.toString('utf8')),
+      parseUnambiguousAuditArchiveJson(archiveBytes).parsed,
       {trustedCheckpoint,rawArchiveBytes:archiveBytes},
     );
   }catch{return false;}
@@ -221,7 +221,7 @@ export async function signPostgresAuditArchiveWitness({
   // asynchronous proof/hash work, and sign ONLY the already-verified bytes.
   const snapshot=Buffer.from(archiveBytes);
   let parsed;
-  try{parsed=JSON.parse(snapshot.toString('utf8'));}
+  try{parsed=parseUnambiguousAuditArchiveJson(snapshot).parsed;}
   catch{throw new Error('Invalid audit archive content');}
   if(!await verifyPostgresAuditArchiveBundle(parsed,{trustedCheckpoint,rawArchiveBytes:snapshot})){
     throw new Error('Refusing to sign unverified or incomplete audit archive');
@@ -256,7 +256,7 @@ export async function verifyPostgresAuditArchiveWitness({
     if(!verify(null,witnessMessage(body),publicKey,
       Buffer.from(witness.signature,'base64')))return false;
     return verifyPostgresAuditArchiveBundle(
-      JSON.parse(snapshot.toString('utf8')),
+      parseUnambiguousAuditArchiveJson(snapshot).parsed,
       {trustedCheckpoint:witness.checkpoint,rawArchiveBytes:snapshot},
     );
   }catch{return false;}
