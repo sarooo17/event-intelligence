@@ -84,7 +84,7 @@ integration('real PG16 repeated matching: 24 distinct events across 8 triggers r
   assert.ok(raw.postgres.after.isolatedTableBytes >=
     raw.postgres.before.isolatedTableBytes);
   assert.equal(out.evidence.rawSamples.samples,24);
-  assert.equal(out.evidence.rawSamples.sha256,sha256OfRawEvidence(raw));
+  assert.equal(out.evidence.rawSamples.sha256,sha256OfRawEvidence(readFileSync(outputPath)));
   const verdict=verifyPostgresPipelineRawEvidence(out,raw);
   assert.equal(verdict.ok,true,verdict.failures.join(','));
   assert.equal(verdict.productionSloCertified,false);
