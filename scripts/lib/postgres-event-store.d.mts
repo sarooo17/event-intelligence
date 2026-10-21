@@ -53,7 +53,8 @@ export interface McpOccurrenceArchiveWindow {
   afterSequence: number;
   previousHash: string;
   limit: number;
-  records: any[];
+  /** Lossless original PG JSONB::text payloads. Do not JSON.parse/serialize for signing. */
+  records: string[];
   endSequence: number;
   headHash: string;
   hasMore: boolean;
