@@ -106,3 +106,30 @@ Off-host versioned WORM upload, independently retained checkpoints,
 provider replay floors, audit-prefix continuation and tested restore
 still block authorizing any physical deletion. No auto-signing, auto-upload,
 auto-retention or pruner is enabled by this API.
+
+## JSONB numeric precision: fail-closed audit proofs
+
+**An important PostgreSQL-to-JavaScript integrity boundary:** JSONB can
+represent numeric lexemes that `JSON.parse` rounds to a different IEEE-754
+`Number` (for example, `9007199254740992` vs `9007199254740993`, or
+`2` vs `2.0000000000000001`). Re-hashing only the parsed JavaScript
+value would allow an altered source number to evade audit hash checks.
+
+Audit checkpoint and proof-window reads therefore inspect PostgreSQL's
+original `payload::text` **before** converting to JavaScript objects.
+The standalone archive verifier and signed-witness APIs also require the
+original **raw archive file bytes**, scan the numeric lexemes outside JSON
+strings and reject unsafe precision with
+`EVENT_INTELLIGENCE_AUDIT_PRECISION_UNSAFE` at the store boundary (or
+`false` in a verifier). The object-based verification API intentionally
+requires an associated `rawArchiveBytes` Buffer: a pre-parsed object
+cannot authenticate numeric spellings that JavaScript already rounded.
+
+This policy is conservative: an audit record legitimately containing a
+high-precision numeric JSON value may **not** be exportable. Represent
+large identifiers, high-precision currency decimals or arbitrary-precision
+values as **strings** in audit details. Rejection is a deliberate safety
+failure, not permission to skip records or rewrite the established audit
+hash chain. A future precision-preserving canonical hash version may
+support richer exact numeric types; it would require an explicit reviewed
+compatibility contract and full migration tests.
