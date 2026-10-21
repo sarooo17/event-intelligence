@@ -25,7 +25,7 @@ prefix of a genesis-linked audit chain breaks `appendAudit` and
    against normal EI ingestion, scans up to 10000 occurrences and verifies
    contiguous 1-based sequence numbers. Any missing, malformed, reordered or
    excessive history fails closed. Every record participates in a
-   domain-separated, scope-bound canonical-JSON SHA-256 hash chain, beginning
+   domain-separated, scope-bound SHA-256 hash chain over **raw PostgreSQL\n   `JSONB::text`** rather than parsed JavaScript values, beginning
    with a deterministic scoped genesis. The returned checkpoint contains
    `schema`, `scopeId`, `genesisHash`, `endSequence`, and `headHash`.
    This operation is **O(N)**, deliberately limited and operator-only; large
@@ -79,3 +79,13 @@ pinned external archive, replay floor for each source/subscription including
 unresolved delivery gaps, long-lived CEP/pending-work protection, safe
 post-prune hash-chain continuation, crash/recovery/fencing and measured
 storage/latency proof at production workload scales.
+
+**Additional PG16 fault regressions:**
+`test/postgres-mcp-archive-lock-precision.test.mjs` pauses a real writer
+*after incrementing the transactional sequence counter but before appending
+its history*, proves the independent snapshot waits at the counter fence,
+then resumes and validates a contiguous archive. It also changes a retained
+JSONB numeric value from `9007199254740992` to `9007199254740993`:
+JavaScript numeric decoding sees the same value, but the **raw JSONB text
+commitment rejects the tamper**. The full MCP occurrence schema is checked
+before producing any checkpoint or page.
