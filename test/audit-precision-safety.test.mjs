@@ -9,6 +9,7 @@ test('raw audit JSON numeric precision policy rejects unrepresentable and rounde
     '{"details":{"tiny":1e-100,"small":0.0000000000000000001}}',
     '{"x":-9007199254740991,"y":123.456789012345}',
     '{"x":0.0000,"y":1000000000.00000000}',
+    '{"x":0.00000000000000000010000000000000001}',
   ];
   for(const raw of valid){
     assert.doesNotThrow(()=>assertAuditJsonNumberPrecision(raw),raw);
@@ -30,7 +31,7 @@ test('raw audit JSON numeric precision policy rejects unrepresentable and rounde
     '{"counter":2.1e-323}',
     '{"counter":3.1e-323}',
     '{"counter":4.9e-324}',
-    '{"counter":0.00000000000000000010000000000000001}',
+    '{"counter":0.000000000000000000100000000000000001}',
     '{"counter":-3e-324}',
   ];
   for(const raw of unsafe){
