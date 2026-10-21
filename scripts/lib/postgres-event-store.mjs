@@ -1965,6 +1965,10 @@ export class PostgresEventStore {
     const key =
       String(serverId) + ':' + (subscriptionId ?? '') + ':' + event.eventId;
     return this.tx(async (client) => {
+      // Shared with operator snapshot: serialize the sequence+history
+      // commit including the first INSERT when no counter row exists.
+      // Preserve consistent advisory-lock ordering before the key lock.
+      await this.lock(client, 'mcp-archive-sequence', 'scope');
       await this.lock(client, 'mcp-occurrence', key);
       const existing = await this.get('mcp_occurrence_key', key, client);
       if (existing) {
@@ -2006,6 +2010,9 @@ export class PostgresEventStore {
       return await this.tx(async client => {
         await client.query("SELECT set_config('statement_timeout', $1, true)",
           [String(maxScanMs) + 'ms']);
+        // Lock even before the FIRST occurrence counter row exists. FOR
+        // UPDATE alone cannot fence an uncommitted INSERT of that row.
+        await this.lock(client, 'mcp-archive-sequence', 'scope');
         const last = await client.query(
           'SELECT value FROM ' + this.counters +
           ' WHERE scope_id=$1 AND name=$2 FOR UPDATE',
