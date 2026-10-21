@@ -1,0 +1,104 @@
+name: PostgreSQL 1200 Raw Pipeline Samples
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/postgres-pipeline-1200-raw-samples.yml'
+      - 'scripts/evidence/postgres-mcp-ingest-wake.mjs'
+      - 'scripts/lib/postgres-pipeline-raw-evidence.mjs'
+      - 'scripts/lib/postgres-event-store.mjs'
+      - 'scripts/lib/composite-event-consumer.mjs'
+      - 'scripts/lib/composite-wake-coordinator.mjs'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pg-1200-raw:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: event_intelligence
+        ports: [5432:5432]
+        options: >-
+          --health-cmd "pg_isready -U postgres -d event_intelligence"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      POSTGRES_URL: postgresql://postgres:postgres@127.0.0.1:5432/event_intelligence
+      EI_PG_PIPELINE_CONFIRM: YES_ISOLATED
+      EI_PG_PIPELINE_REPEAT_CONFIRM: YES_ISOLATED_REPEAT
+      BENCH_SOURCE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+      BENCH_IS_PULL_REQUEST: ${{ github.event_name == 'pull_request' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Require exact reviewed source checkout
+        run: test "$(git rev-parse HEAD)" = "$BENCH_SOURCE_COMMIT"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install pinned driver and build EI
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm install --no-save --ignore-scripts --no-audit --no-fund pg@8.16.3
+          npm run build
+      - name: Pin reproducible host specification
+        run: |
+          {
+            echo "source-sha=$BENCH_SOURCE_COMMIT"
+            echo "pg-driver=$(node -p "require('pg/package.json').version")"
+            node --version
+            uname -a
+            lscpu
+            free -m
+          } > pg-1200-host.txt
+      - name: Actual PG16 1200-event monotonic-rate-cap profile (not a remote SLO)
+        run: |
+          set -euo pipefail
+          node scripts/evidence/postgres-mcp-ingest-wake.mjs \
+            --triggers 16 --events 1200 --sources 4 \
+            --noise 8 --replays 20 --repeat-matches --rate 20 \
+            --raw-evidence-out pg-1200-raw-samples.json \
+            > pg-1200-summary.json 2> pg-1200-errors.jsonl
+      - name: Independently recompute actual 1200 raw event percentiles
+        run: |
+          node --input-type=module -e '
+            import {readFileSync} from "node:fs";
+            import {verifyPostgresPipelineRawEvidence,sha256OfRawEvidence} from
+              "./scripts/lib/postgres-pipeline-raw-evidence.mjs";
+            const summary=JSON.parse(readFileSync("pg-1200-summary.json","utf8"));
+            const raw=JSON.parse(readFileSync("pg-1200-raw-samples.json","utf8"));
+            const proof=verifyPostgresPipelineRawEvidence(summary,raw);
+            if(!proof.ok || raw.events.length!==1200 ||
+              summary.evidence.rawSamples.sha256!==sha256OfRawEvidence(raw) ||
+              summary.evidence.persistedReceiptsCheckedAfterPoolReopen!==1200 ||
+              summary.runtime.commit!==process.env.BENCH_SOURCE_COMMIT ||
+              summary.metrics.duplicateHostSideEffects!==0) {
+              throw Error("1200-event evidence refused: "+proof.failures.join(","));
+            }
+            console.log(JSON.stringify({actualRawSamples:raw.events.length,
+              sourceCommitSha:summary.runtime.commit,
+              measuredPgPipelineP99Ms:summary.metrics.ingestToWake.p99Ms,
+              providerTransportMeasured:false,productionSloCertified:false}));
+          '
+      - name: Publish real measured samples and any failed-run stderr
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ei-pg-pipeline-1200-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: warn
+          retention-days: 90
+          path: |
+            pg-1200-host.txt
+            pg-1200-summary.json
+            pg-1200-raw-samples.json
+            pg-1200-errors.jsonl
