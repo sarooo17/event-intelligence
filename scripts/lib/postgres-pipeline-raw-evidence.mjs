@@ -87,6 +87,17 @@ export function verifyPostgresPipelineRawEvidence(summary,raw) {
     summary?.metrics?.duplicateHostSideEffects===0 &&
     summary?.evidence?.persistedReceiptsCheckedAfterPoolReopen===count,
     'durable-receipt-host-invariant');
+  // Achieved-rate measurements must have the same measured wall-clock
+  // interval as the raw per-event series. A valid-looking tail histogram
+  // cannot legitimize a fabricated throughput or shortened duration.
+  const duration=raw?.measuredDurationMs;
+  const durationValid=typeof duration==='number' &&
+    Number.isFinite(duration) && duration>0;
+  check(durationValid && near(summary?.metrics?.measuredWallMs,duration),
+    'measured-wall-duration');
+  check(durationValid && Number.isSafeInteger(count) && count>0 &&
+    near(summary?.metrics?.measuredMatchingEventsPerSecond,
+      count*1000/duration),'measured-achieved-throughput');
   for(const [metric,field] of metrics) {
     const found=quantiles(rows.map(row=>row?.[field]));
     const declared=summary?.metrics?.[metric];
