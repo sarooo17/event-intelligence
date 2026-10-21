@@ -1,4 +1,5 @@
 import { parseAuditRecord } from '../../dist/src/intelligenceProtocol/index.js';
+import { isDeepStrictEqual } from 'node:util';
 import { canonicalJson, sha256Hex } from '../../dist/src/intelligenceProtocol/canonical.js';
 
 /**
@@ -44,6 +45,10 @@ export async function verifyAuditProofWindow(proof, {
   try {
     for (const row of proof.records) {
       const record = parseAuditRecord(row);
+      // AuditRecordSchema is non-strict and strips unknown top-level keys.
+      // Such bytes were never committed by the canonical audit hash and
+      // must NOT appear in a trusted proof or become signed by an operator.
+      if (!isDeepStrictEqual(row, record)) return false;
       sequence += 1;
       if (record.sequence !== sequence || record.previousHash !== hash) {
         return false;
