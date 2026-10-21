@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {PG_PIPELINE_RAW_SCHEMA,verifyPostgresPipelineRawEvidence} from
+import {PG_PIPELINE_RAW_SCHEMA,verifyPostgresPipelineRawEvidence,reopenedReceiptDigest} from
   '../scripts/lib/postgres-pipeline-raw-evidence.mjs';
 
 const summarySchema='event-intelligence.postgres-mcp-ingest-wake.v1';
@@ -23,8 +23,12 @@ function fixture(){
   const stats={xact_commit:100,xact_rollback:1,blks_read:2,blks_hit:3,
     tup_inserted:4,tup_updated:5,tup_deleted:6,temp_bytes:7,
     deadlocks:0,isolatedTableBytes:9000};
+  const commit='a'.repeat(40);
+  const reopenedReceipts=events.map(e=>({
+    wakeId:e.wakeId,receiptId:e.receiptId,status:'delivered',attemptCount:1,
+  }));
   const summary={schema:summarySchema,status:'completed',
-    runtime:{commit:'full-exact-head-sha'},
+    runtime:{commit},
     workload:{triggers:2,matchingMcpOccurrences:4},
     metrics:{
       ingestToMatch:q(events.map(x=>x.ingestToMatchMs)),
@@ -36,17 +40,18 @@ function fixture(){
     },
     evidence:{persistedReceiptsCheckedAfterPoolReopen:4,
       transportLatencyIncluded:false,hostExecutionLatencyIncluded:false,
-      candidateDefinitionsPerMeasuredEvent:{samples:4,min:1,max:2,average:1.25}},
+      candidateDefinitionsPerMeasuredEvent:{samples:4,min:1,max:2,average:1.25},
+      rawSamples:{reopenedReceiptDigest:reopenedReceiptDigest(reopenedReceipts)}},
   };
   const raw={schema:PG_PIPELINE_RAW_SCHEMA,scopeId:'fixture-scope',
-    sourceCommitSha:'full-exact-head-sha',
+    sourceCommitSha:commit,
     measurementKind:'in-process-synthetic-source-and-local-host',
     providerTransportMeasured:false,externalHostEffectMeasured:false,
     postgresServiceCpuMeasured:false,
     postgres:{
       statement:'pg_stat_database counters are DB-wide, not EI-exclusive; PG service CPU not measured',
       before:stats,after:{...stats,xact_commit:120}},
-    events};
+    events,reopenedReceipts};
   return {summary,raw};
 }
 test('raw PG pipeline verifier recomputes all four percentile streams and durable identities',()=>{
@@ -60,11 +65,15 @@ test('raw PG pipeline proof rejects tampered tails, missing receipts and false s
     ({summary})=>{summary.metrics.ingestToWake.p99Ms=100;},
     ({raw})=>{raw.events[3].hostCallbackMs=999;},
     ({raw})=>{raw.events[1].wakeId='wake-0';},
+    ({raw})=>{raw.events[1].receiptId='fake-but-unique';},
+    ({raw})=>{raw.reopenedReceipts[2].receiptId='other-receipt';},
+    ({raw})=>{raw.reopenedReceipts.pop();},
     ({raw})=>{raw.events[2].ingestToWakeMs=300;},
     ({raw})=>{raw.events[2].candidateDefinitions=888;},
     ({raw})=>{raw.events.pop();},
     ({raw})=>{raw.events[0].index=2;},
     ({raw})=>{raw.sourceCommitSha='another-sha';},
+    ({raw})=>{raw.sourceCommitSha=null;},
     ({raw})=>{raw.providerTransportMeasured=true;},
     ({raw})=>{raw.externalHostEffectMeasured=true;},
     ({raw})=>{raw.postgresServiceCpuMeasured=true;},
