@@ -5,6 +5,8 @@ on:
     paths:
       - ".github/workflows/postgres-mcp-pipeline-evidence.yml"
       - "scripts/evidence/postgres-mcp-ingest-wake.mjs"
+      - "scripts/lib/postgres-pipeline-raw-evidence.mjs"
+      - "test/postgres-mcp-pipeline-repeat-rate.test.mjs"
       - "docs/POSTGRES-MCP-PIPELINE-EVIDENCE.md"
       # Running only for benchmark-file changes is not a regression gate.
       # Include every core path that can change matching/delivery results.
@@ -84,8 +86,22 @@ jobs:
           set -o pipefail
           node scripts/evidence/postgres-mcp-ingest-wake.mjs \
             --triggers "$TRIGGERS" --noise 4 --replays 2 \
+            --raw-evidence-out pipeline-raw-samples.json \
             > pipeline-result.json 2> pipeline-errors.jsonl
-          cat pipeline-result.json
+          node --input-type=module -e '
+            import { readFileSync } from "node:fs";
+            import { verifyPostgresPipelineRawEvidence,sha256OfRawEvidence } from
+              "./scripts/lib/postgres-pipeline-raw-evidence.mjs";
+            const summary=JSON.parse(readFileSync("pipeline-result.json","utf8"));
+            const raw=JSON.parse(readFileSync("pipeline-raw-samples.json","utf8"));
+            const result=verifyPostgresPipelineRawEvidence(summary,raw);
+            if(!result.ok ||
+              summary.evidence.rawSamples.sha256!==sha256OfRawEvidence(raw) ||
+              summary.runtime.commit!==process.env.BENCH_SOURCE_COMMIT) {
+              throw Error("Raw pipeline samples failed independent verification: "+result.failures);
+            }
+            console.log(JSON.stringify({verified:raw.events.length,productionSloCertified:false}));
+          '
       - name: Preserve independent raw measurements and failures
         if: always()
         uses: actions/upload-artifact@v4
@@ -93,6 +109,7 @@ jobs:
           name: ei-pg-mcp-pipeline-${{ matrix.triggers }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             pipeline-result.json
+            pipeline-raw-samples.json
             pipeline-errors.jsonl
             pipeline-host.txt
           retention-days: 90
