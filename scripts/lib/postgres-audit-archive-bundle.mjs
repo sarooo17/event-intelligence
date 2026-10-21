@@ -37,10 +37,14 @@ export async function verifyPostgresAuditArchiveBundle(bundle,{
   if(!Buffer.isBuffer(rawArchiveBytes) ||
       rawArchiveBytes.length<2 || rawArchiveBytes.length>MAX_BYTES)return false;
   try{
-    const rawText=rawArchiveBytes.toString('utf8');
+    // Freeze both the original bytes and verified object BEFORE awaiting
+    // chained SHA256 checks. Neither caller can mutate the proof in-flight.
+    const snapshot=Buffer.from(rawArchiveBytes);
+    const rawText=snapshot.toString('utf8');
     assertAuditJsonNumberPrecision(rawText);
     const parsed=JSON.parse(rawText);
     if(!isDeepStrictEqual(parsed,bundle))return false;
+    bundle=parsed;
   }catch{return false;}
   if(!sameCheckpoint(bundle?.checkpoint,trustedCheckpoint) ||
       bundle.schema!==SCHEMA || !Array.isArray(bundle.pages) ||
@@ -213,17 +217,20 @@ export async function signPostgresAuditArchiveWitness({
       !privateKeyPem.trim()){
     throw new TypeError('Ed25519 audit archive witness requires trusted checkpoint, byte buffer, keyId and private key');
   }
+  // The caller's Buffer is mutable. Snapshot synchronously before any
+  // asynchronous proof/hash work, and sign ONLY the already-verified bytes.
+  const snapshot=Buffer.from(archiveBytes);
   let parsed;
-  try{parsed=JSON.parse(archiveBytes.toString('utf8'));}
+  try{parsed=JSON.parse(snapshot.toString('utf8'));}
   catch{throw new Error('Invalid audit archive content');}
-  if(!await verifyPostgresAuditArchiveBundle(parsed,{trustedCheckpoint,rawArchiveBytes:archiveBytes})){
+  if(!await verifyPostgresAuditArchiveBundle(parsed,{trustedCheckpoint,rawArchiveBytes:snapshot})){
     throw new Error('Refusing to sign unverified or incomplete audit archive');
   }
   const privateKey=createPrivateKey(privateKeyPem);
   if(privateKey.asymmetricKeyType!=='ed25519'){
     throw new TypeError('Only Ed25519 audit witness private keys accepted');
   }
-  const body=evidenceBody(archiveBytes,trustedCheckpoint,keyId);
+  const body=evidenceBody(snapshot,trustedCheckpoint,keyId);
   return Object.freeze({...body,
     signature:sign(null,witnessMessage(body),privateKey).toString('base64')});
 }
@@ -242,14 +249,15 @@ export async function verifyPostgresAuditArchiveWitness({
       createHash('sha256').update(archiveBytes).digest('hex')!==
         witness.archiveSha256)return false;
   try{
+    const snapshot=Buffer.from(archiveBytes);
     const publicKey=createPublicKey(trustedPublicKeyPem);
     if(publicKey.asymmetricKeyType!=='ed25519')return false;
-    const body=evidenceBody(archiveBytes,witness.checkpoint,witness.keyId);
+    const body=evidenceBody(snapshot,witness.checkpoint,witness.keyId);
     if(!verify(null,witnessMessage(body),publicKey,
       Buffer.from(witness.signature,'base64')))return false;
     return verifyPostgresAuditArchiveBundle(
-      JSON.parse(archiveBytes.toString('utf8')),
-      {trustedCheckpoint:witness.checkpoint,rawArchiveBytes:archiveBytes},
+      JSON.parse(snapshot.toString('utf8')),
+      {trustedCheckpoint:witness.checkpoint,rawArchiveBytes:snapshot},
     );
   }catch{return false;}
 }
