@@ -16,6 +16,10 @@ on:
       - 'src/protocol/ownPath.ts'
       - 'scripts/lib/generic-runtime-wake.mjs'
       - 'scripts/lib/pattern-v2-signature-contract.mjs'
+      # Conservative transitive regression gate: the benchmark imports
+      # helpers indirectly through PostgreSQL/Pattern/wake modules.
+      # Include wake-claim-generation and future helper additions.
+      - 'scripts/lib/**'
   workflow_dispatch:
 
 permissions:
