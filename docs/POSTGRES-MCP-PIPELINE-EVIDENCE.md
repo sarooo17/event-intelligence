@@ -144,7 +144,7 @@ source commit and measurement scope. **Both jobs in `postgres-mcp-pipeline-evide
 Each occurrence has index, selected trigger slot, unique match/wake/receipt
 identities, actual PostgreSQL candidate-definition count and measured
 `ingestToMatchMs`, `matchToWakeMs`, `ingestToWakeMs` and
-`hostCallbackMs`. The separate verifier recomputes every p50/p95/p99/max
+`hostCallbackMs`. The separate verifier also checks the raw measured wall-clock duration against the summary and recomputes actual achieved wake/event throughput (sample count divided by duration), rejecting inflated throughput figures even if the latency tails are untouched. It recomputes every p50/p95/p99/max
 and checks stage conservation, uniqueness, candidate counts and matched
 persisted receipts against the main JSON report. The producer must be inside a **clean actual Git checkout**: the
 source SHA is verified against `git rev-parse HEAD`, any separately supplied
