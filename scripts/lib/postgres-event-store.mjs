@@ -1836,6 +1836,120 @@ export class PostgresEventStore {
    * No implicit TTL job: only exact adjacent duplicate *snapshots* of a
    * durably fired match may be pruned, and only before a past cutoff.
    */
+  /**
+   * Paginated, scope-local operator sweep of ONLY redundant terminal
+   * snapshots. This never deletes audit, source occurrences, source dedup,
+   * active matches, pending wakes or any authoritative receipt/record.
+   * Run with dryRun=true first. Each selected key commits independently;
+   * preserve nextAfterKey when an operator run is interrupted.
+   */
+  async compactScopedTerminalHistoryBatch({
+    kind, before, afterKey = '', maxKeys = 10, maxRows = 100,
+    maxHistoryRows = 10000, maxScanMs = 2000, dryRun = true,
+  } = {}) {
+    const validKind = kind === 'wake' || kind === 'trigger_match_history';
+    if (!validKind || !z.iso.datetime({offset:true}).safeParse(before).success ||
+        Date.parse(before) > Date.now() ||
+        typeof afterKey !== 'string' ||
+        !Number.isSafeInteger(maxKeys) || maxKeys < 1 || maxKeys > 32 ||
+        !Number.isSafeInteger(maxRows) || maxRows < 1 || maxRows > 1000 ||
+        !Number.isSafeInteger(maxHistoryRows) ||
+        maxHistoryRows < 3 || maxHistoryRows > 100000 ||
+        !Number.isSafeInteger(maxScanMs) ||
+        maxScanMs < 100 || maxScanMs > 30000 ||
+        typeof dryRun !== 'boolean') {
+      const error = new TypeError(
+        'Scope retention sweep requires wake/match history kind, past ISO cutoff, ' +
+        'afterKey, maxKeys 1..32, maxRows 1..1000, maxHistoryRows 3..100000, ' +
+        'maxScanMs 100..30000 and boolean dryRun',
+      );
+      error.code = 'EVENT_INTELLIGENCE_TERMINAL_SWEEP_POLICY_INVALID';
+      throw error;
+    }
+    let keys;
+    try {
+      keys = await this.tx(async client => {
+        await client.query("SELECT set_config('statement_timeout', $1, true)",
+          [String(maxScanMs) + 'ms']);
+        const found = await client.query(
+          'SELECT DISTINCT record_key FROM ' + this.history +
+          ' WHERE scope_id=$1 AND kind=$2 AND record_key>$3' +
+          ' ORDER BY record_key LIMIT $4',
+          [this.scopeId, kind, afterKey, maxKeys + 1],
+        );
+        return found.rows.map(row => String(row.record_key));
+      });
+    } catch (error) {
+      if (error?.code === '57014') {
+        const bounded = new Error('Scoped terminal retention key scan exceeded SQL time budget');
+        bounded.code = 'EVENT_INTELLIGENCE_TERMINAL_SWEEP_TIME_BUDGET_EXCEEDED';
+        throw bounded;
+      }
+      throw error;
+    }
+    const examined = keys.slice(0, maxKeys);
+    const rows = [];
+    let cursor = afterKey;
+    let cappedKey = null;
+    // The underlying per-key functions hold the existing writer fences and
+    // revalidate current authoritative states on independent transactions.
+    // Never assume a cached key scan itself authorizes deletion.
+    for (const key of examined) {
+      const settings = {
+        before, maxRows, maxHistoryRows, maxScanMs, dryRun,
+      };
+      let outcome;
+      try {
+        outcome = kind === 'wake'
+          ? await this.compactDeliveredWakeDuplicateHistory({
+            wakeId: key, ...settings,
+          })
+          : await this.compactTerminalMatchDuplicateHistory({
+            matchId: key, ...settings,
+          });
+      } catch (error) {
+        // Earlier keys were independent committed transactions. Do not
+        // pretend the whole batch rolled back or discard the operator's
+        // exact last committed cursor on a failure at this key.
+        if (error && typeof error === 'object') {
+          error.partialProgress = Object.freeze({
+            scopeId: this.scopeId, kind, before, dryRun,
+            afterKey, nextAfterKey: cursor, failedKey: key,
+            inspected: rows.length,
+            eligible: rows.reduce((sum, row) => sum + row.eligible, 0),
+            deleted: rows.reduce((sum, row) => sum + row.deleted, 0),
+            rows: Object.freeze([...rows]),
+            hasMore: true,
+          });
+        }
+        throw error;
+      }
+      rows.push({key, ...outcome});
+      if (outcome.capped) {
+        // Do not advance past a key with unprocessed duplicates. Even
+        // exactly-maxRows may require one harmless recheck next page.
+        // Dry-run is always a preview, not a cursor-draining campaign.
+        cappedKey = key;
+        break;
+      }
+      cursor = key;
+    }
+    return {
+      ok: true, strategy: 'scoped-terminal-duplicate-history-sweep-v1',
+      scopeId: this.scopeId, kind, before, dryRun,
+      afterKey, maxKeys, maxRows, maxHistoryRows, maxScanMs,
+      nextAfterKey: cursor,
+      cappedKey,
+      hasMore: cappedKey !== null || keys.length > maxKeys,
+      inspected: rows.length,
+      eligible: rows.reduce((sum, row) => sum + row.eligible, 0),
+      deleted: rows.reduce((sum, row) => sum + row.deleted, 0),
+      rows,
+      excludes: ['mcp_occurrence','mcp_occurrence_key','audit',
+        'wake_delivery','trigger_match','nonterminal_keys'],
+    };
+  }
+
   async compactTerminalMatchDuplicateHistory({
     matchId,
     before,
