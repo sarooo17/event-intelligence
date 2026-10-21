@@ -23,7 +23,11 @@ export interface PostgresAuditArchiveBundle {
 }
 export declare function verifyPostgresAuditArchiveBundle(
   bundle: PostgresAuditArchiveBundle,
-  options: { trustedCheckpoint: PostgresAuditCheckpoint },
+  options: {
+    trustedCheckpoint: PostgresAuditCheckpoint;
+    /** Exact unparsed original archive bytes: prevents JSON numeric rounding. */
+    rawArchiveBytes: Buffer;
+  },
 ): Promise<boolean>;
 export declare function writePostgresAuditArchiveBundle(
   store: {getAuditProofWindow(options: {
