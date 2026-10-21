@@ -28,9 +28,13 @@ subsequent pages). If an individual key reaches `maxRows`, it is
 returned as `cappedKey` with `hasMore: true`, and `nextAfterKey` remains
 **before that key**: the next call must revisit it until no more interior
 duplicates are eligible. Dry-run preview does not drain capped keys.
-No more
-than 32 history keys and 1000 revisions per key are considered in one page,
-and there is a configurable PG per-statement time budget.
+No more than 32 history keys are processed per page, and **maxRows**
+(default 100, up to 1000) limits the eligible duplicate candidates deleted
+*per key*. The underlying LAG/LEAD query may inspect **maxHistoryRows**
+revisions per key (default 10,000, configurable up to 100,000) while holding
+the per-key writer fence; the PostgreSQL statement timeout bounds its physical
+execution. **Do not confuse the 1000 deletion limit with a 1000-row scan
+limit** when sizing maintenance windows.
 
 The outer scan does not grant permission to delete: each candidate executes
 the already-reviewed transactional per-key compactor and rechecks the
