@@ -41,8 +41,12 @@ cutoff and adjacency checks still apply. **Only INTERIOR duplicate revisions
 in runs of identical JSON snapshots** can be deleted. The first and last
 revision of each run and each transition remain. The source occurrence
 stream, event-ID dedup keys, audit chain, current match records, delivery
-receipts, pending/dead-letter wakes and all nonterminal snapshots are NEVER
-deleted by this method.
+receipts, **wake keys that remain pending/dead-letter** are NEVER compacted by
+this method. A wake which is *now durably delivered* may have accumulated
+older duplicate `queued` revisions; this operation can delete their
+**interior exact duplicates**, keeping the first and last witness of the
+queued phase and every distinct status transition. It therefore does not
+promise to preserve every original queued snapshot byte-for-byte.
 
 Each key is one transaction. A failed later key may leave earlier keys
 already compacted. The method throws the original fail-closed SQL/policy
