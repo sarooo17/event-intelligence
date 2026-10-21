@@ -43,9 +43,12 @@
       "evidence": [
         "https://github.com/sarooo17/event-intelligence/pull/218",
         "https://github.com/sarooo17/event-intelligence/pull/219",
-        "https://github.com/sarooo17/event-intelligence/issues/47"
+        "https://github.com/sarooo17/event-intelligence/pull/251",
+        "https://github.com/sarooo17/event-intelligence/pull/252",
+        "https://github.com/sarooo17/event-intelligence/pull/254",
+        "https://github.com/sarooo17/event-intelligence/pull/256"
       ],
-      "note": "Partial: #218 supplies opt-in terminal-match duplicate revision thinning; #219 supplies checkpoint-pinned, non-destructive audit proof windows. Source occurrence retention, safe archived audit-prefix deletion, external immutable anchor/storage and replay-lineage guarantees remain UNSOLVED. No production TTL enabled."
+      "note": "Still BLOCKED: merged #218/#254 permit only bounded operator-controlled duplicate terminal match/wake revision compaction without removing dedup, sources, receipts or audit; #219 provides non-destructive pinned audit proof pages; #251/#252 provide bounded source occurrence snapshot and local file export. PR #256 adds complete local audit archive and optional externally keyed Ed25519 detached byte witness (pending review/merge). Neither key-based signing nor local archive guarantees independently immutable off-host WORM retention. Actual source occurrence TTL, replay-floor fencing, externally recoverable archived audit-prefix pruning and post-prune hash-chain continuation are NOT implemented. No production source/audit TTL enabled."
     },
     {
       "id": "pg-chaos-recovery",
@@ -53,11 +56,11 @@
       "required": true,
       "status": "blocked",
       "evidence": [
-        "https://github.com/sarooo17/event-intelligence/pull/215",
-        "https://github.com/sarooo17/event-intelligence/pull/216",
-        "https://github.com/sarooo17/event-intelligence/pull/220"
+        "https://github.com/sarooo17/event-intelligence/pull/253",
+        "https://github.com/sarooo17/event-intelligence/actions/runs/39568691478",
+        "https://github.com/sarooo17/event-intelligence/issues/47"
       ],
-      "note": "Partial: real provider pre-ingest and receipt-before-finalize OS crash boundaries verified in #215/#216; #220 multi-round OS SIGKILL evidence workflow is still under review, and manual long runs, network/database partitions and sustained multiworker/CEP recovery evidence remain UNSOLVED."
+      "note": "Partially evidenced: merged #253 produced real PG16 single-node actual-run worker OS SIGKILL and post-host-effect recovery plus rebalance/backend termination fault matrix with source-pinned artifacts. This checks bounded process-worker correctness but NOT sustained ≥600s multiworker network partitions, external-provider outage, PostgreSQL primary failover or long-duration soak; production HA signoff remains BLOCKED."
     },
     {
       "id": "pg-scale-measured",
@@ -65,11 +68,12 @@
       "required": true,
       "status": "blocked",
       "evidence": [
-        "https://github.com/sarooo17/event-intelligence/pull/221",
-        "https://github.com/sarooo17/event-intelligence/actions/runs/39234715605",
+        "https://github.com/sarooo17/event-intelligence/pull/229",
+        "https://github.com/sarooo17/event-intelligence/pull/255",
+        "https://github.com/sarooo17/event-intelligence/actions/runs/39603115535",
         "https://github.com/sarooo17/event-intelligence/issues/47"
       ],
-      "note": "Partial actual PostgreSQL 16 scale evidence: #221 CI run 39234715605 completed all 1k/10k/100k durable store profiles with retained raw artifacts and an aggregate profiles-observed report. These measure registration, listing and synthetic wake claims/receipts, NOT active 10k/100k CEP event-to-wake under varied rates, provider or host latency, sustained load, database fault or production SLO; the release gate remains BLOCKED."
+      "note": "Still BLOCKED. Merged #229 publishes actual isolated PostgreSQL durable 1k/10k/100k profile data and limitations. PR #255 pending review adds raw source-pinned real PG16 EI→wake pipeline samples and an actual 1200-event run, independently recomputable tails, reopened receipts and database-wide PG counters. Provider transport and external host side effects remain simulated/in-process; PG service CPU, sustained ≥600s steady/burst/fault campaigns, ≥2 workers/partitions, preregistered production budgets and independent p99 SLO signoff are NOT complete."
     },
     {
       "id": "stored-state-upgrade",
