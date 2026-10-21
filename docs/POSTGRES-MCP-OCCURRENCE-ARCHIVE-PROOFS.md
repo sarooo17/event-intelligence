@@ -21,8 +21,9 @@ prefix of a genesis-linked audit chain breaks `appendAudit` and
 ## Snapshot and proof contract
 
 1. `getMcpOccurrenceArchiveCheckpoint({maxOccurrences:10000,maxScanMs:5000})`
-   locks the existing scope-local MCP sequence counter transactionally
-   against normal EI ingestion, scans up to 10000 occurrences and verifies
+   acquires a scope-local PostgreSQL advisory transaction fence shared with
+   **every** MCP append (before even the first sequence row can be inserted),
+   then locks the sequence counter row and scans up to 10000 occurrences and verifies
    contiguous 1-based sequence numbers. Any missing, malformed, reordered or
    excessive history fails closed. Every record participates in a
    domain-separated, scope-bound SHA-256 hash chain over **raw PostgreSQL\n   `JSONB::text`** rather than parsed JavaScript values, beginning
@@ -83,7 +84,7 @@ storage/latency proof at production workload scales.
 **Additional PG16 fault regressions:**
 `test/postgres-mcp-archive-lock-precision.test.mjs` pauses a real writer
 *after incrementing the transactional sequence counter but before appending
-its history*, proves the independent snapshot waits at the counter fence,
+its history*, proves the independent snapshot waits at the advisory fence\n(and then reads the complete committed history),
 then resumes and validates a contiguous archive. It also changes a retained
 JSONB numeric value from `9007199254740992` to `9007199254740993`:
 JavaScript numeric decoding sees the same value, but the **raw JSONB text
