@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
+import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
-import {PG_PIPELINE_RAW_SCHEMA,verifyPostgresPipelineRawEvidence,reopenedReceiptDigest} from
+import {PG_PIPELINE_RAW_SCHEMA,verifyPostgresPipelineRawEvidence,
+  reopenedReceiptDigest,publishPostgresPipelineRawEvidence,sha256OfRawEvidence} from
   '../scripts/lib/postgres-pipeline-raw-evidence.mjs';
 
 const summarySchema='event-intelligence.postgres-mcp-ingest-wake.v1';
@@ -87,4 +91,24 @@ test('raw PG pipeline proof rejects tampered tails, missing receipts and false s
     assert.equal(verdict.ok,false,
       'tampered fixture was accepted');
   }
+});
+
+test('raw evidence publication is private, atomic, source-byte hashed, and never overwrites',async()=>{
+  const dir=await mkdtemp(join(tmpdir(),'ei-pg-proof-'));
+  const output=join(dir,'raw.json');
+  try {
+    const raw=Buffer.from('{"one":1.0,"two":2}\n');
+    assert.notEqual(sha256OfRawEvidence(raw),
+      sha256OfRawEvidence(Buffer.from('{"one":1,"two":2}\n')),
+      'changed numeric text must change the raw artifact digest');
+    await publishPostgresPipelineRawEvidence(output,raw);
+    assert.deepEqual(await readFile(output),raw);
+    assert.deepEqual(await readdir(dir),['raw.json']);
+    await assert.rejects(()=>
+      publishPostgresPipelineRawEvidence(output,Buffer.from('changed')),
+      e=>e?.code==='EEXIST');
+    assert.deepEqual(await readFile(output),raw);
+    assert.deepEqual(await readdir(dir),['raw.json'],
+      'failed exclusive publish must remove its random staging file');
+  } finally {await rm(dir,{recursive:true,force:true});}
 });
