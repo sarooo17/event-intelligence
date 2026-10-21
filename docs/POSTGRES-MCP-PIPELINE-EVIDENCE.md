@@ -167,3 +167,23 @@ effect, multiple workers and partitions, PostgreSQL service resource
 attribution, and pre-registered performance budgets. The new raw series
 makes the available PG pipeline measurements independently auditable;
 it does **not** satisfy those remaining #47 criteria by itself.
+
+### Reproducible 1,200-sample PostgreSQL profile
+
+`.github/workflows/postgres-pipeline-1200-raw-samples.yml`
+now runs a separate real PG16 / Node 22 profile of **1,200 distinct**
+MCP-shaped events across 16 reused active triggers and four synthetic
+event names, under an upper-bound pacing rate of 20 events/second. It
+verifies all 1,200 receipts on a reopened pool and checks replay/noise
+do not produce extra host effects. The artifact records actual achieved
+wall time, four latency distributions, raw per-event IDs and timings,
+Node benchmark CPU/RSS, database-wide `pg_stat_database` counters and
+five generated table sizes, hardware and exact checked-out Git SHA.
+
+The job requires 1,200 real samples to pass an independent percentile
+recalculation and rejects any failure to retain the file. **No SLO target
+is silently inferred:** a rate *cap* is not a minimum throughput target,
+and this job is generally shorter than 600 seconds, single-worker,
+provider-in-process, callback-in-process and without injected failure.
+It meets the raw-sample-count prerequisite for this bounded PG pipeline,
+not the full production SLO evidence contract for #47.
