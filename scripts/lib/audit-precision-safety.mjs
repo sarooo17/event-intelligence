@@ -51,11 +51,14 @@ export function assertAuditJsonNumberPrecision(raw) {
     const significant=digits.replace(/^0+/,'').replace(/0+$/,'');
     // Unsafe integers and >=16 significant nonzero digits have
     // ambiguous JS-Number roundtrips. Also reject underflow to zero.
+    // A safe exact integer in plain canonical decimal may use 16 digits,
+    // but an ambiguous high-precision decimal such as 1.0000000000000001
+    // MUST be refused even though Number() rounds it to safe integer 1.
+    const exactSafePlainInteger=Number.isSafeInteger(parsed) && !dot &&
+      !/[eE]/.test(token) && token===String(parsed);
     if((Number.isInteger(parsed)&&!Number.isSafeInteger(parsed)) ||
-       significant.length>15 && !Number.isSafeInteger(parsed) ||
-       parsed===0 && /[1-9]/.test(digits))throw unsafe();
-    if(dot && !Number.isSafeInteger(parsed) && significant.length>15)
-      throw unsafe();
+       (significant.length>15 && !exactSafePlainInteger) ||
+       (parsed===0 && /[1-9]/.test(digits)))throw unsafe();
   }
   if(quoted||escaped)throw unsafe();
 }
