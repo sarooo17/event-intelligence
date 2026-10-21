@@ -1,40 +1,50 @@
 import { createHash } from 'node:crypto';
+import { McpEventOccurrenceSchema } from '../../dist/src/intelligenceProtocol/index.js';
 
 const SCHEMA = 'event-intelligence.mcp-occurrence-archive.v1';
 const HASH = /^[0-9a-f]{64}$/;
 const safeInteger = n => Number.isSafeInteger(n) && n >= 0;
+const digest = value => createHash('sha256').update(value, 'utf8').digest('hex');
 
-function canonical(value) {
-  if (Array.isArray(value)) return value.map(canonical);
-  if (value !== null && typeof value === 'object') {
-    return Object.fromEntries(Object.keys(value).sort().map(k => [k, canonical(value[k])]));
-  }
-  return value;
-}
-function digest(value) {
-  return createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');
-}
 export function mcpArchiveGenesis(scopeId) {
   if (typeof scopeId !== 'string' || !scopeId) {
     throw new TypeError('Archive scopeId must be nonempty');
   }
-  return digest({ schema: SCHEMA, scopeId, kind: 'genesis' });
-}
-export function mcpArchiveRecordHash(scopeId, previousHash, record) {
-  if (typeof scopeId !== 'string' || !scopeId || !HASH.test(previousHash) ||
-      !record || !Number.isSafeInteger(record.sequence) || record.sequence < 1 ||
-      typeof record.serverId !== 'string' || !record.serverId ||
-      !(record.subscriptionId === null || typeof record.subscriptionId === 'string') ||
-      typeof record.event?.eventId !== 'string' || !record.event.eventId) {
-    throw new TypeError('Invalid MCP archive scope, hash or occurrence record');
-  }
-  return digest({ schema: SCHEMA, scopeId, previousHash, record });
+  return digest(JSON.stringify([SCHEMA, scopeId, 'genesis']));
 }
 
 /**
- * Independently verify one bounded window with a separately pinned checkpoint
- * and a previous hash independently validated from the preceding page.
- * A DB-generated checkpoint MUST NOT itself be treated as a trusted anchor.
+ * Exact PG JSONB::text is the archive wire representation. Do not pass
+ * parsed JSON here: node-postgres uses JS Number and can conflate distinct
+ * PostgreSQL numeric values beyond 2^53. Hash the original lossless text.
+ */
+export function mcpArchiveRecordHash(scopeId, previousHash, payloadJson) {
+  if (typeof scopeId !== 'string' || !scopeId || !HASH.test(previousHash) ||
+      typeof payloadJson !== 'string' || !payloadJson) {
+    throw new TypeError('Invalid MCP archive scope, predecessor or raw payload');
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(payloadJson);
+    if (!Number.isSafeInteger(parsed?.sequence) || parsed.sequence < 1 ||
+        typeof parsed.serverId !== 'string' || !parsed.serverId ||
+        !(parsed.subscriptionId === null ||
+          typeof parsed.subscriptionId === 'string') ||
+        !McpEventOccurrenceSchema.safeParse(parsed.event).success) {
+      throw new Error('MCP archive occurrence does not satisfy source schema');
+    }
+  } catch {
+    throw new TypeError('Malformed MCP archive source occurrence');
+  }
+  // The exact PostgreSQL JSONB textual representation is committed bytewise,
+  // including every numeric lexeme (not lossy JSON.parse / JSON.stringify).
+  return digest(JSON.stringify([SCHEMA, scopeId, previousHash, payloadJson]));
+}
+
+/**
+ * Independent verification REQUIRES a separately pinned trust root, plus the
+ * previous hash retained from an independently validated preceding page.
+ * The database must not be trusted to choose its own root during verification.
  */
 export function verifyMcpOccurrenceArchiveWindow(proof, {
   trustedCheckpoint, trustedAfterSequence, trustedPreviousHash, trustedLimit,
@@ -59,10 +69,13 @@ export function verifyMcpOccurrenceArchiveWindow(proof, {
   let sequence = trustedAfterSequence;
   let hash = trustedPreviousHash;
   try {
-    for (const record of proof.records) {
-      if (record?.sequence !== sequence + 1) return false;
+    for (const payloadJson of proof.records) {
+      // Parsing here is ONLY for shape/sequence validation. The commitment
+      // always covers the exact PG JSONB text, not reserialized JS numbers.
+      if (typeof payloadJson !== 'string' ||
+          JSON.parse(payloadJson)?.sequence !== sequence + 1) return false;
       sequence++;
-      hash = mcpArchiveRecordHash(cp.scopeId, hash, record);
+      hash = mcpArchiveRecordHash(cp.scopeId, hash, payloadJson);
     }
   } catch {
     return false;
