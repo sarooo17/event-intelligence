@@ -133,8 +133,12 @@ are collected and independently reviewed.
 The opt-in `--raw-evidence-out /path/to/new-file.json` flag writes a **separate
 exclusive local artifact**, only after successful durable receipt verification
 through an independently reopened PostgreSQL pool and successful cleanup.
-An existing path fails closed and is never overwritten. The success JSON
-includes SHA-256 of the raw artifact's exact JSON bytes, its sample count,
+The helper stages the complete raw JSON in a private `0600` file,
+fsyncs the bytes, exclusively hard-links the final name, removes the staging
+link and fsyncs its parent directory before reporting success. An existing
+path fails closed and is never overwritten. The success JSON
+includes SHA-256 of the **actual saved file bytes** (not a reserialized
+JSON object), its sample count,
 source commit and measurement scope. All benchmark CI jobs now upload the
 source-pinned raw artifact and independently recheck its per-event summaries
 before publishing success.
@@ -144,7 +148,10 @@ identities, actual PostgreSQL candidate-definition count and measured
 `ingestToMatchMs`, `matchToWakeMs`, `ingestToWakeMs` and
 `hostCallbackMs`. The separate verifier recomputes every p50/p95/p99/max
 and checks stage conservation, uniqueness, candidate counts and matched
-persisted receipts against the main JSON report; changing a percentile,
+persisted receipts against the main JSON report. The producer must be inside an actual Git
+checkout; the source SHA is verified against `git rev-parse HEAD` and a
+separately supplied expected benchmark SHA. Files with absent/null or
+non-40-hex provenance cannot pass the verifier. Changing a percentile,
 identity, host time or candidate count fails. The schema is
 `event-intelligence.postgres-pipeline-raw-samples.v1`.
 
