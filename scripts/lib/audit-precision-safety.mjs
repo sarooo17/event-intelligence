@@ -9,6 +9,26 @@
  *
  * Not a JSON parser: the caller also validates JSON syntax/shape.
  */
+/**
+ * Normalize the EXACT decimal mathematical value, not an IEEE-754 binary
+ * approximation. 300e-2, 3 and 3.000 have the same identity, but 3e-324
+ * and 4e-324 must NOT collapse to the same Number.toString() output.
+ * The numeric scanner checks lexemes before calling this helper.
+ */
+function decimalIdentity(token) {
+  if(token.length>512)throw unsafe();
+  const match=/^(-?)(0|[1-9][0-9]*)(?:\\.([0-9]+))?(?:[eE]([+-]?[0-9]+))?$/.exec(token);
+  if(!match || (match[4] && match[4].length>8))throw unsafe();
+  const digits=match[2]+(match[3]??'');
+  let coefficient=digits.replace(/^0+/,'');
+  if(!coefficient)return '0';
+  let exponent=BigInt(match[4]??0)-BigInt((match[3]??'').length);
+  const trailing=coefficient.match(/0+$/)?.[0].length??0;
+  coefficient=coefficient.slice(0,coefficient.length-trailing);
+  exponent+=BigInt(trailing);
+  return (match[1]||'+')+':'+coefficient+':'+exponent;
+}
+
 export function assertAuditJsonNumberPrecision(raw) {
   if (typeof raw !== 'string' || !raw.length) {
     throw new TypeError('Expected raw audit JSON text');
@@ -46,19 +66,15 @@ export function assertAuditJsonNumberPrecision(raw) {
     const token=raw.slice(start,i);
     const parsed=Number(token);
     if(!Number.isFinite(parsed))throw unsafe();
-    const mantissa=token.split(/[eE]/,1)[0];
-    const digits=mantissa.replace(/[^0-9]/g,'');
-    const significant=digits.replace(/^0+/,'').replace(/0+$/,'');
-    // Unsafe integers and >=16 significant nonzero digits have
-    // ambiguous JS-Number roundtrips. Also reject underflow to zero.
-    // A safe exact integer in plain canonical decimal may use 16 digits,
-    // but an ambiguous high-precision decimal such as 1.0000000000000001
-    // MUST be refused even though Number() rounds it to safe integer 1.
-    const exactSafePlainInteger=Number.isSafeInteger(parsed) && !dot &&
-      !/[eE]/.test(token) && token===String(parsed);
-    if((Number.isInteger(parsed)&&!Number.isSafeInteger(parsed)) ||
-       (significant.length>15 && !exactSafePlainInteger) ||
-       (parsed===0 && /[1-9]/.test(digits)))throw unsafe();
+    // Compare canonical DECIMAL identities, not just digit count.
+    // JS Number.toString() is the exact spelling used downstream when
+    // the audit record is canonicalized for hashing. Every altered
+    // lexeme that rounds into the same JS Number now fails closed,
+    // including nonzero subnormals and high-precision mantissas.
+    if (!Number.isSafeInteger(parsed) && Number.isInteger(parsed)) {
+      throw unsafe();
+    }
+    if(decimalIdentity(token)!==decimalIdentity(String(parsed)))throw unsafe();
   }
   if(quoted||escaped)throw unsafe();
 }
