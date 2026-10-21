@@ -100,7 +100,8 @@ integration('PG source occurrence archive pages resist tampering and preserve cu
 
     // Later inserts do not modify the already pinned five-record snapshot.
     await a.appendMcpOccurrence('fixture-server', sample(5), 'sub-A');
-    assert.equal((await a.getMcpOccurrenceArchiveCheckpoint()).endSequence, 6);
+    const sixRecordCheckpoint = await a.getMcpOccurrenceArchiveCheckpoint();
+    assert.equal(sixRecordCheckpoint.endSequence, 6);
     const frozen = await a.getMcpOccurrenceArchiveWindow({
       checkpoint: cp, afterSequence: 4, previousHash: page2.headHash,
       limit: 2,
@@ -168,9 +169,12 @@ integration('PG source occurrence archive pages resist tampering and preserve cu
       checkpoint: cp, afterSequence: 4,
       previousHash: page2.headHash, limit: 2,
     }), e => e.code === 'EVENT_INTELLIGENCE_MCP_ARCHIVE_INTEGRITY_INVALID');
-    await assert.rejects(() => reader.getMcpOccurrenceArchiveCheckpoint(),
-      e => e.code === 'EVENT_INTELLIGENCE_MCP_ARCHIVE_INTEGRITY_INVALID' ||
-        e.code === 'EVENT_INTELLIGENCE_MCP_ARCHIVE_SCAN_BUDGET_EXCEEDED');
+    // A freshly generated DB checkpoint alone is NOT a trust root: a
+    // compromised DB could recompute a new, apparently valid commitment.
+    // The operator must compare against a previously pinned external anchor.
+    const freshCp = await reader.getMcpOccurrenceArchiveCheckpoint();
+    assert.equal(freshCp.endSequence, 6);
+    assert.notEqual(freshCp.headHash, sixRecordCheckpoint.headHash);
     assert.equal(await a.verifyAudit(), true,
       'source corruption cannot silently mutate independent audit history');
   } finally {
