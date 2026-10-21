@@ -133,3 +133,29 @@ failure, not permission to skip records or rewrite the established audit
 hash chain. A future precision-preserving canonical hash version may
 support richer exact numeric types; it would require an explicit reviewed
 compatibility contract and full migration tests.
+
+## Signed payload completeness and async buffer-safety
+
+The audit record schema historically uses non-strict object parsing:
+unexpected top-level fields can otherwise be discarded before checking
+its SHA-256 commitment. Archive proof verification and PostgreSQL
+checkpoint/page reads now explicitly require that the original record
+matches the **entire parsed record object**, preventing unsigned extra
+top-level bytes from becoming part of a signed export. Nested audit
+`details` values remain covered by the canonical audit hash and are not
+silently discarded.
+
+`signPostgresAuditArchiveWitness` copies the caller-owned raw Buffer
+**before the first asynchronous proof check**. Every subsequent parse,
+page verification, SHA-256 and Ed25519 signature uses that same private
+immutable byte snapshot; a caller changing its original Buffer during an
+await cannot cause the signature to bind unverified content. The raw
+object verifier similarly copies and parses the provided bytes and uses
+the frozen parsed representation rather than a mutable caller-supplied
+object. The witness verifier checks the signature against a consistent
+buffer snapshot, never a different post-await view.
+
+The PG16 test injects unsigned top-level fields directly into PostgreSQL
+and serialized archive bytes, and mutates a caller-owned buffer while
+the signer is awaiting audit hash verification. Both attacks must be
+rejected or correctly bound to the original verified snapshot.
