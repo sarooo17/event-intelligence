@@ -112,14 +112,16 @@ auto-retention or pruner is enabled by this API.
 **An important PostgreSQL-to-JavaScript integrity boundary:** JSONB can
 represent numeric lexemes that `JSON.parse` rounds to a different IEEE-754
 `Number` (for example, `9007199254740992` vs `9007199254740993`, or
-`2` vs `2.0000000000000001`). Re-hashing only the parsed JavaScript
+`2` vs `2.0000000000000001`, and **nonzero subnormal** values such
+as `3e-324` vs `4e-324`, both parsed as `5e-324`). Re-hashing only the parsed JavaScript
 value would allow an altered source number to evade audit hash checks.
 
 Audit checkpoint and proof-window reads therefore inspect PostgreSQL's
 original `payload::text` **before** converting to JavaScript objects.
 The standalone archive verifier and signed-witness APIs also require the
 original **raw archive file bytes**, scan the numeric lexemes outside JSON
-strings and reject unsafe precision with
+strings and compare canonical decimal mathematical identities before and after JS parsing,
+and reject unsafe precision with
 `EVENT_INTELLIGENCE_AUDIT_PRECISION_UNSAFE` at the store boundary (or
 `false` in a verifier). The object-based verification API intentionally
 requires an associated `rawArchiveBytes` Buffer: a pre-parsed object
