@@ -4,6 +4,8 @@ import { safeMcpSourceArguments } from './mcp-safe-arguments.mjs';
 import { randomUUID } from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { verifyAuditProofWindow } from './audit-proof-window.mjs';
+import { mcpArchiveGenesis, mcpArchiveRecordHash, verifyMcpOccurrenceArchiveWindow } from './mcp-occurrence-archive.mjs';
+export { verifyMcpOccurrenceArchiveWindow } from './mcp-occurrence-archive.mjs';
 export { verifyAuditProofWindow } from './audit-proof-window.mjs';
 import {
   AuditChain,
@@ -1983,6 +1985,148 @@ export class PostgresEventStore {
       await this.appendHistory('mcp_occurrence', key, record, client);
       return { accepted: true, sequence, event };
     });
+  }
+
+  /**
+   * Operator-only, nondestructive bounded snapshot of the occurrence stream.
+   * Lock the existing scope-local counter row: competing EI inserts must
+   * finish their sequence+history transaction before snapshot enumeration.
+   * A 10k upper bound avoids accidental unbounded scans on live systems.
+   */
+  async getMcpOccurrenceArchiveCheckpoint({ maxOccurrences = 10000, maxScanMs = 5000 } = {}) {
+    if (!Number.isSafeInteger(maxOccurrences) ||
+        maxOccurrences < 1 || maxOccurrences > 10000 ||
+        !Number.isSafeInteger(maxScanMs) ||
+        maxScanMs < 100 || maxScanMs > 30000) {
+      const error = new TypeError('MCP archive checkpoint requires maxOccurrences 1..10000 and maxScanMs 100..30000');
+      error.code = 'EVENT_INTELLIGENCE_MCP_ARCHIVE_POLICY_INVALID';
+      throw error;
+    }
+    try {
+      return await this.tx(async client => {
+        await client.query("SELECT set_config('statement_timeout', $1, true)",
+          [String(maxScanMs) + 'ms']);
+        const last = await client.query(
+          'SELECT value FROM ' + this.counters +
+          ' WHERE scope_id=$1 AND name=$2 FOR UPDATE',
+          [this.scopeId, 'mcp_occurrence'],
+        );
+        const endSequence = Number(last.rows[0]?.value ?? 0);
+        if (!Number.isSafeInteger(endSequence) || endSequence < 0 ||
+            endSequence > maxOccurrences) {
+          const error = new Error('MCP occurrence history exceeds bounded archive policy');
+          error.code = 'EVENT_INTELLIGENCE_MCP_ARCHIVE_SCAN_BUDGET_EXCEEDED';
+          throw error;
+        }
+        const rows = await client.query(
+          'SELECT payload FROM ' + this.history +
+          ' WHERE scope_id=$1 AND kind=$2 ORDER BY history_id LIMIT $3',
+          [this.scopeId, 'mcp_occurrence', maxOccurrences + 1],
+        );
+        if (rows.rows.length !== endSequence) {
+          const error = new Error('MCP archive source history diverged from durable sequence counter');
+          error.code = 'EVENT_INTELLIGENCE_MCP_ARCHIVE_INTEGRITY_INVALID';
+          throw error;
+        }
+        let hash = mcpArchiveGenesis(this.scopeId);
+        try {
+          for (let i = 0; i < rows.rows.length; i++) {
+            if (rows.rows[i].payload?.sequence !== i + 1) {
+              throw new Error('sequence gap or reordered record');
+            }
+            hash = mcpArchiveRecordHash(this.scopeId, hash, rows.rows[i].payload);
+          }
+        } catch {
+          const error = new Error('MCP archive history sequence or payload invalid');
+          error.code = 'EVENT_INTELLIGENCE_MCP_ARCHIVE_INTEGRITY_INVALID';
+          throw error;
+        }
+        return {
+          schema: 'event-intelligence.mcp-occurrence-archive.v1',
+          scopeId: this.scopeId, genesisHash: mcpArchiveGenesis(this.scopeId),
+          endSequence, headHash: hash,
+        };
+      });
+    } catch (error) {
+      if (error?.code === '57014') {
+        const budget = new Error('MCP archive SQL time budget exceeded');
+        budget.code = 'EVENT_INTELLIGENCE_MCP_ARCHIVE_TIME_BUDGET_EXCEEDED';
+        throw budget;
+      }
+      throw error;
+    }
+  }
+
+  /** Bounded read-only page. Only an EXTERNALLY pinned checkpoint is trusted. */
+  async getMcpOccurrenceArchiveWindow({
+    checkpoint, afterSequence = 0, previousHash, limit = 100,
+    maxScanMs = 5000,
+  } = {}) {
+    const genesis = mcpArchiveGenesis(this.scopeId);
+    const predecessor = previousHash ?? (afterSequence === 0 ? genesis : null);
+    if (!checkpoint || checkpoint.schema !== 'event-intelligence.mcp-occurrence-archive.v1' ||
+        checkpoint.scopeId !== this.scopeId ||
+        !Number.isSafeInteger(checkpoint.endSequence) ||
+        checkpoint.endSequence < 0 || checkpoint.endSequence > 10000 ||
+        !Number.isSafeInteger(afterSequence) ||
+        afterSequence < 0 || afterSequence > checkpoint.endSequence ||
+        !Number.isSafeInteger(limit) || limit < 1 || limit > 1000 ||
+        !Number.isSafeInteger(maxScanMs) || maxScanMs < 100 || maxScanMs > 30000 ||
+        typeof predecessor !== 'string' || !/^[0-9a-f]{64}$/.test(predecessor) ||
+        checkpoint.genesisHash !== genesis ||
+        typeof checkpoint.headHash !== 'string' ||
+        !/^[0-9a-f]{64}$/.test(checkpoint.headHash)) {
+      const error = new TypeError('MCP archive window requires pinned scope, bounded sequence, hash and page size');
+      error.code = 'EVENT_INTELLIGENCE_MCP_ARCHIVE_POLICY_INVALID';
+      throw error;
+    }
+    try {
+      return await this.tx(async client => {
+        await client.query("SELECT set_config('statement_timeout', $1, true)",
+          [String(maxScanMs) + 'ms']);
+        const count = Math.min(limit, checkpoint.endSequence - afterSequence);
+        const result = await client.query(
+          'SELECT payload FROM ' + this.history +
+          ' WHERE scope_id=$1 AND kind=$2 ORDER BY history_id' +
+          ' OFFSET $3 LIMIT $4',
+          [this.scopeId, 'mcp_occurrence', afterSequence, count],
+        );
+        const proof = {
+          schema: checkpoint.schema, scopeId: this.scopeId,
+          afterSequence, previousHash: predecessor, limit,
+          records: result.rows.map(row => row.payload),
+          endSequence: afterSequence + result.rows.length,
+          headHash: predecessor, hasMore: false,
+        };
+        try {
+          for (const row of proof.records) {
+            proof.headHash = mcpArchiveRecordHash(this.scopeId, proof.headHash, row);
+          }
+        } catch {
+          // The independent verifier below must fail closed, not return a
+          // success-shaped proof from a malformed historical payload.
+        }
+        proof.hasMore = proof.endSequence < checkpoint.endSequence;
+        if (!verifyMcpOccurrenceArchiveWindow(proof, {
+          trustedCheckpoint: checkpoint,
+          trustedAfterSequence: afterSequence,
+          trustedPreviousHash: predecessor,
+          trustedLimit: limit,
+        })) {
+          const error = new Error('MCP archived occurrence page does not match pinned commitment');
+          error.code = 'EVENT_INTELLIGENCE_MCP_ARCHIVE_INTEGRITY_INVALID';
+          throw error;
+        }
+        return proof;
+      });
+    } catch (error) {
+      if (error?.code === '57014') {
+        const budget = new Error('MCP archive window SQL time budget exceeded');
+        budget.code = 'EVENT_INTELLIGENCE_MCP_ARCHIVE_TIME_BUDGET_EXCEEDED';
+        throw budget;
+      }
+      throw error;
+    }
   }
 
   async latestMcpEventSequence() {
