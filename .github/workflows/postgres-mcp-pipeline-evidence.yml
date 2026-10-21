@@ -96,7 +96,7 @@ jobs:
             const raw=JSON.parse(readFileSync("pipeline-raw-samples.json","utf8"));
             const result=verifyPostgresPipelineRawEvidence(summary,raw);
             if(!result.ok ||
-              summary.evidence.rawSamples.sha256!==sha256OfRawEvidence(raw) ||
+              summary.evidence.rawSamples.sha256!==sha256OfRawEvidence(readFileSync("pipeline-raw-samples.json")) ||
               summary.runtime.commit!==process.env.BENCH_SOURCE_COMMIT) {
               throw Error("Raw pipeline samples failed independent verification: "+result.failures);
             }
