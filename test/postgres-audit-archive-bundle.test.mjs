@@ -101,6 +101,24 @@ integration('PG16 audit bundle verifies whole externally pinned chain, survives 
       JSON.parse(losslessOriginal),'JS parse cannot detect this mutation');
     const roundedBytes=Buffer.from(roundedReplacement);
     assert.equal(await verifySigned(signed,roundedBytes),false);
+    // Duplicate decoded JSON object member: JSON.parse drops the first
+    // copy and sees EXACTLY the original trusted object, but strict
+    // consumers might see the attacker-controlled first member.
+    const originalJson=rawBytes.toString('utf8');
+    const duplicatedJson=originalJson.replace(
+      '"scopeId":"audit-A"','"scopeId":"attacker","scopeId":"audit-A"');
+    assert.notEqual(duplicatedJson,originalJson);
+    assert.deepEqual(JSON.parse(duplicatedJson),JSON.parse(originalJson));
+    const duplicatedBytes=Buffer.from(duplicatedJson);
+    assert.equal(await verifyPostgresAuditArchiveBundle(
+      JSON.parse(duplicatedJson),{
+        trustedCheckpoint:pinned,rawArchiveBytes:duplicatedBytes,
+      }),false);
+    await assert.rejects(()=>signPostgresAuditArchiveWitness({
+      archiveBytes:duplicatedBytes,trustedCheckpoint:pinned,
+      privateKeyPem,keyId:'operator-offhost-2026-01',
+    }),/Invalid or ambiguous/);
+    assert.equal(await verifySigned(signed,duplicatedBytes),false);
     assert.equal(await verifyPostgresAuditArchiveBundle(
       JSON.parse(roundedReplacement),{
         trustedCheckpoint:pinned,rawArchiveBytes:roundedBytes,
