@@ -69,7 +69,7 @@ integration('PG source occurrence archive pages resist tampering and preserve cu
     const page1 = await a.getMcpOccurrenceArchiveWindow({
       checkpoint: cp, limit: 2,
     });
-    assert.deepEqual(page1.records.map(r => r.sequence), [1, 2]);
+    assert.deepEqual(page1.records.map(r => JSON.parse(r).sequence), [1, 2]);
     assert.equal(page1.hasMore, true);
     const verify = (page, after, hash, limit=2, checkpoint=cp) =>
       verifyMcpOccurrenceArchiveWindow(page, {
@@ -81,13 +81,13 @@ integration('PG source occurrence archive pages resist tampering and preserve cu
       checkpoint: cp, afterSequence: page1.endSequence,
       previousHash: page1.headHash, limit: 2,
     });
-    assert.deepEqual(page2.records.map(r => r.sequence), [3, 4]);
+    assert.deepEqual(page2.records.map(r => JSON.parse(r).sequence), [3, 4]);
     assert.equal(verify(page2, 2, page1.headHash), true);
     const page3 = await a.getMcpOccurrenceArchiveWindow({
       checkpoint: cp, afterSequence: page2.endSequence,
       previousHash: page2.headHash, limit: 2,
     });
-    assert.deepEqual(page3.records.map(r => r.sequence), [5]);
+    assert.deepEqual(page3.records.map(r => JSON.parse(r).sequence), [5]);
     assert.equal(page3.hasMore, false);
     assert.equal(page3.headHash, cp.headHash);
     assert.equal(verify(page3, 4, page2.headHash), true);
@@ -122,7 +122,9 @@ integration('PG source occurrence archive pages resist tampering and preserve cu
     // Independent verification uses a *previously pinned* external hash,
     // never a predecessor supplied ad hoc by the untrusted proof itself.
     const changed = structuredClone(page2);
-    changed.records[0].event.data.sequence = 999;
+    const changedPayload = JSON.parse(changed.records[0]);
+    changedPayload.event.data.sequence = 999;
+    changed.records[0] = JSON.stringify(changedPayload);
     assert.equal(verify(changed, 2, page1.headHash), false,
       'payload changes invalidate the archived page hash');
     const dropped = structuredClone(page2);
