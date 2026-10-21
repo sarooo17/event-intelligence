@@ -35,3 +35,25 @@ export declare function verifyMcpOccurrenceArchiveBundleFile(
   filePath: string,
   options: {trustedCheckpoint:McpOccurrenceArchiveCheckpoint;maxBytes?:number},
 ): Promise<boolean>;
+
+/**
+ * Source-archive offline replay: records are raw authenticated PostgreSQL
+ * JSONB text, not JS Number-decoded event payloads. No runtime fallback
+ * or permission to prune provider history/dedup/audit is implied.
+ */
+export declare function readMcpOccurrenceArchiveReplayWindow(
+  bundle: McpOccurrenceArchiveBundle,
+  options: {
+    trustedCheckpoint: McpOccurrenceArchiveCheckpoint;
+    afterSequence?: number;
+    limit?: number;
+  },
+): {
+  schema: 'event-intelligence.mcp-occurrence-archive-replay.v1';
+  scopeId: string;
+  afterSequence: number;
+  limit: number;
+  endSequence: number;
+  hasMore: boolean;
+  records: ReadonlyArray<Readonly<{sequence:number;rawPayloadJson:string}>>;
+};

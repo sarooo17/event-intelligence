@@ -2266,15 +2266,90 @@ export class PostgresEventStore {
   }
 
   async listMcpOccurrencesAfter(sequence) {
-    return (await this.historyList('mcp_occurrence'))
-      .filter((record) => Number(record.sequence) > Number(sequence))
-      .sort((a, b) => Number(a.sequence) - Number(b.sequence))
-      .map((record) => ({
-        sequence: Number(record.sequence),
-        serverId: String(record.serverId),
-        subscriptionId: record.subscriptionId ?? null,
-        event: { ...record.event, data: { ...record.event.data } },
-      }));
+    // Retention safety fence: a missing historical occurrence or durable
+    // dedup key must NEVER masquerade as a successful (partial) replay.
+    // No source pruning is enabled today. Until a verified archive-backed
+    // replay floor exists, *every* source record remains mandatory.
+    if (!Number.isSafeInteger(sequence) || sequence < 0) {
+      const error = new TypeError('MCP replay cursor must be a nonnegative safe sequence');
+      error.code = 'EVENT_INTELLIGENCE_MCP_REPLAY_CURSOR_INVALID';
+      throw error;
+    }
+    return this.tx(async client => {
+      // All source writer state (counter + dedup + history) commits in
+      // ONE PostgreSQL transaction. A read-only REPEATABLE READ snapshot
+      // sees either all or none of a concurrent append, even the first.
+      // Crucially, a frequently polling reader does NOT hold the writer's
+      // advisory lock over potentially large historical scans.
+      await client.query(
+        'SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY',
+      );
+      const c = await client.query(
+        'SELECT value FROM ' + this.counters +
+        ' WHERE scope_id=$1 AND name=$2',
+        [this.scopeId, 'mcp_occurrence'],
+      );
+      const endSequence = Number(c.rows[0]?.value ?? 0);
+      if (!Number.isSafeInteger(endSequence) || endSequence < 0 ||
+          sequence > endSequence) {
+        const error = new Error('MCP replay sequence is beyond the durable source tail');
+        error.code = 'EVENT_INTELLIGENCE_MCP_REPLAY_CURSOR_INVALID';
+        throw error;
+      }
+      const history = await client.query(
+        'SELECT payload::text AS payload_json FROM ' + this.history +
+        ' WHERE scope_id=$1 AND kind=$2 ORDER BY history_id',
+        [this.scopeId, 'mcp_occurrence'],
+      );
+      const dedup = await client.query(
+        'SELECT record_key,payload::text AS payload_json FROM ' + this.records +
+        ' WHERE scope_id=$1 AND kind=$2',
+        [this.scopeId, 'mcp_occurrence_key'],
+      );
+      const keys = new Map(dedup.rows.map(row=>[row.record_key,row.payload_json]));
+      const results = [];
+      let expected = 1;
+      const invalid = ()=>{
+        const error = new Error(
+          'MCP replay history or dedup retention is incomplete; refuse silent replay',
+        );
+        error.code = 'EVENT_INTELLIGENCE_MCP_REPLAY_HISTORY_GAP';
+        return error;
+      };
+      for (const {payload_json:rawPayload} of history.rows) {
+        let record;
+        try {record=JSON.parse(rawPayload);}catch{throw invalid();}
+        if (!Number.isSafeInteger(record?.sequence) ||
+            record.sequence !== expected ||
+            typeof record.serverId !== 'string' ||
+            !(record.subscriptionId === null ||
+              typeof record.subscriptionId === 'string') ||
+            !McpEventOccurrenceSchema.safeParse(record.event).success) {
+          throw invalid();
+        }
+        const key = record.serverId+':'+(record.subscriptionId??'')+
+          ':'+record.event.eventId;
+        const originalDedupJson = keys.get(key);
+        // PostgreSQL JSONB::text preserves numeric lexemes beyond JS 2^53.
+        // Full canonical raw-object equality also detects changed event
+        // payloads, metadata, extra fields and omitted source properties.
+        if (typeof originalDedupJson !== 'string' ||
+            originalDedupJson !== rawPayload) {
+          throw invalid();
+        }
+        keys.delete(key);
+        if (record.sequence > sequence) {
+          results.push({
+            sequence:record.sequence,serverId:record.serverId,
+            subscriptionId:record.subscriptionId,
+            event:{...record.event,data:{...record.event.data}},
+          });
+        }
+        expected++;
+      }
+      if (expected !== endSequence + 1 || keys.size) throw invalid();
+      return results;
+    });
   }
 
   getMcpClientState(connectionId, eventName, args = {}) {
