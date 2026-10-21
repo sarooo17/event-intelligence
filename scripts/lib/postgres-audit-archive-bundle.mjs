@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash, createPrivateKey, createPublicKey, sign, verify } from 'node:crypto';
 import { constants } from 'node:fs';
 import { open, rm, lstat, link } from 'node:fs/promises';
 import { dirname } from 'node:path';
@@ -144,4 +144,98 @@ export async function verifyPostgresAuditArchiveBundleFile(filePath,{
     );
   }catch{return false;}
   finally{if(fd)await fd.close();}
+}
+
+/**
+ * Optional detached Ed25519 witness. Offline key custody and a separately
+ * pinned public key are REQUIRED; these helpers are not a WORM writer.
+ * Bind exact file BYTES plus complete scope-bound audit checkpoint.
+ */
+const WITNESS_SCHEMA='event-intelligence.postgres-audit-witness.v1';
+const MAX_KEY_ID=128;
+const hex=(s)=>typeof s==='string' && /^[0-9a-f]{64}$/.test(s);
+const witnessMessage=body=>Buffer.from(JSON.stringify([
+  WITNESS_SCHEMA,body.keyId,body.checkpoint.scopeId,
+  body.checkpoint.firstHash,body.checkpoint.endSequence,
+  body.checkpoint.headHash,body.archiveBytes,body.archiveSha256,
+]),'utf8');
+const validKeyId=id=>typeof id==='string' &&
+  id.length>=1 && id.length<=MAX_KEY_ID &&
+  /^[a-zA-Z0-9_.:-]+$/.test(id);
+const validBytes=bytes=>Buffer.isBuffer(bytes) &&
+  bytes.length>=2 && bytes.length<=MAX_BYTES;
+function evidenceBody(bytes,checkpoint,keyId){
+  return {
+    schema:WITNESS_SCHEMA,keyId,
+    checkpoint:{
+      scopeId:checkpoint.scopeId,firstHash:checkpoint.firstHash,
+      endSequence:checkpoint.endSequence,headHash:checkpoint.headHash,
+    },
+    archiveBytes:bytes.length,
+    archiveSha256:createHash('sha256').update(bytes).digest('hex'),
+  };
+}
+function validateWitness(witness){
+  const cp=witness?.checkpoint;
+  return witness?.schema===WITNESS_SCHEMA &&
+    validKeyId(witness.keyId) && validCheckpoint(cp) &&
+    Number.isSafeInteger(witness.archiveBytes) &&
+    witness.archiveBytes>=2 && witness.archiveBytes<=MAX_BYTES &&
+    hex(witness.archiveSha256) &&
+    typeof witness.signature==='string' &&
+    /^[A-Za-z0-9+/]{86}==$/.test(witness.signature) &&
+    Buffer.from(witness.signature,'base64').length===64;
+}
+/**
+ * Sign only after an independent operator has authenticated its checkpoint.
+ * Signing bytes alone does NOT make local storage immutable. Private PEM
+ * must be held away from DB / application worker; no key is auto-generated.
+ */
+export async function signPostgresAuditArchiveWitness({
+  archiveBytes,trustedCheckpoint,privateKeyPem,keyId,
+}={}){
+  if(!validBytes(archiveBytes) || !validCheckpoint(trustedCheckpoint) ||
+      !validKeyId(keyId) || typeof privateKeyPem!=='string' ||
+      !privateKeyPem.trim()){
+    throw new TypeError('Ed25519 audit archive witness requires trusted checkpoint, byte buffer, keyId and private key');
+  }
+  let parsed;
+  try{parsed=JSON.parse(archiveBytes.toString('utf8'));}
+  catch{throw new Error('Invalid audit archive content');}
+  if(!await verifyPostgresAuditArchiveBundle(parsed,{trustedCheckpoint})){
+    throw new Error('Refusing to sign unverified or incomplete audit archive');
+  }
+  const privateKey=createPrivateKey(privateKeyPem);
+  if(privateKey.asymmetricKeyType!=='ed25519'){
+    throw new TypeError('Only Ed25519 audit witness private keys accepted');
+  }
+  const body=evidenceBody(archiveBytes,trustedCheckpoint,keyId);
+  return Object.freeze({...body,
+    signature:sign(null,witnessMessage(body),privateKey).toString('base64')});
+}
+
+/** Verify file bytes against a separately known Ed25519 public key. */
+export async function verifyPostgresAuditArchiveWitness({
+  witness,archiveBytes,trustedPublicKeyPem,expectedKeyId,expectedScopeId,
+}={}){
+  if(!validateWitness(witness) || !validBytes(archiveBytes) ||
+      !validKeyId(expectedKeyId) ||
+      expectedKeyId!==witness.keyId ||
+      typeof expectedScopeId!=='string' || !expectedScopeId ||
+      witness.checkpoint.scopeId!==expectedScopeId ||
+      typeof trustedPublicKeyPem!=='string' || !trustedPublicKeyPem.trim() ||
+      witness.archiveBytes!==archiveBytes.length ||
+      createHash('sha256').update(archiveBytes).digest('hex')!==
+        witness.archiveSha256)return false;
+  try{
+    const publicKey=createPublicKey(trustedPublicKeyPem);
+    if(publicKey.asymmetricKeyType!=='ed25519')return false;
+    const body=evidenceBody(archiveBytes,witness.checkpoint,witness.keyId);
+    if(!verify(null,witnessMessage(body),publicKey,
+      Buffer.from(witness.signature,'base64')))return false;
+    return verifyPostgresAuditArchiveBundle(
+      JSON.parse(archiveBytes.toString('utf8')),
+      {trustedCheckpoint:witness.checkpoint},
+    );
+  }catch{return false;}
 }
