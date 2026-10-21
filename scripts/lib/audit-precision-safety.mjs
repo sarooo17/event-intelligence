@@ -17,7 +17,7 @@
  */
 function decimalIdentity(token) {
   if(token.length>512)throw unsafe();
-  const match=/^(-?)(0|[1-9][0-9]*)(?:\\.([0-9]+))?(?:[eE]([+-]?[0-9]+))?$/.exec(token);
+  const match=/^(-?)(0|[1-9][0-9]*)(?:[.]([0-9]+))?(?:[eE]([+-]?[0-9]+))?$/.exec(token);
   if(!match || (match[4] && match[4].length>8))throw unsafe();
   const digits=match[2]+(match[3]??'');
   let coefficient=digits.replace(/^0+/,'');
