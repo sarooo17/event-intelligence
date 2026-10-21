@@ -243,6 +243,44 @@ export declare class PostgresEventStore {
    * Leaves first/last witnesses, distinct transitions, current match, audit,
    * wake receipts and MCP occurrence deduplication untouched.
    */
+  /**
+   * Paged, operator-only dry-run-first compaction of terminal *duplicate*
+   * wake or fired-match revisions. Each key is an independently committed
+   * transaction; return cursor is meaningful even on partial operational runs.
+   * Never prunes source history, audit, dedup keys, wake receipts or matches.
+   */
+  compactScopedTerminalHistoryBatch(options: {
+    kind: 'wake' | 'trigger_match_history';
+    before: string;
+    afterKey?: string;
+    maxKeys?: number;
+    maxRows?: number;
+    maxHistoryRows?: number;
+    maxScanMs?: number;
+    dryRun?: boolean;
+  }): Promise<{
+    ok: true;
+    strategy: 'scoped-terminal-duplicate-history-sweep-v1';
+    scopeId: string;
+    kind: 'wake' | 'trigger_match_history';
+    before: string;
+    dryRun: boolean;
+    afterKey: string;
+    maxKeys: number;
+    maxRows: number;
+    maxHistoryRows: number;
+    maxScanMs: number;
+    nextAfterKey: string;
+    /** The first incompletely compacted key; the cursor deliberately stays before it. */
+    cappedKey: string | null;
+    hasMore: boolean;
+    inspected: number;
+    eligible: number;
+    deleted: number;
+    rows: Array<{key: string;eligible: number;deleted: number;skipped?: string}>;
+    excludes: string[];
+  }>;
+
   compactTerminalMatchDuplicateHistory(options: {
     matchId: string;
     before: string;
