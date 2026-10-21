@@ -17,15 +17,16 @@ function example() {
       data:{nested:{z:4,a:1},sequence},
     },
   }));
+  const raw = records.map(r => JSON.stringify(r));
   let first=genesisHash;
-  for(const record of records) first=mcpArchiveRecordHash(scopeId,first,record);
+  for(const record of raw) first=mcpArchiveRecordHash(scopeId,first,record);
   const cp={schema,scopeId,genesisHash,endSequence:3,headHash:first};
   const p1={schema,scopeId,afterSequence:0,previousHash:genesisHash,
-    limit:2,records:records.slice(0,2),endSequence:2,hasMore:true,headHash:''};
-  p1.headHash=records.slice(0,2).reduce(
+    limit:2,records:raw.slice(0,2),endSequence:2,hasMore:true,headHash:''};
+  p1.headHash=raw.slice(0,2).reduce(
     (hash,record)=>mcpArchiveRecordHash(scopeId,hash,record),genesisHash);
   const p2={schema,scopeId,afterSequence:2,previousHash:p1.headHash,
-    limit:2,records:records.slice(2),endSequence:3,hasMore:false,headHash:first};
+    limit:2,records:raw.slice(2),endSequence:3,hasMore:false,headHash:first};
   return {cp,p1,p2};
 }
 function verify(proof,cp,after,previous,limit=2) {
@@ -34,15 +35,19 @@ function verify(proof,cp,after,previous,limit=2) {
     trustedPreviousHash:previous,trustedLimit:limit,
   });
 }
-test('MCP archive SHA256 is domain/scope bounded and canonical across JSON object key order',()=>{
-  const a={sequence:1,serverId:'provider',subscriptionId:null,
-    event:{eventId:'one',name:'source',data:{b:3,a:2}}};
-  const b={event:{data:{a:2,b:3},name:'source',eventId:'one'},
-    subscriptionId:null,serverId:'provider',sequence:1};
-  const g=mcpArchiveGenesis('customer-A');
-  assert.equal(mcpArchiveRecordHash('customer-A',g,a),mcpArchiveRecordHash('customer-A',g,b));
+test('MCP archive hash binds exact raw JSONB bytes without JavaScript numeric collisions',()=>{
+  const scope='customer-A', g=mcpArchiveGenesis(scope);
+  const rawA='{"sequence":1,"serverId":"provider","subscriptionId":null,"event":{"eventId":"one","name":"source","timestamp":"2026-10-19T00:00:00Z","data":{"amount":9007199254740992}}}';
+  const rawB=rawA.replace('9007199254740992','9007199254740993');
+  assert.equal(JSON.parse(rawA).event.data.amount, JSON.parse(rawB).event.data.amount,
+    'JS Number would erase this material PostgreSQL JSONB difference');
+  assert.notEqual(mcpArchiveRecordHash(scope,g,rawA),mcpArchiveRecordHash(scope,g,rawB));
   assert.notEqual(mcpArchiveGenesis('customer-A'),mcpArchiveGenesis('customer-B'));
-  assert.notEqual(mcpArchiveRecordHash('customer-A',g,a),mcpArchiveRecordHash('customer-B',mcpArchiveGenesis('customer-B'),a));
+  assert.notEqual(mcpArchiveRecordHash(scope,g,rawA),
+    mcpArchiveRecordHash('customer-B',mcpArchiveGenesis('customer-B'),rawA));
+  const invalid=JSON.stringify({sequence:1,serverId:'provider',subscriptionId:null,
+    event:{eventId:'one',name:'source',timestamp:'invalid',data:{a:1}}});
+  assert.throws(()=>mcpArchiveRecordHash(scope,g,invalid));
 });
 test('verified complete archive pages require independently pinned predecessor and terminal',()=>{
   const {cp,p1,p2}=example();
@@ -52,7 +57,9 @@ test('verified complete archive pages require independently pinned predecessor a
   const end={...p2,afterSequence:3,previousHash:cp.headHash,records:[],endSequence:3,headHash:cp.headHash};
   assert.equal(verify(end,cp,3,cp.headHash),true);
   for (const mutate of [
-    p=>{p.records[0].event.data.sequence=998;},
+    p=>{const altered=JSON.parse(p.records[0]);
+         altered.event.data.sequence=998;
+         p.records[0]=JSON.stringify(altered);},
     p=>{p.records.reverse();},
     p=>{p.records.pop();},
     p=>{p.scopeId='customer-B';},
