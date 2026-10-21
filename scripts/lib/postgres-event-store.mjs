@@ -2019,7 +2019,9 @@ export class PostgresEventStore {
           throw error;
         }
         const rows = await client.query(
-          'SELECT payload FROM ' + this.history +
+          // Preserve the original PostgreSQL JSONB numeric lexemes. Parsing
+          // to JS numbers before hashing would lose values beyond 2^53.
+          'SELECT payload::text AS payload_json FROM ' + this.history +
           ' WHERE scope_id=$1 AND kind=$2 ORDER BY history_id LIMIT $3',
           [this.scopeId, 'mcp_occurrence', maxOccurrences + 1],
         );
@@ -2031,10 +2033,11 @@ export class PostgresEventStore {
         let hash = mcpArchiveGenesis(this.scopeId);
         try {
           for (let i = 0; i < rows.rows.length; i++) {
-            if (rows.rows[i].payload?.sequence !== i + 1) {
+            const raw = rows.rows[i].payload_json;
+            if (JSON.parse(raw)?.sequence !== i + 1) {
               throw new Error('sequence gap or reordered record');
             }
-            hash = mcpArchiveRecordHash(this.scopeId, hash, rows.rows[i].payload);
+            hash = mcpArchiveRecordHash(this.scopeId, hash, raw);
           }
         } catch {
           const error = new Error('MCP archive history sequence or payload invalid');
@@ -2086,7 +2089,7 @@ export class PostgresEventStore {
           [String(maxScanMs) + 'ms']);
         const count = Math.min(limit, checkpoint.endSequence - afterSequence);
         const result = await client.query(
-          'SELECT payload FROM ' + this.history +
+          'SELECT payload::text AS payload_json FROM ' + this.history +
           ' WHERE scope_id=$1 AND kind=$2 ORDER BY history_id' +
           ' OFFSET $3 LIMIT $4',
           [this.scopeId, 'mcp_occurrence', afterSequence, count],
@@ -2094,7 +2097,8 @@ export class PostgresEventStore {
         const proof = {
           schema: checkpoint.schema, scopeId: this.scopeId,
           afterSequence, previousHash: predecessor, limit,
-          records: result.rows.map(row => row.payload),
+          // Raw JSONB text, NOT node-postgres-decoded JSON numbers.
+          records: result.rows.map(row => row.payload_json),
           endSequence: afterSequence + result.rows.length,
           headHash: predecessor, hasMore: false,
         };
