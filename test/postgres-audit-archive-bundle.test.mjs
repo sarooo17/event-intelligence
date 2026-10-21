@@ -1,0 +1,154 @@
+import assert from 'node:assert/strict';
+import {randomBytes} from 'node:crypto';
+import {mkdtemp,readFile,writeFile,rm,readdir,stat} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import test from 'node:test';
+import {PostgresEventStore} from '../scripts/lib/postgres-event-store.mjs';
+import {
+  writePostgresAuditArchiveBundle,
+  verifyPostgresAuditArchiveBundle,
+  verifyPostgresAuditArchiveBundleFile,
+} from '../scripts/lib/postgres-audit-archive-bundle.mjs';
+
+const url=process.env.POSTGRES_URL;
+const pg=url?await import('pg'):null;
+const Pool=pg?.Pool??pg?.default?.Pool;
+const integration=url?test:test.skip;
+const record=i=>({
+  auditId:'audit-bundle-'+i,traceId:'trace-bundle',
+  timestamp:'2026-10-20T13:20:00.000Z',
+  kind:'trigger.created',entityType:'trigger',
+  entityId:'tenant-a-trigger-'+i,details:{counter:i},
+});
+
+integration('PG16 audit bundle verifies whole externally pinned chain, survives later writes and catches database tamper',async()=>{
+  const prefix='ei_auditbundle_'+randomBytes(5).toString('hex');
+  const poolA=new Pool({connectionString:url,max:3});
+  const poolB=new Pool({connectionString:url,max:3});
+  const make=(pool,scope)=>new PostgresEventStore({
+    pool,dispatchPoolIdentity:pool,tablePrefix:prefix,scopeId:scope,
+  });
+  const writer=make(poolA,'audit-A'),reader=make(poolB,'audit-A');
+  const other=make(poolB,'audit-B');
+  const dir=await mkdtemp(join(tmpdir(),'ei-pg-audit-bundle-'));
+  try{
+    await Promise.all([writer.init(),reader.init(),other.init()]);
+    const empty=await writer.getAuditCheckpoint();
+    assert.equal(empty.endSequence,-1);
+    const emptyFile=join(dir,'empty.json');
+    await writePostgresAuditArchiveBundle(writer,{
+      trustedCheckpoint:empty,outputPath:emptyFile,pageSize:2,
+    });
+    assert.equal(await verifyPostgresAuditArchiveBundleFile(emptyFile,{
+      trustedCheckpoint:empty,
+    }),true);
+    assert.equal((await readdir(dir)).length,1);
+    for(let i=0;i<5;i++) {
+      await (i%2?reader:writer).appendAudit(record(i));
+    }
+    await other.appendAudit(record('other-tenant'));
+    const pinned=await writer.getAuditCheckpoint();
+    assert.equal(pinned.endSequence,4);
+    assert.equal((await other.getAuditCheckpoint()).endSequence,0);
+    const path=join(dir,'verified-audit.json');
+    const result=await writePostgresAuditArchiveBundle(reader,{
+      trustedCheckpoint:pinned,outputPath:path,pageSize:2,
+    });
+    assert.equal(result.endSequence,4);
+    assert.equal(result.headHash,pinned.headHash);
+    assert.equal((await stat(path)).mode & 0o777,0o600);
+    assert.equal(await verifyPostgresAuditArchiveBundleFile(path,{
+      trustedCheckpoint:pinned,
+    }),true);
+    const original=await readFile(path,'utf8');
+    const bundle=JSON.parse(original);
+    assert.equal(bundle.pages.length,3);
+    assert.deepEqual(bundle.pages.map(p=>p.records.length),[2,2,1]);
+    assert.equal(await verifyPostgresAuditArchiveBundle(bundle,{
+      trustedCheckpoint:pinned,
+    }),true);
+    for(const modify of [
+      b=>{b.pages[0].records[0].details.counter=999;},
+      b=>{b.pages[1].records.reverse();},
+      b=>{b.pages.pop();},
+      b=>{b.pages[0].scopeId='audit-B';},
+      b=>{b.pages[0].headHash='f'.repeat(64);},
+      b=>{b.pages.push(structuredClone(b.pages.at(-1)));},
+      b=>{b.checkpoint.scopeId='audit-B';},
+    ]){
+      const fake=structuredClone(bundle);
+      modify(fake);
+      assert.equal(await verifyPostgresAuditArchiveBundle(fake,{
+        trustedCheckpoint:pinned,
+      }),false);
+    }
+    await assert.rejects(()=>writePostgresAuditArchiveBundle(reader,{
+      trustedCheckpoint:pinned,outputPath:path,
+    }),/exists/);
+    assert.equal(await readFile(path,'utf8'),original);
+    const mutated=join(dir,'mutated.json');
+    await writeFile(mutated,JSON.stringify({
+      ...bundle,pages:bundle.pages.slice(0,1),
+    }));
+    assert.equal(await verifyPostgresAuditArchiveBundleFile(mutated,{
+      trustedCheckpoint:pinned,
+    }),false);
+    const truncated=join(dir,'truncated.json');
+    await writeFile(truncated,original.slice(0,-43));
+    assert.equal(await verifyPostgresAuditArchiveBundleFile(truncated,{
+      trustedCheckpoint:pinned,
+    }),false);
+    assert.equal(await verifyPostgresAuditArchiveBundleFile(path,{
+      trustedCheckpoint:{...pinned,scopeId:'audit-B'},
+    }),false);
+
+    await writer.appendAudit(record(5));
+    assert.equal((await writer.listAudit()).length,6);
+    assert.equal(await verifyPostgresAuditArchiveBundleFile(path,{
+      trustedCheckpoint:pinned,
+    }),true,'frozen independent export unaffected by later append');
+    assert.equal(await writer.verifyAudit(),true);
+    assert.equal((await other.listAudit()).length,1);
+    const archivedBefore=JSON.parse(original).pages[1].records[0];
+    assert.equal(archivedBefore.details.counter,2);
+    // Alter the live stored history AFTER writing the durable archive.
+    await poolA.query(
+      'UPDATE "'+prefix+'_history" SET payload='+
+      "jsonb_set(payload,'{details,counter}','999'::jsonb) "+
+      "WHERE scope_id=$1 AND kind='audit' AND payload->>'sequence'='2'",
+      ['audit-A'],
+    );
+    await assert.rejects(()=>reader.getAuditProofWindow({
+      checkpoint:pinned,afterSequence:1,limit:2,
+    }),e=>e.code==='EVENT_INTELLIGENCE_AUDIT_PROOF_CHAIN_INVALID');
+    assert.equal(await verifyPostgresAuditArchiveBundleFile(path,{
+      trustedCheckpoint:pinned,
+    }),true,'archived chain independent from later corrupt database');
+  }finally{
+    try{
+      for(const suffix of ['metadata','leases','history','records','counters']){
+        await poolA.query('DROP TABLE IF EXISTS "'+prefix+'_'+suffix+'" CASCADE');
+      }
+    }finally{
+      await Promise.allSettled([poolA.end(),poolB.end()]);
+      await rm(dir,{recursive:true,force:true});
+    }
+  }
+});
+
+test('audit archive refuses malformed checkpoint and unsafe file budgets',async()=>{
+  const incomplete={scopeId:'A',firstHash:'f'.repeat(64),
+    endSequence:1,headHash:'a'.repeat(64)};
+  for(const opts of [
+    {trustedCheckpoint:incomplete,pageSize:0,outputPath:'x'},
+    {trustedCheckpoint:incomplete,pageSize:1001,outputPath:'x'},
+    {trustedCheckpoint:incomplete,outputPath:''},
+    {trustedCheckpoint:{...incomplete,endSequence:10001},outputPath:'x'},
+    {trustedCheckpoint:{...incomplete,firstHash:'bad'},outputPath:'x'},
+  ]) {
+    await assert.rejects(()=>writePostgresAuditArchiveBundle({
+      getAuditProofWindow:async()=>{throw Error('should never query store');},
+    },opts),TypeError);
+  }
+});
