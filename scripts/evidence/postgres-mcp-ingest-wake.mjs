@@ -1,8 +1,11 @@
 #!/usr/bin/env node
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
-import { writeFile } from 'node:fs/promises';
-import { verifyPostgresPipelineRawEvidence, sha256OfRawEvidence, PG_PIPELINE_RAW_SCHEMA } from '../lib/postgres-pipeline-raw-evidence.mjs';
+import { spawnSync } from 'node:child_process';
+import {
+  verifyPostgresPipelineRawEvidence,sha256OfRawEvidence,reopenedReceiptDigest,
+  publishPostgresPipelineRawEvidence,PG_PIPELINE_RAW_SCHEMA,
+} from '../lib/postgres-pipeline-raw-evidence.mjs';
 import { createRequire } from 'node:module';
 import { performance } from 'node:perf_hooks';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -101,6 +104,7 @@ const failed = [];
 let record = null;
 let rawEvidence = null;
 let rawOutputPath = null;
+let benchmarkSourceCommit = null;
 try {
   if (process.env.EI_PG_PIPELINE_CONFIRM !== 'YES_ISOLATED') {
     fail('set EI_PG_PIPELINE_CONFIRM=YES_ISOLATED for disposable PostgreSQL tables');
@@ -111,6 +115,20 @@ try {
       (typeof rawOutputPath !== 'string' || !rawOutputPath.trim() ||
         rawOutputPath.startsWith('--'))) {
     fail('--raw-evidence-out requires a nonempty fresh filesystem path');
+  }
+  if(rawOutputPath) {
+    const git=spawnSync('git',['rev-parse','HEAD'],{
+      encoding:'utf8',timeout:5000,
+    });
+    const actual=git.status===0 ? git.stdout.trim() : '';
+    if(!/^[0-9a-f]{40}$/.test(actual)) {
+      fail('raw benchmark requires an actual checked-out Git HEAD');
+    }
+    if(process.env.BENCH_SOURCE_COMMIT &&
+      process.env.BENCH_SOURCE_COMMIT!==actual) {
+      fail('raw benchmark provenance differs from actual Git HEAD');
+    }
+    benchmarkSourceCommit=actual;
   }
   const triggers = numberArg('triggers', 8, 100000);
   const sourceCount = numberArg('sources', 1, 32);
@@ -375,9 +393,11 @@ try {
       'large single direct numeric-equality fixtures must use safe PG prefilter');
   }
   const measuredWall = performance.now() - started;
-  const pgCountersAfter = rawOutputPath ? await readPostgresStats() : null;
+  // Resource measurements must share the SAME end boundary as wall-clock
+  // latency; PostgreSQL stats collection is outside the measured phase.
   const measuredCpu = process.cpuUsage(baselineCpu);
   const measuredMemory = process.memoryUsage();
+  const pgCountersAfter = rawOutputPath ? await readPostgresStats() : null;
   assert.equal(hostCalls, events);
   assert.equal(matched.size, events);
   assert.equal(wakeIds.size, events);
@@ -420,18 +440,22 @@ try {
   });
   await recovered.init();
   assert.equal((await recovered.listTriggers()).length, triggers);
+  const reopenedReceipts=[];
   for (const [wakeId, receiptId] of expectedReceipts) {
     const saved = await recovered.getWakeDelivery(wakeId);
     assert.equal(saved?.status, 'delivered');
     assert.equal(saved.runtimeReceiptId, receiptId);
     assert.equal(saved.attemptCount, 1);
+    reopenedReceipts.push({
+      wakeId,receiptId:saved.runtimeReceiptId,
+      status:saved.status,attemptCount:saved.attemptCount,
+    });
   }
   assert.equal(hostCalls, events);
   if(rawOutputPath) {
     rawEvidence = {
       schema: PG_PIPELINE_RAW_SCHEMA,
-      scopeId, sourceCommitSha: process.env.BENCH_SOURCE_COMMIT ??
-        process.env.GITHUB_SHA ?? null,
+      scopeId, sourceCommitSha: benchmarkSourceCommit,
       measurementKind:'in-process-synthetic-source-and-local-host',
       providerTransportMeasured:false,externalHostEffectMeasured:false,
       postgresServiceCpuMeasured:false,
@@ -440,7 +464,7 @@ try {
         statement:'pg_stat_database counters are DB-wide, not EI-exclusive; PG service CPU not measured',
         before:pgCountersBefore,after:pgCountersAfter,
       },
-      events:rawSamples,
+      events:rawSamples,reopenedReceipts,
     };
   }
   record = {
@@ -448,7 +472,8 @@ try {
     runtime: {
       node: process.version, platform: process.platform, arch: process.arch,
       postgresVersion: (await recoveredPool.query('SHOW server_version')).rows[0].server_version,
-      commit: process.env.BENCH_SOURCE_COMMIT ?? process.env.GITHUB_SHA ?? null,
+      commit: benchmarkSourceCommit ??
+        process.env.BENCH_SOURCE_COMMIT ?? process.env.GITHUB_SHA ?? null,
       workflowTestMergeSha: process.env.BENCH_IS_PULL_REQUEST === 'true'
         ? process.env.GITHUB_SHA ?? null : null,
       pgDriverVersion: driverVersion,
@@ -520,8 +545,10 @@ try {
       transportLatencyIncluded: false, hostExecutionLatencyIncluded: false,
       productionSloCertified: false,
       rawSamples: rawOutputPath
-        ? {schema:PG_PIPELINE_RAW_SCHEMA,sha256:sha256OfRawEvidence(rawEvidence),
-          samples:rawSamples.length,mode:'operator-file-exact-checked-out-commit'}
+        ? {schema:PG_PIPELINE_RAW_SCHEMA,
+          sha256:sha256OfRawEvidence(Buffer.from(JSON.stringify(rawEvidence)+'\n')),
+          samples:rawSamples.length,mode:'operator-file-exact-checked-out-commit',
+          reopenedReceiptDigest:reopenedReceiptDigest(reopenedReceipts)}
         : null,
     },
   };
@@ -549,9 +576,9 @@ if (!failed.length && rawOutputPath) {
     const assessed=verifyPostgresPipelineRawEvidence(record,rawEvidence);
     assert.equal(assessed.ok,true,
       'raw PG pipeline sample validation failed: '+assessed.failures.join(','));
-    await writeFile(rawOutputPath,JSON.stringify(rawEvidence)+'\n',{
-      flag:'wx',mode:0o600,
-    });
+    await publishPostgresPipelineRawEvidence(
+      rawOutputPath,Buffer.from(JSON.stringify(rawEvidence)+'\n'),
+    );
   } catch(error) {
     failed.push(cleanError(error,'raw-evidence-export'));
   }
