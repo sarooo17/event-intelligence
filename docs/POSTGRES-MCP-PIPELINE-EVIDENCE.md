@@ -146,9 +146,10 @@ identities, actual PostgreSQL candidate-definition count and measured
 `ingestToMatchMs`, `matchToWakeMs`, `ingestToWakeMs` and
 `hostCallbackMs`. The separate verifier recomputes every p50/p95/p99/max
 and checks stage conservation, uniqueness, candidate counts and matched
-persisted receipts against the main JSON report. The producer must be inside an actual Git
-checkout; the source SHA is verified against `git rev-parse HEAD` and a
-separately supplied expected benchmark SHA. Files with absent/null or
+persisted receipts against the main JSON report. The producer must be inside a **clean actual Git checkout**: the
+source SHA is verified against `git rev-parse HEAD`, any separately supplied
+benchmark SHA, all tracked changes and untracked executable files under
+`src/`, `scripts/` and `bin/` are rejected before measurement. Files with absent/null or
 non-40-hex provenance cannot pass the verifier. Changing a percentile,
 identity, host time or candidate count fails. The schema is
 `event-intelligence.postgres-pipeline-raw-samples.v1`.
