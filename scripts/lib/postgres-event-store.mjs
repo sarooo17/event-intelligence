@@ -3,6 +3,7 @@ import { mcpGapSnapshot } from '../../dist/src/composite/gapFingerprint.js';
 import { safeMcpSourceArguments } from './mcp-safe-arguments.mjs';
 import { randomUUID } from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { isDeepStrictEqual } from 'node:util';
 import { verifyAuditProofWindow } from './audit-proof-window.mjs';
 import { assertAuditJsonNumberPrecision } from './audit-precision-safety.mjs';
 import { mcpArchiveGenesis, mcpArchiveRecordHash, verifyMcpOccurrenceArchiveWindow } from './mcp-occurrence-archive.mjs';
@@ -2697,7 +2698,14 @@ export class PostgresEventStore {
       );
       const records = source.rows.map(({raw}) => {
         assertAuditJsonNumberPrecision(raw);
-        return parseAuditRecord(JSON.parse(raw));
+        const value=JSON.parse(raw);
+        const record=parseAuditRecord(value);
+        if(!isDeepStrictEqual(value,record)) {
+          const error=new Error('Uncommitted audit record fields prevent checkpoint');
+          error.code='EVENT_INTELLIGENCE_AUDIT_UNCOMMITTED_FIELDS';
+          throw error;
+        }
+        return record;
       });
       if (!await new AuditChain(records).verify()) {
         const error = new Error('Cannot checkpoint a damaged audit chain');
@@ -2739,7 +2747,14 @@ export class PostgresEventStore {
       await this.lock(client, 'audit', 'chain');
       const parseSafeAuditJson = raw => {
         assertAuditJsonNumberPrecision(raw);
-        return parseAuditRecord(JSON.parse(raw));
+        const value=JSON.parse(raw);
+        const record=parseAuditRecord(value);
+        if(!isDeepStrictEqual(value,record)) {
+          const error=new Error('Uncommitted audit fields in proof page');
+          error.code='EVENT_INTELLIGENCE_AUDIT_UNCOMMITTED_FIELDS';
+          throw error;
+        }
+        return record;
       };
       let terminalHistoryId = null;
       if (checkpoint.endSequence >= 0) {
