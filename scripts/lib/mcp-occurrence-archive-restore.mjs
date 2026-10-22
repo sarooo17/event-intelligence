@@ -1,7 +1,9 @@
+import { createHash } from 'node:crypto';
 import { verifyMcpOccurrenceArchiveBundle } from './mcp-occurrence-archive-bundle.mjs';
 
 const CONSENT = 'RESTORE_VERIFIED_SOURCE_TO_ISOLATED_EMPTY_POSTGRES';
 const INVALID = 'EVENT_INTELLIGENCE_MCP_ARCHIVE_RESTORE_REFUSED';
+const RESTORE_MARKER = 'mcp-source-archive-restore';
 
 function refuse(reason) {
   const error = new Error('Refusing isolated MCP source archive restore: ' + reason);
@@ -73,8 +75,23 @@ export async function restoreMcpOccurrenceArchiveToIsolatedPostgres(store, {
       // DDL-free and fail-closed. TABLE locks serialize any competing writers
       // to the dedicated prefix throughout the empty-check and commit.
       await client.query('LOCK TABLE ' + [
-        store.records, store.history, store.counters, store.leases,
+        store.metadata, store.records, store.history, store.counters, store.leases,
       ].join(', ') + ' IN SHARE ROW EXCLUSIVE MODE');
+      // This marker lives OUTSIDE the disposable event tables and persists
+      // even after someone deletes/truncates every restored source row.
+      // It is also essential when restoring a legitimately empty archive:
+      // there would otherwise be no counter, history or key to fence a
+      // second, serialized (apparently successful) empty restore.
+      const provenance = await client.query(
+        'SELECT component,version,adopted_from FROM ' + store.metadata +
+        ' WHERE component IN ($1,$2) FOR UPDATE',
+        ['store',RESTORE_MARKER],
+      );
+      const base = provenance.rows.find(row=>row.component==='store');
+      if (!base || Number(base.version)!==1 || base.adopted_from!==null ||
+          provenance.rows.some(row=>row.component===RESTORE_MARKER)) {
+        throw refuse('target schema is untrusted or previously restored');
+      }
       const state = await client.query(
         'SELECT EXISTS(SELECT 1 FROM ' + store.records + ' LIMIT 1) AS records, ' +
         'EXISTS(SELECT 1 FROM ' + store.history + ' LIMIT 1) AS history, ' +
@@ -84,6 +101,13 @@ export async function restoreMcpOccurrenceArchiveToIsolatedPostgres(store, {
       if (Object.values(state.rows[0] ?? {}).some(value => value !== false)) {
         throw refuse('target prefix is not completely empty');
       }
+      const checkpointDigest = createHash('sha256')
+        .update(JSON.stringify(trustedCheckpoint)).digest('hex');
+      await client.query(
+        'INSERT INTO ' + store.metadata +
+        ' (component,version,adopted_from) VALUES ($1,$2,$3)',
+        [RESTORE_MARKER,1,'mcp-source-archive-sha256:'+checkpointDigest],
+      );
       for (const { raw, key } of originals) {
         // All payloads arrive as original PostgreSQL JSONB::text. DO NOT
         // stringify parsed JavaScript Numbers (>2^53 would be destroyed).
