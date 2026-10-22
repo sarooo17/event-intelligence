@@ -29,11 +29,16 @@ PostgreSQL 16 using the existing opt-in benchmark:
   the literal saved-file SHA256, source commit, all per-occurrence stage
   timings, exact achieved throughput vs measured wall time, uniqueness
   of IDs, persisted receipt pairs and the actual ≥600s duration.
-  It rejects attempts to relabel this experiment as production SLO.
+  It validates the PostgreSQL major version *reported by the server*
+  before labeling an artifact PG16, and rejects any attempt to relabel
+  this local experiment as production SLO.
 - GitHub Actions 26-minute job cap and source-path opt-in avoid applying
   costly 600-second soaks to every normal PR. The production release gate
   should refer only to an actual successful exact-head run, never the
-  existence of this workflow definition alone.
+  existence of this workflow definition alone. Both benchmark stderr
+  and strict-verifier failure JSON are retained separately in failed
+  workflow artifacts to expose rejected duration, rate, checksum, server
+  version and missing receipt claims.
 
 ### Non-claims
 
