@@ -230,8 +230,14 @@ integration('PG16 empty trusted archive commits a durable one-time restore marke
     const archive=JSON.parse(await readFile(outputPath,'utf8'));
     assert.deepEqual(archive.pages,[]);
     const args={archive,trustedCheckpoint,confirmIsolatedRestore:CONSENT};
-    const first=await restoreMcpOccurrenceArchiveToIsolatedPostgres(
-      targetA,args);
+    const attempted=await Promise.allSettled([
+      restoreMcpOccurrenceArchiveToIsolatedPostgres(targetA,args),
+      restoreMcpOccurrenceArchiveToIsolatedPostgres(targetB,args),
+    ]);
+    assert.equal(attempted.filter(x=>x.status==='fulfilled').length,1);
+    assert.equal(attempted.filter(x=>x.status==='rejected'&&
+      checkRejected(x.reason)).length,1);
+    const first=attempted.find(x=>x.status==='fulfilled').value;
     assert.equal(first.restoredOccurrences,0);
     assert.equal(first.restoredDedupKeys,0);
     assert.deepEqual(await targetB.getMcpOccurrenceArchiveCheckpoint(),
