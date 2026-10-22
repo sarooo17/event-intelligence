@@ -46,9 +46,11 @@
         "https://github.com/sarooo17/event-intelligence/pull/251",
         "https://github.com/sarooo17/event-intelligence/pull/252",
         "https://github.com/sarooo17/event-intelligence/pull/254",
-        "https://github.com/sarooo17/event-intelligence/pull/256"
+        "https://github.com/sarooo17/event-intelligence/pull/256",
+        "https://github.com/sarooo17/event-intelligence/pull/257",
+        "https://github.com/sarooo17/event-intelligence/pull/258"
       ],
-      "note": "Still BLOCKED: merged #218/#254 permit only bounded operator-controlled duplicate terminal match/wake revision compaction without removing dedup, sources, receipts or audit; #219 provides non-destructive pinned audit proof pages; #251/#252 provide bounded source occurrence snapshot and local file export. PR #256 adds complete local audit archive and optional externally keyed Ed25519 detached byte witness (pending review/merge). Neither key-based signing nor local archive guarantees independently immutable off-host WORM retention. Actual source occurrence TTL, replay-floor fencing, externally recoverable archived audit-prefix pruning and post-prune hash-chain continuation are NOT implemented. No production source/audit TTL enabled."
+      "note": "BLOCKED: source and audit proof archives, detached Ed25519 audit witness, PostgreSQL lossless precision, replay-gap fail-closed fence and offline raw source archive reading have merged (#251/#252/#256/#257). PR #258 adds operator-confirmed isolated PG16 source+dedup+counter restoration with durable metadata provenance, injected rollback, race and empty-archive tests; it is under review, NOT production cutover. Match/wake terminal revision compaction (#254) is proven safe, but off-host immutable WORM, provider opaque cursor replay low-watermark, authenticated source+audit physical TTL/prune, continuation of the genesis-linked audit chain and complete CEP/host-state recovery are NOT implemented. No source/audit purge approved."
     },
     {
       "id": "pg-chaos-recovery",
@@ -71,9 +73,10 @@
         "https://github.com/sarooo17/event-intelligence/pull/229",
         "https://github.com/sarooo17/event-intelligence/pull/255",
         "https://github.com/sarooo17/event-intelligence/actions/runs/39603115535",
-        "https://github.com/sarooo17/event-intelligence/issues/47"
+        "https://github.com/sarooo17/event-intelligence/issues/47",
+        "https://github.com/sarooo17/event-intelligence/pull/259"
       ],
-      "note": "Still BLOCKED. Merged #229 publishes actual isolated PostgreSQL durable 1k/10k/100k profile data and limitations. PR #255 pending review adds raw source-pinned real PG16 EI→wake pipeline samples and an actual 1200-event run, independently recomputable tails, reopened receipts and database-wide PG counters. Provider transport and external host side effects remain simulated/in-process; PG service CPU, sustained ≥600s steady/burst/fault campaigns, ≥2 workers/partitions, preregistered production budgets and independent p99 SLO signoff are NOT complete."
+      "note": "BLOCKED: #229 actual isolated 1k/10k/100k durable trigger and indexed active matching runs (small tail sample counts). Merged #255 now publishes actual PG16 1200-event source-pinned raw ingest-to-wake p50/p95/p99, fresh-pool receipts, independent byte/duration/achieved-throughput proof and DB-wide stats; single worker, synthetic provider/local host. PR #259 adds >=600s 3040-event local PG16 sustained baseline, pending real workflow/review. These do NOT measure remote-provider wire, external host execution, PG server CPU, >=2-worker sustained burst/fault and real high-cardinality provider workloads. Production SLO signoff is NOT justified."
     },
     {
       "id": "stored-state-upgrade",
