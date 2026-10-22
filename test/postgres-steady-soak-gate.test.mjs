@@ -38,7 +38,7 @@ function fixture(){
   const bytes=Buffer.from(JSON.stringify(raw)+'\n');
   const summary={
     schema:'event-intelligence.postgres-mcp-ingest-wake.v1',
-    status:'completed',runtime:{commit},
+    status:'completed',runtime:{commit,postgresVersion:'16.15'},
     workload:{
       triggers:16,distinctEventNames:8,
       matchingMcpOccurrences:STEADY_EVENTS,
@@ -89,6 +89,9 @@ test('steady gate rejects forged duration, throughput, identities and production
     f=>{f.summary.evidence.productionSloCertified=true;},
     f=>{f.raw.externalHostEffectMeasured=true;},
     f=>{f.summary.runtime.commit='b'.repeat(40);},
+    f=>{f.summary.runtime.postgresVersion='15.13';},
+    f=>{f.summary.runtime.postgresVersion='17.2';},
+    f=>{delete f.summary.runtime.postgresVersion;},
     f=>{f.bytes=Buffer.from('{}\n');},
   ];
   for(const mutate of mutations){
