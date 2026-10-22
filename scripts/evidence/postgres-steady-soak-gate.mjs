@@ -28,6 +28,11 @@ export function verifyPostgresSteadySoakEvidence(summary,raw,rawBytes,{
     /^[0-9a-f]{40}$/.test(expectedCommitSha) &&
     summary?.runtime?.commit===expectedCommitSha &&
     raw?.sourceCommitSha===expectedCommitSha,'exact-head-provenance');
+  // The workflow uses postgres:16-alpine but a standalone artifact verifier
+  // MUST validate the server-reported major version before advertising PG16.
+  check(typeof summary?.runtime?.postgresVersion==='string' &&
+    /^16(?:[.]|$)/.test(summary.runtime.postgresVersion.trim()),
+    'recorded-server-version-must-be-postgresql-16');
   check(summary?.workload?.triggers===16 &&
     summary?.workload?.distinctEventNames===8 &&
     summary?.workload?.matchingMcpOccurrences===STEADY_EVENTS &&
