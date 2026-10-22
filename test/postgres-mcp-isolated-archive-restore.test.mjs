@@ -77,6 +77,13 @@ integration('PG16 source archive restores complete raw JSONB, dedup and sequence
     assert.equal(restored.hostEffectsExecuted,0);
     assert.equal(restored.productionCutoverAuthorized,false);
     assert.equal(restored.targetPrefix,targetPrefix);
+    const marker=await restorePool.query(
+      'SELECT version,adopted_from FROM "'+targetPrefix+
+      '_metadata" WHERE component=$1',['mcp-source-archive-restore']);
+    assert.equal(marker.rows.length,1);
+    assert.equal(marker.rows[0].version,1);
+    assert.match(marker.rows[0].adopted_from,
+      /^mcp-source-archive-sha256:[0-9a-f]{64}$/);
     assert.deepEqual(await target.getMcpOccurrenceArchiveCheckpoint(),pinned);
     const full=await target.listMcpOccurrencesAfter(0);
     assert.deepEqual(full.map(x=>x.sequence),[1,2,3,4]);
@@ -169,6 +176,15 @@ integration('PG16 isolated archive restore rolls back every row on mid-stream fa
     assert.equal((await targetA.listMcpOccurrencesAfter(0)).length,4);
     assert.deepEqual(await targetB.getMcpOccurrenceArchiveCheckpoint(),
       trustedCheckpoint);
+    // Even an operator that later wipes every restored source/counter row
+    // must not make this previously used schema appear fresh again.
+    for(const table of ['history','records','counters']){
+      await poolA.query('DELETE FROM "'+targetPrefix+'_'+table+'"');
+    }
+    assert.equal(await targetA.latestMcpEventSequence(),0);
+    await assert.rejects(()=>
+      restoreMcpOccurrenceArchiveToIsolatedPostgres(targetA,args),checkRejected,
+      'persistent checkpoint provenance remains after data are cleared');
     const foreignPrefix='ei_restore_foreign_'+suffix;
     const foreign=mk(poolA,foreignPrefix,'restore-scope');
     const foreignTenant=mk(poolB,foreignPrefix,'other-tenant');
@@ -188,6 +204,58 @@ integration('PG16 isolated archive restore rolls back every row on mid-stream fa
       await drop(poolA,targetPrefix);
     }finally{
       await Promise.allSettled([srcPool.end(),poolA.end(),poolB.end()]);
+      await rm(dir,{recursive:true,force:true});
+    }
+  }
+});
+
+integration('PG16 empty trusted archive commits a durable one-time restore marker',async()=>{
+  const suffix=randomBytes(4).toString('hex');
+  const sourcePrefix='ei_src_empty_'+suffix;
+  const targetPrefix='ei_restore_empty_'+suffix;
+  const poolA=new Pool({connectionString:url,max:3});
+  const poolB=new Pool({connectionString:url,max:3});
+  const source=mk(poolA,sourcePrefix,'empty-archive');
+  const targetA=mk(poolA,targetPrefix,'empty-archive');
+  const targetB=mk(poolB,targetPrefix,'empty-archive');
+  const dir=await mkdtemp(join(tmpdir(),'ei-empty-restore-'));
+  try {
+    await Promise.all([source.init(),targetA.init(),targetB.init()]);
+    const trustedCheckpoint=await source.getMcpOccurrenceArchiveCheckpoint();
+    assert.equal(trustedCheckpoint.endSequence,0);
+    const outputPath=join(dir,'empty.json');
+    await writeMcpOccurrenceArchiveBundle(source,{
+      trustedCheckpoint,outputPath,
+    });
+    const archive=JSON.parse(await readFile(outputPath,'utf8'));
+    assert.deepEqual(archive.pages,[]);
+    const args={archive,trustedCheckpoint,confirmIsolatedRestore:CONSENT};
+    const first=await restoreMcpOccurrenceArchiveToIsolatedPostgres(
+      targetA,args);
+    assert.equal(first.restoredOccurrences,0);
+    assert.equal(first.restoredDedupKeys,0);
+    assert.deepEqual(await targetB.getMcpOccurrenceArchiveCheckpoint(),
+      trustedCheckpoint);
+    const marker=await poolB.query(
+      'SELECT component,adopted_from FROM "'+targetPrefix+
+      '_metadata" WHERE component=$1',['mcp-source-archive-restore']);
+    assert.equal(marker.rows.length,1);
+    assert.match(marker.rows[0].adopted_from,
+      /^mcp-source-archive-sha256:[0-9a-f]{64}$/);
+    for(const table of ['records','history','counters','leases']){
+      const n=await poolB.query('SELECT count(*)::int AS n FROM "'+
+        targetPrefix+'_'+table+'"');
+      assert.equal(n.rows[0].n,0);
+    }
+    await assert.rejects(()=>
+      restoreMcpOccurrenceArchiveToIsolatedPostgres(targetB,args),checkRejected,
+      'zero-row restore must not appear unused to another process');
+  } finally {
+    try{
+      await drop(poolA,sourcePrefix);
+      await drop(poolA,targetPrefix);
+    }finally{
+      await Promise.allSettled([poolA.end(),poolB.end()]);
       await rm(dir,{recursive:true,force:true});
     }
   }
