@@ -8,6 +8,7 @@ import { PostgresEventStore } from '../scripts/lib/postgres-event-store.mjs';
 import {
   writeMcpOccurrenceArchiveBundle,
   verifyMcpOccurrenceArchiveBundleFile,
+  readMcpOccurrenceArchiveReplayWindow,
 } from '../scripts/lib/mcp-occurrence-archive-bundle.mjs';
 
 const url=process.env.POSTGRES_URL;
@@ -45,6 +46,35 @@ integration('real PG archive is pinned and independently verifiable after later 
     const persisted=JSON.parse(originalBytes);
     assert.equal(persisted.pages.length,2);
     assert.equal(persisted.pages[0].records.length,2);
+    const offlineFirst=readMcpOccurrenceArchiveReplayWindow(persisted,{
+      trustedCheckpoint:pinned,afterSequence:0,limit:2,
+    });
+    assert.deepEqual(offlineFirst.records.map(r=>r.sequence),[1,2]);
+    assert.equal(offlineFirst.hasMore,true);
+    assert.equal(typeof offlineFirst.records[0].rawPayloadJson,'string');
+    assert.equal(JSON.parse(offlineFirst.records[0].rawPayloadJson).event.eventId,
+      'archived-source-event-0');
+    const offlineTail=readMcpOccurrenceArchiveReplayWindow(persisted,{
+      trustedCheckpoint:pinned,afterSequence:2,limit:2,
+    });
+    assert.deepEqual(offlineTail.records.map(r=>r.sequence),[3,4]);
+    assert.equal(offlineTail.hasMore,false);
+    assert.deepEqual(readMcpOccurrenceArchiveReplayWindow(persisted,{
+      trustedCheckpoint:pinned,afterSequence:4,
+    }).records,[]);
+    for(const bad of [
+      {afterSequence:5},{afterSequence:-1},{afterSequence:0.5},
+      {limit:0},{limit:1001},
+    ]){
+      assert.throws(()=>readMcpOccurrenceArchiveReplayWindow(persisted,{
+        trustedCheckpoint:pinned,...bad,
+      }),e=>e?.code==='EVENT_INTELLIGENCE_MCP_ARCHIVE_REPLAY_POLICY_INVALID');
+    }
+    const incomplete=structuredClone(persisted);
+    incomplete.pages.pop();
+    assert.throws(()=>readMcpOccurrenceArchiveReplayWindow(incomplete,{
+      trustedCheckpoint:pinned,
+    }),e=>e?.code==='EVENT_INTELLIGENCE_MCP_ARCHIVE_REPLAY_UNTRUSTED');
     assert.equal(JSON.parse(persisted.pages[0].records[0]).event.eventId,
       'archived-source-event-0');
     assert.equal((await other.getMcpOccurrenceArchiveCheckpoint()).endSequence,0,
@@ -76,6 +106,13 @@ integration('real PG archive is pinned and independently verifiable after later 
     assert.equal(await verifyMcpOccurrenceArchiveBundleFile(path,{trustedCheckpoint:pinned}),true,
       'the independent file keeps its original full verified historical snapshot');
     assert.equal(await readFile(path,'utf8'),originalBytes);
+    const recoveredOffline=readMcpOccurrenceArchiveReplayWindow(persisted,{
+      trustedCheckpoint:pinned,afterSequence:3,limit:1,
+    });
+    assert.equal(recoveredOffline.records.length,1);
+    assert.equal(JSON.parse(recoveredOffline.records[0].rawPayloadJson)
+      .event.data.number,3,
+      'verified archived source can be recovered after live DB corruption');
     assert.equal(await a.verifyAudit(),true);
   }finally{
     try{

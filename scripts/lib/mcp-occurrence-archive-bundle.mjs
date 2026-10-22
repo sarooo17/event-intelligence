@@ -158,3 +158,47 @@ export async function verifyMcpOccurrenceArchiveBundleFile(filePath,{
     if(handle)await handle.close();
   }
 }
+
+/**
+ * Bounded OFFLINE replay window from an authenticated immutable logical
+ * prefix. Exposes the ORIGINAL PostgreSQL JSONB text, not parsed JS event
+ * numbers; this preserves large/precise numeric lexemes losslessly.
+ *
+ * This is intentionally not a runtime fallback: providers, CEP state,
+ * subscriptions and host wake safety still need an audited cutover before
+ * an archived prefix may ever be physically removed from PostgreSQL.
+ */
+export function readMcpOccurrenceArchiveReplayWindow(bundle,{
+  trustedCheckpoint,afterSequence=0,limit=100,
+}={}){
+  if(!Number.isSafeInteger(afterSequence) || afterSequence<0 ||
+      !Number.isSafeInteger(limit) || limit<1 || limit>1000 ||
+      !Number.isSafeInteger(trustedCheckpoint?.endSequence) ||
+      afterSequence>trustedCheckpoint.endSequence){
+    const err=new TypeError('Offline MCP archive replay needs valid trusted checkpoint and bounded cursor');
+    err.code='EVENT_INTELLIGENCE_MCP_ARCHIVE_REPLAY_POLICY_INVALID';
+    throw err;
+  }
+  if(!verifyMcpOccurrenceArchiveBundle(bundle,{trustedCheckpoint})){
+    const err=new Error('Offline MCP archive replay rejected unverified occurrence prefix');
+    err.code='EVENT_INTELLIGENCE_MCP_ARCHIVE_REPLAY_UNTRUSTED';
+    throw err;
+  }
+  const records=[];
+  let seq=0;
+  for(const page of bundle.pages){
+    for(const rawPayloadJson of page.records){
+      seq++;
+      if(seq>afterSequence && records.length<limit){
+        records.push(Object.freeze({sequence:seq,rawPayloadJson}));
+      }
+    }
+  }
+  const endSequence=afterSequence+records.length;
+  return Object.freeze({
+    schema:'event-intelligence.mcp-occurrence-archive-replay.v1',
+    scopeId:trustedCheckpoint.scopeId,afterSequence,limit,
+    endSequence,hasMore:endSequence<trustedCheckpoint.endSequence,
+    records:Object.freeze(records),
+  });
+}
