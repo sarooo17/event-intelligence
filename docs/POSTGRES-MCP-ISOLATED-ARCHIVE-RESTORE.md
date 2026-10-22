@@ -40,8 +40,14 @@ const receipt = await restoreMcpOccurrenceArchiveToIsolatedPostgres(isolated,{
 - The target store must be initialized at a distinct operator-controlled
   prefix starting with `ei_restore_`. Under transactional table locks,
   **all** record, history, counter and lease tables must be empty, including
-  rows owned by other tenants. Already used and ambiguous targets fail
-  closed, without overwriting or dropping any rows.
+  rows owned by other tenants. The schema must have an original clean
+  `store` metadata marker (no explicit legacy adoption). Before writing
+  event rows, the transaction inserts a persistent, separately stored
+  `mcp-source-archive-restore` provenance marker into the PostgreSQL
+  metadata table, committed atomically with the restored rows. A later
+  restore is refused **even when the prior archive was empty** or someone
+  deleted every restored history/key/counter row. Already used and
+  ambiguous targets fail closed without overwriting or dropping rows.
 - Source occurrence history, matching `mcp_occurrence_key` dedup rows and
   the original durable source counter are written atomically; an injected
   mid-stream database failure rolls back **every** row. Two concurrent
