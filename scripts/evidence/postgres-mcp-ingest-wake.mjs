@@ -1,6 +1,11 @@
 #!/usr/bin/env node
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
+import {
+  verifyPostgresPipelineRawEvidence,sha256OfRawEvidence,reopenedReceiptDigest,
+  publishPostgresPipelineRawEvidence,PG_PIPELINE_RAW_SCHEMA,
+} from '../lib/postgres-pipeline-raw-evidence.mjs';
 import { createRequire } from 'node:module';
 import { performance } from 'node:perf_hooks';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -97,11 +102,47 @@ let recoveredPool = null;
 let stage = 'configuration';
 const failed = [];
 let record = null;
+let rawEvidence = null;
+let rawOutputPath = null;
+let benchmarkSourceCommit = null;
 try {
   if (process.env.EI_PG_PIPELINE_CONFIRM !== 'YES_ISOLATED') {
     fail('set EI_PG_PIPELINE_CONFIRM=YES_ISOLATED for disposable PostgreSQL tables');
   }
   if (!process.env.POSTGRES_URL) fail('POSTGRES_URL is required');
+  rawOutputPath = arg('raw-evidence-out', null);
+  if (rawOutputPath !== null &&
+      (typeof rawOutputPath !== 'string' || !rawOutputPath.trim() ||
+        rawOutputPath.startsWith('--'))) {
+    fail('--raw-evidence-out requires a nonempty fresh filesystem path');
+  }
+  if(rawOutputPath) {
+    const git=spawnSync('git',['rev-parse','HEAD'],{
+      encoding:'utf8',timeout:5000,
+    });
+    const actual=git.status===0 ? git.stdout.trim() : '';
+    if(!/^[0-9a-f]{40}$/.test(actual)) {
+      fail('raw benchmark requires an actual checked-out Git HEAD');
+    }
+    if(process.env.BENCH_SOURCE_COMMIT &&
+      process.env.BENCH_SOURCE_COMMIT!==actual) {
+      fail('raw benchmark provenance differs from actual Git HEAD');
+    }
+    // HEAD alone does not identify the code actually executed from a local
+    // dirty checkout. Reject all tracked modifications and any untracked
+    // executable inputs under the project source/helper entrypoint roots.
+    const tracked=spawnSync('git',['diff','HEAD','--quiet','--'],{
+      encoding:'utf8',timeout:5000,
+    });
+    const sourceFiles=spawnSync('git',[
+      'ls-files','--others','--exclude-standard','--','src','scripts','bin',
+    ],{encoding:'utf8',timeout:5000});
+    if(tracked.status!==0 || sourceFiles.status!==0 ||
+      sourceFiles.stdout.trim()) {
+      fail('raw evidence provenance requires a clean tracked checkout and no untracked executable files');
+    }
+    benchmarkSourceCommit=actual;
+  }
   const triggers = numberArg('triggers', 8, 100000);
   const sourceCount = numberArg('sources', 1, 32);
   if (sourceCount > triggers) {
@@ -217,7 +258,37 @@ try {
     return candidates;
   };
 
+  const readPostgresStats = async () => {
+    // Scope is DATABASE WIDE. Do not present these as process CPU,
+    // query-specific time, or EI-exclusive statistics on shared systems.
+    await pool.query('SELECT pg_stat_clear_snapshot()');
+    const result = await pool.query(
+      'SELECT xact_commit,xact_rollback,blks_read,blks_hit,' +
+      'tup_inserted,tup_updated,tup_deleted,temp_bytes,deadlocks' +
+      ' FROM pg_stat_database WHERE datname=current_database()',
+    );
+    assert.equal(result.rows.length,1);
+    const observed={};
+    for(const [key,value] of Object.entries(result.rows[0])) {
+      const n=Number(value);
+      assert.ok(Number.isSafeInteger(n) && n>=0,'unsafe PG counter '+key);
+      observed[key]=n;
+    }
+    let total=0;
+    for(const table of TABLES) {
+      const relation='"'+prefix+'_'+table+'"';
+      const size=await pool.query(
+        'SELECT pg_total_relation_size($1::regclass)::bigint AS bytes',[relation]);
+      const n=Number(size.rows[0]?.bytes);
+      assert.ok(Number.isSafeInteger(n) && n>=0);
+      total+=n;
+    }
+    observed.isolatedTableBytes=total;
+    return observed;
+  };
   const measurements = { ingestToMatch: [], matchToWake: [], ingestToWake: [] };
+  const rawSamples=[];
+  const pgCountersBefore=rawOutputPath ? await readPostgresStats() : null;
   const measuredHostCallbackMs = [];
   const hostReceipts = new Map();
   let hostCalls = 0;
@@ -304,6 +375,18 @@ try {
       wakeId: result.deliveries[0].wakeId,
       receiptId: result.deliveries[0].runtimeReceiptId,
     });
+    if(rawOutputPath) {
+      rawSamples.push({
+        index:i,slot:slotFor(i),
+        matchId:match.matchId,wakeId:result.deliveries[0].wakeId,
+        receiptId:result.deliveries[0].runtimeReceiptId,
+        candidateDefinitions:observedCandidateCounts.at(-1),
+        ingestToMatchMs:matchedAt-begin,
+        matchToWakeMs:end-matchedAt,
+        ingestToWakeMs:end-begin,
+        hostCallbackMs:measuredHostCallbackMs.at(-1),
+      });
+    }
     measurements.ingestToMatch.push(matchedAt - begin);
     measurements.matchToWake.push(end - matchedAt);
     measurements.ingestToWake.push(end - begin);
@@ -323,8 +406,11 @@ try {
       'large single direct numeric-equality fixtures must use safe PG prefilter');
   }
   const measuredWall = performance.now() - started;
+  // Resource measurements must share the SAME end boundary as wall-clock
+  // latency; PostgreSQL stats collection is outside the measured phase.
   const measuredCpu = process.cpuUsage(baselineCpu);
   const measuredMemory = process.memoryUsage();
+  const pgCountersAfter = rawOutputPath ? await readPostgresStats() : null;
   assert.equal(hostCalls, events);
   assert.equal(matched.size, events);
   assert.equal(wakeIds.size, events);
@@ -367,19 +453,40 @@ try {
   });
   await recovered.init();
   assert.equal((await recovered.listTriggers()).length, triggers);
+  const reopenedReceipts=[];
   for (const [wakeId, receiptId] of expectedReceipts) {
     const saved = await recovered.getWakeDelivery(wakeId);
     assert.equal(saved?.status, 'delivered');
     assert.equal(saved.runtimeReceiptId, receiptId);
     assert.equal(saved.attemptCount, 1);
+    reopenedReceipts.push({
+      wakeId,receiptId:saved.runtimeReceiptId,
+      status:saved.status,attemptCount:saved.attemptCount,
+    });
   }
   assert.equal(hostCalls, events);
+  if(rawOutputPath) {
+    rawEvidence = {
+      schema: PG_PIPELINE_RAW_SCHEMA,
+      scopeId, sourceCommitSha: benchmarkSourceCommit,
+      measurementKind:'in-process-synthetic-source-and-local-host',
+      providerTransportMeasured:false,externalHostEffectMeasured:false,
+      postgresServiceCpuMeasured:false,
+      measuredDurationMs:measuredWall,
+      postgres:{
+        statement:'pg_stat_database counters are DB-wide, not EI-exclusive; PG service CPU not measured',
+        before:pgCountersBefore,after:pgCountersAfter,
+      },
+      events:rawSamples,reopenedReceipts,
+    };
+  }
   record = {
     schema: SCHEMA, status: 'completed', measuredAt: new Date().toISOString(),
     runtime: {
       node: process.version, platform: process.platform, arch: process.arch,
       postgresVersion: (await recoveredPool.query('SHOW server_version')).rows[0].server_version,
-      commit: process.env.BENCH_SOURCE_COMMIT ?? process.env.GITHUB_SHA ?? null,
+      commit: benchmarkSourceCommit ??
+        process.env.BENCH_SOURCE_COMMIT ?? process.env.GITHUB_SHA ?? null,
       workflowTestMergeSha: process.env.BENCH_IS_PULL_REQUEST === 'true'
         ? process.env.GITHUB_SHA ?? null : null,
       pgDriverVersion: driverVersion,
@@ -450,6 +557,12 @@ try {
       storeOperationProfileIsInclusive: true,
       transportLatencyIncluded: false, hostExecutionLatencyIncluded: false,
       productionSloCertified: false,
+      rawSamples: rawOutputPath
+        ? {schema:PG_PIPELINE_RAW_SCHEMA,
+          sha256:sha256OfRawEvidence(Buffer.from(JSON.stringify(rawEvidence)+'\n')),
+          samples:rawSamples.length,mode:'operator-file-exact-checked-out-commit',
+          reopenedReceiptDigest:reopenedReceiptDigest(reopenedReceipts)}
+        : null,
     },
   };
 } catch (error) {
@@ -469,6 +582,18 @@ try {
   for (const candidate of new Set([pool, recoveredPool].filter(Boolean))) {
     try { await candidate.end(); }
     catch (error) { failed.push(cleanError(error, 'pool-close')); }
+  }
+}
+if (!failed.length && rawOutputPath) {
+  try {
+    const assessed=verifyPostgresPipelineRawEvidence(record,rawEvidence);
+    assert.equal(assessed.ok,true,
+      'raw PG pipeline sample validation failed: '+assessed.failures.join(','));
+    await publishPostgresPipelineRawEvidence(
+      rawOutputPath,Buffer.from(JSON.stringify(rawEvidence)+'\n'),
+    );
+  } catch(error) {
+    failed.push(cleanError(error,'raw-evidence-export'));
   }
 }
 if (failed.length) {

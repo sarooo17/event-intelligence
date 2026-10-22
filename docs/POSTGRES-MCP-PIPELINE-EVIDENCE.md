@@ -127,3 +127,69 @@ rebalance. A large sample count may produce a useful synthetic local
 p99 but **cannot** satisfy the production SLO evidence contract or #47
 until multi-worker, multi-rate, real-provider/host and fault evidence
 are collected and independently reviewed.
+
+## Per-event raw evidence and PostgreSQL service counters (#47)
+
+The opt-in `--raw-evidence-out /path/to/new-file.json` flag writes a **separate
+exclusive local artifact**, only after successful durable receipt verification
+through an independently reopened PostgreSQL pool and successful cleanup.
+The helper stages the complete raw JSON in a private `0600` file,
+fsyncs the bytes, exclusively hard-links the final name, removes the staging
+link and fsyncs its parent directory before reporting success. An existing
+path fails closed and is never overwritten. The success JSON
+includes SHA-256 of the **actual saved file bytes** (not a reserialized
+JSON object), its sample count,
+source commit and measurement scope. **Both jobs in `postgres-mcp-pipeline-evidence.yml`** now upload a\nsource-pinned raw artifact and independently recheck its per-event summaries\nbefore publishing success. The separate 1,200-sample workflow does the same;\nother active 1k/10k/100k benchmark workflows still publish their original\naggregate-only artifacts and are not implied to export raw per-event data.
+
+Each occurrence has index, selected trigger slot, unique match/wake/receipt
+identities, actual PostgreSQL candidate-definition count and measured
+`ingestToMatchMs`, `matchToWakeMs`, `ingestToWakeMs` and
+`hostCallbackMs`. The separate verifier also checks the raw measured wall-clock duration against the summary and recomputes actual achieved wake/event throughput (sample count divided by duration), rejecting inflated throughput figures even if the latency tails are untouched. It recomputes every p50/p95/p99/max
+and checks stage conservation, uniqueness, candidate counts and matched
+persisted receipts against the main JSON report. The producer must be inside a **clean actual Git checkout**: the
+source SHA is verified against `git rev-parse HEAD`, any separately supplied
+benchmark SHA, all tracked changes and untracked executable files under
+`src/`, `scripts/` and `bin/` are rejected before measurement. Files with absent/null or
+non-40-hex provenance cannot pass the verifier. Changing a percentile,
+identity, host time or candidate count fails. The schema is
+`event-intelligence.postgres-pipeline-raw-samples.v1`.
+
+It also captures **before/after** PostgreSQL `pg_stat_database` counters:
+transactions, block cache reads/hits, inserted/updated/deleted tuples,
+temporary bytes and deadlocks; and actual isolated-prefix table bytes using
+`pg_total_relation_size`. These counters are **database-wide**, not
+EI-exclusive on a shared DB, and may lag the latest transaction due to
+PostgreSQL asynchronous statistics reporting. The workload measures Node
+process CPU/RSS separately. It does **not** measure PostgreSQL server
+process CPU/RSS, per-query service time, host service CPU or provider
+transport latency. A completed artifact must never be relabeled as
+production SLO evidence.
+
+These are still bounded **in-process synthetic provider / local host**
+runs, usually only 8/16 events in CI. The production gate requires
+independent ≥600-second steady, burst and fault campaigns with ≥1000
+latency samples per stage, genuine provider transport and remote host
+effect, multiple workers and partitions, PostgreSQL service resource
+attribution, and pre-registered performance budgets. The new raw series
+makes the available PG pipeline measurements independently auditable;
+it does **not** satisfy those remaining #47 criteria by itself.
+
+### Reproducible 1,200-sample PostgreSQL profile
+
+`.github/workflows/postgres-pipeline-1200-raw-samples.yml`
+now runs a separate real PG16 / Node 22 profile of **1,200 distinct**
+MCP-shaped events across 16 reused active triggers and four synthetic
+event names, under an upper-bound pacing rate of 20 events/second. It
+verifies all 1,200 receipts on a reopened pool and checks replay/noise
+do not produce extra host effects. The artifact records actual achieved
+wall time, four latency distributions, raw per-event IDs and timings,
+Node benchmark CPU/RSS, database-wide `pg_stat_database` counters and
+five generated table sizes, hardware and exact checked-out Git SHA.
+
+The job requires 1,200 real samples to pass an independent percentile
+recalculation and rejects any failure to retain the file. **No SLO target
+is silently inferred:** a rate *cap* is not a minimum throughput target,
+and this job is generally shorter than 600 seconds, single-worker,
+provider-in-process, callback-in-process and without injected failure.
+It meets the raw-sample-count prerequisite for this bounded PG pipeline,
+not the full production SLO evidence contract for #47.
