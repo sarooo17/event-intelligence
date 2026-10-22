@@ -83,6 +83,7 @@ grant an agent a tool or permission.
 | `mcp-event-intelligence/conformance` | Host conformance utilities |
 | `mcp-event-intelligence/storage/postgres` | PostgreSQL-backed authoritative store |
 | `mcp-event-intelligence/storage/postgres/archive` | Offline, operator-controlled PostgreSQL source archive bundle writer/verifier; no runtime tools, signing or pruning |
+| `mcp-event-intelligence/storage/postgres/restore` | Operator-only verified MCP source/dedup restore to EMPTY isolated PostgreSQL prefix; no host, no production cutover, no pruning |
 | `mcp-event-intelligence/storage/postgres/audit-archive` | Operator-only full audit chain archive, independent external-checkpoint verification; NO TTL, automatic purge or WORM |
 | `mcp-event-intelligence/diagnostics` | Read-only integration doctor utilities |
 
