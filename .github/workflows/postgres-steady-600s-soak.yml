@@ -10,6 +10,11 @@ on:
 permissions:
   contents: read
 
+# Avoid running duplicate 600s experiments when the same PR is amended.
+concurrency:
+  group: pg-steady-600s-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   pg-steady-600s:
     runs-on: ubuntu-latest
@@ -71,7 +76,8 @@ jobs:
           set -euo pipefail
           node scripts/evidence/postgres-steady-soak-gate.mjs \
             pg-steady-summary.json pg-steady-raw-samples.json \
-            "$BENCH_SOURCE_COMMIT" > pg-steady-verification.json
+            "$BENCH_SOURCE_COMMIT" > pg-steady-verification.json \
+            2> pg-steady-gate-errors.jsonl
           cat pg-steady-verification.json
       - name: Publish exact-HEAD measured raw evidence, including failed runs
         if: always()
@@ -86,3 +92,4 @@ jobs:
             pg-steady-raw-samples.json
             pg-steady-verification.json
             pg-steady-errors.jsonl
+            pg-steady-gate-errors.jsonl
