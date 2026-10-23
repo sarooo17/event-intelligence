@@ -14,21 +14,23 @@ Measurements use monotonic time within `ei-benchmark` for provider request-to-wo
 
 In `ei-validation` → `staging`, add three services with **New → GitHub Repo**, choose `sarooo17/event-intelligence`, and select the same branch/commit for all three. Name the services exactly `ei-worker-a`, `ei-worker-b`, and `ei-benchmark`. In each service's Settings → Source, leave Root Directory at `/` (the repository root). Use the same commit/branch for all services.
 
-Set these commands for both worker services:
+Railway's legacy Config as Code gives file settings precedence over dashboard settings. This repository's root `railway.json` starts the existing JSONL service, so check each deployment's configuration source before using it. For a service already using Config as Code, set Settings → Config as Code → Config File Path to `/railway.validation-worker.json` on both workers and `/railway.validation-benchmark.json` on `ei-benchmark`. For a newly created service that does not use Config as Code, set the dashboard build/start/healthcheck commands below; Railway's current docs say new services cannot opt into legacy Config as Code. Verify the resolved commands on the deployment details page. Railway has deprecated Config as Code with a hard cutoff on 2026-12-01; these per-service JSON files support existing legacy services until then. See [Config as Code](https://docs.railway.com/config-as-code) and [Infrastructure as Code](https://docs.railway.com/infrastructure-as-code).
+
+These are the effective commands for both worker services:
 
 ```sh
 npm ci --no-audit --no-fund && npm run build
 npm run start:validation-worker
 ```
 
-Set these commands for `ei-benchmark`:
+These are the effective commands for `ei-benchmark`:
 
 ```sh
 npm ci --no-audit --no-fund && npm run build
 npm run start:validation-benchmark
 ```
 
-Use Node.js 22. Set the healthcheck path to `/readyz`; the service listens on Railway's injected `PORT` (defaulting to 3000 if run outside Railway). Keep automatic sleep disabled and set one replica per worker and benchmark service. Set all four services to the same region. The supplied project context selected Amsterdam (EU West); verify that each service actually uses that region. Configure a restart policy of **On Failure** for both workers so the explicit crash profile can exercise process recovery.
+Use Node.js 22. The worker config path selects the PostgreSQL worker and the benchmark config path selects the campaign host. Both use healthcheck `/readyz`, listen on Railway's injected `PORT` (defaulting to 3000 if run outside Railway), and restart on failure. Keep automatic sleep disabled and set one replica per worker and benchmark service. Set all four services to the same region. The supplied project context selected Amsterdam (EU West); verify that each service actually uses that region.
 
 Do not generate public domains for the workers, benchmark, or PostgreSQL service. The worker admin, ingest, callback, and campaign endpoints are intended for the project/environment private network. Railway private DNS uses `<service-name>.railway.internal`; private HTTP traffic uses the service port. See [Railway private domains](https://docs.railway.com/networking/domains/working-with-domains) and [healthchecks](https://docs.railway.com/deployments/healthchecks).
 

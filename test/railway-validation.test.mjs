@@ -6,7 +6,7 @@ import net from 'node:net';
 import { once } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { assessPostgresProductionSloEvidence } from '../scripts/evidence/postgres-production-slo-gate.mjs';
 import { percentileStats, parsePrivateServiceUrl } from '../scripts/validation/common.mjs';
@@ -60,6 +60,15 @@ test('CLI keeps a small smoke default and honors explicit persistent trigger sca
   assert.equal(buildStartPayload('smoke', { EI_TRIGGER_COUNT: '10000', EI_EVENT_COUNT: '12' }).triggerCount, 10_000);
   assert.equal(buildStartPayload('smoke', { EI_TRIGGER_COUNT: '10000', EI_EVENT_COUNT: '12' }).eventCount, 12);
   assert.equal(buildStartPayload('steady', { EI_TRIGGER_COUNT: '100000', EI_ALLOW_100K_RUN: 'true' }).allow100k, true);
+});
+
+test('Railway validation config files select the PostgreSQL entrypoints and readiness checks', async () => {
+  const worker = JSON.parse(await readFile(resolve(dirname(fileURLToPath(import.meta.url)), '../railway.validation-worker.json'), 'utf8'));
+  const benchmark = JSON.parse(await readFile(resolve(dirname(fileURLToPath(import.meta.url)), '../railway.validation-benchmark.json'), 'utf8'));
+  assert.equal(worker.deploy.startCommand, 'npm run start:validation-worker');
+  assert.equal(worker.deploy.healthcheckPath, '/readyz');
+  assert.equal(benchmark.deploy.startCommand, 'npm run start:validation-benchmark');
+  assert.equal(benchmark.deploy.healthcheckPath, '/readyz');
 });
 
 test('artifact checksum rejects tampering and incomplete SLO evidence stays blocked', () => {
