@@ -1,0 +1,95 @@
+name: PostgreSQL Steady 600s Soak
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/postgres-steady-600s-soak.yml'
+      - 'scripts/evidence/postgres-steady-soak-gate.mjs'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Avoid running duplicate 600s experiments when the same PR is amended.
+concurrency:
+  group: pg-steady-600s-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pg-steady-600s:
+    runs-on: ubuntu-latest
+    timeout-minutes: 26
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: event_intelligence
+        ports: [5432:5432]
+        options: >-
+          --health-cmd "pg_isready -U postgres -d event_intelligence"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      POSTGRES_URL: postgresql://postgres:postgres@127.0.0.1:5432/event_intelligence
+      EI_PG_PIPELINE_CONFIRM: YES_ISOLATED
+      EI_PG_PIPELINE_REPEAT_CONFIRM: YES_ISOLATED_REPEAT
+      BENCH_SOURCE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+      BENCH_IS_PULL_REQUEST: ${{ github.event_name == 'pull_request' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Pin exact source commit
+        run: test "$(git rev-parse HEAD)" = "$BENCH_SOURCE_COMMIT"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install pinned dependencies and build
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm install --no-save --ignore-scripts --no-audit --no-fund pg@8.16.3
+          npm run build
+      - name: Record runner and database service hardware
+        run: |
+          {
+            echo "source-sha=$BENCH_SOURCE_COMMIT"
+            echo "pg-driver=$(node -p "require('pg/package.json').version")"
+            node --version
+            uname -a
+            lscpu
+            free -m
+            df -h .
+          } > pg-steady-host.txt
+      - name: Real 3040-event / 600s PostgreSQL steady profile (single-worker only)
+        run: |
+          set -euo pipefail
+          node scripts/evidence/postgres-mcp-ingest-wake.mjs \
+            --triggers 16 --events 3040 --sources 8 \
+            --noise 16 --replays 20 --repeat-matches --rate 5 \
+            --raw-evidence-out pg-steady-raw-samples.json \
+            > pg-steady-summary.json 2> pg-steady-errors.jsonl
+      - name: Strict 600s duration, saved-bytes p99 and all receipt verification
+        run: |
+          set -euo pipefail
+          node scripts/evidence/postgres-steady-soak-gate.mjs \
+            pg-steady-summary.json pg-steady-raw-samples.json \
+            "$BENCH_SOURCE_COMMIT" > pg-steady-verification.json \
+            2> pg-steady-gate-errors.jsonl
+          cat pg-steady-verification.json
+      - name: Publish exact-HEAD measured raw evidence, including failed runs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ei-pg-steady-600s-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: warn
+          retention-days: 90
+          path: |
+            pg-steady-host.txt
+            pg-steady-summary.json
+            pg-steady-raw-samples.json
+            pg-steady-verification.json
+            pg-steady-errors.jsonl
+            pg-steady-gate-errors.jsonl
