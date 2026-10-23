@@ -69,7 +69,9 @@ export function verifyPostgresLongOsChaosEvidence(manifest,rawFiles,{
     Math.floor(manifest.postgres.serverVersionNum/10000)===16);
   check(typeof manifest?.hardware?.node==='string' &&
     /^v22\./.test(manifest.hardware.node),'record Node22 runtime');
-  const seenMatches=new Set(),seenWakes=new Set();
+  // Each cohort uses a distinct disposable PostgreSQL table prefix and may
+  // deterministically reuse the same fixture IDs. Deduplication is scoped
+  // to one physical cohort, not across independently isolated databases.
   let activeMs=0,totalRounds=0,wallMs=0;
   for(let i=0;i<manifest.batches.length;i++){
     const entry=manifest.batches[i];
@@ -102,6 +104,7 @@ export function verifyPostgresLongOsChaosEvidence(manifest,rawFiles,{
       raw.metrics.totalWallMs>0,'measured batch wall duration');
     let batchActiveMs=0;
     for(let j=0;j<raw.cohorts.length;j++){
+      const seenMatches=new Set(),seenWakes=new Set();
       const cohort=raw.cohorts[j];
       assert.equal(cohort.cohort,j+1);
       assert.equal(cohort.rounds,raw.workload.roundsPerCohort);
