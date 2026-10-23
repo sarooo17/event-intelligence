@@ -1769,7 +1769,10 @@ export class PostgresEventStore {
               typeof state?.connectionId !== 'string' || !state.connectionId ||
               typeof state.eventName !== 'string' || !state.eventName ||
               !Number.isSafeInteger(state.completenessRevision) ||
-              state.completenessRevision < 1) {
+              state.completenessRevision < 1 ||
+              typeof state.gapUnresolved !== 'boolean' ||
+              (state.truncated !== undefined &&
+                typeof state.truncated !== 'boolean')) {
             const error = new Error('Untrusted MCP source identity/revision in retention inventory');
             error.code = 'EVENT_INTELLIGENCE_MCP_RETENTION_STATE_INVALID';
             throw error;
@@ -2622,9 +2625,22 @@ export class PostgresEventStore {
             ? { truncated: previous.truncated }
             : {}),
       };
-      if (Buffer.byteLength(JSON.stringify(state),'utf8') >
+      const encodedState=JSON.stringify(state);
+      // Fast precheck; the definitive guard below counts PostgreSQL JSONB's
+      // own logical textual representation, including normalized spaces.
+      if (Buffer.byteLength(encodedState,'utf8') >
           MCP_STATE_PAYLOAD_MAX_BYTES) {
         const error = new Error('MCP provider client state exceeds persisted JSONB byte limit');
+        error.code = 'EVENT_INTELLIGENCE_MCP_CLIENT_STATE_SIZE_LIMIT';
+        throw error;
+      }
+      const renderedSize=await client.query(
+        'SELECT octet_length($1::jsonb::text)::int AS logical_bytes',
+        [encodedState],
+      );
+      if (renderedSize.rows[0]?.logical_bytes >
+          MCP_STATE_PAYLOAD_MAX_BYTES) {
+        const error = new Error('MCP provider PostgreSQL canonical JSONB exceeds persisted byte limit');
         error.code = 'EVENT_INTELLIGENCE_MCP_CLIENT_STATE_SIZE_LIMIT';
         throw error;
       }
