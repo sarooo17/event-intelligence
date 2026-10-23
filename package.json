@@ -63,6 +63,8 @@
     "bin/",
     "dist/",
     "scripts/service.mjs",
+    "scripts/validation/",
+    "scripts/evidence/postgres-production-slo-gate.mjs",
     "scripts/lib/",
     "README.md",
     "LICENSE",

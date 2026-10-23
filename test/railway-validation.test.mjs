@@ -136,7 +136,7 @@ test('PostgreSQL 16 HTTP smoke uses two OS workers, real CEP, remote wake receip
   assert.ok(status.report.latency.providerToWorkerResponse.samples === 4);
   assert.ok(status.report.missingMetrics.includes('ingestToMatch (not instrumented inside EI)'));
 
-  const duplicatePacket = { scopeId: `${scopeBase}:host-idempotency`, packet: { wake_id: 'same-wake-id', target: { runtime: 'ei-validation-host', kind: 'task', id: 'x' }, source_event_refs: [] } };
+  const duplicatePacket = { scopeId: status.scopeId, packet: { wake_id: 'same-wake-id', target: { runtime: 'ei-validation-host', kind: 'task', id: 'x' }, source_event_refs: [] } };
   async function hostCall() {
     return fetch(`${benchmarkUrl}/v1/host/wake`, { method: 'POST', headers: { authorization: `Bearer ${hostToken}`, 'content-type': 'application/json' }, body: JSON.stringify(duplicatePacket) });
   }
