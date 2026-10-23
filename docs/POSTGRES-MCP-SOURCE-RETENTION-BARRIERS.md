@@ -28,12 +28,18 @@ The method:
   the read it has a coherent, serialized view of source client revisions and
   the durable EI source counter. The locks release **before** returning:
   an old report is not a concurrent prune authorization.
-- Uses bounded indexed SQL, max 16,384 client states and 30s SQL timeout;
-  rejects over-budget, invalid or lossy persisted states rather than
-  truncating an operator report.
+- Uses bounded indexed SQL, max 16,384 client states, an **8 MiB total**
+  serialized client-state/key budget and 30s statement timeout. An aggregate
+  PostgreSQL-side size check runs **before** transferring or parsing JSONB;
+  individual persistent state payloads are capped at 16 KiB and keys at
+  8 KiB (new writes fail closed; legacy oversized records cannot be inspected).
+  Invalid or lossy records are rejected rather than truncated.
 - Returns a reproducible SHA-256 digest bound to tenant and observed state,
   per-source opaque-cursor *hashes* and completeness revisions, never raw
   provider tokens or subscription argument bodies.
+- Recomputes and verifies each persisted client-state identity key from the
+  actual connection ID, event name and canonical safe JSON arguments; rows
+  whose stored key does not match their payload fail closed.
 - Reports observed unresolved gaps (`gapUnresolved` or `truncated`),
   missing cursors and missing source inventory; **always** reports
   unverified provider cursor→source sequence proof, externally immutable
@@ -56,7 +62,11 @@ gaps, revision changes, non-exposure of opaque cursor values, scope separation,
 bounded inspection, unsafe-number refusal and unchanged source replay/dedup.
 It is part of `npm run test:postgres`.
 
-**Compatibility:** only an additive read-only method and declaration.
+**Compatibility:** an additive read-only method and declaration, plus a
+pre-v1 fail-closed durable provider-state byte policy (16 KiB payload,
+8 KiB key). Hosts with extraordinarily large opaque cursors/arguments
+must reject or redesign that source representation; existing oversized
+legacy rows block operator inspection rather than being silently skipped.
 No new tables/indexes, migration, provider transport changes, background
 work, MCP tools, WORM uploads, production SLO or physical TTL. #47 and all
 transferred #21 unresolved items remain open.
