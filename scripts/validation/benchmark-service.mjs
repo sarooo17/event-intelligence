@@ -203,7 +203,10 @@ export function createBenchmarkService({ env = process.env, pool: suppliedPool, 
   async function requestWorker(worker, path, body, token = config.ingestToken) {
     const response = await fetch(`${worker.url}${path}`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(15000) });
     const payload = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(`${worker.id} ${path} failed with HTTP ${response.status}`);
+    if (!response.ok) {
+      const detail = typeof payload.error === 'string' ? payload.error : payload.error?.message;
+      throw new Error(`${worker.id} ${path} failed with HTTP ${response.status}${detail ? `: ${String(detail).slice(0, 240)}` : ''}`);
+    }
     return payload;
   }
 
@@ -451,14 +454,18 @@ export function createBenchmarkService({ env = process.env, pool: suppliedPool, 
         if (campaign.status === 'cleaned') return sendJson(response, 409, { error: 'campaign-already-cleaned' });
         const body = await readJson(request, 4096);
         if (body.confirmation !== `DELETE_ONLY_CAMPAIGN:${campaign.id}`) return sendJson(response, 400, { error: 'explicit campaign cleanup confirmation required' });
-        if (!campaign.artifactPath || !campaign.rawArtifactPath) return sendJson(response, 409, { error: 'verified campaign artifacts are required before cleanup' });
-        const artifactText = await readFile(campaign.artifactPath, 'utf8');
-        const artifactChecksum = await readFile(`${campaign.artifactPath.replace(/\.json$/, '')}.sha256`, 'utf8');
-        const artifact = verifyCampaignArtifact(artifactText, artifactChecksum);
-        const samplesText = await readFile(campaign.rawArtifactPath, 'utf8');
-        const samplesChecksum = await readFile(`${campaign.rawArtifactPath}.sha256`, 'utf8');
-        const samples = verifyRawSampleArtifact(samplesText, samplesChecksum, artifact.report?.rawSamples?.rows);
-        if (!artifact.valid || !samples.valid || artifact.report.campaignId !== campaign.id || artifact.report.scopeId !== campaign.scopeId) return sendJson(response, 409, { error: 'campaign artifact verification failed; data retained' });
+        const interruptedWithoutArtifacts = campaign.status === 'interrupted' && !campaign.artifactPath && !campaign.rawArtifactPath;
+        if (campaign.scopeId !== `${config.scopeBase}:${campaign.id}`) return sendJson(response, 409, { error: 'campaign scope does not match its generated identifier; data retained' });
+        if (!interruptedWithoutArtifacts) {
+          if (!campaign.artifactPath || !campaign.rawArtifactPath) return sendJson(response, 409, { error: 'verified campaign artifacts are required before cleanup' });
+          const artifactText = await readFile(campaign.artifactPath, 'utf8');
+          const artifactChecksum = await readFile(`${campaign.artifactPath.replace(/\.json$/, '')}.sha256`, 'utf8');
+          const artifact = verifyCampaignArtifact(artifactText, artifactChecksum);
+          const samplesText = await readFile(campaign.rawArtifactPath, 'utf8');
+          const samplesChecksum = await readFile(`${campaign.rawArtifactPath}.sha256`, 'utf8');
+          const samples = verifyRawSampleArtifact(samplesText, samplesChecksum, artifact.report?.rawSamples?.rows);
+          if (!artifact.valid || !samples.valid || artifact.report.campaignId !== campaign.id || artifact.report.scopeId !== campaign.scopeId) return sendJson(response, 409, { error: 'campaign artifact verification failed; data retained' });
+        }
         const client = await pool.connect();
         let deleted = {};
         try {
@@ -476,7 +483,7 @@ export function createBenchmarkService({ env = process.env, pool: suppliedPool, 
         campaign.status = 'cleaned';
         campaign.cleanupDeletedRows = deleted;
         await persistCampaign(campaign);
-        return sendJson(response, 200, { campaignId: campaign.id, status: campaign.status, deletedRows: deleted, artifactsRetained: true });
+        return sendJson(response, 200, { campaignId: campaign.id, status: campaign.status, deletedRows: deleted, artifactsRetained: !interruptedWithoutArtifacts, cleanupBasis: interruptedWithoutArtifacts ? 'interrupted-campaign-explicit-confirmation' : 'verified-artifacts' });
       }
       return sendJson(response, 404, { error: 'not-found' });
     } catch (error) {

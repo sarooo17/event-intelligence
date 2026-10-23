@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { Pool } from 'pg';
 import { assessPostgresProductionSloEvidence } from '../scripts/evidence/postgres-production-slo-gate.mjs';
 import { percentileStats, parsePrivateServiceUrl } from '../scripts/validation/common.mjs';
 import { verifyCampaignArtifact, verifyRawSampleArtifact } from '../scripts/validation/artifact.mjs';
@@ -179,6 +180,14 @@ test('PostgreSQL 16 HTTP smoke uses two OS workers, real CEP, remote wake receip
   assert.equal(secondReceipt.duplicate, true);
   assert.ok(!JSON.stringify(status).includes(token));
 
+  const interruptedId = randomUUID();
+  const interruptedScope = `${scopeBase}:${interruptedId}`;
+  const testPool = new Pool({ connectionString: databaseUrl });
+  try {
+    const metadata = { id: interruptedId, scopeId: interruptedScope, options: { profile: 'smoke' }, createdAt: new Date().toISOString(), status: 'running', attemptedEvents: 0 };
+    await testPool.query(`INSERT INTO "${prefix}_campaigns" (campaign_id, scope_id, metadata) VALUES ($1, $2, $3::jsonb)`, [interruptedId, interruptedScope, JSON.stringify(metadata)]);
+  } finally { await testPool.end(); }
+
   benchmark.kill('SIGTERM');
   await once(benchmark, 'exit');
   benchmark = spawnService('scripts/validation/benchmark-service.mjs', benchmarkPort, { EI_CONTROL_TOKEN: controlToken, EI_WORKER_A_URL: workerAUrl, EI_WORKER_B_URL: workerBUrl });
@@ -190,6 +199,14 @@ test('PostgreSQL 16 HTTP smoke uses two OS workers, real CEP, remote wake receip
   assert.equal(restoredStatus.status, 'completed');
   assert.equal(restoredStatus.observed.acceptedEvents, 4);
   assert.equal(restoredStatus.report.campaignId, campaignId);
+
+  const interruptedStatus = await fetch(`${benchmarkUrl}/v1/campaigns/${interruptedId}`, { headers: { authorization: `Bearer ${controlToken}` } });
+  assert.equal((await interruptedStatus.json()).status, 'interrupted');
+  const interruptedCleanup = await fetch(`${benchmarkUrl}/v1/campaigns/${interruptedId}/cleanup`, { method: 'POST', headers: { authorization: `Bearer ${controlToken}`, 'content-type': 'application/json' }, body: JSON.stringify({ confirmation: `DELETE_ONLY_CAMPAIGN:${interruptedId}` }) });
+  assert.equal(interruptedCleanup.status, 200);
+  const interruptedCleanupSummary = await interruptedCleanup.json();
+  assert.equal(interruptedCleanupSummary.cleanupBasis, 'interrupted-campaign-explicit-confirmation');
+  assert.equal(interruptedCleanupSummary.artifactsRetained, false);
 
   workerB.kill('SIGTERM');
   await once(workerB, 'exit');

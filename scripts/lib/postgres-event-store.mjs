@@ -1000,7 +1000,7 @@ export class PostgresEventStore {
       " OR ((d.payload->>'status')='delivered' AND (" +
       " COALESCE((SELECT h.payload->>'status' FROM " + this.history + " AS h WHERE h.scope_id=d.scope_id AND h.kind='wake' AND h.record_key=d.payload->>'wakeId' ORDER BY h.history_id DESC LIMIT 1),'') <> 'delivered'" +
       " OR COALESCE((SELECT m.payload->>'status' FROM " + this.records + " AS m WHERE m.scope_id=d.scope_id AND m.kind='trigger_match' AND m.record_key=d.payload->>'matchId' LIMIT 1),'') <> 'fired'" +
-      ' ))' +
+      ' )))' +
       " ORDER BY NULLIF(d.payload->>'nextAttemptAt','')::timestamptz NULLS LAST, d.record_key",
       [this.scopeId, 'wake_delivery', nowIso],
     );
