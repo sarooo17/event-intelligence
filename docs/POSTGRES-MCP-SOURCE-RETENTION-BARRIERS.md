@@ -31,15 +31,19 @@ The method:
 - Uses bounded indexed SQL, max 16,384 client states, an **8 MiB total**
   serialized client-state/key budget and 30s statement timeout. An aggregate
   PostgreSQL-side size check runs **before** transferring or parsing JSONB;
-  individual persistent state payloads are capped at 16 KiB and keys at
-  8 KiB (new writes fail closed; legacy oversized records cannot be inspected).
+  individual persistent state payloads are capped at 16 KiB of actual
+  PostgreSQL `JSONB::text` (not compact `JSON.stringify` and not TOAST
+  compressed bytes) and keys at 8 KiB. New writes fail closed, including
+  canonical whitespace expansion; legacy oversized rows block inspection.
   Invalid or lossy records are rejected rather than truncated.
 - Returns a reproducible SHA-256 digest bound to tenant and observed state,
   per-source opaque-cursor *hashes* and completeness revisions, never raw
   provider tokens or subscription argument bodies.
 - Recomputes and verifies each persisted client-state identity key from the
   actual connection ID, event name and canonical safe JSON arguments; rows
-  whose stored key does not match their payload fail closed.
+  whose stored key does not match their payload fail closed. Persisted
+  `gapUnresolved` and optional `truncated` must be real booleans;
+  malformed values never masquerade as complete delivery.
 - Reports observed unresolved gaps (`gapUnresolved` or `truncated`),
   missing cursors and missing source inventory; **always** reports
   unverified provider cursor→source sequence proof, externally immutable
