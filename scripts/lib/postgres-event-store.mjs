@@ -2318,7 +2318,15 @@ export class PostgresEventStore {
       };
       for (const {payload_json:rawPayload} of history.rows) {
         let record;
-        try {record=JSON.parse(rawPayload);}catch{throw invalid();}
+        try {
+          // The provenance comparison uses lossless PG JSONB::text, but
+          // returning a JS Number could STILL silently round a genuine
+          // provider integer/decimal even when history and dedup match.
+          // Until there is a precision-aware event data representation,
+          // refuse to dispatch a corrupted success-shaped replay.
+          assertAuditJsonNumberPrecision(rawPayload);
+          record=JSON.parse(rawPayload);
+        } catch { throw invalid(); }
         if (!Number.isSafeInteger(record?.sequence) ||
             record.sequence !== expected ||
             typeof record.serverId !== 'string' ||

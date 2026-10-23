@@ -79,3 +79,16 @@ idempotency state; fault-injected cutover tests and operator-authorized
 physical pruning. This isolated drill proves source history and dedup are
 restorable without data loss, but it must **never** be attached to a live
 host before those additional conditions are implemented and reviewed.
+
+## Precision-safe post-restore inspection
+
+An isolated restore preserves exact PostgreSQL `JSONB::text`, including
+unrepresentable JavaScript integers such as `9007199254740993`. This is a
+**lossless storage/recovery guarantee**, not permission to decode those events
+as JavaScript Number values. The live `listMcpOccurrencesAfter()` reader
+now fails closed on such unsafe numeric tokens, even when the historical
+source and dedup rows match. Operators can independently inspect original
+raw PostgreSQL JSONB text or authenticated archive windows; they must not
+route those values through a lossy JavaScript replay/agent until a reviewed
+precision-aware conversion contract exists. The PG16 isolated-restore
+regression verifies exact raw bytes and the expected fail-closed live reader.

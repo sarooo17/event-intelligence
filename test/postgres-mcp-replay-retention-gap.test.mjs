@@ -95,6 +95,25 @@ integration('PG16 independent workers refuse missing replay history, missing ded
       "'9007199254740993'::jsonb) WHERE scope_id=$1"+
       " AND kind='mcp_occurrence'",['replay-precision']);
     await assert.rejects(()=>precise.listMcpOccurrencesAfter(0),gap);
+    // Stronger regression: corrupt BOTH authoritative history and durable
+    // dedup to the same lossless PG JSONB numeric value. Comparing their
+    // raw strings succeeds, but returning JSON.parse would silently round
+    // 9007199254740993 to 9007199254740992. Replay must still fail closed.
+    await poolA.query('UPDATE '+records+
+      " SET payload=jsonb_set(payload,'{event,data,amount}',"+
+      "'9007199254740993'::jsonb) WHERE scope_id=$1"+
+      " AND kind='mcp_occurrence_key'",['replay-precision']);
+    const exactHistorical=await poolA.query('SELECT payload::text AS raw FROM '+
+      history+" WHERE scope_id=$1 AND kind='mcp_occurrence'",['replay-precision']);
+    const exactDedup=await poolA.query('SELECT payload::text AS raw FROM '+
+      records+" WHERE scope_id=$1 AND kind='mcp_occurrence_key'",['replay-precision']);
+    assert.equal(exactHistorical.rows[0].raw,exactDedup.rows[0].raw,
+      'raw dedup and history are identical, so equality cannot catch precision loss');
+    assert.match(exactHistorical.rows[0].raw,/9007199254740993/);
+    await assert.rejects(()=>precise.listMcpOccurrencesAfter(0),gap,
+      'lossy Number decoding must never masquerade as valid replay');
+    await assert.rejects(()=>precise.listMcpOccurrencesAfter(1),gap,
+      'a current cursor must not bypass unsafe source history');
     // Reader does not block the provider writer: a single PG MVCC snapshot
     // sees all or none of concurrent transactional source+dedup inserts.
     // Repeated read snapshots may end at different valid head sequences,

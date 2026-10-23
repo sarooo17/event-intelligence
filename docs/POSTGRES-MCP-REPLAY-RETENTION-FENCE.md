@@ -103,3 +103,25 @@ subscription opaque cursors, active Pattern/CEP state, wake receipts and
 exactly-once host effects still require a separately designed atomic
 cutover, off-host immutable evidence and replay-floor protocol. No TTL
 is enabled and no physical deletion is authorized.
+
+## Additional fail-closed numeric replay policy (October 23, 2026)
+
+The historical event and dedup rows may be **identical** in PostgreSQL
+`JSONB::text` yet carry an integer or high-precision decimal that
+`JSON.parse` silently rounds before EI returns the event to an agent.
+For example, a real PostgreSQL source amount `9007199254740993`
+would become the JavaScript Number `9007199254740992` despite a
+successful raw history/dedup comparison. Before decoding each persisted
+source occurrence, `listMcpOccurrencesAfter()` now applies the same
+strict numeric-precision preflight already used by the audit chain. Such
+unsafe payloads fail closed with
+`EVENT_INTELLIGENCE_MCP_REPLAY_HISTORY_GAP`; no rounded event data is
+returned, even when the cursor requests only later events. The real PG16
+regression mutates *both* source history and dedup to the same exact unsafe
+numeric lexeme and confirms replay refuses it.
+
+This is an intentional safety restriction until a precision-aware live
+source representation is supported. Operators/providers should encode
+amounts requiring exactness as validated decimal strings. This change
+does **not** introduce an archive-backed replay floor or authorize
+removing any history. It adds no persisted schema migration.
