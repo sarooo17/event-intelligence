@@ -325,6 +325,26 @@ export declare class PostgresEventStore {
   }): Promise<McpOccurrenceArchiveWindow>;
   latestMcpEventSequence(): Promise<number>;
   listMcpOccurrencesAfter(sequence: number): Promise<any[]>;
+  /** Read-only snapshot; never authorizes physical pruning or translates opaque provider cursors to EI sequence floors. */
+  inspectMcpSourceRetentionBarriers(options?: {
+    maxSources?: number;
+    maxScanMs?: number;
+  }): Promise<{
+    schema: 'event-intelligence.mcp-retention-source-inventory.v1';
+    scopeId: string;
+    sourceTailSequence: number;
+    sourceCount: number;
+    sources: ReadonlyArray<Readonly<{
+      identitySha256: string;
+      completenessRevision: number;
+      cursorSha256: string | null;
+      gapUnresolved: boolean;
+    }>>;
+    snapshotSha256: string;
+    blockers: ReadonlyArray<string>;
+    physicalSourcePruneAuthorized: false;
+    productionReplayFloorEstablished: false;
+  }>;
   getMcpClientState(connectionId: string, eventName: string, args?: Record<string, unknown>): Promise<any | null>;
   listMcpClientStates(connectionId?: string): Promise<any[]>;
   putMcpClientState(input: any): Promise<any>;
