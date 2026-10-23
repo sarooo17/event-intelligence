@@ -12,7 +12,7 @@ import { assessPostgresProductionSloEvidence } from '../scripts/evidence/postgre
 import { percentileStats, parsePrivateServiceUrl } from '../scripts/validation/common.mjs';
 import { verifyCampaignArtifact, verifyRawSampleArtifact } from '../scripts/validation/artifact.mjs';
 import { readWorkerConfig } from '../scripts/validation/worker-service.mjs';
-import { readBenchmarkConfig, validateCampaign, waitForLaunch } from '../scripts/validation/benchmark-service.mjs';
+import { campaignLaunchAt, readBenchmarkConfig, validateCampaign, waitForLaunch } from '../scripts/validation/benchmark-service.mjs';
 
 test('validation config fails closed and permits only explicitly enabled local test URLs', () => {
   assert.throws(() => readWorkerConfig({}), /EI_WORKER_ID is required/);
@@ -47,6 +47,11 @@ test('burst launch waits through every capped sleep until the scheduled boundary
   await waitForLaunch(4500, { now: () => clock, sleep: async ms => { sleeps.push(ms); clock += ms; } });
   assert.deepEqual(sleeps, [1000, 1000, 1000, 1000, 500]);
   assert.equal(clock, 4500);
+});
+
+test('steady schedules each request and burst schedules five-second groups', () => {
+  assert.deepEqual([0, 1, 2, 3].map(index => campaignLaunchAt('steady', 100, index, 20)), [100, 150, 200, 250]);
+  assert.deepEqual([0, 1, 2, 99, 100].map(index => campaignLaunchAt('burst', 100, index, 20)), [100, 100, 100, 100, 5100]);
 });
 
 test('artifact checksum rejects tampering and incomplete SLO evidence stays blocked', () => {

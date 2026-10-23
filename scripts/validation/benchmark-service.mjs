@@ -84,6 +84,14 @@ export async function waitForLaunch(launchAt, { now = () => performance.now(), s
   }
 }
 
+export function campaignLaunchAt(profile, start, eventIndex, requestedRatePerSecond) {
+  if (profile === 'burst') {
+    const burstSize = Math.max(1, Math.floor(requestedRatePerSecond * 5));
+    return start + Math.floor(eventIndex / burstSize) * 5000;
+  }
+  return start + eventIndex * (1000 / requestedRatePerSecond);
+}
+
 export function createBenchmarkService({ env = process.env, pool: suppliedPool, logger = console } = {}) {
   const config = readBenchmarkConfig(env);
   const pool = suppliedPool ?? new Pool({ connectionString: config.databaseUrl, max: 8, connectionTimeoutMillis: 5000, idleTimeoutMillis: 30000, statement_timeout: 15000, application_name: 'ei-benchmark', keepAlive: true });
@@ -283,6 +291,7 @@ export function createBenchmarkService({ env = process.env, pool: suppliedPool, 
     let index = 0;
     let workerAStopped = false;
     let crashPromise = null;
+    const inFlight = new Set();
     async function sendOne(eventIndex) {
       if (controller.signal.aborted) return;
       if (options.profile === 'fault-injected' && eventIndex >= Math.floor(options.eventCount / 2)) {
@@ -318,17 +327,16 @@ export function createBenchmarkService({ env = process.env, pool: suppliedPool, 
         campaign.eventStarts.delete(eventId);
       }
     }
-    const interval = 1000 / options.requestedRatePerSecond;
     while (index < options.eventCount && performance.now() < due && !controller.signal.aborted) {
-      const burstSize = Math.max(1, Math.floor(options.requestedRatePerSecond * 5));
-      const launchAt = options.profile === 'burst'
-        ? start + Math.floor(index / burstSize) * 5000
-        : start + index * interval;
+      const launchAt = campaignLaunchAt(options.profile, start, index, options.requestedRatePerSecond);
       if (!controller.signal.aborted) await waitForLaunch(launchAt, { signal: controller.signal });
-      const active = [];
-      for (let slot = 0; slot < options.concurrency && index < options.eventCount && performance.now() < due; slot++) active.push(sendOne(index++));
-      await Promise.all(active);
+      if (controller.signal.aborted || performance.now() >= due) break;
+      while (inFlight.size >= options.concurrency && !controller.signal.aborted) await Promise.race(inFlight);
+      if (controller.signal.aborted) break;
+      const task = sendOne(index++).finally(() => inFlight.delete(task));
+      inFlight.add(task);
     }
+    await Promise.all(inFlight);
     campaign.elapsedSeconds = (performance.now() - start) / 1000;
     if (controller.signal.aborted) campaign.status = 'stopped';
     else campaign.status = campaign.errors.length ? 'completed-with-errors' : 'completed';
@@ -367,6 +375,8 @@ export function createBenchmarkService({ env = process.env, pool: suppliedPool, 
         if ([...campaigns.values()].some(campaign => ['queued', 'preparing', 'running'].includes(campaign.status))) return sendJson(response, 409, { error: 'campaign-already-running' });
         if (campaigns.size >= 1000) return sendJson(response, 409, { error: 'campaign-history-capacity-reached' });
         const body = await readJson(request, 32 * 1024);
+        if ([...campaigns.values()].some(campaign => ['queued', 'preparing', 'running'].includes(campaign.status))) return sendJson(response, 409, { error: 'campaign-already-running' });
+        if (campaigns.size >= 1000) return sendJson(response, 409, { error: 'campaign-history-capacity-reached' });
         const options = validateCampaign(body, config);
         const id = randomUUID();
         const campaign = emptyCampaign(id, `${config.scopeBase}:${id}`, options);
