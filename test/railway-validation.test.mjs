@@ -47,14 +47,14 @@ test('latency aggregation computes nearest-rank p50/p95/p99 and rejects invalid 
 test('consumer exposes worker-local monotonic ingest-to-match and match-to-wake spans', async () => {
   const match = { matchId: 'match-1', triggerId: 'trigger-1', triggerVersion: '1', status: 'matched' };
   const consumer = new CompositeEventConsumer({
-    store: { async getTrigger() { return { triggerId: 'trigger-1', version: '1', target: { runtime: 'remote-host' } }; } },
+    store: { async getTrigger() { await new Promise(resolve => setTimeout(resolve, 20)); return { triggerId: 'trigger-1', version: '1', target: { runtime: 'remote-host' } }; } },
     triggerEngine: { async ingest() { return [{ matched: true, triggerId: 'trigger-1', match }]; } },
     wakeCoordinator: { async deliverMatched() { return { status: 'wake_delivered', wake: { wakeId: 'wake-1' } }; } },
   });
   const result = await consumer.ingestCorrelatable({ eventId: 'event-1', traceId: 'trace-1' });
   assert.equal(result.timings.matchToWakeSamplesMs.length, 1);
   assert.ok(Number.isFinite(result.timings.ingestToMatchMs) && result.timings.ingestToMatchMs >= 0);
-  assert.ok(Number.isFinite(result.timings.matchToWakeSamplesMs[0]) && result.timings.matchToWakeSamplesMs[0] >= 0);
+  assert.ok(Number.isFinite(result.timings.matchToWakeSamplesMs[0]) && result.timings.matchToWakeSamplesMs[0] >= 15, 'match-to-wake includes trigger-definition lookup time after matching');
 });
 
 test('burst launch waits through every capped sleep until the scheduled boundary', async () => {

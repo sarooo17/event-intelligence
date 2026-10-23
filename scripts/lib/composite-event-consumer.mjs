@@ -58,7 +58,8 @@ export class CompositeEventConsumer {
     // between the provider, worker, and host containers.
     const ingestStartedAt = performance.now();
     const results = await this.triggerEngine.ingest(event);
-    const ingestToMatchMs = performance.now() - ingestStartedAt;
+    const matchCompletedAt = performance.now();
+    const ingestToMatchMs = matchCompletedAt - ingestStartedAt;
     const deliveries = [];
     const matchToWakeSamplesMs = [];
     const derivedEvents = [];
@@ -171,10 +172,9 @@ export class CompositeEventConsumer {
         continue;
       }
 
-      const matchToWakeStartedAt = performance.now();
       const delivery = await coordinator.deliverMatched(result.match);
       if (delivery.status === 'wake_delivered') {
-        matchToWakeSamplesMs.push(performance.now() - matchToWakeStartedAt);
+        matchToWakeSamplesMs.push(performance.now() - matchCompletedAt);
       }
       const persistedWake = delivery.wake;
 
