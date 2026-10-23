@@ -85,8 +85,12 @@ integration('PG16 source archive restores complete raw JSONB, dedup and sequence
     assert.match(marker.rows[0].adopted_from,
       /^mcp-source-archive-sha256:[0-9a-f]{64}$/);
     assert.deepEqual(await target.getMcpOccurrenceArchiveCheckpoint(),pinned);
-    const full=await target.listMcpOccurrencesAfter(0);
-    assert.deepEqual(full.map(x=>x.sequence),[1,2,3,4]);
+    // Restoration is lossless: the exact >2^53 JSONB amount survived.
+    // But returning this as a JS Number would silently round it. Until
+    // precision-aware source replay exists, the live read must fail closed,
+    // while source archive proof and raw isolated rows remain available.
+    await assert.rejects(()=>target.listMcpOccurrencesAfter(0),
+      error=>error?.code==='EVENT_INTELLIGENCE_MCP_REPLAY_HISTORY_GAP');
     const raw=await restorePool.query(
       'SELECT payload::text AS json FROM "'+targetPrefix+
       '_history" WHERE scope_id=$1 AND kind=$2 ORDER BY history_id',
