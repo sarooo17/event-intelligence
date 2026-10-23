@@ -130,6 +130,44 @@ integration('PG16 source retention inventory is scope-bound, fenced and never au
       ]);
     assert.equal((await a.inspectMcpSourceRetentionBarriers()).sourceCount,2);
 
+    // Codex P2: JSON.stringify is more compact than PostgreSQL's JSONB::text.
+    // Pick a cursor whose compact JS state fits exactly within the limit,
+    // while PostgreSQL's canonical rendering with spaces exceeds it.
+    const persistedA=await a.getMcpClientState(
+      'conn-A','fixture.retention.changed',{project:'sample-A'});
+    const minimal={...persistedA,cursor:''};
+    const free=16384-Buffer.byteLength(JSON.stringify(minimal),'utf8');
+    assert.ok(free>100);
+    const expanded={...minimal,cursor:'x'.repeat(free)};
+    assert.ok(Buffer.byteLength(JSON.stringify(expanded),'utf8')<=16384);
+    const rendered=await poolA.query(
+      'SELECT octet_length($1::jsonb::text)::int AS n',
+      [JSON.stringify(expanded)]);
+    assert.ok(rendered.rows[0].n>16384,'PostgreSQL inserts separator bytes');
+    await assert.rejects(()=>a.putMcpClientState(expanded),
+      e=>e?.code==='EVENT_INTELLIGENCE_MCP_CLIENT_STATE_SIZE_LIMIT');
+    assert.equal((await a.getMcpClientState(
+      'conn-A','fixture.retention.changed',{project:'sample-A'}))
+      .completenessRevision,persistedA.completenessRevision,
+      'failed oversized update must roll back revision');
+
+    // Codex P2: a restored gap field with an unexpected type cannot be
+    // interpreted as false, even when the source key is canonical.
+    for (const path of ['gapUnresolved','truncated']) {
+      await poolA.query('UPDATE "'+prefix+'_records" SET payload=jsonb_set('+
+        "payload,ARRAY[$1::text],to_jsonb('invalid'::text))"+
+        ' WHERE scope_id=$2 AND kind=$3 AND record_key=$4',[
+          path,'tenant-A','mcp_client_state',first.record_key,
+        ]);
+      await assert.rejects(()=>a.inspectMcpSourceRetentionBarriers(),
+        e=>e?.code==='EVENT_INTELLIGENCE_MCP_RETENTION_STATE_INVALID');
+      await poolA.query('UPDATE "'+prefix+'_records" SET payload=$1::jsonb'+
+        ' WHERE scope_id=$2 AND kind=$3 AND record_key=$4',[
+          first.original,'tenant-A','mcp_client_state',first.record_key,
+        ]);
+    }
+    assert.equal((await a.inspectMcpSourceRetentionBarriers()).sourceCount,2);
+
     // Precision-dependent state revisions must never be rounded into a
     // plausible retention snapshot, even with zero pending delivery gaps.
     await poolA.query('UPDATE "'+prefix+'_records" SET payload=jsonb_set('+
