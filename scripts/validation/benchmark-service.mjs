@@ -19,6 +19,7 @@ const MAX_TRIGGERS = 100_000;
 const MAX_CONCURRENCY = 32;
 const MAX_RAW_SAMPLE_ROWS = 100_000;
 const MAX_ARTIFACT_BYTES = 32 * 1024 * 1024;
+const ACTIVE_CAMPAIGN_STATES = new Set(['queued', 'preparing', 'running', 'finalizing']);
 
 export function readBenchmarkConfig(env = process.env) {
   const databaseUrl = requiredEnv(env, 'DATABASE_URL', { minLength: 12 });
@@ -114,7 +115,7 @@ export function createBenchmarkService({ env = process.env, pool: suppliedPool, 
       if (!metadata || typeof metadata.id !== 'string' || typeof metadata.scopeId !== 'string' || !metadata.scopeId.startsWith(`${config.scopeBase}:`)) continue;
       const campaign = { ...emptyCampaign(metadata.id, metadata.scopeId, metadata.options, metadata.createdAt), ...metadata,
         verifiedWakes: new Set(), eventStarts: new Map(), rawSampleRows: [], providerToWorkerSamples: [], hostEffectSamples: [], endToEndSamples: [], workerRequestCounts: new Map(Object.entries(metadata.workerRequestCounts || {})), errors: metadata.errors || [], faults: metadata.faults || [] };
-      if (['queued', 'preparing', 'running'].includes(campaign.status)) {
+      if (ACTIVE_CAMPAIGN_STATES.has(campaign.status)) {
         campaign.status = 'interrupted';
         campaign.error = { message: 'benchmark service restarted while this campaign was active' };
       }
@@ -221,7 +222,7 @@ export function createBenchmarkService({ env = process.env, pool: suppliedPool, 
     const metrics = {
       schema: 'event-intelligence.railway-validation-campaign.v1',
       campaignId: campaign.id, profile: campaign.options.profile, scopeId: campaign.scopeId,
-      status: campaign.status,
+      status: campaign.finalStatus || campaign.status,
       startedAt: campaign.startedAt, completedAt: new Date().toISOString(),
       sourceCommitSha: env.SOURCE_COMMIT_SHA || env.RAILWAY_GIT_COMMIT_SHA || null,
       environment: { node: process.version, postgresVersion, pgDriver: 'pg 8.16.3', cpuModel: null, benchmarkRssBytes: process.memoryUsage().rss, railwayRegion: env.RAILWAY_REPLICA_REGION || null },
@@ -333,14 +334,17 @@ export function createBenchmarkService({ env = process.env, pool: suppliedPool, 
       if (controller.signal.aborted || performance.now() >= due) break;
       while (inFlight.size >= options.concurrency && !controller.signal.aborted) await Promise.race(inFlight);
       if (controller.signal.aborted) break;
-      const task = sendOne(index++).finally(() => inFlight.delete(task));
+      const eventIndex = index++;
+      const task = sendOne(eventIndex).catch(error => {
+        campaign.errorCount++;
+        if (campaign.errors.length < 100) campaign.errors.push({ worker: 'fault-injection', message: String(error.message).slice(0, 180) });
+      }).finally(() => inFlight.delete(task));
       inFlight.add(task);
     }
     await Promise.all(inFlight);
     campaign.elapsedSeconds = (performance.now() - start) / 1000;
-    if (controller.signal.aborted) campaign.status = 'stopped';
-    else campaign.status = campaign.errors.length ? 'completed-with-errors' : 'completed';
-    campaign.completedAt = new Date().toISOString();
+    campaign.finalStatus = controller.signal.aborted ? 'stopped' : (campaign.errors.length ? 'completed-with-errors' : 'completed');
+    campaign.status = 'finalizing';
     await persistCampaign(campaign);
     const dbEnd = await pool.query("SELECT pg_database_size(current_database())::bigint AS bytes, (SELECT xact_commit FROM pg_stat_database WHERE datname=current_database())::bigint AS commits");
     campaign.databaseSizeEndBytes = Number(dbEnd.rows[0].bytes);
@@ -356,6 +360,9 @@ export function createBenchmarkService({ env = process.env, pool: suppliedPool, 
         : null;
     }
     await writeArtifacts(campaign);
+    campaign.status = campaign.finalStatus;
+    campaign.completedAt = new Date().toISOString();
+    await persistCampaign(campaign);
     activeAborters.delete(campaign.id);
   }
 
@@ -372,17 +379,17 @@ export function createBenchmarkService({ env = process.env, pool: suppliedPool, 
       if (!bearerMatches(request, config.controlToken)) return sendJson(response, 401, { error: 'unauthorized' });
       if (!ready) return sendJson(response, 503, { error: 'not-ready' });
       if (request.method === 'POST' && url.pathname === '/v1/campaigns') {
-        if ([...campaigns.values()].some(campaign => ['queued', 'preparing', 'running'].includes(campaign.status))) return sendJson(response, 409, { error: 'campaign-already-running' });
+        if ([...campaigns.values()].some(campaign => ACTIVE_CAMPAIGN_STATES.has(campaign.status))) return sendJson(response, 409, { error: 'campaign-already-running' });
         if (campaigns.size >= 1000) return sendJson(response, 409, { error: 'campaign-history-capacity-reached' });
         const body = await readJson(request, 32 * 1024);
-        if ([...campaigns.values()].some(campaign => ['queued', 'preparing', 'running'].includes(campaign.status))) return sendJson(response, 409, { error: 'campaign-already-running' });
+        if ([...campaigns.values()].some(campaign => ACTIVE_CAMPAIGN_STATES.has(campaign.status))) return sendJson(response, 409, { error: 'campaign-already-running' });
         if (campaigns.size >= 1000) return sendJson(response, 409, { error: 'campaign-history-capacity-reached' });
         const options = validateCampaign(body, config);
         const id = randomUUID();
         const campaign = emptyCampaign(id, `${config.scopeBase}:${id}`, options);
         campaigns.set(id, campaign);
         await persistCampaign(campaign);
-        const task = runCampaign(campaign).catch(async error => { campaign.status = 'failed'; campaign.error = safeError(error); campaign.completedAt = new Date().toISOString(); activeAborters.delete(id); await writeArtifacts(campaign).catch(writeError => logger.error?.(JSON.stringify({ event: 'campaign_artifact_failed', ...safeError(writeError) }))); await persistCampaign(campaign).catch(writeError => logger.error?.(JSON.stringify({ event: 'campaign_metadata_failed', ...safeError(writeError) }))); }).finally(() => campaignTasks.delete(id));
+        const task = runCampaign(campaign).catch(async error => { campaign.finalStatus = 'failed'; campaign.status = 'finalizing'; campaign.error = safeError(error); campaign.completedAt = new Date().toISOString(); await writeArtifacts(campaign).catch(writeError => logger.error?.(JSON.stringify({ event: 'campaign_artifact_failed', ...safeError(writeError) }))); campaign.status = 'failed'; activeAborters.delete(id); await persistCampaign(campaign).catch(writeError => logger.error?.(JSON.stringify({ event: 'campaign_metadata_failed', ...safeError(writeError) }))); }).finally(() => campaignTasks.delete(id));
         campaignTasks.set(id, task);
         return sendJson(response, 202, { campaignId: id, status: campaign.status, scopeId: campaign.scopeId });
       }
@@ -396,6 +403,7 @@ export function createBenchmarkService({ env = process.env, pool: suppliedPool, 
       if (match && request.method === 'POST' && match[2]) {
         const campaign = campaigns.get(match[1]);
         if (!campaign) return sendJson(response, 404, { error: 'campaign-not-found' });
+        if (campaign.status === 'finalizing') return sendJson(response, 409, { error: 'campaign-is-finalizing' });
         const controller = activeAborters.get(campaign.id);
         controller?.abort();
         return sendJson(response, 202, { campaignId: campaign.id, status: 'stop-requested' });
@@ -404,7 +412,7 @@ export function createBenchmarkService({ env = process.env, pool: suppliedPool, 
       if (cleanupMatch && request.method === 'POST') {
         const campaign = campaigns.get(cleanupMatch[1]);
         if (!campaign) return sendJson(response, 404, { error: 'campaign-not-found' });
-        if (['queued', 'preparing', 'running'].includes(campaign.status)) return sendJson(response, 409, { error: 'campaign-is-active' });
+        if (ACTIVE_CAMPAIGN_STATES.has(campaign.status)) return sendJson(response, 409, { error: 'campaign-is-active' });
         if (campaign.status === 'cleaned') return sendJson(response, 409, { error: 'campaign-already-cleaned' });
         const body = await readJson(request, 4096);
         if (body.confirmation !== `DELETE_ONLY_CAMPAIGN:${campaign.id}`) return sendJson(response, 400, { error: 'explicit campaign cleanup confirmation required' });
