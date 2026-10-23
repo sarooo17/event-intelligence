@@ -161,6 +161,14 @@ The service requires the campaign to be terminal, verifies the JSON and JSONL SH
 
 For setup or functional verification, use `profile=smoke` with `triggerCount` set to 1,000 or 10,000 and a bounded event count. For SLO comparison, each of `steady`, `burst`, and `fault-injected` must run for at least 600 seconds, have at least two actual workers, two or more partitions, 1,000 verified wakes, and 1,000 valid samples for every required latency series. The current runtime reports missing `providerToIngest`, `ingestToMatch` and `matchToWake` spans, so it deliberately leaves the evidence gate blocked until EI instrumentation adds clock-safe stage boundaries.
 
+The CLI defaults `smoke` to 10 triggers and 10 events. To smoke-test a larger persistent trigger set while keeping event load small, set both values explicitly; `EI_TRIGGER_COUNT` also works for `steady`, `burst`, and `fault-injected`:
+
+```powershell
+$env:EI_TRIGGER_COUNT = '10000'
+$env:EI_EVENT_COUNT = '20'
+node scripts/validation/campaign-cli.mjs start smoke
+```
+
 Use `steady` at a constant rate, `burst` with a higher rate and concurrency (up to 32), and `fault-injected` only after setting the opt-in fault token and operator confirmation. The fault profile terminates worker A and routes subsequent work to worker B; it exercises worker recovery and request routing. Database interruption is refused in this single-PostgreSQL deployment. PostgreSQL failover requires a separate HA environment and an explicitly approved fault procedure. No service will kill or terminate the database from the campaign API.
 
 Example PowerShell runs (after the private tunnel and control token are set):

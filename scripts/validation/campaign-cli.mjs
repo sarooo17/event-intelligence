@@ -1,7 +1,26 @@
 #!/usr/bin/env node
 import { readFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { verifyCampaignArtifact, verifyRawSampleArtifact } from './artifact.mjs';
 
+export function buildStartPayload(profile, env = process.env) {
+  const triggerCount = Number(env.EI_TRIGGER_COUNT || (profile === 'smoke' ? 10 : 1000));
+  const smoke = profile === 'smoke';
+  return {
+    profile,
+    triggerCount,
+    eventCount: Number(env.EI_EVENT_COUNT || (smoke ? 10 : 6000)),
+    requestedRatePerSecond: Number(env.EI_REQUESTED_RATE || (smoke ? 10 : 10)),
+    durationSeconds: Number(env.EI_DURATION_SECONDS || (smoke ? 5 : 600)),
+    concurrency: Number(env.EI_CONCURRENCY || 1),
+    partitions: Number(env.EI_PARTITIONS || 2),
+    ...(triggerCount === 100_000 && env.EI_ALLOW_100K_RUN === 'true' ? { allow100k: true } : {}),
+    ...(profile === 'fault-injected' && env.EI_FAULT_CONFIRMATION ? { injectWorkerCrash: true, faultConfirmation: env.EI_FAULT_CONFIRMATION } : {}),
+  };
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
 const [action, value] = process.argv.slice(2);
 const base = process.env.EI_BENCHMARK_URL;
 const token = process.env.EI_CONTROL_TOKEN;
@@ -19,11 +38,7 @@ async function call(path, method = 'GET', body) {
 }
 if (action === 'start') {
   const profile = value || 'smoke';
-  const triggerCount = profile === 'smoke' ? 10 : Number(process.env.EI_TRIGGER_COUNT || 1000);
-  const payload = profile === 'smoke'
-    ? { profile, triggerCount: 10, eventCount: 10, requestedRatePerSecond: 10, durationSeconds: 5, partitions: 2 }
-    : { profile, triggerCount, eventCount: Number(process.env.EI_EVENT_COUNT || 6000), requestedRatePerSecond: Number(process.env.EI_REQUESTED_RATE || 10), durationSeconds: Number(process.env.EI_DURATION_SECONDS || 600), concurrency: Number(process.env.EI_CONCURRENCY || 1), partitions: Number(process.env.EI_PARTITIONS || 2), ...(triggerCount === 100_000 && process.env.EI_ALLOW_100K_RUN === 'true' ? { allow100k: true } : {}), ...(profile === 'fault-injected' && process.env.EI_FAULT_CONFIRMATION ? { injectWorkerCrash: true, faultConfirmation: process.env.EI_FAULT_CONFIRMATION } : {}) };
-  await call('/v1/campaigns', 'POST', payload);
+  await call('/v1/campaigns', 'POST', buildStartPayload(profile));
 } else if (action === 'status' && value) {
   await call(`/v1/campaigns/${encodeURIComponent(value)}`);
 } else if (action === 'stop' && value) {
@@ -42,4 +57,5 @@ if (action === 'start') {
   if (!valid) process.exitCode = 1;
 } else {
   throw new Error('Usage: node scripts/validation/campaign-cli.mjs start [smoke|steady|burst|fault-injected] | status <id> | stop <id> | cleanup <id> | verify-artifact <path>');
+}
 }

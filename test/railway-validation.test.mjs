@@ -13,6 +13,7 @@ import { percentileStats, parsePrivateServiceUrl } from '../scripts/validation/c
 import { verifyCampaignArtifact, verifyRawSampleArtifact } from '../scripts/validation/artifact.mjs';
 import { readWorkerConfig } from '../scripts/validation/worker-service.mjs';
 import { campaignLaunchAt, readBenchmarkConfig, validateCampaign, waitForLaunch } from '../scripts/validation/benchmark-service.mjs';
+import { buildStartPayload } from '../scripts/validation/campaign-cli.mjs';
 
 test('validation config fails closed and permits only explicitly enabled local test URLs', () => {
   assert.throws(() => readWorkerConfig({}), /EI_WORKER_ID is required/);
@@ -52,6 +53,13 @@ test('burst launch waits through every capped sleep until the scheduled boundary
 test('steady schedules each request and burst schedules five-second groups', () => {
   assert.deepEqual([0, 1, 2, 3].map(index => campaignLaunchAt('steady', 100, index, 20)), [100, 150, 200, 250]);
   assert.deepEqual([0, 1, 2, 99, 100].map(index => campaignLaunchAt('burst', 100, index, 20)), [100, 100, 100, 100, 5100]);
+});
+
+test('CLI keeps a small smoke default and honors explicit persistent trigger scale', () => {
+  assert.equal(buildStartPayload('smoke', {}).triggerCount, 10);
+  assert.equal(buildStartPayload('smoke', { EI_TRIGGER_COUNT: '10000', EI_EVENT_COUNT: '12' }).triggerCount, 10_000);
+  assert.equal(buildStartPayload('smoke', { EI_TRIGGER_COUNT: '10000', EI_EVENT_COUNT: '12' }).eventCount, 12);
+  assert.equal(buildStartPayload('steady', { EI_TRIGGER_COUNT: '100000', EI_ALLOW_100K_RUN: 'true' }).allow100k, true);
 });
 
 test('artifact checksum rejects tampering and incomplete SLO evidence stays blocked', () => {
