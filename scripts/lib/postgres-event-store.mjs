@@ -1711,9 +1711,11 @@ export class PostgresEventStore {
         // writers from invalidating the measured budget before this read.
         const size = await client.query(
           'SELECT COUNT(*)::int AS rows, ' +
-          'COALESCE(SUM(pg_column_size(payload)::bigint + ' +
+          // octet_length(payload::text) measures decoded logical JSON,
+          // NOT TOAST-compressed pg_column_size on a repetitive payload.
+          'COALESCE(SUM(octet_length(payload::text)::bigint + ' +
           'octet_length(record_key)::bigint),0)::text AS total_bytes, ' +
-          'COALESCE(MAX(pg_column_size(payload)),0)::int AS max_row_bytes, ' +
+          'COALESCE(MAX(octet_length(payload::text)),0)::int AS max_row_bytes, ' +
           'COALESCE(MAX(octet_length(record_key)),0)::int AS max_key_bytes ' +
           'FROM ' + this.records + ' WHERE scope_id=$1 AND kind=$2',
           [this.scopeId, 'mcp_client_state'],
