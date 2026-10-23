@@ -1,6 +1,7 @@
 import {
   mcpOccurrenceToCorrelatableEvent,
 } from '../../dist/src/mcpEvents/consumer.js';
+import { performance } from 'node:perf_hooks';
 
 export class CompositeEventConsumer {
   constructor({
@@ -53,8 +54,13 @@ export class CompositeEventConsumer {
 
   async ingestCorrelatable(event, context = {}) {
     const derivedDepth = Number(context.derivedDepth ?? 0);
+    // Both boundaries are local monotonic durations. Never compare wall clocks
+    // between the provider, worker, and host containers.
+    const ingestStartedAt = performance.now();
     const results = await this.triggerEngine.ingest(event);
+    const ingestToMatchMs = performance.now() - ingestStartedAt;
     const deliveries = [];
+    const matchToWakeSamplesMs = [];
     const derivedEvents = [];
 
     for (const result of results) {
@@ -165,7 +171,11 @@ export class CompositeEventConsumer {
         continue;
       }
 
+      const matchToWakeStartedAt = performance.now();
       const delivery = await coordinator.deliverMatched(result.match);
+      if (delivery.status === 'wake_delivered') {
+        matchToWakeSamplesMs.push(performance.now() - matchToWakeStartedAt);
+      }
       const persistedWake = delivery.wake;
 
       deliveries.push({
@@ -182,6 +192,7 @@ export class CompositeEventConsumer {
       results,
       deliveries,
       derivedEvents,
+      timings: { ingestToMatchMs, matchToWakeSamplesMs },
     };
   }
 }

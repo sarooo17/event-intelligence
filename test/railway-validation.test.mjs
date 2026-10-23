@@ -15,6 +15,7 @@ import { verifyCampaignArtifact, verifyRawSampleArtifact } from '../scripts/vali
 import { readWorkerConfig } from '../scripts/validation/worker-service.mjs';
 import { campaignLaunchAt, readBenchmarkConfig, validateCampaign, waitForLaunch } from '../scripts/validation/benchmark-service.mjs';
 import { buildStartPayload } from '../scripts/validation/campaign-cli.mjs';
+import { CompositeEventConsumer } from '../scripts/lib/composite-event-consumer.mjs';
 
 test('validation config fails closed and permits only explicitly enabled local test URLs', () => {
   assert.throws(() => readWorkerConfig({}), /EI_WORKER_ID is required/);
@@ -41,6 +42,19 @@ test('latency aggregation computes nearest-rank p50/p95/p99 and rejects invalid 
   assert.deepEqual(percentileStats(values), { samples: 1000, p50Ms: 500, p95Ms: 950, p99Ms: 990, maxMs: 1000 });
   assert.throws(() => percentileStats([]), /non-empty/);
   assert.throws(() => percentileStats([1, Number.NaN]), /finite/);
+});
+
+test('consumer exposes worker-local monotonic ingest-to-match and match-to-wake spans', async () => {
+  const match = { matchId: 'match-1', triggerId: 'trigger-1', triggerVersion: '1', status: 'matched' };
+  const consumer = new CompositeEventConsumer({
+    store: { async getTrigger() { return { triggerId: 'trigger-1', version: '1', target: { runtime: 'remote-host' } }; } },
+    triggerEngine: { async ingest() { return [{ matched: true, triggerId: 'trigger-1', match }]; } },
+    wakeCoordinator: { async deliverMatched() { return { status: 'wake_delivered', wake: { wakeId: 'wake-1' } }; } },
+  });
+  const result = await consumer.ingestCorrelatable({ eventId: 'event-1', traceId: 'trace-1' });
+  assert.equal(result.timings.matchToWakeSamplesMs.length, 1);
+  assert.ok(Number.isFinite(result.timings.ingestToMatchMs) && result.timings.ingestToMatchMs >= 0);
+  assert.ok(Number.isFinite(result.timings.matchToWakeSamplesMs[0]) && result.timings.matchToWakeSamplesMs[0] >= 0);
 });
 
 test('burst launch waits through every capped sleep until the scheduled boundary', async () => {
@@ -167,7 +181,9 @@ test('PostgreSQL 16 HTTP smoke uses two OS workers, real CEP, remote wake receip
   assert.equal(status.report.externalProviderMeasured, false);
   assert.match(status.report.trafficSource, /synthetic MCP-shaped/);
   assert.ok(status.report.latency.providerToWorkerResponse.samples === 4);
-  assert.ok(status.report.missingMetrics.includes('ingestToMatch (not instrumented inside EI)'));
+  assert.equal(status.report.latency.ingestToMatch.samples, 4);
+  assert.equal(status.report.latency.matchToWake.samples, 4);
+  assert.ok(status.report.missingMetrics.includes('providerToIngest (no clock-safe ingest acknowledgement boundary)'));
 
   const duplicatePacket = { scopeId: status.scopeId, packet: { wake_id: 'same-wake-id', target: { runtime: 'ei-validation-host', kind: 'task', id: 'x' }, source_event_refs: [] } };
   async function hostCall() {

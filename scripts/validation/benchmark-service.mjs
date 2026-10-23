@@ -116,7 +116,7 @@ export function createBenchmarkService({ env = process.env, pool: suppliedPool, 
       const metadata = row.metadata;
       if (!metadata || typeof metadata.id !== 'string' || typeof metadata.scopeId !== 'string' || !metadata.scopeId.startsWith(`${config.scopeBase}:`)) continue;
       const campaign = { ...emptyCampaign(metadata.id, metadata.scopeId, metadata.options, metadata.createdAt), ...metadata,
-        verifiedWakes: new Set(), eventStarts: new Map(), rawSampleRows: [], providerToWorkerSamples: [], hostEffectSamples: [], endToEndSamples: [], workerRequestCounts: new Map(Object.entries(metadata.workerRequestCounts || {})), errors: metadata.errors || [], faults: metadata.faults || [] };
+        verifiedWakes: new Set(), eventStarts: new Map(), rawSampleRows: [], providerToWorkerSamples: [], ingestToMatchSamples: [], matchToWakeSamples: [], hostEffectSamples: [], endToEndSamples: [], workerRequestCounts: new Map(Object.entries(metadata.workerRequestCounts || {})), errors: metadata.errors || [], faults: metadata.faults || [] };
       if (ACTIVE_CAMPAIGN_STATES.has(campaign.status)) {
         campaign.status = 'interrupted';
         campaign.error = { message: 'benchmark service restarted while this campaign was active' };
@@ -152,7 +152,7 @@ export function createBenchmarkService({ env = process.env, pool: suppliedPool, 
   }
 
   function emptyCampaign(id, scopeId, options, createdAt = new Date().toISOString()) {
-    return { id, options, scopeId, status: 'queued', createdAt, startedAt: null, completedAt: null, attemptedEvents: 0, acceptedEvents: 0, matchedEvents: 0, persistedDeliveredWakes: 0, duplicateCallbackAttempts: 0, duplicateHostEffects: 0, errorCount: 0, verifiedWakes: new Set(), eventStarts: new Map(), rawSampleRows: [], providerToWorkerSamples: [], hostEffectSamples: [], endToEndSamples: [], workerRequestCounts: new Map(), workerMetrics: null, postgresStats: null, databaseStorageGrowthBytes: null, errors: [], faults: [], artifactPath: null, artifactSha256: null, rawArtifactPath: null, rawArtifactSha256: null, report: null, elapsedSeconds: 0 };
+    return { id, options, scopeId, status: 'queued', createdAt, startedAt: null, completedAt: null, attemptedEvents: 0, acceptedEvents: 0, matchedEvents: 0, persistedDeliveredWakes: 0, duplicateCallbackAttempts: 0, duplicateHostEffects: 0, errorCount: 0, verifiedWakes: new Set(), eventStarts: new Map(), rawSampleRows: [], providerToWorkerSamples: [], ingestToMatchSamples: [], matchToWakeSamples: [], hostEffectSamples: [], endToEndSamples: [], workerRequestCounts: new Map(), workerMetrics: null, postgresStats: null, databaseStorageGrowthBytes: null, errors: [], faults: [], artifactPath: null, artifactSha256: null, rawArtifactPath: null, rawArtifactSha256: null, report: null, elapsedSeconds: 0 };
   }
 
   async function persistCampaign(campaign) {
@@ -258,9 +258,17 @@ export function createBenchmarkService({ env = process.env, pool: suppliedPool, 
       externalProviderMeasured: false,
       configuration: { ...campaign.options, workers: config.workers.map(({ id }) => id), partitions: campaign.options.partitions },
       observed: { elapsedSeconds: campaign.elapsedSeconds, requestedEvents: campaign.options.eventCount, attemptedEvents: campaign.attemptedEvents, acceptedEvents: campaign.acceptedEvents, matchedEvents: campaign.matchedEvents, persistedDeliveredWakes: campaign.persistedDeliveredWakes, verifiedWakes: campaign.verifiedWakes.size, duplicateCallbackAttempts: campaign.duplicateCallbackAttempts, duplicateHostEffects: campaign.duplicateHostEffects, errors: campaign.errorCount, lostEvents: Math.max(0, campaign.attemptedEvents - campaign.verifiedWakes.size), requestedEventRatePerSecond: campaign.options.requestedRatePerSecond, achievedRequestRatePerSecond: campaign.elapsedSeconds ? campaign.acceptedEvents / campaign.elapsedSeconds : 0, workerRequestCounts: Object.fromEntries(campaign.workerRequestCounts), workerCpuUsageMicros: campaign.workerCpuUsageMicros, backlog: campaign.workerMetrics ? Object.fromEntries(Object.entries(campaign.workerMetrics).map(([key, value]) => [key, value?.dueWakeBacklog ?? null])) : null, pendingWakeDeliveries: campaign.wakeSettlement?.pendingWakeDeliveries ?? null, wakeSettlement: campaign.wakeSettlement ?? null, queueDepth: null, workerMetrics: campaign.workerMetrics, postgresDatabaseStats: campaign.postgresStats, databaseStorageGrowthBytes: campaign.databaseStorageGrowthBytes },
-      latency: { providerToWorkerResponse: percentileStatsOrMissing(campaign.providerToWorkerSamples), hostEffect: percentileStatsOrMissing(campaign.hostEffectSamples), providerToHostEndToEnd: percentileStatsOrMissing(campaign.endToEndSamples), providerToIngest: null, ingestToMatch: null, matchToWake: null },
+      latency: { providerToWorkerResponse: percentileStatsOrMissing(campaign.providerToWorkerSamples), hostEffect: percentileStatsOrMissing(campaign.hostEffectSamples), providerToHostEndToEnd: percentileStatsOrMissing(campaign.endToEndSamples), providerToIngest: null, ingestToMatch: percentileStatsOrMissing(campaign.ingestToMatchSamples), matchToWake: percentileStatsOrMissing(campaign.matchToWakeSamples) },
       rawSamples: { file: `ei-validation-${campaign.id}.jsonl`, rows: campaign.rawSampleRows.length, maxRows: MAX_RAW_SAMPLE_ROWS, truncated: campaign.acceptedEvents > campaign.rawSampleRows.length },
-      missingMetrics: ['providerToIngest (no clock-safe ingest acknowledgement boundary)', 'ingestToMatch (not instrumented inside EI)', 'matchToWake (not instrumented inside EI)', 'total pending wake queue depth (campaign reports per-scope unsettled deliveries, not full service queue depth)', 'PostgreSQL service CPU/memory attribution', 'independent provider and host failure domains', ...(campaign.acceptedEvents > campaign.rawSampleRows.length ? ['raw latency sample set is truncated at 100000 rows'] : [])],
+      missingMetrics: [
+        'providerToIngest (no clock-safe ingest acknowledgement boundary)',
+        ...(campaign.ingestToMatchSamples.length ? [] : ['ingestToMatch (no valid worker timing samples)']),
+        ...(campaign.matchToWakeSamples.length ? [] : ['matchToWake (no successful wake delivery timing samples)']),
+        'total pending wake queue depth (campaign reports per-scope unsettled deliveries, not full service queue depth)',
+        'PostgreSQL service CPU/memory attribution',
+        'independent provider and host failure domains',
+        ...(campaign.acceptedEvents > campaign.rawSampleRows.length ? ['raw latency sample set is truncated at 100000 rows'] : []),
+      ],
       faults: campaign.faults,
       limitations: ['The provider is a synthetic MCP-shaped event generator, not a real third-party provider.', 'Provider and host HTTP roles share ei-benchmark process and Railway failure domain.', 'Host effect idempotency ledger uses the shared benchmark PostgreSQL database.', 'Cross-container wall-clock timestamps are not subtracted.', 'Database unavailability/failover fault was not executed against this single PostgreSQL service.', 'Partition movement is exercised through routing away from the failed worker; PostgreSQL HA lease failover remains unverified.', 'No WORM archive or retention purge is implemented by this campaign service.'],
       productionSloCertified: false,
@@ -270,7 +278,7 @@ export function createBenchmarkService({ env = process.env, pool: suppliedPool, 
       productionSloCertified: false,
       observedAt: new Date().toISOString(),
       environment: { node: process.version, postgres: postgresVersion, pgDriver: 'pg 8.16.3', cpuModel: null, memoryBytes: process.memoryUsage().rss, sourceCommitSha: env.SOURCE_COMMIT_SHA || env.RAILWAY_GIT_COMMIT_SHA || null },
-      profiles: [{ name: campaign.options.profile, durationSeconds: campaign.elapsedSeconds, requestedEventRatePerSecond: campaign.options.requestedRatePerSecond, observedEventRatePerSecond: campaign.elapsedSeconds ? campaign.acceptedEvents / campaign.elapsedSeconds : 0, workers: 2, partitions: campaign.options.partitions, expectedWakes: campaign.options.eventCount, verifiedWakes: campaign.verifiedWakes.size, duplicateHostEffects: campaign.duplicateHostEffects, providerTransportMeasured: campaign.providerToWorkerSamples.length > 0, externalHostEffectMeasured: campaign.hostEffectSamples.length > 0, postgresServiceResourcesMeasured: false, latency: { providerToIngest: null, ingestToMatch: null, matchToWake: null, hostEffect: percentileStatsOrMissing(campaign.hostEffectSamples) }, faults: campaign.faults }],
+      profiles: [{ name: campaign.options.profile, durationSeconds: campaign.elapsedSeconds, requestedEventRatePerSecond: campaign.options.requestedRatePerSecond, observedEventRatePerSecond: campaign.elapsedSeconds ? campaign.acceptedEvents / campaign.elapsedSeconds : 0, workers: 2, partitions: campaign.options.partitions, expectedWakes: campaign.options.eventCount, verifiedWakes: campaign.verifiedWakes.size, duplicateHostEffects: campaign.duplicateHostEffects, providerTransportMeasured: campaign.providerToWorkerSamples.length > 0, externalHostEffectMeasured: campaign.hostEffectSamples.length > 0, postgresServiceResourcesMeasured: false, latency: { providerToIngest: null, ingestToMatch: percentileStatsOrMissing(campaign.ingestToMatchSamples), matchToWake: percentileStatsOrMissing(campaign.matchToWakeSamples), hostEffect: percentileStatsOrMissing(campaign.hostEffectSamples) }, faults: campaign.faults }],
     });
     metrics.sloGate = { status: 'blocked', productionSloCertified: false, missing: assessment.missing };
     const json = JSON.stringify(metrics, null, 2) + '\n';
@@ -281,7 +289,7 @@ export function createBenchmarkService({ env = process.env, pool: suppliedPool, 
     await writeFile(tmpPath, json, { flag: 'wx', mode: 0o600 });
     await rename(tmpPath, jsonPath);
     await writeFile(join(directory, `${base}.sha256`), `${digest}  ${base}.json\n`, { flag: 'wx', mode: 0o600 });
-    const rawSamples = campaign.rawSampleRows.map(row => JSON.stringify({ eventId: row.eventId, workerId: row.workerId, providerToWorkerResponseMs: row.providerToWorkerResponseMs ?? null, hostEffectMs: row.hostEffectMs ?? null, providerToHostEndToEndMs: row.providerToHostEndToEndMs ?? null, hostReceipt: row.hostReceipt === true })).join('\n') + (campaign.rawSampleRows.length ? '\n' : '');
+    const rawSamples = campaign.rawSampleRows.map(row => JSON.stringify({ eventId: row.eventId, workerId: row.workerId, providerToWorkerResponseMs: row.providerToWorkerResponseMs ?? null, ingestToMatchMs: row.ingestToMatchMs ?? null, matchToWakeMs: row.matchToWakeMs ?? null, hostEffectMs: row.hostEffectMs ?? null, providerToHostEndToEndMs: row.providerToHostEndToEndMs ?? null, hostReceipt: row.hostReceipt === true })).join('\n') + (campaign.rawSampleRows.length ? '\n' : '');
     if (Buffer.byteLength(rawSamples) > MAX_ARTIFACT_BYTES) throw new Error('raw sample artifact exceeds the 32 MiB output limit');
     const rawPath = join(directory, `${base}.jsonl`);
     await writeFile(`${rawPath}.tmp`, rawSamples, { flag: 'wx', mode: 0o600 });
@@ -336,7 +344,7 @@ export function createBenchmarkService({ env = process.env, pool: suppliedPool, 
       const slot = eventIndex % options.triggerCount;
       const worker = workerAStopped ? config.workers[1] : config.workers[eventIndex % config.workers.length];
       const eventId = `${campaign.id}-event-${eventIndex}`;
-      const sample = { eventId, workerId: worker.id, startedAt: performance.now(), providerToWorkerResponseMs: null, hostEffectMs: null, providerToHostEndToEndMs: null, hostReceipt: false };
+      const sample = { eventId, workerId: worker.id, startedAt: performance.now(), providerToWorkerResponseMs: null, ingestToMatchMs: null, matchToWakeMs: null, hostEffectMs: null, providerToHostEndToEndMs: null, hostReceipt: false };
       campaign.attemptedEvents++;
       campaign.eventStarts.set(eventId, sample);
       if (campaign.rawSampleRows.length < MAX_RAW_SAMPLE_ROWS) campaign.rawSampleRows.push(sample);
@@ -346,6 +354,13 @@ export function createBenchmarkService({ env = process.env, pool: suppliedPool, 
         const result = await requestWorker(worker, '/v1/events', packet);
         campaign.providerToWorkerSamples.push(performance.now() - callStart);
         sample.providerToWorkerResponseMs = campaign.providerToWorkerSamples.at(-1);
+        if (Number.isFinite(result.timings?.ingestToMatchMs) && result.timings.ingestToMatchMs >= 0) {
+          sample.ingestToMatchMs = result.timings.ingestToMatchMs;
+          campaign.ingestToMatchSamples.push(sample.ingestToMatchMs);
+        }
+        const wakeTiming = Array.isArray(result.timings?.matchToWakeSamplesMs) ? result.timings.matchToWakeSamplesMs : [];
+        sample.matchToWakeMs = wakeTiming.length === 1 && Number.isFinite(wakeTiming[0]) && wakeTiming[0] >= 0 ? wakeTiming[0] : null;
+        for (const value of wakeTiming) if (Number.isFinite(value) && value >= 0) campaign.matchToWakeSamples.push(value);
         campaign.workerRequestCounts.set(worker.id, (campaign.workerRequestCounts.get(worker.id) || 0) + 1);
         campaign.acceptedEvents++;
         campaign.persistedDeliveredWakes += Number(result.persistedDeliveredWakes || 0);

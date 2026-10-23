@@ -25,8 +25,8 @@ export function verifyRawSampleArtifact(sampleText, checksumText, expectedRows) 
     for (const line of rows) {
       const row = JSON.parse(line);
       if (typeof row.eventId !== 'string' || typeof row.workerId !== 'string') return { valid: false, reason: 'sample-schema-mismatch' };
-      for (const key of ['providerToWorkerResponseMs', 'hostEffectMs', 'providerToHostEndToEndMs']) {
-        if (row[key] !== null && (typeof row[key] !== 'number' || !Number.isFinite(row[key]) || row[key] < 0)) return { valid: false, reason: 'sample-value-invalid' };
+      for (const key of ['providerToWorkerResponseMs', 'ingestToMatchMs', 'matchToWakeMs', 'hostEffectMs', 'providerToHostEndToEndMs']) {
+        if (key in row && row[key] !== null && (typeof row[key] !== 'number' || !Number.isFinite(row[key]) || row[key] < 0)) return { valid: false, reason: 'sample-value-invalid' };
       }
     }
   } catch { return { valid: false, reason: 'sample-json-invalid' }; }
