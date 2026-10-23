@@ -76,10 +76,19 @@ export function validateCampaign(body, config) {
   return { profile: body.profile, triggerCount, durationSeconds, requestedRatePerSecond: requestedRate, concurrency, eventCount, partitions, injectWorkerCrash: body.injectWorkerCrash === true };
 }
 
+export async function waitForLaunch(launchAt, { now = () => performance.now(), sleep = ms => new Promise(resolve => setTimeout(resolve, ms)), signal } = {}) {
+  let delay = launchAt - now();
+  while (delay > 0 && !signal?.aborted) {
+    await sleep(Math.min(delay, 1000));
+    delay = launchAt - now();
+  }
+}
+
 export function createBenchmarkService({ env = process.env, pool: suppliedPool, logger = console } = {}) {
   const config = readBenchmarkConfig(env);
   const pool = suppliedPool ?? new Pool({ connectionString: config.databaseUrl, max: 8, connectionTimeoutMillis: 5000, idleTimeoutMillis: 30000, statement_timeout: 15000, application_name: 'ei-benchmark', keepAlive: true });
   const campaigns = new Map();
+  const campaignTable = `\"${config.tablePrefix}_campaigns\"`;
   const activeAborters = new Map();
   const campaignTasks = new Map();
   let server;
@@ -90,7 +99,62 @@ export function createBenchmarkService({ env = process.env, pool: suppliedPool, 
     const connection = await pool.query('SELECT current_setting(\'server_version\') AS server_version');
     postgresVersion = connection.rows[0].server_version;
     await pool.query(`CREATE TABLE IF NOT EXISTS ${HOST_TABLE} (scope_id TEXT NOT NULL, wake_id TEXT NOT NULL, receipt_id TEXT NOT NULL, attempt_count BIGINT NOT NULL DEFAULT 1, first_seen_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(), last_seen_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(), PRIMARY KEY(scope_id, wake_id))`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS ${campaignTable} (campaign_id UUID PRIMARY KEY, scope_id TEXT NOT NULL UNIQUE, metadata JSONB NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp())`);
+    const stored = await pool.query(`SELECT metadata FROM ${campaignTable} ORDER BY updated_at DESC LIMIT 1000`);
+    for (const row of stored.rows) {
+      const metadata = row.metadata;
+      if (!metadata || typeof metadata.id !== 'string' || typeof metadata.scopeId !== 'string' || !metadata.scopeId.startsWith(`${config.scopeBase}:`)) continue;
+      const campaign = { ...emptyCampaign(metadata.id, metadata.scopeId, metadata.options, metadata.createdAt), ...metadata,
+        verifiedWakes: new Set(), eventStarts: new Map(), rawSampleRows: [], providerToWorkerSamples: [], hostEffectSamples: [], endToEndSamples: [], workerRequestCounts: new Map(Object.entries(metadata.workerRequestCounts || {})), errors: metadata.errors || [], faults: metadata.faults || [] };
+      if (['queued', 'preparing', 'running'].includes(campaign.status)) {
+        campaign.status = 'interrupted';
+        campaign.error = { message: 'benchmark service restarted while this campaign was active' };
+      }
+      const base = join(resolve(config.artifactDir), `ei-validation-${campaign.id}`);
+      try {
+        const [json, checksum, raw, rawChecksum] = await Promise.all([
+          readFile(`${base}.json`, 'utf8'), readFile(`${base}.sha256`, 'utf8'),
+          readFile(`${base}.jsonl`, 'utf8'), readFile(`${base}.jsonl.sha256`, 'utf8'),
+        ]);
+        const verified = verifyCampaignArtifact(json, checksum);
+        const samples = verifyRawSampleArtifact(raw, rawChecksum, verified.report?.rawSamples?.rows);
+        if (verified.valid && samples.valid && verified.report.campaignId === campaign.id && verified.report.scopeId === campaign.scopeId) {
+          campaign.artifactPath = `${base}.json`;
+          campaign.rawArtifactPath = `${base}.jsonl`;
+          campaign.artifactSha256 = verified.sha256;
+          campaign.rawArtifactSha256 = samples.sha256;
+          campaign.report = verified.report;
+          campaign.status = campaign.status === 'cleaned' ? 'cleaned' : verified.report.status || campaign.status;
+          campaign.attemptedEvents = verified.report.observed?.attemptedEvents || 0;
+          campaign.acceptedEvents = verified.report.observed?.acceptedEvents || 0;
+          campaign.matchedEvents = verified.report.observed?.matchedEvents || 0;
+          campaign.persistedDeliveredWakes = verified.report.observed?.persistedDeliveredWakes || 0;
+          campaign.duplicateHostEffects = verified.report.observed?.duplicateHostEffects || 0;
+          campaign.errorCount = verified.report.observed?.errors || 0;
+          campaign.verifiedWakeCount = verified.report.observed?.verifiedWakes || 0;
+        }
+      } catch { /* artifacts may not exist for an interrupted campaign */ }
+      campaigns.set(campaign.id, campaign);
+      await persistCampaign(campaign);
+    }
     ready = true;
+  }
+
+  function emptyCampaign(id, scopeId, options, createdAt = new Date().toISOString()) {
+    return { id, options, scopeId, status: 'queued', createdAt, startedAt: null, completedAt: null, attemptedEvents: 0, acceptedEvents: 0, matchedEvents: 0, persistedDeliveredWakes: 0, duplicateCallbackAttempts: 0, duplicateHostEffects: 0, errorCount: 0, verifiedWakes: new Set(), verifiedWakeCount: 0, eventStarts: new Map(), rawSampleRows: [], providerToWorkerSamples: [], hostEffectSamples: [], endToEndSamples: [], workerRequestCounts: new Map(), workerMetrics: null, postgresStats: null, databaseStorageGrowthBytes: null, errors: [], faults: [], artifactPath: null, artifactSha256: null, rawArtifactPath: null, rawArtifactSha256: null, report: null, elapsedSeconds: 0 };
+  }
+
+  async function persistCampaign(campaign) {
+    const metadata = {
+      id: campaign.id, scopeId: campaign.scopeId, options: campaign.options, status: campaign.status,
+      createdAt: campaign.createdAt, startedAt: campaign.startedAt, completedAt: campaign.completedAt,
+      error: campaign.error || null, report: campaign.report || null, attemptedEvents: campaign.attemptedEvents || 0,
+      acceptedEvents: campaign.acceptedEvents || 0, matchedEvents: campaign.matchedEvents || 0,
+      persistedDeliveredWakes: campaign.persistedDeliveredWakes || 0, duplicateHostEffects: campaign.duplicateHostEffects || 0,
+      errorCount: campaign.errorCount || 0, workerRequestCounts: Object.fromEntries(campaign.workerRequestCounts || []),
+      artifactSha256: campaign.artifactSha256 || null, rawArtifactSha256: campaign.rawArtifactSha256 || null,
+    };
+    await pool.query(`INSERT INTO ${campaignTable} (campaign_id,scope_id,metadata) VALUES ($1,$2,$3::jsonb) ON CONFLICT (campaign_id) DO UPDATE SET metadata=EXCLUDED.metadata,updated_at=clock_timestamp()`, [campaign.id, campaign.scopeId, JSON.stringify(metadata)]);
   }
 
   async function receiveWake(request, response) {
@@ -149,6 +213,7 @@ export function createBenchmarkService({ env = process.env, pool: suppliedPool, 
     const metrics = {
       schema: 'event-intelligence.railway-validation-campaign.v1',
       campaignId: campaign.id, profile: campaign.options.profile, scopeId: campaign.scopeId,
+      status: campaign.status,
       startedAt: campaign.startedAt, completedAt: new Date().toISOString(),
       sourceCommitSha: env.SOURCE_COMMIT_SHA || env.RAILWAY_GIT_COMMIT_SHA || null,
       environment: { node: process.version, postgresVersion, pgDriver: 'pg 8.16.3', cpuModel: null, benchmarkRssBytes: process.memoryUsage().rss, railwayRegion: env.RAILWAY_REPLICA_REGION || null },
@@ -191,6 +256,7 @@ export function createBenchmarkService({ env = process.env, pool: suppliedPool, 
     campaign.rawArtifactPath = rawPath;
     campaign.rawArtifactSha256 = rawDigest;
     campaign.report = metrics;
+    await persistCampaign(campaign);
   }
 
   async function runCampaign(campaign) {
@@ -198,6 +264,7 @@ export function createBenchmarkService({ env = process.env, pool: suppliedPool, 
     const controller = new AbortController();
     activeAborters.set(campaign.id, controller);
     campaign.status = 'preparing';
+    await persistCampaign(campaign);
     const dbStart = await pool.query("SELECT pg_database_size(current_database())::bigint AS bytes, (SELECT xact_commit FROM pg_stat_database WHERE datname=current_database())::bigint AS commits");
     campaign.databaseSizeStartBytes = Number(dbStart.rows[0].bytes);
     const workerA = config.workers[0];
@@ -210,6 +277,7 @@ export function createBenchmarkService({ env = process.env, pool: suppliedPool, 
     campaign.workerMetricsStart = await collectWorkerMetrics(campaign.scopeId);
     campaign.status = 'running';
     campaign.startedAt = new Date().toISOString();
+    await persistCampaign(campaign);
     const start = performance.now();
     const due = start + options.durationSeconds * 1000;
     let index = 0;
@@ -256,8 +324,7 @@ export function createBenchmarkService({ env = process.env, pool: suppliedPool, 
       const launchAt = options.profile === 'burst'
         ? start + Math.floor(index / burstSize) * 5000
         : start + index * interval;
-      const delay = launchAt - performance.now();
-      if (delay > 0) await new Promise(resolve => setTimeout(resolve, Math.min(delay, 1000)));
+      if (!controller.signal.aborted) await waitForLaunch(launchAt, { signal: controller.signal });
       const active = [];
       for (let slot = 0; slot < options.concurrency && index < options.eventCount && performance.now() < due; slot++) active.push(sendOne(index++));
       await Promise.all(active);
@@ -266,6 +333,7 @@ export function createBenchmarkService({ env = process.env, pool: suppliedPool, 
     if (controller.signal.aborted) campaign.status = 'stopped';
     else campaign.status = campaign.errors.length ? 'completed-with-errors' : 'completed';
     campaign.completedAt = new Date().toISOString();
+    await persistCampaign(campaign);
     const dbEnd = await pool.query("SELECT pg_database_size(current_database())::bigint AS bytes, (SELECT xact_commit FROM pg_stat_database WHERE datname=current_database())::bigint AS commits");
     campaign.databaseSizeEndBytes = Number(dbEnd.rows[0].bytes);
     campaign.databaseStorageGrowthBytes = campaign.databaseSizeEndBytes - campaign.databaseSizeStartBytes;
@@ -301,9 +369,10 @@ export function createBenchmarkService({ env = process.env, pool: suppliedPool, 
         const body = await readJson(request, 32 * 1024);
         const options = validateCampaign(body, config);
         const id = randomUUID();
-        const campaign = { id, options, scopeId: `${config.scopeBase}:${id}`, status: 'queued', createdAt: new Date().toISOString(), startedAt: null, completedAt: null, attemptedEvents: 0, acceptedEvents: 0, matchedEvents: 0, persistedDeliveredWakes: 0, duplicateCallbackAttempts: 0, duplicateHostEffects: 0, errorCount: 0, verifiedWakes: new Set(), eventStarts: new Map(), rawSampleRows: [], providerToWorkerSamples: [], hostEffectSamples: [], endToEndSamples: [], workerRequestCounts: new Map(), workerMetrics: null, postgresStats: null, databaseStorageGrowthBytes: null, errors: [], faults: [], artifactPath: null, artifactSha256: null, rawArtifactPath: null, rawArtifactSha256: null, report: null, elapsedSeconds: 0 };
+        const campaign = emptyCampaign(id, `${config.scopeBase}:${id}`, options);
         campaigns.set(id, campaign);
-        const task = runCampaign(campaign).catch(async error => { campaign.status = 'failed'; campaign.error = safeError(error); campaign.completedAt = new Date().toISOString(); activeAborters.delete(id); await writeArtifacts(campaign).catch(writeError => logger.error?.(JSON.stringify({ event: 'campaign_artifact_failed', ...safeError(writeError) }))); }).finally(() => campaignTasks.delete(id));
+        await persistCampaign(campaign);
+        const task = runCampaign(campaign).catch(async error => { campaign.status = 'failed'; campaign.error = safeError(error); campaign.completedAt = new Date().toISOString(); activeAborters.delete(id); await writeArtifacts(campaign).catch(writeError => logger.error?.(JSON.stringify({ event: 'campaign_artifact_failed', ...safeError(writeError) }))); await persistCampaign(campaign).catch(writeError => logger.error?.(JSON.stringify({ event: 'campaign_metadata_failed', ...safeError(writeError) }))); }).finally(() => campaignTasks.delete(id));
         campaignTasks.set(id, task);
         return sendJson(response, 202, { campaignId: id, status: campaign.status, scopeId: campaign.scopeId });
       }
@@ -312,7 +381,7 @@ export function createBenchmarkService({ env = process.env, pool: suppliedPool, 
         const campaign = campaigns.get(match[1]);
         if (!campaign) return sendJson(response, 404, { error: 'campaign-not-found' });
         const { id, status, scopeId, options, createdAt, startedAt, completedAt, artifactPath, artifactSha256, rawArtifactPath, rawArtifactSha256, report, error } = campaign;
-        return sendJson(response, 200, { id, status, scopeId, options, createdAt, startedAt, completedAt, artifactPath, artifactSha256, rawArtifactPath, rawArtifactSha256, observed: { attemptedEvents: campaign.attemptedEvents, acceptedEvents: campaign.acceptedEvents, matchedEvents: campaign.matchedEvents, persistedDeliveredWakes: campaign.persistedDeliveredWakes, verifiedWakes: campaign.verifiedWakes.size, duplicateHostEffects: campaign.duplicateHostEffects, errors: campaign.errorCount }, ...(report ? { report } : {}), ...(error ? { error } : {}) });
+        return sendJson(response, 200, { id, status, scopeId, options, createdAt, startedAt, completedAt, artifactPath, artifactSha256, rawArtifactPath, rawArtifactSha256, observed: { attemptedEvents: campaign.attemptedEvents, acceptedEvents: campaign.acceptedEvents, matchedEvents: campaign.matchedEvents, persistedDeliveredWakes: campaign.persistedDeliveredWakes, verifiedWakes: campaign.verifiedWakeCount ?? campaign.verifiedWakes.size, duplicateHostEffects: campaign.duplicateHostEffects, errors: campaign.errorCount }, ...(report ? { report } : {}), ...(error ? { error } : {}) });
       }
       if (match && request.method === 'POST' && match[2]) {
         const campaign = campaigns.get(match[1]);
@@ -340,6 +409,7 @@ export function createBenchmarkService({ env = process.env, pool: suppliedPool, 
         const client = await pool.connect();
         let deleted = {};
         try {
+          for (const worker of config.workers) await requestWorker(worker, `/v1/scopes/${encodeURIComponent(campaign.id)}/close`, {});
           await client.query('BEGIN');
           for (const [table, column] of [[`${config.tablePrefix}_records`, 'scope_id'], [`${config.tablePrefix}_history`, 'scope_id'], [`${config.tablePrefix}_leases`, 'scope_id'], [`${config.tablePrefix}_counters`, 'scope_id'], [HOST_TABLE, 'scope_id']]) {
             const result = await client.query(`DELETE FROM "${table}" WHERE "${column}" = $1`, [campaign.scopeId]);
@@ -352,6 +422,7 @@ export function createBenchmarkService({ env = process.env, pool: suppliedPool, 
         } finally { client.release(); }
         campaign.status = 'cleaned';
         campaign.cleanupDeletedRows = deleted;
+        await persistCampaign(campaign);
         return sendJson(response, 200, { campaignId: campaign.id, status: campaign.status, deletedRows: deleted, artifactsRetained: true });
       }
       return sendJson(response, 404, { error: 'not-found' });

@@ -144,6 +144,16 @@ export function createWorkerService({ env = process.env, pool: suppliedPool, log
         const outcomes = await ctx.scheduler.runDue();
         return sendJson(response, 200, { recovered: outcomes.length, outcomes: outcomes.slice(0, 100), workerId: config.workerId });
       }
+      const closeScopeMatch = /^\/v1\/scopes\/([a-f0-9-]+)\/close$/.exec(url.pathname);
+      if (request.method === 'POST' && closeScopeMatch) {
+        const scopeId = `${config.scopeBase}:${closeScopeMatch[1]}`;
+        const ctx = scopes.get(scopeId);
+        if (ctx) {
+          await ctx.scheduler.close();
+          scopes.delete(scopeId);
+        }
+        return sendJson(response, 200, { closed: true, workerId: config.workerId });
+      }
       if (request.method === 'GET' && url.pathname === '/v1/metrics') {
         let backlog = null;
         const scopeId = url.searchParams.get('scopeId');

@@ -12,7 +12,7 @@ import { assessPostgresProductionSloEvidence } from '../scripts/evidence/postgre
 import { percentileStats, parsePrivateServiceUrl } from '../scripts/validation/common.mjs';
 import { verifyCampaignArtifact, verifyRawSampleArtifact } from '../scripts/validation/artifact.mjs';
 import { readWorkerConfig } from '../scripts/validation/worker-service.mjs';
-import { readBenchmarkConfig, validateCampaign } from '../scripts/validation/benchmark-service.mjs';
+import { readBenchmarkConfig, validateCampaign, waitForLaunch } from '../scripts/validation/benchmark-service.mjs';
 
 test('validation config fails closed and permits only explicitly enabled local test URLs', () => {
   assert.throws(() => readWorkerConfig({}), /EI_WORKER_ID is required/);
@@ -39,6 +39,14 @@ test('latency aggregation computes nearest-rank p50/p95/p99 and rejects invalid 
   assert.deepEqual(percentileStats(values), { samples: 1000, p50Ms: 500, p95Ms: 950, p99Ms: 990, maxMs: 1000 });
   assert.throws(() => percentileStats([]), /non-empty/);
   assert.throws(() => percentileStats([1, Number.NaN]), /finite/);
+});
+
+test('burst launch waits through every capped sleep until the scheduled boundary', async () => {
+  let clock = 0;
+  const sleeps = [];
+  await waitForLaunch(4500, { now: () => clock, sleep: async ms => { sleeps.push(ms); clock += ms; } });
+  assert.deepEqual(sleeps, [1000, 1000, 1000, 1000, 500]);
+  assert.equal(clock, 4500);
 });
 
 test('artifact checksum rejects tampering and incomplete SLO evidence stays blocked', () => {
@@ -101,7 +109,7 @@ test('PostgreSQL 16 HTTP smoke uses two OS workers, real CEP, remote wake receip
   const workerA = spawnService('scripts/validation/worker-service.mjs', workerAPort, { EI_WORKER_ID: 'ei-worker-a', EI_BENCHMARK_URL: benchmarkUrl });
   const workerB = spawnService('scripts/validation/worker-service.mjs', workerBPort, { EI_WORKER_ID: 'ei-worker-b', EI_BENCHMARK_URL: benchmarkUrl });
   services.set('a', workerA); services.set('b', workerB);
-  const benchmark = spawnService('scripts/validation/benchmark-service.mjs', benchmarkPort, { EI_CONTROL_TOKEN: controlToken, EI_WORKER_A_URL: workerAUrl, EI_WORKER_B_URL: workerBUrl });
+  let benchmark = spawnService('scripts/validation/benchmark-service.mjs', benchmarkPort, { EI_CONTROL_TOKEN: controlToken, EI_WORKER_A_URL: workerAUrl, EI_WORKER_B_URL: workerBUrl });
   services.set('benchmark', benchmark);
   t.after(async () => {
     for (const child of services.values()) if (child.exitCode === null) child.kill('SIGTERM');
@@ -147,6 +155,18 @@ test('PostgreSQL 16 HTTP smoke uses two OS workers, real CEP, remote wake receip
   assert.equal(secondReceipt.duplicate, true);
   assert.ok(!JSON.stringify(status).includes(token));
 
+  benchmark.kill('SIGTERM');
+  await once(benchmark, 'exit');
+  benchmark = spawnService('scripts/validation/benchmark-service.mjs', benchmarkPort, { EI_CONTROL_TOKEN: controlToken, EI_WORKER_A_URL: workerAUrl, EI_WORKER_B_URL: workerBUrl });
+  services.set('benchmark', benchmark);
+  await waitReady(benchmarkUrl, benchmark);
+  const restored = await fetch(`${benchmarkUrl}/v1/campaigns/${campaignId}`, { headers: { authorization: `Bearer ${controlToken}` } });
+  assert.equal(restored.status, 200);
+  const restoredStatus = await restored.json();
+  assert.equal(restoredStatus.status, 'completed');
+  assert.equal(restoredStatus.observed.acceptedEvents, 4);
+  assert.equal(restoredStatus.report.campaignId, campaignId);
+
   workerB.kill('SIGTERM');
   await once(workerB, 'exit');
   const restarted = spawnService('scripts/validation/worker-service.mjs', workerBPort, { EI_WORKER_ID: 'ei-worker-b', EI_BENCHMARK_URL: benchmarkUrl });
@@ -162,4 +182,6 @@ test('PostgreSQL 16 HTTP smoke uses two OS workers, real CEP, remote wake receip
   assert.equal(cleanupSummary.status, 'cleaned');
   assert.ok(cleanupSummary.deletedRows[`${prefix}_records`] > 0);
   assert.equal(cleanupSummary.artifactsRetained, true);
+  const restoredCleaned = await fetch(`${benchmarkUrl}/v1/campaigns/${campaignId}`, { headers: { authorization: `Bearer ${controlToken}` } });
+  assert.equal((await restoredCleaned.json()).status, 'cleaned');
 });
