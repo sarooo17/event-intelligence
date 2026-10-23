@@ -35,6 +35,11 @@ import {
 // reuse its own trigger authorization lock without deadlocking itself.
 const dispatchContext = new AsyncLocalStorage();
 const poolFenceSlots = new WeakMap();
+// Pre-v1 durable provider-state size policy. Prevent a single opaque cursor
+// or nested source identity from defeating operator retention inventory caps.
+const MCP_STATE_KEY_MAX_BYTES = 8192;
+const MCP_STATE_PAYLOAD_MAX_BYTES = 16384;
+const MCP_RETENTION_INVENTORY_MAX_BYTES = 8 * 1024 * 1024;
 
 function quarantinedDispatchPoolError() {
   const error = new Error(
@@ -1701,6 +1706,27 @@ export class PostgresEventStore {
           error.code = 'EVENT_INTELLIGENCE_MCP_RETENTION_STATE_INVALID';
           throw error;
         }
+        // Inspect aggregate stored size BEFORE fetching any large JSONB
+        // payload into Node. Scope fences prevent normal concurrent MCP
+        // writers from invalidating the measured budget before this read.
+        const size = await client.query(
+          'SELECT COUNT(*)::int AS rows, ' +
+          'COALESCE(SUM(pg_column_size(payload)::bigint + ' +
+          'octet_length(record_key)::bigint),0)::text AS total_bytes, ' +
+          'COALESCE(MAX(pg_column_size(payload)),0)::int AS max_row_bytes, ' +
+          'COALESCE(MAX(octet_length(record_key)),0)::int AS max_key_bytes ' +
+          'FROM ' + this.records + ' WHERE scope_id=$1 AND kind=$2',
+          [this.scopeId, 'mcp_client_state'],
+        );
+        const measurements = size.rows[0];
+        if (!measurements || measurements.rows > maxSources ||
+            Number(measurements.total_bytes) > MCP_RETENTION_INVENTORY_MAX_BYTES ||
+            measurements.max_row_bytes > MCP_STATE_PAYLOAD_MAX_BYTES ||
+            measurements.max_key_bytes > MCP_STATE_KEY_MAX_BYTES) {
+          const error = new Error('MCP client states exceed bounded retention inventory bytes or rows');
+          error.code = 'EVENT_INTELLIGENCE_MCP_RETENTION_SCAN_BUDGET_EXCEEDED';
+          throw error;
+        }
         const saved = await client.query(
           'SELECT record_key,payload::text AS raw FROM ' + this.records +
           ' WHERE scope_id=$1 AND kind=$2 ORDER BY record_key LIMIT $3',
@@ -1729,7 +1755,15 @@ export class PostgresEventStore {
             error.code = 'EVENT_INTELLIGENCE_MCP_RETENTION_STATE_INVALID';
             throw error;
           }
+          let expectedKey;
+          try {
+            expectedKey=mcpStateKey(
+              state?.connectionId,state?.eventName,state?.arguments);
+          } catch {
+            // Tampered/invalid stored identity is NOT a valid source census.
+          }
           if (typeof recordKey !== 'string' ||
+              expectedKey !== recordKey ||
               typeof state?.connectionId !== 'string' || !state.connectionId ||
               typeof state.eventName !== 'string' || !state.eventName ||
               !Number.isSafeInteger(state.completenessRevision) ||
@@ -2506,6 +2540,11 @@ export class PostgresEventStore {
     }
     const args = safeMcpSourceArguments(input.arguments);
     const key = mcpStateKey(connectionId, eventName, args);
+    if (Buffer.byteLength(key,'utf8') > MCP_STATE_KEY_MAX_BYTES) {
+      const error = new Error('MCP provider source identity exceeds persisted key byte limit');
+      error.code = 'EVENT_INTELLIGENCE_MCP_CLIENT_STATE_SIZE_LIMIT';
+      throw error;
+    }
     return this.tx(async (client) => {
       // Preserve lock ordering: scope fence, then individual source lock.
       await this.lock(client, 'mcp-gap-fence', 'scope');
@@ -2581,6 +2620,12 @@ export class PostgresEventStore {
             ? { truncated: previous.truncated }
             : {}),
       };
+      if (Buffer.byteLength(JSON.stringify(state),'utf8') >
+          MCP_STATE_PAYLOAD_MAX_BYTES) {
+        const error = new Error('MCP provider client state exceeds persisted JSONB byte limit');
+        error.code = 'EVENT_INTELLIGENCE_MCP_CLIENT_STATE_SIZE_LIMIT';
+        throw error;
+      }
       await this.upsert('mcp_client_state', key, state, client);
       return state;
     });
