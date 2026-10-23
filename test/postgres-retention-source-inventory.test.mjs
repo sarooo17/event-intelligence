@@ -91,6 +91,45 @@ integration('PG16 source retention inventory is scope-bound, fenced and never au
         e=>e?.code==='EVENT_INTELLIGENCE_MCP_RETENTION_POLICY_INVALID');
     }
 
+    // Codex P2: stored row bytes MUST be bounded before JSONB reaches
+    // Node, including historical rows written before the new byte policy.
+    await assert.rejects(()=>a.putMcpClientState(
+      state('oversize',{cursor:'💻'.repeat(5000)})),
+      e=>e?.code==='EVENT_INTELLIGENCE_MCP_CLIENT_STATE_SIZE_LIMIT');
+    await assert.rejects(()=>a.putMcpClientState(
+      state('oversize-args',{arguments:{payload:'z'.repeat(9500)}})),
+      e=>e?.code==='EVENT_INTELLIGENCE_MCP_CLIENT_STATE_SIZE_LIMIT');
+    const rows=await poolA.query(
+      'SELECT record_key,payload::text AS original FROM "'+prefix+
+      '_records" WHERE scope_id=$1 AND kind=$2 ORDER BY record_key',
+      ['tenant-A','mcp_client_state'],
+    );
+    const first=rows.rows[0];
+    await poolA.query('UPDATE "'+prefix+'_records" SET record_key=$1'+
+      ' WHERE scope_id=$2 AND kind=$3 AND record_key=$4',[
+        first.record_key+'-forged','tenant-A','mcp_client_state',first.record_key,
+      ]);
+    await assert.rejects(()=>a.inspectMcpSourceRetentionBarriers(),
+      e=>e?.code==='EVENT_INTELLIGENCE_MCP_RETENTION_STATE_INVALID',
+      'a valid-looking payload under a forged durable key is not a valid inventory');
+    await poolA.query('UPDATE "'+prefix+'_records" SET record_key=$1'+
+      ' WHERE scope_id=$2 AND kind=$3 AND record_key=$4',[
+        first.record_key,'tenant-A','mcp_client_state',first.record_key+'-forged',
+      ]);
+    await poolA.query('UPDATE "'+prefix+'_records" SET payload=jsonb_set('+
+      "payload,'{cursor}',to_jsonb(repeat('y',70000)))"+
+      ' WHERE scope_id=$1 AND kind=$2 AND record_key=$3',[
+        'tenant-A','mcp_client_state',first.record_key,
+      ]);
+    await assert.rejects(()=>a.inspectMcpSourceRetentionBarriers(),
+      e=>e?.code==='EVENT_INTELLIGENCE_MCP_RETENTION_SCAN_BUDGET_EXCEEDED',
+      'oversized persisted JSONB must be rejected by SQL preflight before materializing');
+    await poolA.query('UPDATE "'+prefix+'_records" SET payload=$1::jsonb'+
+      ' WHERE scope_id=$2 AND kind=$3 AND record_key=$4',[
+        first.original,'tenant-A','mcp_client_state',first.record_key,
+      ]);
+    assert.equal((await a.inspectMcpSourceRetentionBarriers()).sourceCount,2);
+
     // Precision-dependent state revisions must never be rounded into a
     // plausible retention snapshot, even with zero pending delivery gaps.
     await poolA.query('UPDATE "'+prefix+'_records" SET payload=jsonb_set('+
