@@ -1,0 +1,97 @@
+name: PostgreSQL Independent OS Worker 600s Continuous Chaos
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/postgres-os-600s-continuous.yml
+      - scripts/evidence/postgres-os-600s-runner.mjs
+      - scripts/evidence/postgres-os-600s-gate.mjs
+      - test/postgres-os-600s-gate.test.mjs
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pg-os-600s-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  independent-process-600s:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: event_intelligence
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d event_intelligence"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      POSTGRES_URL: postgresql://postgres:postgres@127.0.0.1:5432/event_intelligence
+      EI_PG_CHAOS_SOAK_CONFIRM: YES_DISPOSABLE_PG
+      SOAK_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Confirm exact source SHA before running any PostgreSQL work
+        run: test "$(git rev-parse HEAD)" = "$SOAK_SOURCE_SHA"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install exact dependencies and compile runtime
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm install --no-save --ignore-scripts --no-audit --no-fund pg@8.16.3
+          npm run build
+      - name: Validate adversarial raw-evidence gate fixtures
+        run: node --test test/postgres-os-600s-gate.test.mjs
+      - name: Record exact runner specification
+        run: |
+          {
+            echo "source-sha=$SOAK_SOURCE_SHA"
+            node --version
+            node -p "require('pg/package.json').version"
+            uname -a
+            lscpu
+            free -m
+            df -h .
+            docker --version
+          } > pg-os-600s-environment.txt
+      - name: Execute real independent-process SIGKILL cycles for >=600s ACTIVE
+        run: |
+          set -euo pipefail
+          node scripts/evidence/postgres-os-600s-runner.mjs \
+            --min-active-seconds 600 \
+            --cohorts 4 \
+            --rounds 10 \
+            --max-batches 120 \
+            --out-dir pg-os-600s-raw \
+            | tee pg-os-600s-run.tap
+      - name: Independent complete raw-batch/sha/duration/correctness verification
+        run: |
+          set -euo pipefail
+          node scripts/evidence/postgres-os-600s-gate.mjs \
+            pg-os-600s-raw "$SOAK_SOURCE_SHA" \
+            | tee pg-os-600s-gate-result.json
+      - name: Retain all raw OS kill batches and environment even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pg-os-600s-continuous-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 90
+          if-no-files-found: warn
+          path: |
+            pg-os-600s-raw/
+            pg-os-600s-environment.txt
+            pg-os-600s-run.tap
+            pg-os-600s-gate-result.json
