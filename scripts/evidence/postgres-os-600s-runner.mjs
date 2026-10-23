@@ -62,12 +62,26 @@ function execOne({batchPath,cohorts,rounds,timeoutMs}){
       env:process.env,
     });
     let output='',failed=null,settled=false;
+    let terminationRequested=false,escalation=null;
     const kill=()=>{
-      if(!child.pid)return;
+      if(!child.pid||settled||terminationRequested)return;
+      terminationRequested=true;
       try {
-        if(process.platform!=='win32')process.kill(-child.pid,'SIGKILL');
-        else child.kill('SIGKILL');
+        // The child runner owns a SECOND, detached process group with the
+        // active SIGKILL cohort. Forward SIGTERM first so its signal handler
+        // terminates and reaps that group before the intermediate process
+        // exits. Sending immediate SIGKILL would orphan the cohort.
+        if(process.platform!=='win32')process.kill(-child.pid,'SIGTERM');
+        else child.kill('SIGTERM');
       }catch(error){if(error.code!=='ESRCH')failed??=error.message;}
+      escalation=setTimeout(()=>{
+        if(settled)return;
+        try{
+          if(process.platform!=='win32')process.kill(-child.pid,'SIGKILL');
+          else child.kill('SIGKILL');
+        }catch(error){if(error.code!=='ESRCH')failed??=error.message;}
+      },10_000);
+      escalation.unref();
     };
     activeGroup=kill;
     const timer=setTimeout(()=>{
@@ -85,6 +99,7 @@ function execOne({batchPath,cohorts,rounds,timeoutMs}){
       if(settled)return;
       settled=true;
       clearTimeout(timer);
+      if(escalation)clearTimeout(escalation);
       if(activeGroup===kill)activeGroup=null;
       if(error||interrupted){
         kill();
