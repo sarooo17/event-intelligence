@@ -120,3 +120,25 @@ test('a tiny or zero-duration synthetic profile can never satisfy minimum soak',
   x.manifest.metrics.observedWallMs=4;
   assert.throws(()=>checked(x),/insufficient REAL active SIGKILL process time/);
 });
+
+
+test('match and wake identities can repeat across isolated cohorts and batches',()=>{
+  const x=fake();
+  // Distinct disposable databases use deterministic fixture IDs; reuse of
+  // identities across independently isolated physical cohorts is valid.
+  const raw=JSON.parse(x.rawFiles[0].toString('utf8'));
+  for(let k=0;k<2;k++){
+    const original=raw.cohorts[0].evidence[k];
+    raw.cohorts[1].evidence[k].matchId=original.matchId;
+    raw.cohorts[1].evidence[k].wakeId=original.wakeId;
+    raw.cohorts[1].evidence[k].receiptId=original.receiptId;
+  }
+  x.rawFiles[0]=Buffer.from(JSON.stringify(raw));
+  x.manifest.batches[0].sha256=digest(x.rawFiles[0]);
+  assert.equal(checked(x).ok,true);
+  // The same IDs remain forbidden inside ONE cohort and PostgreSQL scope.
+  raw.cohorts[0].evidence[1].matchId=raw.cohorts[0].evidence[0].matchId;
+  x.rawFiles[0]=Buffer.from(JSON.stringify(raw));
+  x.manifest.batches[0].sha256=digest(x.rawFiles[0]);
+  assert.throws(()=>checked(x),/duplicate logical match identity/);
+});
