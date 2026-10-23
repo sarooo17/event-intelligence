@@ -59,10 +59,11 @@ Generate the three random tokens locally (for example, `openssl rand -hex 32`) a
 | `DATABASE_URL` | `${{Postgres.DATABASE_URL}}` |
 | `EI_SCOPE_ID` | `ei-validation` |
 | `EI_TABLE_PREFIX` | `ei_validation` |
+| `PORT` | `3000` (fixed private listener port) |
 | `EI_WORKER_ID` | `ei-worker-a` |
 | `EI_INGEST_TOKEN` | `${{ei-benchmark.EI_INGEST_TOKEN}}` |
 | `EI_HOST_CALLBACK_TOKEN` | `${{ei-benchmark.EI_HOST_CALLBACK_TOKEN}}` |
-| `EI_BENCHMARK_URL` | `http://${{ei-benchmark.RAILWAY_PRIVATE_DOMAIN}}:${{ei-benchmark.PORT}}` |
+| `EI_BENCHMARK_URL` | `http://${{ei-benchmark.RAILWAY_PRIVATE_DOMAIN}}:3000` |
 | `EI_PG_POOL_MAX` | `10` |
 | `EI_RECOVERY_MAX_SCOPES` | `1000` (optional; maximum scopes scanned on restart) |
 | `EI_ENABLE_WORKER_CRASH_INJECTION` | `false` initially |
@@ -73,6 +74,7 @@ Use the same values as worker A except:
 
 | Variable | Value |
 | --- | --- |
+| `PORT` | `3000` (fixed private listener port) |
 | `EI_WORKER_ID` | `ei-worker-b` |
 
 Keep `EI_ENABLE_WORKER_CRASH_INJECTION=false` until the explicit fault-injection profile is approved for this staging environment. To enable it later, set it to `true` on both workers and set `EI_FAULT_TOKEN` on both workers to a new random token referenced from the benchmark service.
@@ -81,14 +83,15 @@ Keep `EI_ENABLE_WORKER_CRASH_INJECTION=false` until the explicit fault-injection
 
 | Variable | Value |
 | --- | --- |
+| `PORT` | `3000` (fixed private listener port) |
 | `DATABASE_URL` | `${{Postgres.DATABASE_URL}}` |
 | `EI_SCOPE_ID` | `ei-validation` |
 | `EI_TABLE_PREFIX` | `ei_validation` |
 | `EI_CONTROL_TOKEN` | random token, at least 32 characters |
 | `EI_INGEST_TOKEN` | random token, at least 32 characters |
 | `EI_HOST_CALLBACK_TOKEN` | a different random token, at least 32 characters |
-| `EI_WORKER_A_URL` | `http://${{ei-worker-a.RAILWAY_PRIVATE_DOMAIN}}:${{ei-worker-a.PORT}}` |
-| `EI_WORKER_B_URL` | `http://${{ei-worker-b.RAILWAY_PRIVATE_DOMAIN}}:${{ei-worker-b.PORT}}` |
+| `EI_WORKER_A_URL` | `http://${{ei-worker-a.RAILWAY_PRIVATE_DOMAIN}}:3000` |
+| `EI_WORKER_B_URL` | `http://${{ei-worker-b.RAILWAY_PRIVATE_DOMAIN}}:3000` |
 | `EI_ARTIFACT_DIR` | `/data/artifacts` |
 | `EI_ALLOW_100K` | `false` initially |
 | `EI_WAKE_SETTLE_TIMEOUT_SECONDS` | `120` (optional, 1–900 seconds; maximum wait for durable retries and host receipts after traffic ends) |
