@@ -141,7 +141,7 @@ export function createBenchmarkService({ env = process.env, pool: suppliedPool, 
   }
 
   function emptyCampaign(id, scopeId, options, createdAt = new Date().toISOString()) {
-    return { id, options, scopeId, status: 'queued', createdAt, startedAt: null, completedAt: null, attemptedEvents: 0, acceptedEvents: 0, matchedEvents: 0, persistedDeliveredWakes: 0, duplicateCallbackAttempts: 0, duplicateHostEffects: 0, errorCount: 0, verifiedWakes: new Set(), verifiedWakeCount: 0, eventStarts: new Map(), rawSampleRows: [], providerToWorkerSamples: [], hostEffectSamples: [], endToEndSamples: [], workerRequestCounts: new Map(), workerMetrics: null, postgresStats: null, databaseStorageGrowthBytes: null, errors: [], faults: [], artifactPath: null, artifactSha256: null, rawArtifactPath: null, rawArtifactSha256: null, report: null, elapsedSeconds: 0 };
+    return { id, options, scopeId, status: 'queued', createdAt, startedAt: null, completedAt: null, attemptedEvents: 0, acceptedEvents: 0, matchedEvents: 0, persistedDeliveredWakes: 0, duplicateCallbackAttempts: 0, duplicateHostEffects: 0, errorCount: 0, verifiedWakes: new Set(), eventStarts: new Map(), rawSampleRows: [], providerToWorkerSamples: [], hostEffectSamples: [], endToEndSamples: [], workerRequestCounts: new Map(), workerMetrics: null, postgresStats: null, databaseStorageGrowthBytes: null, errors: [], faults: [], artifactPath: null, artifactSha256: null, rawArtifactPath: null, rawArtifactSha256: null, report: null, elapsedSeconds: 0 };
   }
 
   async function persistCampaign(campaign) {
