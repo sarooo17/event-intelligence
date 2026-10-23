@@ -1,7 +1,7 @@
 import * as z from 'zod/v4';
 import { mcpGapSnapshot } from '../../dist/src/composite/gapFingerprint.js';
 import { safeMcpSourceArguments } from './mcp-safe-arguments.mjs';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { isDeepStrictEqual } from 'node:util';
 import { verifyAuditProofWindow } from './audit-proof-window.mjs';
@@ -1657,6 +1657,130 @@ export class PostgresEventStore {
     // One SQL SELECT yields a coherent read-committed view of this scope.
     const states=await this.list('mcp_client_state');
     return { states, snapshot:mcpGapSnapshot(states) };
+  }
+
+  /**
+   * Operator-only, READ-ONLY preflight inventory for a future source replay
+   * floor. Locks all concurrent source-state mutations and MCP appends
+   * while taking one scope-local SQL snapshot. It NEVER authorizes pruning.
+   *
+   * An opaque provider cursor cannot be ordered against EI's numeric source
+   * occurrence sequence. A clean snapshot is NOT a watermark or proof that
+   * a provider can replay archived events.
+   */
+  async inspectMcpSourceRetentionBarriers({
+    maxSources = 1024, maxScanMs = 5000,
+  } = {}) {
+    if (!Number.isSafeInteger(maxSources) || maxSources < 1 ||
+        maxSources > 16384 ||
+        !Number.isSafeInteger(maxScanMs) || maxScanMs < 100 ||
+        maxScanMs > 30000) {
+      const error = new TypeError('MCP source retention inventory needs bounded sources and SQL budget');
+      error.code = 'EVENT_INTELLIGENCE_MCP_RETENTION_POLICY_INVALID';
+      throw error;
+    }
+    try {
+      return await this.tx(async client => {
+        await client.query("SELECT set_config('statement_timeout', $1, true)",
+          [String(maxScanMs) + 'ms']);
+        // Ordered scope fences: provider state writes take the gap fence;
+        // occurrence appends take the source sequence fence. No lock is held
+        // after this method returns, so a later prune MUST revalidate.
+        await this.lock(client, 'mcp-gap-fence', 'scope');
+        await this.lock(client, 'mcp-archive-sequence', 'scope');
+        const tail = await client.query(
+          'SELECT value::text AS original FROM ' + this.counters +
+          ' WHERE scope_id=$1 AND name=$2',
+          [this.scopeId, 'mcp_occurrence'],
+        );
+        const rawTail = tail.rows[0]?.original ?? '0';
+        const sourceTailSequence = Number(rawTail);
+        if (!Number.isSafeInteger(sourceTailSequence) ||
+            sourceTailSequence < 0 || String(sourceTailSequence) !== rawTail) {
+          const error = new Error('Source sequence is invalid for retention inventory');
+          error.code = 'EVENT_INTELLIGENCE_MCP_RETENTION_STATE_INVALID';
+          throw error;
+        }
+        const saved = await client.query(
+          'SELECT record_key,payload::text AS raw FROM ' + this.records +
+          ' WHERE scope_id=$1 AND kind=$2 ORDER BY record_key LIMIT $3',
+          [this.scopeId, 'mcp_client_state', maxSources + 1],
+        );
+        if (saved.rows.length > maxSources) {
+          const error = new Error('MCP source retention inventory exceeds bounded scope');
+          error.code = 'EVENT_INTELLIGENCE_MCP_RETENTION_SCAN_BUDGET_EXCEEDED';
+          throw error;
+        }
+        const blockers = new Set([
+          'opaque-provider-cursor-to-sequence-floor-unproven',
+          'off-host-immutable-source-and-audit-archive-unverified',
+          'pending-cep-wake-and-dedup-lifecycle-unverified',
+          'audit-prefix-hash-continuation-unverified',
+        ]);
+        if (!saved.rows.length) blockers.add('no-registered-provider-state');
+        const sources = [];
+        for (const {record_key:recordKey,raw} of saved.rows) {
+          let state;
+          try {
+            assertAuditJsonNumberPrecision(raw);
+            state=JSON.parse(raw);
+          } catch {
+            const error = new Error('Malformed or lossy durable MCP state prevents retention inventory');
+            error.code = 'EVENT_INTELLIGENCE_MCP_RETENTION_STATE_INVALID';
+            throw error;
+          }
+          if (typeof recordKey !== 'string' ||
+              typeof state?.connectionId !== 'string' || !state.connectionId ||
+              typeof state.eventName !== 'string' || !state.eventName ||
+              !Number.isSafeInteger(state.completenessRevision) ||
+              state.completenessRevision < 1) {
+            const error = new Error('Untrusted MCP source identity/revision in retention inventory');
+            error.code = 'EVENT_INTELLIGENCE_MCP_RETENTION_STATE_INVALID';
+            throw error;
+          }
+          const hasOpaqueCursor = typeof state.cursor === 'string' &&
+            state.cursor.length > 0;
+          const gapUnresolved = state.gapUnresolved === true ||
+            state.truncated === true;
+          if (!hasOpaqueCursor) blockers.add('missing-opaque-provider-cursor');
+          if (gapUnresolved) blockers.add('unreconciled-provider-delivery-gap');
+          sources.push(Object.freeze({
+            identitySha256:createHash('sha256').update(
+              JSON.stringify([this.scopeId,recordKey]),'utf8').digest('hex'),
+            completenessRevision:state.completenessRevision,
+            cursorSha256:hasOpaqueCursor
+              ? createHash('sha256').update(state.cursor,'utf8').digest('hex')
+              : null,
+            gapUnresolved,
+            // No raw provider tokens, arguments or full connection IDs leave
+            // this operator report; the hash still must be treated as scoped.
+          }));
+        }
+        const snapshotSha256 = createHash('sha256').update(JSON.stringify([
+          'event-intelligence.mcp-retention-source-inventory.v1',
+          this.scopeId,sourceTailSequence,sources,
+        ]),'utf8').digest('hex');
+        return Object.freeze({
+          schema:'event-intelligence.mcp-retention-source-inventory.v1',
+          scopeId:this.scopeId,sourceTailSequence,
+          sourceCount:sources.length,
+          sources:Object.freeze(sources),
+          snapshotSha256,
+          blockers:Object.freeze([...blockers].sort()),
+          // The returned inventory is informative only, NOT trusted:
+          // callers cannot conclude that archived history is deletable.
+          physicalSourcePruneAuthorized:false,
+          productionReplayFloorEstablished:false,
+        });
+      });
+    } catch (error) {
+      if (error?.code === '57014') {
+        const bounded = new Error('MCP source retention inventory SQL budget exceeded');
+        bounded.code = 'EVENT_INTELLIGENCE_MCP_RETENTION_TIME_BUDGET_EXCEEDED';
+        throw bounded;
+      }
+      throw error;
+    }
   }
 
   async appendTriggerMatchIfMcpGapUnchanged(input, expectedSnapshot, expectedBuffer) {
