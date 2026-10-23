@@ -156,9 +156,17 @@ export function createWorkerService({ env = process.env, pool: suppliedPool, log
       }
       if (request.method === 'GET' && url.pathname === '/v1/metrics') {
         let backlog = null;
+        let pendingWakeDeliveries = null;
+        let deadLetterWakeDeliveries = null;
         const scopeId = url.searchParams.get('scopeId');
-        if (scopeId) backlog = (await (await context(scopeId)).store.listDueWakeDeliveries()).length;
-        return sendJson(response, 200, { workerId: config.workerId, counters: { ...counters }, process: { uptimeSeconds: process.uptime(), rssBytes: process.memoryUsage().rss, heapUsedBytes: process.memoryUsage().heapUsed, cpu: process.cpuUsage() }, database: { connected: ready }, ...(backlog === null ? {} : { dueWakeBacklog: backlog }) });
+        if (scopeId) {
+          const store = (await context(scopeId)).store;
+          const wakeStates = await store.countWakeDeliveryStates();
+          backlog = wakeStates.due;
+          pendingWakeDeliveries = wakeStates.pending;
+          deadLetterWakeDeliveries = wakeStates.deadLetter;
+        }
+        return sendJson(response, 200, { workerId: config.workerId, counters: { ...counters }, process: { uptimeSeconds: process.uptime(), rssBytes: process.memoryUsage().rss, heapUsedBytes: process.memoryUsage().heapUsed, cpu: process.cpuUsage() }, database: { connected: ready }, ...(backlog === null ? {} : { dueWakeBacklog: backlog }), ...(pendingWakeDeliveries === null ? {} : { pendingWakeDeliveries, deadLetterWakeDeliveries }) });
       }
       return sendJson(response, 404, { error: 'not-found' });
     } catch (error) {

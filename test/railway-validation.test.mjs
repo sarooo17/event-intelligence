@@ -150,6 +150,8 @@ test('PostgreSQL 16 HTTP smoke uses two OS workers, real CEP, remote wake receip
   assert.equal(status.observed.acceptedEvents, 4);
   assert.equal(status.observed.persistedDeliveredWakes, 4);
   assert.equal(status.observed.verifiedWakes, 4);
+  assert.equal(status.report.observed.wakeSettlement.settled, true);
+  assert.equal(status.report.observed.pendingWakeDeliveries, 0);
   assert.deepEqual(Object.keys(status.report.observed.workerRequestCounts).sort(), ['ei-worker-a', 'ei-worker-b']);
   assert.equal(status.report.productionSloCertified, false);
   assert.equal(status.report.externalProviderMeasured, false);

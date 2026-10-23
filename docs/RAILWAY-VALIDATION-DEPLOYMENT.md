@@ -89,6 +89,7 @@ Keep `EI_ENABLE_WORKER_CRASH_INJECTION=false` until the explicit fault-injection
 | `EI_WORKER_B_URL` | `http://${{ei-worker-b.RAILWAY_PRIVATE_DOMAIN}}:${{ei-worker-b.PORT}}` |
 | `EI_ARTIFACT_DIR` | `/data/artifacts` |
 | `EI_ALLOW_100K` | `false` initially |
+| `EI_WAKE_SETTLE_TIMEOUT_SECONDS` | `120` (optional, 1–900 seconds; maximum wait for durable retries and host receipts after traffic ends) |
 
 Attach a Railway volume to `ei-benchmark` at `/data` to persist campaign artifacts. The volume adds storage, not a fifth service. For fault runs only, set `EI_FAULT_TOKEN` on benchmark to the same random token as the workers. The explicit campaign request also needs `faultConfirmation=CRASH_EI_WORKER_A`; this only terminates worker A and does not stop PostgreSQL.
 
