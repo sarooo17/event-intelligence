@@ -1,0 +1,388 @@
+#!/usr/bin/env node
+import http from 'node:http';
+import { createHash, randomUUID } from 'node:crypto';
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
+import { performance } from 'node:perf_hooks';
+import { pathToFileURL } from 'node:url';
+import pg from 'pg';
+import { assessPostgresProductionSloEvidence } from '../evidence/postgres-production-slo-gate.mjs';
+import { verifyCampaignArtifact, verifyRawSampleArtifact } from './artifact.mjs';
+import { MAX_POSTGRES_TABLE_PREFIX_BYTES } from '../lib/postgres-event-store.mjs';
+import { bearerMatches, httpPort, parsePrivateServiceUrl, percentileStats, readJson, requiredEnv, safeError, safeIdentifier, sendJson } from './common.mjs';
+
+const { Pool } = pg;
+const HOST_TABLE = 'ei_validation_host_receipts';
+const MAX_DURATION_SECONDS = 3600;
+const MAX_EVENTS = 250_000;
+const MAX_TRIGGERS = 100_000;
+const MAX_CONCURRENCY = 32;
+const MAX_RAW_SAMPLE_ROWS = 100_000;
+const MAX_ARTIFACT_BYTES = 32 * 1024 * 1024;
+
+export function readBenchmarkConfig(env = process.env) {
+  const databaseUrl = requiredEnv(env, 'DATABASE_URL', { minLength: 12 });
+  if (!/^postgres(?:ql)?:\/\//i.test(databaseUrl)) throw new Error('DATABASE_URL must be a PostgreSQL URL');
+  const controlToken = requiredEnv(env, 'EI_CONTROL_TOKEN', { minLength: 32 });
+  const ingestToken = requiredEnv(env, 'EI_INGEST_TOKEN', { minLength: 32 });
+  const hostCallbackToken = requiredEnv(env, 'EI_HOST_CALLBACK_TOKEN', { minLength: 32 });
+  if (new Set([controlToken, ingestToken, hostCallbackToken]).size !== 3) throw new Error('EI_CONTROL_TOKEN, EI_INGEST_TOKEN, and EI_HOST_CALLBACK_TOKEN must be distinct');
+  const scopeBase = safeIdentifier(requiredEnv(env, 'EI_SCOPE_ID'), 'EI_SCOPE_ID');
+  const tablePrefix = safeIdentifier(env.EI_TABLE_PREFIX || 'ei_validation', 'EI_TABLE_PREFIX');
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(tablePrefix) || Buffer.byteLength(tablePrefix) > MAX_POSTGRES_TABLE_PREFIX_BYTES) throw new Error(`EI_TABLE_PREFIX must be a valid PostgreSQL prefix of at most ${MAX_POSTGRES_TABLE_PREFIX_BYTES} bytes`);
+  const workers = [
+    { id: 'ei-worker-a', url: parsePrivateServiceUrl(requiredEnv(env, 'EI_WORKER_A_URL'), 'EI_WORKER_A_URL', { allowLocal: env.EI_VALIDATION_ALLOW_LOCAL_HTTP === 'true' }) },
+    { id: 'ei-worker-b', url: parsePrivateServiceUrl(requiredEnv(env, 'EI_WORKER_B_URL'), 'EI_WORKER_B_URL', { allowLocal: env.EI_VALIDATION_ALLOW_LOCAL_HTTP === 'true' }) },
+  ];
+  if (workers[0].url === workers[1].url) throw new Error('EI_WORKER_A_URL and EI_WORKER_B_URL must identify distinct services');
+  const artifactDir = resolve(env.EI_ARTIFACT_DIR || '/data/artifacts');
+  const port = httpPort(env);
+  const allow100k = env.EI_ALLOW_100K === 'true';
+  const faultToken = env.EI_FAULT_TOKEN || '';
+  if (faultToken && faultToken.length < 32) throw new Error('EI_FAULT_TOKEN must have at least 32 characters');
+  if (faultToken && [controlToken, ingestToken, hostCallbackToken].includes(faultToken)) throw new Error('EI_FAULT_TOKEN must be distinct from service authentication tokens');
+  return { databaseUrl, controlToken, ingestToken, hostCallbackToken, scopeBase, tablePrefix, workers, artifactDir, port, allow100k, faultToken };
+}
+
+function triggerDefinition(slot) {
+  return {
+    triggerId: `railway-slot-${slot}`, version: '1',
+    clauses: [{ id: 'changed', event: `railway.validation.changed.${slot}`, arguments: {}, where: [{ path: 'slot', op: 'eq', value: slot }] }],
+    pattern: { version: '2', root: { kind: 'event', ref: 'changed' }, partitionBy: [{ key: 'benchmark-partition', fields: [{ ref: 'changed', path: 'correlation' }] }] },
+    withinMs: 60000,
+    lifecycle: { oneShot: false, cooldownMs: 0, completeOnGoal: false },
+    target: { runtime: 'ei-validation-host', kind: 'benchmark-task', id: `task-${slot}` },
+  };
+}
+
+export function validateCampaign(body, config) {
+  const profiles = ['smoke', 'steady', 'burst', 'fault-injected'];
+  if (!body || !profiles.includes(body.profile)) throw new Error('profile must be smoke, steady, burst, or fault-injected');
+  const triggerCount = body.triggerCount ?? 1000;
+  const durationSeconds = body.durationSeconds ?? (body.profile === 'smoke' ? 5 : 600);
+  const requestedRate = body.requestedRatePerSecond ?? 10;
+  const concurrency = body.concurrency ?? 1;
+  const eventCount = body.eventCount ?? Math.min(MAX_EVENTS, Math.ceil(durationSeconds * requestedRate));
+  const partitions = body.partitions ?? 2;
+  for (const [name, value, min, max] of [
+    ['triggerCount', triggerCount, 1, MAX_TRIGGERS], ['durationSeconds', durationSeconds, 1, MAX_DURATION_SECONDS],
+    ['requestedRatePerSecond', requestedRate, 1, 1000], ['concurrency', concurrency, 1, MAX_CONCURRENCY],
+    ['eventCount', eventCount, 1, MAX_EVENTS], ['partitions', partitions, 2, 256],
+  ]) if (!Number.isSafeInteger(value) || value < min || value > max) throw new Error(`${name} must be an integer from ${min} to ${max}`);
+  if (body.profile !== 'smoke' && durationSeconds < 600) throw new Error('SLO profiles require at least 600 seconds');
+  if (triggerCount === 100_000 && (!config.allow100k || body.allow100k !== true)) throw new Error('100k triggers require EI_ALLOW_100K=true and allow100k=true on this campaign');
+  if (body.profile === 'fault-injected' && (body.injectWorkerCrash !== true || body.faultConfirmation !== 'CRASH_EI_WORKER_A' || config.faultToken.length < 32)) throw new Error('fault-injected profile requires enabled worker fault injection, EI_FAULT_TOKEN, and faultConfirmation=CRASH_EI_WORKER_A');
+  if (body.profile === 'fault-injected' && body.databaseUnavailable === true) throw new Error('database interruption is disabled for this single-database setup; use an isolated HA fault-test environment');
+  return { profile: body.profile, triggerCount, durationSeconds, requestedRatePerSecond: requestedRate, concurrency, eventCount, partitions, injectWorkerCrash: body.injectWorkerCrash === true };
+}
+
+export function createBenchmarkService({ env = process.env, pool: suppliedPool, logger = console } = {}) {
+  const config = readBenchmarkConfig(env);
+  const pool = suppliedPool ?? new Pool({ connectionString: config.databaseUrl, max: 8, connectionTimeoutMillis: 5000, idleTimeoutMillis: 30000, statement_timeout: 15000, application_name: 'ei-benchmark', keepAlive: true });
+  const campaigns = new Map();
+  const activeAborters = new Map();
+  const campaignTasks = new Map();
+  let server;
+  let ready = false;
+  let postgresVersion = null;
+
+  async function initialize() {
+    const connection = await pool.query('SELECT current_setting(\'server_version\') AS server_version');
+    postgresVersion = connection.rows[0].server_version;
+    await pool.query(`CREATE TABLE IF NOT EXISTS ${HOST_TABLE} (scope_id TEXT NOT NULL, wake_id TEXT NOT NULL, receipt_id TEXT NOT NULL, attempt_count BIGINT NOT NULL DEFAULT 1, first_seen_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(), last_seen_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(), PRIMARY KEY(scope_id, wake_id))`);
+    ready = true;
+  }
+
+  async function receiveWake(request, response) {
+    if (!bearerMatches(request, config.hostCallbackToken)) return sendJson(response, 401, { error: 'unauthorized' });
+    const body = await readJson(request, 64 * 1024);
+    const scopeId = safeIdentifier(body?.scopeId, 'scopeId');
+    const packet = body?.packet;
+    if (!scopeId.startsWith(`${config.scopeBase}:`) || !packet || typeof packet.wake_id !== 'string' || !packet.target || !Array.isArray(packet.source_event_refs)) return sendJson(response, 400, { error: 'invalid-wake-packet' });
+    const eventRefs = packet.source_event_refs;
+    const campaign = [...campaigns.values()].find(item => item.scopeId === scopeId);
+    const sample = campaign?.eventStarts.get(eventRefs.at(-1)?.event_id);
+    const started = sample?.startedAt;
+    const hostEffectStart = performance.now();
+    const receiptId = `receipt-${createHash('sha256').update(`${scopeId}:${packet.wake_id}`).digest('hex').slice(0, 32)}`;
+    const result = await pool.query(
+      `INSERT INTO ${HOST_TABLE} (scope_id,wake_id,receipt_id) VALUES ($1,$2,$3) ON CONFLICT (scope_id,wake_id) DO UPDATE SET attempt_count=${HOST_TABLE}.attempt_count+1,last_seen_at=clock_timestamp() RETURNING attempt_count`,
+      [scopeId, packet.wake_id, receiptId],
+    );
+    const duplicate = Number(result.rows[0].attempt_count) > 1;
+    if (campaign && started !== undefined) {
+      campaign.hostEffectSamples.push(performance.now() - hostEffectStart);
+      campaign.endToEndSamples.push(performance.now() - started);
+      sample.hostEffectMs = campaign.hostEffectSamples.at(-1);
+      sample.providerToHostEndToEndMs = campaign.endToEndSamples.at(-1);
+      sample.hostReceipt = true;
+    }
+    if (campaign) {
+      if (duplicate) campaign.duplicateCallbackAttempts++;
+      campaign.verifiedWakes.add(packet.wake_id);
+    }
+    campaign?.eventStarts.delete(eventRefs.at(-1)?.event_id);
+    return sendJson(response, 200, { runtimeReceiptId: receiptId, duplicate, status: 'completed' });
+  }
+
+  async function requestWorker(worker, path, body, token = config.ingestToken) {
+    const response = await fetch(`${worker.url}${path}`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(15000) });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(`${worker.id} ${path} failed with HTTP ${response.status}`);
+    return payload;
+  }
+
+  async function collectWorkerMetrics(scopeId) {
+    const result = {};
+    for (const worker of config.workers) {
+      try {
+        const response = await fetch(`${worker.url}/v1/metrics?scopeId=${encodeURIComponent(scopeId)}`, { headers: { authorization: `Bearer ${config.ingestToken}` }, signal: AbortSignal.timeout(3000) });
+        result[worker.id] = response.ok ? await response.json() : null;
+      } catch { result[worker.id] = null; }
+    }
+    return result;
+  }
+
+  async function writeArtifacts(campaign) {
+    const directory = resolve(config.artifactDir);
+    await mkdir(directory, { recursive: true });
+    const metrics = {
+      schema: 'event-intelligence.railway-validation-campaign.v1',
+      campaignId: campaign.id, profile: campaign.options.profile, scopeId: campaign.scopeId,
+      startedAt: campaign.startedAt, completedAt: new Date().toISOString(),
+      sourceCommitSha: env.SOURCE_COMMIT_SHA || env.RAILWAY_GIT_COMMIT_SHA || null,
+      environment: { node: process.version, postgresVersion, pgDriver: 'pg 8.16.3', cpuModel: null, benchmarkRssBytes: process.memoryUsage().rss, railwayRegion: env.RAILWAY_REPLICA_REGION || null },
+      trafficSource: 'synthetic MCP-shaped events generated by ei-benchmark over private HTTP',
+      externalProviderMeasured: false,
+      configuration: { ...campaign.options, workers: config.workers.map(({ id }) => id), partitions: campaign.options.partitions },
+      observed: { elapsedSeconds: campaign.elapsedSeconds, requestedEvents: campaign.options.eventCount, attemptedEvents: campaign.attemptedEvents, acceptedEvents: campaign.acceptedEvents, matchedEvents: campaign.matchedEvents, persistedDeliveredWakes: campaign.persistedDeliveredWakes, verifiedWakes: campaign.verifiedWakes.size, duplicateCallbackAttempts: campaign.duplicateCallbackAttempts, duplicateHostEffects: campaign.duplicateHostEffects, errors: campaign.errorCount, lostEvents: Math.max(0, campaign.attemptedEvents - campaign.verifiedWakes.size), requestedEventRatePerSecond: campaign.options.requestedRatePerSecond, achievedRequestRatePerSecond: campaign.elapsedSeconds ? campaign.acceptedEvents / campaign.elapsedSeconds : 0, workerRequestCounts: Object.fromEntries(campaign.workerRequestCounts), workerCpuUsageMicros: campaign.workerCpuUsageMicros, backlog: campaign.workerMetrics ? Object.fromEntries(Object.entries(campaign.workerMetrics).map(([key, value]) => [key, value?.database?.dueWakeBacklog ?? null])) : null, queueDepth: null, workerMetrics: campaign.workerMetrics, postgresDatabaseStats: campaign.postgresStats, databaseStorageGrowthBytes: campaign.databaseStorageGrowthBytes },
+      latency: { providerToWorkerResponse: percentileStatsOrMissing(campaign.providerToWorkerSamples), hostEffect: percentileStatsOrMissing(campaign.hostEffectSamples), providerToHostEndToEnd: percentileStatsOrMissing(campaign.endToEndSamples), providerToIngest: null, ingestToMatch: null, matchToWake: null },
+      rawSamples: { file: `ei-validation-${campaign.id}.jsonl`, rows: campaign.rawSampleRows.length, maxRows: MAX_RAW_SAMPLE_ROWS, truncated: campaign.acceptedEvents > campaign.rawSampleRows.length },
+      missingMetrics: ['providerToIngest (no clock-safe ingest acknowledgement boundary)', 'ingestToMatch (not instrumented inside EI)', 'matchToWake (not instrumented inside EI)', 'total pending wake queue depth (the current store API exposes only due deliveries)', 'PostgreSQL service CPU/memory attribution', 'independent provider and host failure domains', ...(campaign.acceptedEvents > campaign.rawSampleRows.length ? ['raw latency sample set is truncated at 100000 rows'] : [])],
+      faults: campaign.faults,
+      limitations: ['The provider is a synthetic MCP-shaped event generator, not a real third-party provider.', 'Provider and host HTTP roles share ei-benchmark process and Railway failure domain.', 'Host effect idempotency ledger uses the shared benchmark PostgreSQL database.', 'Cross-container wall-clock timestamps are not subtracted.', 'Database unavailability/failover fault was not executed against this single PostgreSQL service.', 'Partition movement is exercised through routing away from the failed worker; PostgreSQL HA lease failover remains unverified.', 'No WORM archive or retention purge is implemented by this campaign service.'],
+      productionSloCertified: false,
+    };
+    const assessment = assessPostgresProductionSloEvidence({
+      schema: 'event-intelligence.postgres-production-slo-evidence.v1',
+      productionSloCertified: false,
+      observedAt: new Date().toISOString(),
+      environment: { node: process.version, postgres: postgresVersion, pgDriver: 'pg 8.16.3', cpuModel: null, memoryBytes: process.memoryUsage().rss, sourceCommitSha: env.SOURCE_COMMIT_SHA || env.RAILWAY_GIT_COMMIT_SHA || null },
+      profiles: [{ name: campaign.options.profile, durationSeconds: campaign.elapsedSeconds, requestedEventRatePerSecond: campaign.options.requestedRatePerSecond, observedEventRatePerSecond: campaign.elapsedSeconds ? campaign.acceptedEvents / campaign.elapsedSeconds : 0, workers: 2, partitions: campaign.options.partitions, expectedWakes: campaign.options.eventCount, verifiedWakes: campaign.verifiedWakes.size, duplicateHostEffects: campaign.duplicateHostEffects, providerTransportMeasured: campaign.providerToWorkerSamples.length > 0, externalHostEffectMeasured: campaign.hostEffectSamples.length > 0, postgresServiceResourcesMeasured: false, latency: { providerToIngest: null, ingestToMatch: null, matchToWake: null, hostEffect: percentileStatsOrMissing(campaign.hostEffectSamples) }, faults: campaign.faults }],
+    });
+    metrics.sloGate = { status: 'blocked', productionSloCertified: false, missing: assessment.missing };
+    const json = JSON.stringify(metrics, null, 2) + '\n';
+    const digest = createHash('sha256').update(json).digest('hex');
+    const base = `ei-validation-${campaign.id}`;
+    const jsonPath = join(directory, `${base}.json`);
+    const tmpPath = `${jsonPath}.tmp`;
+    await writeFile(tmpPath, json, { flag: 'wx', mode: 0o600 });
+    await rename(tmpPath, jsonPath);
+    await writeFile(join(directory, `${base}.sha256`), `${digest}  ${base}.json\n`, { flag: 'wx', mode: 0o600 });
+    const rawSamples = campaign.rawSampleRows.map(row => JSON.stringify({ eventId: row.eventId, workerId: row.workerId, providerToWorkerResponseMs: row.providerToWorkerResponseMs ?? null, hostEffectMs: row.hostEffectMs ?? null, providerToHostEndToEndMs: row.providerToHostEndToEndMs ?? null, hostReceipt: row.hostReceipt === true })).join('\n') + (campaign.rawSampleRows.length ? '\n' : '');
+    if (Buffer.byteLength(rawSamples) > MAX_ARTIFACT_BYTES) throw new Error('raw sample artifact exceeds the 32 MiB output limit');
+    const rawPath = join(directory, `${base}.jsonl`);
+    await writeFile(`${rawPath}.tmp`, rawSamples, { flag: 'wx', mode: 0o600 });
+    await rename(`${rawPath}.tmp`, rawPath);
+    const rawDigest = createHash('sha256').update(rawSamples).digest('hex');
+    await writeFile(`${rawPath}.sha256`, `${rawDigest}  ${base}.jsonl\n`, { flag: 'wx', mode: 0o600 });
+    campaign.artifactPath = jsonPath;
+    campaign.artifactSha256 = digest;
+    campaign.rawArtifactPath = rawPath;
+    campaign.rawArtifactSha256 = rawDigest;
+    campaign.report = metrics;
+  }
+
+  async function runCampaign(campaign) {
+    const { options } = campaign;
+    const controller = new AbortController();
+    activeAborters.set(campaign.id, controller);
+    campaign.status = 'preparing';
+    const dbStart = await pool.query("SELECT pg_database_size(current_database())::bigint AS bytes, (SELECT xact_commit FROM pg_stat_database WHERE datname=current_database())::bigint AS commits");
+    campaign.databaseSizeStartBytes = Number(dbStart.rows[0].bytes);
+    const workerA = config.workers[0];
+    const batchSize = 500;
+    for (let offset = 0; offset < options.triggerCount; offset += batchSize) {
+      if (controller.signal.aborted) throw new Error('campaign stopped');
+      const rows = Array.from({ length: Math.min(batchSize, options.triggerCount - offset) }, (_, index) => triggerDefinition(offset + index));
+      await requestWorker(workerA, '/v1/triggers/batch', { scopeId: campaign.scopeId, triggers: rows });
+    }
+    campaign.workerMetricsStart = await collectWorkerMetrics(campaign.scopeId);
+    campaign.status = 'running';
+    campaign.startedAt = new Date().toISOString();
+    const start = performance.now();
+    const due = start + options.durationSeconds * 1000;
+    let index = 0;
+    let workerAStopped = false;
+    let crashPromise = null;
+    async function sendOne(eventIndex) {
+      if (controller.signal.aborted) return;
+      if (options.profile === 'fault-injected' && eventIndex >= Math.floor(options.eventCount / 2)) {
+        if (!crashPromise) crashPromise = (async () => {
+          const confirmation = await requestWorker(workerA, '/v1/admin/crash', { confirmation: 'CRASH_THIS_WORKER:ei-worker-a' }, config.faultToken);
+          if (confirmation.accepted !== true) throw new Error('worker crash injection was not acknowledged');
+          workerAStopped = true;
+          campaign.faults.push('worker-kill', 'partition-rebalance');
+          await requestWorker(config.workers[1], '/v1/recover', { scopeId: campaign.scopeId });
+        })();
+        await crashPromise;
+      }
+      const slot = eventIndex % options.triggerCount;
+      const worker = workerAStopped ? config.workers[1] : config.workers[eventIndex % config.workers.length];
+      const eventId = `${campaign.id}-event-${eventIndex}`;
+      const sample = { eventId, workerId: worker.id, startedAt: performance.now(), providerToWorkerResponseMs: null, hostEffectMs: null, providerToHostEndToEndMs: null, hostReceipt: false };
+      campaign.attemptedEvents++;
+      campaign.eventStarts.set(eventId, sample);
+      if (campaign.rawSampleRows.length < MAX_RAW_SAMPLE_ROWS) campaign.rawSampleRows.push(sample);
+      const callStart = performance.now();
+      const packet = { scopeId: campaign.scopeId, traceId: `${campaign.id}-trace-${eventIndex}`, serverId: 'remote-mcp-provider', event: { eventId, name: `railway.validation.changed.${slot}`, timestamp: new Date().toISOString(), data: { slot, correlation: `partition-${slot % options.partitions}`, index: eventIndex } } };
+      try {
+        const result = await requestWorker(worker, '/v1/events', packet);
+        campaign.providerToWorkerSamples.push(performance.now() - callStart);
+        sample.providerToWorkerResponseMs = campaign.providerToWorkerSamples.at(-1);
+        campaign.workerRequestCounts.set(worker.id, (campaign.workerRequestCounts.get(worker.id) || 0) + 1);
+        campaign.acceptedEvents++;
+        campaign.persistedDeliveredWakes += Number(result.persistedDeliveredWakes || 0);
+        campaign.matchedEvents += Number(result.matched || 0);
+      } catch (error) {
+        campaign.errorCount++;
+        if (campaign.errors.length < 100) campaign.errors.push({ worker: worker.id, message: String(error.message).slice(0, 180) });
+        campaign.eventStarts.delete(eventId);
+      }
+    }
+    const interval = 1000 / options.requestedRatePerSecond;
+    while (index < options.eventCount && performance.now() < due && !controller.signal.aborted) {
+      const burstSize = Math.max(1, Math.floor(options.requestedRatePerSecond * 5));
+      const launchAt = options.profile === 'burst'
+        ? start + Math.floor(index / burstSize) * 5000
+        : start + index * interval;
+      const delay = launchAt - performance.now();
+      if (delay > 0) await new Promise(resolve => setTimeout(resolve, Math.min(delay, 1000)));
+      const active = [];
+      for (let slot = 0; slot < options.concurrency && index < options.eventCount && performance.now() < due; slot++) active.push(sendOne(index++));
+      await Promise.all(active);
+    }
+    campaign.elapsedSeconds = (performance.now() - start) / 1000;
+    if (controller.signal.aborted) campaign.status = 'stopped';
+    else campaign.status = campaign.errors.length ? 'completed-with-errors' : 'completed';
+    campaign.completedAt = new Date().toISOString();
+    const dbEnd = await pool.query("SELECT pg_database_size(current_database())::bigint AS bytes, (SELECT xact_commit FROM pg_stat_database WHERE datname=current_database())::bigint AS commits");
+    campaign.databaseSizeEndBytes = Number(dbEnd.rows[0].bytes);
+    campaign.databaseStorageGrowthBytes = campaign.databaseSizeEndBytes - campaign.databaseSizeStartBytes;
+    campaign.postgresStats = { databaseSizeBytes: campaign.databaseSizeEndBytes, committedTransactions: Number(dbEnd.rows[0].commits) };
+    campaign.workerMetrics = await collectWorkerMetrics(campaign.scopeId);
+    campaign.workerCpuUsageMicros = {};
+    for (const worker of config.workers) {
+      const before = campaign.workerMetricsStart?.[worker.id]?.process?.cpu;
+      const after = campaign.workerMetrics?.[worker.id]?.process?.cpu;
+      campaign.workerCpuUsageMicros[worker.id] = before && after
+        ? { user: Math.max(0, after.user - before.user), system: Math.max(0, after.system - before.system) }
+        : null;
+    }
+    await writeArtifacts(campaign);
+    activeAborters.delete(campaign.id);
+  }
+
+  async function handle(request, response) {
+    const url = new URL(request.url, 'http://localhost');
+    try {
+      if (request.method === 'GET' && url.pathname === '/healthz') return sendJson(response, 200, { status: 'ok' });
+      if (request.method === 'GET' && url.pathname === '/readyz') {
+        if (!ready) return sendJson(response, 503, { status: 'not-ready' });
+        await pool.query('SELECT 1');
+        return sendJson(response, 200, { status: 'ready' });
+      }
+      if (request.method === 'POST' && url.pathname === '/v1/host/wake') return await receiveWake(request, response);
+      if (!bearerMatches(request, config.controlToken)) return sendJson(response, 401, { error: 'unauthorized' });
+      if (!ready) return sendJson(response, 503, { error: 'not-ready' });
+      if (request.method === 'POST' && url.pathname === '/v1/campaigns') {
+        if ([...campaigns.values()].some(campaign => ['queued', 'preparing', 'running'].includes(campaign.status))) return sendJson(response, 409, { error: 'campaign-already-running' });
+        if (campaigns.size >= 1000) return sendJson(response, 409, { error: 'campaign-history-capacity-reached' });
+        const body = await readJson(request, 32 * 1024);
+        const options = validateCampaign(body, config);
+        const id = randomUUID();
+        const campaign = { id, options, scopeId: `${config.scopeBase}:${id}`, status: 'queued', createdAt: new Date().toISOString(), startedAt: null, completedAt: null, attemptedEvents: 0, acceptedEvents: 0, matchedEvents: 0, persistedDeliveredWakes: 0, duplicateCallbackAttempts: 0, duplicateHostEffects: 0, errorCount: 0, verifiedWakes: new Set(), eventStarts: new Map(), rawSampleRows: [], providerToWorkerSamples: [], hostEffectSamples: [], endToEndSamples: [], workerRequestCounts: new Map(), workerMetrics: null, postgresStats: null, databaseStorageGrowthBytes: null, errors: [], faults: [], artifactPath: null, artifactSha256: null, rawArtifactPath: null, rawArtifactSha256: null, report: null, elapsedSeconds: 0 };
+        campaigns.set(id, campaign);
+        const task = runCampaign(campaign).catch(async error => { campaign.status = 'failed'; campaign.error = safeError(error); campaign.completedAt = new Date().toISOString(); activeAborters.delete(id); await writeArtifacts(campaign).catch(writeError => logger.error?.(JSON.stringify({ event: 'campaign_artifact_failed', ...safeError(writeError) }))); }).finally(() => campaignTasks.delete(id));
+        campaignTasks.set(id, task);
+        return sendJson(response, 202, { campaignId: id, status: campaign.status, scopeId: campaign.scopeId });
+      }
+      const match = /^\/v1\/campaigns\/([a-f0-9-]+)(?:\/(stop))?$/.exec(url.pathname);
+      if (match && request.method === 'GET' && !match[2]) {
+        const campaign = campaigns.get(match[1]);
+        if (!campaign) return sendJson(response, 404, { error: 'campaign-not-found' });
+        const { id, status, scopeId, options, createdAt, startedAt, completedAt, artifactPath, artifactSha256, rawArtifactPath, rawArtifactSha256, report, error } = campaign;
+        return sendJson(response, 200, { id, status, scopeId, options, createdAt, startedAt, completedAt, artifactPath, artifactSha256, rawArtifactPath, rawArtifactSha256, observed: { attemptedEvents: campaign.attemptedEvents, acceptedEvents: campaign.acceptedEvents, matchedEvents: campaign.matchedEvents, persistedDeliveredWakes: campaign.persistedDeliveredWakes, verifiedWakes: campaign.verifiedWakes.size, duplicateHostEffects: campaign.duplicateHostEffects, errors: campaign.errorCount }, ...(report ? { report } : {}), ...(error ? { error } : {}) });
+      }
+      if (match && request.method === 'POST' && match[2]) {
+        const campaign = campaigns.get(match[1]);
+        if (!campaign) return sendJson(response, 404, { error: 'campaign-not-found' });
+        const controller = activeAborters.get(campaign.id);
+        controller?.abort();
+        return sendJson(response, 202, { campaignId: campaign.id, status: 'stop-requested' });
+      }
+      const cleanupMatch = /^\/v1\/campaigns\/([a-f0-9-]+)\/cleanup$/.exec(url.pathname);
+      if (cleanupMatch && request.method === 'POST') {
+        const campaign = campaigns.get(cleanupMatch[1]);
+        if (!campaign) return sendJson(response, 404, { error: 'campaign-not-found' });
+        if (['queued', 'preparing', 'running'].includes(campaign.status)) return sendJson(response, 409, { error: 'campaign-is-active' });
+        if (campaign.status === 'cleaned') return sendJson(response, 409, { error: 'campaign-already-cleaned' });
+        const body = await readJson(request, 4096);
+        if (body.confirmation !== `DELETE_ONLY_CAMPAIGN:${campaign.id}`) return sendJson(response, 400, { error: 'explicit campaign cleanup confirmation required' });
+        if (!campaign.artifactPath || !campaign.rawArtifactPath) return sendJson(response, 409, { error: 'verified campaign artifacts are required before cleanup' });
+        const artifactText = await readFile(campaign.artifactPath, 'utf8');
+        const artifactChecksum = await readFile(`${campaign.artifactPath.replace(/\.json$/, '')}.sha256`, 'utf8');
+        const artifact = verifyCampaignArtifact(artifactText, artifactChecksum);
+        const samplesText = await readFile(campaign.rawArtifactPath, 'utf8');
+        const samplesChecksum = await readFile(`${campaign.rawArtifactPath}.sha256`, 'utf8');
+        const samples = verifyRawSampleArtifact(samplesText, samplesChecksum, artifact.report?.rawSamples?.rows);
+        if (!artifact.valid || !samples.valid || artifact.report.campaignId !== campaign.id || artifact.report.scopeId !== campaign.scopeId) return sendJson(response, 409, { error: 'campaign artifact verification failed; data retained' });
+        const client = await pool.connect();
+        let deleted = {};
+        try {
+          await client.query('BEGIN');
+          for (const [table, column] of [[`${config.tablePrefix}_records`, 'scope_id'], [`${config.tablePrefix}_history`, 'scope_id'], [`${config.tablePrefix}_leases`, 'scope_id'], [`${config.tablePrefix}_counters`, 'scope_id'], [HOST_TABLE, 'scope_id']]) {
+            const result = await client.query(`DELETE FROM "${table}" WHERE "${column}" = $1`, [campaign.scopeId]);
+            deleted[table] = result.rowCount;
+          }
+          await client.query('COMMIT');
+        } catch (error) {
+          await client.query('ROLLBACK').catch(() => {});
+          throw error;
+        } finally { client.release(); }
+        campaign.status = 'cleaned';
+        campaign.cleanupDeletedRows = deleted;
+        return sendJson(response, 200, { campaignId: campaign.id, status: campaign.status, deletedRows: deleted, artifactsRetained: true });
+      }
+      return sendJson(response, 404, { error: 'not-found' });
+    } catch (error) {
+      const status = Number(error?.statusCode) || (typeof error?.code === 'string' && /^[0-9A-Z]{5}$/.test(error.code) ? 500 : 400);
+      return sendJson(response, status, { error: safeError(error) });
+    }
+  }
+
+  return {
+    config,
+    async listen() { await initialize(); server = http.createServer(handle); await new Promise((resolve, reject) => { server.once('error', reject); server.listen(config.port, '0.0.0.0', resolve); }); return server; },
+    async close() { for (const controller of activeAborters.values()) controller.abort(); if (server) await new Promise(resolve => server.close(resolve)); await Promise.allSettled([...campaignTasks.values()]); await pool.end(); ready = false; },
+    handle,
+    campaigns,
+  };
+}
+
+function percentileStatsOrMissing(values) { return values.length ? percentileStats(values) : null; }
+
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+  let service;
+  try {
+    service = createBenchmarkService();
+    await service.listen();
+    console.log(JSON.stringify({ event: 'validation_benchmark_ready', port: service.config.port }));
+  } catch (error) {
+    console.error(JSON.stringify({ event: 'validation_benchmark_start_failed', ...safeError(error) }));
+    await service?.close().catch(() => {});
+    process.exitCode = 1;
+  }
+  const stop = async () => { await service?.close().catch(error => console.error(JSON.stringify({ event: 'validation_benchmark_shutdown_failed', ...safeError(error) }))); process.exit(0); };
+  process.once('SIGTERM', stop); process.once('SIGINT', stop);
+}
