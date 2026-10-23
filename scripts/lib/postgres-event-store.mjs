@@ -992,29 +992,35 @@ export class PostgresEventStore {
   }
 
   async listDueWakeDeliveries(nowIso = new Date().toISOString()) {
-    const now = Date.parse(nowIso);
-    const out = [];
-    for (const record of await this.list('wake_delivery')) {
-      if (
-        (record.status === 'pending' || record.status === 'retry_pending') &&
-        Date.parse(record.nextAttemptAt) <= now
-      ) {
-        out.push(record);
-      } else if (
-        record.status === 'claimed' && record.leaseUntil &&
-        Date.parse(record.leaseUntil) <= now
-      ) {
-        out.push(record);
-      } else if (record.status === 'delivered') {
-        const wake = await this.latestWake(record.wakeId);
-        const match = await this.get('trigger_match', record.matchId);
-        if (wake?.status !== 'delivered' || match?.status !== 'fired') out.push(record);
-      }
-    }
-    return out.sort((a, b) =>
-      Date.parse(a.nextAttemptAt) - Date.parse(b.nextAttemptAt) ||
-      a.wakeId.localeCompare(b.wakeId)
+    const result = await this.pool.query(
+      'SELECT d.payload FROM ' + this.records + ' AS d' +
+      ' WHERE d.scope_id=$1 AND d.kind=$2 AND (' +
+      " ((d.payload->>'status' IN ('pending','retry_pending')) AND (d.payload->>'nextAttemptAt')::timestamptz <= $3::timestamptz)" +
+      " OR ((d.payload->>'status')='claimed' AND NULLIF(d.payload->>'leaseUntil','')::timestamptz <= $3::timestamptz)" +
+      " OR ((d.payload->>'status')='delivered' AND (" +
+      " COALESCE((SELECT h.payload->>'status' FROM " + this.history + " AS h WHERE h.scope_id=d.scope_id AND h.kind='wake' AND h.record_key=d.payload->>'wakeId' ORDER BY h.history_id DESC LIMIT 1),'') <> 'delivered'" +
+      " OR COALESCE((SELECT m.payload->>'status' FROM " + this.records + " AS m WHERE m.scope_id=d.scope_id AND m.kind='trigger_match' AND m.record_key=d.payload->>'matchId' LIMIT 1),'') <> 'fired'" +
+      ' )))' +
+      " ORDER BY NULLIF(d.payload->>'nextAttemptAt','')::timestamptz NULLS LAST, d.record_key",
+      [this.scopeId, 'wake_delivery', nowIso],
     );
+    return result.rows.map(row => row.payload);
+  }
+
+  async countWakeDeliveryStates(nowIso = new Date().toISOString()) {
+    const result = await this.pool.query(
+      'SELECT' +
+      " count(*) FILTER (WHERE payload->>'status' IN ('pending','retry_pending','claimed'))::integer AS pending," +
+      " count(*) FILTER (WHERE payload->>'status'='dead_letter')::integer AS dead_letter," +
+      " count(*) FILTER (WHERE ((payload->>'status' IN ('pending','retry_pending') AND (payload->>'nextAttemptAt')::timestamptz <= $2::timestamptz) OR (payload->>'status'='claimed' AND NULLIF(payload->>'leaseUntil','')::timestamptz <= $2::timestamptz)))::integer AS due" +
+      ' FROM ' + this.records + ' WHERE scope_id=$1 AND kind=$3',
+      [this.scopeId, nowIso, 'wake_delivery'],
+    );
+    return {
+      pending: result.rows[0].pending,
+      deadLetter: result.rows[0].dead_letter,
+      due: result.rows[0].due,
+    };
   }
 
   async ensureWakeDelivery(input) {

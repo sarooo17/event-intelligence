@@ -63,6 +63,8 @@
     "bin/",
     "dist/",
     "scripts/service.mjs",
+    "scripts/validation/",
+    "scripts/evidence/postgres-production-slo-gate.mjs",
     "scripts/lib/",
     "README.md",
     "LICENSE",
@@ -87,6 +89,9 @@
     "pack:check": "npm pack --dry-run",
     "prepack": "npm run build",
     "start": "node scripts/service.mjs",
+    "start:validation-worker": "node scripts/validation/worker-service.mjs",
+    "start:validation-benchmark": "node scripts/validation/benchmark-service.mjs",
+    "test:railway-validation": "npm run build && node --test test/railway-validation.test.mjs",
     "protocol:check": "npm run check",
     "mcp": "npm run build && node scripts/mcp-stdio.mjs",
     "mcp:inspect": "npm run build && npx @modelcontextprotocol/inspector node scripts/mcp-stdio.mjs",
@@ -126,15 +131,16 @@
     "access": "public"
   },
   "dependencies": {
-    "zod": "4.6.5",
-    "@modelcontextprotocol/server": "2.0.0"
+    "@modelcontextprotocol/server": "2.0.0",
+    "pg": "8.16.3",
+    "zod": "4.6.5"
   },
   "engines": {
     "node": ">=22"
   },
   "devDependencies": {
-    "typescript": "6.0.3",
-    "@modelcontextprotocol/client": "2.0.0"
+    "@modelcontextprotocol/client": "2.0.0",
+    "typescript": "6.0.3"
   },
   "mcpName": "io.github.sarooo17/event-intelligence"
 }
