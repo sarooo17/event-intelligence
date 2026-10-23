@@ -136,7 +136,7 @@ export function createWorkerService({ env = process.env, pool: suppliedPool, log
         const matches = result.results.filter(row => row.matched).length;
         const delivered = result.deliveries.filter(row => row.status === 'wake_delivered').length;
         counters.requests++; counters.events++; counters.matched += matches; counters.delivered += delivered;
-        return sendJson(response, 200, { accepted: true, workerId: config.workerId, elapsedMs, matched: matches, persistedDeliveredWakes: delivered, deliveries: result.deliveries });
+        return sendJson(response, 200, { accepted: true, workerId: config.workerId, elapsedMs, timings: result.timings ?? null, matched: matches, persistedDeliveredWakes: delivered, deliveries: result.deliveries });
       }
       if (request.method === 'POST' && url.pathname === '/v1/recover') {
         const body = await readJson(request, 16 * 1024);
