@@ -78,6 +78,27 @@ test('PostgreSQL trigger-match lookup is constrained by trigger id', async () =>
   assert.doesNotMatch(calls[0].sql, /SELECT payload FROM "ei_validation_records" WHERE scope_id=\$1 AND kind='trigger_match' ORDER BY record_key/);
 });
 
+test('existing records kind index accepts the legacy folded mixed-case name', async () => {
+  let values;
+  const pool = {
+    async query(sql, params) {
+      values = params;
+      return { rows: [{
+        name: 'ei_ret_example_records_kind_idx', valid: true, ready: true,
+        partial: false, is_unique: false, method: 'btree', key_count: 2,
+        table_name: 'EI_Ret_example_records', key1: 'scope_id', key2: 'kind',
+      }] };
+    },
+    async connect() { throw new Error('assertRecordsKindIndex should use the supplied query client'); },
+  };
+  const store = new PostgresEventStore({ pool, scopeId: 'scope', tablePrefix: 'EI_Ret_example' });
+  assert.equal(await store.assertRecordsKindIndex(), 'EI_Ret_example_records_kind_idx');
+  assert.deepEqual(values, [
+    ['EI_Ret_example_records_kind_idx', 'ei_ret_example_records_kind_idx'],
+    'EI_Ret_example_records_kind_idx',
+  ]);
+});
+
 test('trigger-match index migration overrides and restores the request statement timeout', async () => {
   const ddlTimeouts = [];
   let indexCreated = false;

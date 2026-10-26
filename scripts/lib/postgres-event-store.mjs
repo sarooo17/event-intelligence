@@ -295,6 +295,7 @@ export class PostgresEventStore {
         ]) {
           await client.query(statement);
         }
+        await assertPostgresSchemaShape(client, this.tablePrefix);
         if (freshRecords) {
           await client.query(
             'CREATE INDEX IF NOT EXISTS "' + this.tablePrefix +
@@ -303,7 +304,6 @@ export class PostgresEventStore {
         } else {
           await this.assertRecordsKindIndex(client);
         }
-        await assertPostgresSchemaShape(client, this.tablePrefix);
         // Under the same advisory transaction lock as DDL, require a known
         // persisted contract BEFORE exposing the store to workers. Unknown
         // versions or unversioned nonempty state must never be reinterpreted.
@@ -413,8 +413,10 @@ export class PostgresEventStore {
 
   async assertRecordsKindIndex(client = this.pool) {
     const indexName = this.tablePrefix + '_records_kind_idx';
+    const legacyIndexName = indexName.toLowerCase();
+    const indexNames = [...new Set([indexName, legacyIndexName])];
     const result = await client.query(
-      'SELECT i.indisvalid AS valid, i.indisready AS ready, ' +
+      'SELECT idx.relname AS name, i.indisvalid AS valid, i.indisready AS ready, ' +
       'i.indpred IS NOT NULL AS partial, i.indisunique AS is_unique, ' +
       'am.amname AS method, i.indnkeyatts AS key_count, ' +
       'tbl.relname AS table_name, ' +
@@ -424,8 +426,9 @@ export class PostgresEventStore {
       'JOIN pg_class tbl ON tbl.oid = i.indrelid ' +
       'JOIN pg_am am ON am.oid = idx.relam ' +
       'JOIN pg_namespace n ON n.oid = idx.relnamespace ' +
-      'WHERE n.nspname = current_schema() AND idx.relname = $1',
-      [indexName],
+      'WHERE n.nspname = current_schema() AND idx.relname = ANY($1::text[]) ' +
+      'ORDER BY CASE WHEN idx.relname = $2 THEN 0 ELSE 1 END',
+      [indexNames, indexName],
     );
     const row = result.rows[0];
     const normalize = value => String(value ?? '').replace(/\s+/g, '').replace(/[()]/g, '');
@@ -435,7 +438,7 @@ export class PostgresEventStore {
         normalize(row.key1) !== 'scope_id' || normalize(row.key2) !== 'kind') {
       const error = new Error(
         'Existing Event Intelligence PostgreSQL records table needs a valid ' +
-        '(scope_id, kind) index; inspect or repair ' + indexName + ' before startup.',
+        '(scope_id, kind) index; inspect or repair ' + indexNames.join(' or ') + ' before startup.',
       );
       error.code = row
         ? 'EVENT_INTELLIGENCE_POSTGRES_RECORDS_KIND_INDEX_INVALID'
