@@ -118,7 +118,14 @@ export function assessPostgresProductionSloEvidence(report) {
     }
     if (!Number.isSafeInteger(p.expectedWakes) ||
         p.expectedWakes < 1000 ||
+        p.persistedDeliveredWakes !== p.expectedWakes ||
         p.verifiedWakes !== p.expectedWakes ||
+        p.wakeSettlement?.settled !== true ||
+        p.wakeSettlement?.persistedDeliveredWakeCount !== p.expectedWakes ||
+        p.wakeSettlement?.verifiedHostReceipts !== p.expectedWakes ||
+        p.wakeSettlement?.dueWakeBacklog !== 0 ||
+        p.wakeSettlement?.pendingWakeDeliveries !== 0 ||
+        p.wakeSettlement?.deadLetterWakeDeliveries !== 0 ||
         !Number.isSafeInteger(p.duplicateHostEffects) ||
         p.duplicateHostEffects < 0) {
       missing.push(name + ':durable-wake-and-duplicate-accounting');

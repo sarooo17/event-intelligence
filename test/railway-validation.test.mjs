@@ -15,6 +15,7 @@ import { verifyCampaignArtifact, verifyRawSampleArtifact } from '../scripts/vali
 import { readWorkerConfig } from '../scripts/validation/worker-service.mjs';
 import { campaignLaunchAt, readBenchmarkConfig, validateCampaign, waitForLaunch } from '../scripts/validation/benchmark-service.mjs';
 import { buildStartPayload } from '../scripts/validation/campaign-cli.mjs';
+import { PostgresEventStore } from '../scripts/lib/postgres-event-store.mjs';
 import { CompositeEventConsumer } from '../scripts/lib/composite-event-consumer.mjs';
 
 test('validation config fails closed and permits only explicitly enabled local test URLs', () => {
@@ -42,6 +43,23 @@ test('latency aggregation computes nearest-rank p50/p95/p99 and rejects invalid 
   assert.deepEqual(percentileStats(values), { samples: 1000, p50Ms: 500, p95Ms: 950, p99Ms: 990, maxMs: 1000 });
   assert.throws(() => percentileStats([]), /non-empty/);
   assert.throws(() => percentileStats([1, Number.NaN]), /finite/);
+});
+
+test('PostgreSQL wake-state inventory reports durable delivered rows separately from pending and dead letters', async () => {
+  const calls = [];
+  const pool = {
+    async query(sql, values) {
+      calls.push({ sql, values });
+      return { rows: [{ pending: 2, dead_letter: 1, delivered: 7, due: 1 }] };
+    },
+    async connect() { throw new Error('countWakeDeliveryStates must not acquire a connection'); },
+  };
+  const store = new PostgresEventStore({ pool, scopeId: 'ei-validation:campaign', tablePrefix: 'ei_validation' });
+  assert.deepEqual(await store.countWakeDeliveryStates('2026-10-23T00:00:00.000Z'), {
+    pending: 2, deadLetter: 1, delivered: 7, due: 1,
+  });
+  assert.deepEqual(calls[0].values, ['ei-validation:campaign', '2026-10-23T00:00:00.000Z', 'wake_delivery']);
+  assert.match(calls[0].sql, /payload->>'status'='delivered'/);
 });
 
 test('consumer exposes worker-local monotonic ingest-to-match and match-to-wake spans', async () => {
@@ -175,7 +193,10 @@ test('PostgreSQL 16 HTTP smoke uses two OS workers, real CEP, remote wake receip
   assert.equal(status.observed.persistedDeliveredWakes, 4);
   assert.equal(status.observed.verifiedWakes, 4);
   assert.equal(status.report.observed.wakeSettlement.settled, true);
+  assert.equal(status.report.observed.wakeSettlement.persistedDeliveredWakeCount, 4);
   assert.equal(status.report.observed.pendingWakeDeliveries, 0);
+  assert.equal(status.report.observed.workerMetrics['ei-worker-a'].persistedDeliveredWakeCount, 4);
+  assert.equal(status.report.observed.workerMetrics['ei-worker-b'].persistedDeliveredWakeCount, 4);
   assert.deepEqual(Object.keys(status.report.observed.workerRequestCounts).sort(), ['ei-worker-a', 'ei-worker-b']);
   assert.equal(status.report.productionSloCertified, false);
   assert.equal(status.report.externalProviderMeasured, false);

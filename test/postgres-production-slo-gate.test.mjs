@@ -12,7 +12,8 @@ function completeProfile(name) {
     requestedEventRatePerSecond:10,
     observedEventRatePerSecond:9.5,
     workers:4,partitions:128,
-    expectedWakes:6000,verifiedWakes:6000,duplicateHostEffects:0,
+    expectedWakes:6000,persistedDeliveredWakes:6000,verifiedWakes:6000,duplicateHostEffects:0,
+    wakeSettlement:{settled:true,persistedDeliveredWakeCount:6000,verifiedHostReceipts:6000,dueWakeBacklog:0,pendingWakeDeliveries:0,deadLetterWakeDeliveries:0},
     providerTransportMeasured:true,externalHostEffectMeasured:true,
     postgresServiceResourcesMeasured:true,
     rawArtifactUrl:'https://github.com/sarooo17/event-intelligence/actions/runs/123456',
@@ -77,12 +78,16 @@ test('narrow two-sample p99, absent provider/host and false loss accounting fail
   report.profiles[0].latency.ingestToMatch.samples=2;
   report.profiles[0].externalHostEffectMeasured=false;
   report.profiles[1].verifiedWakes=5999;
+  report.profiles[2].persistedDeliveredWakes=5999;
+  report.profiles[0].wakeSettlement.dueWakeBacklog=1;
   report.profiles[2].faults=['worker-kill'];
   const result=assessPostgresProductionSloEvidence(report);
   assert.equal(result.status,'blocked');
   assert.ok(result.missing.includes('steady:measured-1000-sample-tail:ingestToMatch'));
   assert.ok(result.missing.includes('steady:provider-host-db-attribution'));
   assert.ok(result.missing.includes('burst:durable-wake-and-duplicate-accounting'));
+  assert.ok(result.missing.includes('fault-injected:durable-wake-and-duplicate-accounting'));
+  assert.ok(result.missing.includes('steady:durable-wake-and-duplicate-accounting'));
   assert.ok(result.missing.includes('fault-injected:required-independent-faults'));
 });
 

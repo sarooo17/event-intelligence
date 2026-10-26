@@ -1012,6 +1012,7 @@ export class PostgresEventStore {
       'SELECT' +
       " count(*) FILTER (WHERE payload->>'status' IN ('pending','retry_pending','claimed'))::integer AS pending," +
       " count(*) FILTER (WHERE payload->>'status'='dead_letter')::integer AS dead_letter," +
+      " count(*) FILTER (WHERE payload->>'status'='delivered')::integer AS delivered," +
       " count(*) FILTER (WHERE ((payload->>'status' IN ('pending','retry_pending') AND (payload->>'nextAttemptAt')::timestamptz <= $2::timestamptz) OR (payload->>'status'='claimed' AND NULLIF(payload->>'leaseUntil','')::timestamptz <= $2::timestamptz)))::integer AS due" +
       ' FROM ' + this.records + ' WHERE scope_id=$1 AND kind=$3',
       [this.scopeId, nowIso, 'wake_delivery'],
@@ -1019,6 +1020,7 @@ export class PostgresEventStore {
     return {
       pending: result.rows[0].pending,
       deadLetter: result.rows[0].dead_letter,
+      delivered: result.rows[0].delivered,
       due: result.rows[0].due,
     };
   }
