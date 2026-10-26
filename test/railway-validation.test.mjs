@@ -78,6 +78,46 @@ test('PostgreSQL trigger-match lookup is constrained by trigger id', async () =>
   assert.doesNotMatch(calls[0].sql, /SELECT payload FROM "ei_validation_records" WHERE scope_id=\$1 AND kind='trigger_match' ORDER BY record_key/);
 });
 
+test('trigger-match index migration overrides and restores the request statement timeout', async () => {
+  const ddlTimeouts = [];
+  let indexCreated = false;
+  const client = {
+    async query(sql, values) {
+      if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') return { rows: [] };
+      if (sql.includes('INSERT INTO "ei_validation_metadata"')) return { rows: [{ component: values[0] }] };
+      if (sql === 'SHOW statement_timeout') return { rows: [{ statement_timeout: '15s' }] };
+      if (sql.includes("set_config('statement_timeout'")) {
+        ddlTimeouts.push(values[0]);
+        return { rows: [] };
+      }
+      if (sql.startsWith('CREATE INDEX CONCURRENTLY')) {
+        indexCreated = true;
+        return { rows: [] };
+      }
+      throw new Error(`unexpected migration SQL: ${sql}`);
+    },
+    release() {},
+  };
+  const pool = {
+    async connect() { return client; },
+    async query(sql) {
+      if (sql.includes('FROM pg_class idx')) return { rows: indexCreated ? [{
+        valid: true, ready: true, partial: true, is_unique: false, method: 'btree', key_count: 2,
+        table_name: 'ei_validation_records', key_columns: ['scope_id', "payload ->> 'triggerId'::text"],
+        predicate: "kind = 'trigger_match'::text",
+      }] : [] };
+      if (sql.startsWith('DELETE FROM "ei_validation_metadata"')) return { rows: [] };
+      throw new Error(`unexpected pool SQL: ${sql}`);
+    },
+  };
+  const store = new PostgresEventStore({ pool, scopeId: 'ei-validation:campaign', tablePrefix: 'ei_validation' });
+  store.initialized = true;
+  assert.deepEqual(await store.migrateTriggerMatchLookupIndex({ statementTimeoutMs: 60000 }), {
+    ok: true, index: 'ei_validation_records_match_trigger_idx',
+  });
+  assert.deepEqual(ddlTimeouts, ['60000ms', '15s']);
+});
+
 test('consumer exposes worker-local monotonic ingest-to-match and match-to-wake spans', async () => {
   const match = { matchId: 'match-1', triggerId: 'trigger-1', triggerVersion: '1', status: 'matched' };
   const consumer = new CompositeEventConsumer({

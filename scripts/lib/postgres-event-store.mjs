@@ -1021,7 +1021,7 @@ export class PostgresEventStore {
    * A durable metadata claim serializes concurrent worker startup; the DDL
    * runs outside a transaction because CREATE INDEX CONCURRENTLY requires it.
    */
-  async migrateTriggerMatchLookupIndex({ waitTimeoutMs = 120000 } = {}) {
+  async migrateTriggerMatchLookupIndex({ waitTimeoutMs = 120000, statementTimeoutMs = 900000 } = {}) {
     if (!this.initialized) {
       const error = new Error('Initialize store before trigger-match index migration');
       error.code = 'EVENT_INTELLIGENCE_TRIGGER_MATCH_LOOKUP_MIGRATION_NOT_INITIALIZED';
@@ -1029,6 +1029,9 @@ export class PostgresEventStore {
     }
     if (!Number.isSafeInteger(waitTimeoutMs) || waitTimeoutMs < 1000 || waitTimeoutMs > 900000) {
       throw new TypeError('waitTimeoutMs must be an integer from 1000 to 900000');
+    }
+    if (!Number.isSafeInteger(statementTimeoutMs) || statementTimeoutMs < 1000 || statementTimeoutMs > 3600000) {
+      throw new TypeError('statementTimeoutMs must be an integer from 1000 to 3600000');
     }
     const indexName = this.tablePrefix + '_records_match_trigger_idx';
     const existing = await this.triggerMatchLookupIndexStatus();
@@ -1062,11 +1065,34 @@ export class PostgresEventStore {
         try {
           const beforeDdl = await this.triggerMatchLookupIndexStatus();
           if (!beforeDdl.exists) {
-            await this.pool.query(
+            const client = await this.pool.connect();
+            let originalStatementTimeout;
+            let discardClient = false;
+            try {
+              const setting = await client.query('SHOW statement_timeout');
+              originalStatementTimeout = setting.rows[0]?.statement_timeout;
+              if (typeof originalStatementTimeout !== 'string') {
+                throw new Error('Could not read PostgreSQL statement_timeout before index migration');
+              }
+              await client.query("SELECT set_config('statement_timeout', $1, false)", [`${statementTimeoutMs}ms`]);
+              await client.query(
               'CREATE INDEX CONCURRENTLY IF NOT EXISTS "' + indexName +
               '" ON ' + this.records +
-              " (scope_id, (payload->>'triggerId')) WHERE kind = 'trigger_match'",
-            );
+                " (scope_id, (payload->>'triggerId')) WHERE kind = 'trigger_match'",
+              );
+            } catch (error) {
+              discardClient = true;
+              throw error;
+            } finally {
+              if (originalStatementTimeout !== undefined) {
+                try {
+                  await client.query("SELECT set_config('statement_timeout', $1, false)", [originalStatementTimeout]);
+                } catch {
+                  discardClient = true;
+                }
+              }
+              client.release(discardClient ? new Error('Discard connection after trigger-match index migration') : undefined);
+            }
           }
           await this.assertTriggerMatchLookupIndex();
           verified = true;

@@ -162,6 +162,7 @@ export declare class PostgresEventStore {
   /** Safe online index migration, serialized across worker startup. */
   migrateTriggerMatchLookupIndex(options?: {
     waitTimeoutMs?: number;
+    statementTimeoutMs?: number;
   }): Promise<{ ok: true; index: string }>;
   assertTriggerMatchLookupIndex(): Promise<string>;
   /** Refuse unindexed recurring historical scans; fail closed. */
