@@ -27,10 +27,13 @@ in-process host and absent provider transport cannot satisfy this contract.
    duplicate-host-effect counts, both host and provider measured contributions
    and PostgreSQL-service resource use. A local fake host or replay-only
    harness cannot claim remote network/host measurements.
-4. Compare observed **verified durable wake throughput** (verified wakes / measured
-   duration), measured per-metric p99, and duplicate host effects / verified
-   wakes against the budgets frozen in step 1. Missing or exceeded budgets
-   block review eligibility. The submitted aggregates are still untrusted
+4. Reconcile the expected wake count against both PostgreSQL's persisted
+   `delivered` wake-delivery rows and distinct host receipts after settlement;
+   require zero due backlog, pending, and dead-letter deliveries. Then compare observed
+   **verified durable wake throughput** (verified wakes / measured duration),
+   measured per-metric p99, and duplicate host effects / verified wakes
+   against the budgets frozen in step 1. Missing or mismatched accounting or
+   exceeded budgets block review eligibility. The submitted aggregates are still untrusted
    declarations: a reviewer must recalculate them from retained raw samples.
 5. Call `assessPostgresProductionSloEvidence(report)`. A valid report returns
    `eligible-for-independent-review`, **never `certified`**. The checker

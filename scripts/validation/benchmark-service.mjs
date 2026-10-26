@@ -225,18 +225,23 @@ export function createBenchmarkService({ env = process.env, pool: suppliedPool, 
     const startedAt = performance.now();
     const deadline = startedAt + config.wakeSettleTimeoutSeconds * 1000;
     const expectedWakeCount = campaign.matchedEvents;
-    let observed = { verifiedHostReceipts: 0, pendingWakeDeliveries: null, deadLetterWakeDeliveries: null };
+    let observed = { verifiedHostReceipts: 0, persistedDeliveredWakeCount: null, dueWakeBacklog: null, pendingWakeDeliveries: null, deadLetterWakeDeliveries: null };
     while (performance.now() < deadline) {
       const receiptCount = await pool.query(`SELECT count(DISTINCT wake_id)::integer AS count FROM ${HOST_TABLE} WHERE scope_id=$1`, [campaign.scopeId]);
       const workerMetrics = await collectWorkerMetrics(campaign.scopeId);
       const available = Object.values(workerMetrics).filter(value => value && Number.isSafeInteger(value.pendingWakeDeliveries));
+      const due = available.length ? Math.max(...available.map(value => value.dueWakeBacklog ?? 0)) : null;
       const pending = available.length ? Math.max(...available.map(value => value.pendingWakeDeliveries)) : null;
       const deadLetters = available.length ? Math.max(...available.map(value => value.deadLetterWakeDeliveries ?? 0)) : null;
-      observed = { verifiedHostReceipts: Number(receiptCount.rows[0].count), pendingWakeDeliveries: pending, deadLetterWakeDeliveries: deadLetters };
-      if (observed.verifiedHostReceipts >= expectedWakeCount && pending === 0) {
+      const deliveredCounts = Object.values(workerMetrics).map(value => value?.persistedDeliveredWakeCount);
+      const persistedDeliveredWakeCount = deliveredCounts.length === config.workers.length &&
+        deliveredCounts.every(Number.isSafeInteger) && new Set(deliveredCounts).size === 1
+        ? deliveredCounts[0] : null;
+      observed = { verifiedHostReceipts: Number(receiptCount.rows[0].count), persistedDeliveredWakeCount, dueWakeBacklog: due, pendingWakeDeliveries: pending, deadLetterWakeDeliveries: deadLetters };
+      if (observed.verifiedHostReceipts === expectedWakeCount && persistedDeliveredWakeCount === expectedWakeCount && due === 0 && pending === 0 && deadLetters === 0) {
         return { ...observed, expectedWakeCount, settled: true, elapsedSeconds: (performance.now() - startedAt) / 1000 };
       }
-      if (pending === 0 && deadLetters !== null && observed.verifiedHostReceipts + deadLetters >= expectedWakeCount) {
+      if (pending === 0 && deadLetters !== null && deadLetters > 0 && observed.verifiedHostReceipts + deadLetters >= expectedWakeCount) {
         return { ...observed, expectedWakeCount, settled: false, elapsedSeconds: (performance.now() - startedAt) / 1000 };
       }
       await new Promise(resolve => setTimeout(resolve, 1000));
@@ -278,7 +283,7 @@ export function createBenchmarkService({ env = process.env, pool: suppliedPool, 
       productionSloCertified: false,
       observedAt: new Date().toISOString(),
       environment: { node: process.version, postgres: postgresVersion, pgDriver: 'pg 8.16.3', cpuModel: null, memoryBytes: process.memoryUsage().rss, sourceCommitSha: env.SOURCE_COMMIT_SHA || env.RAILWAY_GIT_COMMIT_SHA || null },
-      profiles: [{ name: campaign.options.profile, durationSeconds: campaign.elapsedSeconds, requestedEventRatePerSecond: campaign.options.requestedRatePerSecond, observedEventRatePerSecond: campaign.elapsedSeconds ? campaign.acceptedEvents / campaign.elapsedSeconds : 0, workers: 2, partitions: campaign.options.partitions, expectedWakes: campaign.options.eventCount, verifiedWakes: campaign.verifiedWakes.size, duplicateHostEffects: campaign.duplicateHostEffects, providerTransportMeasured: campaign.providerToWorkerSamples.length > 0, externalHostEffectMeasured: campaign.hostEffectSamples.length > 0, postgresServiceResourcesMeasured: false, latency: { providerToIngest: null, ingestToMatch: percentileStatsOrMissing(campaign.ingestToMatchSamples), matchToWake: percentileStatsOrMissing(campaign.matchToWakeSamples), hostEffect: percentileStatsOrMissing(campaign.hostEffectSamples) }, faults: campaign.faults }],
+      profiles: [{ name: campaign.options.profile, durationSeconds: campaign.elapsedSeconds, requestedEventRatePerSecond: campaign.options.requestedRatePerSecond, observedEventRatePerSecond: campaign.elapsedSeconds ? campaign.acceptedEvents / campaign.elapsedSeconds : 0, workers: 2, partitions: campaign.options.partitions, expectedWakes: campaign.options.eventCount, persistedDeliveredWakes: campaign.persistedDeliveredWakes, verifiedWakes: campaign.verifiedWakes.size, wakeSettlement: campaign.wakeSettlement, duplicateHostEffects: campaign.duplicateHostEffects, providerTransportMeasured: campaign.providerToWorkerSamples.length > 0, externalHostEffectMeasured: campaign.hostEffectSamples.length > 0, postgresServiceResourcesMeasured: false, latency: { providerToIngest: null, ingestToMatch: percentileStatsOrMissing(campaign.ingestToMatchSamples), matchToWake: percentileStatsOrMissing(campaign.matchToWakeSamples), hostEffect: percentileStatsOrMissing(campaign.hostEffectSamples) }, faults: campaign.faults }],
     });
     metrics.sloGate = { status: 'blocked', productionSloCertified: false, missing: assessment.missing };
     const json = JSON.stringify(metrics, null, 2) + '\n';
@@ -389,9 +394,13 @@ export function createBenchmarkService({ env = process.env, pool: suppliedPool, 
     campaign.status = 'finalizing';
     await persistCampaign(campaign);
     campaign.wakeSettlement = await waitForWakeSettlement(campaign);
+    // The ingest response only includes deliveries completed inline. Some
+    // dispatches finish asynchronously, so use the shared PostgreSQL state
+    // reconciled across both workers after callback settlement.
+    campaign.persistedDeliveredWakes = campaign.wakeSettlement.persistedDeliveredWakeCount;
     if (!campaign.wakeSettlement.settled) {
       campaign.errorCount++;
-      if (campaign.errors.length < 100) campaign.errors.push({ worker: 'wake-settlement', message: campaign.wakeSettlement.timedOut ? 'wake delivery settlement timed out' : 'one or more wake deliveries reached dead letter' });
+      if (campaign.errors.length < 100) campaign.errors.push({ worker: 'wake-settlement', message: campaign.wakeSettlement.timedOut ? 'wake delivery settlement timed out' : 'final persisted wake, host receipt, backlog, or dead-letter counts did not match settlement requirements' });
     }
     campaign.finalStatus = controller.signal.aborted ? 'stopped' : (campaign.errors.length ? 'completed-with-errors' : 'completed');
     const dbEnd = await pool.query("SELECT pg_database_size(current_database())::bigint AS bytes, (SELECT xact_commit FROM pg_stat_database WHERE datname=current_database())::bigint AS commits");

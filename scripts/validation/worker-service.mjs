@@ -158,6 +158,7 @@ export function createWorkerService({ env = process.env, pool: suppliedPool, log
         let backlog = null;
         let pendingWakeDeliveries = null;
         let deadLetterWakeDeliveries = null;
+        let persistedDeliveredWakeCount = null;
         const scopeId = url.searchParams.get('scopeId');
         if (scopeId) {
           const store = (await context(scopeId)).store;
@@ -165,8 +166,9 @@ export function createWorkerService({ env = process.env, pool: suppliedPool, log
           backlog = wakeStates.due;
           pendingWakeDeliveries = wakeStates.pending;
           deadLetterWakeDeliveries = wakeStates.deadLetter;
+          persistedDeliveredWakeCount = wakeStates.delivered;
         }
-        return sendJson(response, 200, { workerId: config.workerId, counters: { ...counters }, process: { uptimeSeconds: process.uptime(), rssBytes: process.memoryUsage().rss, heapUsedBytes: process.memoryUsage().heapUsed, cpu: process.cpuUsage() }, database: { connected: ready }, ...(backlog === null ? {} : { dueWakeBacklog: backlog }), ...(pendingWakeDeliveries === null ? {} : { pendingWakeDeliveries, deadLetterWakeDeliveries }) });
+        return sendJson(response, 200, { workerId: config.workerId, counters: { ...counters }, process: { uptimeSeconds: process.uptime(), rssBytes: process.memoryUsage().rss, heapUsedBytes: process.memoryUsage().heapUsed, cpu: process.cpuUsage() }, database: { connected: ready }, ...(backlog === null ? {} : { dueWakeBacklog: backlog }), ...(pendingWakeDeliveries === null ? {} : { pendingWakeDeliveries, deadLetterWakeDeliveries, persistedDeliveredWakeCount }) });
       }
       return sendJson(response, 404, { error: 'not-found' });
     } catch (error) {
