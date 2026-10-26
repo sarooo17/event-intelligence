@@ -165,6 +165,7 @@ export declare class PostgresEventStore {
     statementTimeoutMs?: number;
   }): Promise<{ ok: true; index: string }>;
   assertTriggerMatchLookupIndex(): Promise<string>;
+  assertRecordsKindIndex(client?: any): Promise<string>;
   /** Refuse unindexed recurring historical scans; fail closed. */
   assertOrphanRecoveryIndexes(): Promise<void>;
   /** Session-scoped transactional-revocation fence across the real host callback. */

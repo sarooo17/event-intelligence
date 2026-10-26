@@ -268,8 +268,6 @@ export class PostgresEventStore {
             'scope_id TEXT NOT NULL, kind TEXT NOT NULL, record_key TEXT NOT NULL,' +
             'payload JSONB NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),' +
             'PRIMARY KEY (scope_id, kind, record_key))',
-          'CREATE INDEX IF NOT EXISTS ' + this.tablePrefix +
-            '_records_kind_idx ON ' + this.records + ' (scope_id, kind)',
           'CREATE TABLE IF NOT EXISTS ' + this.history + ' (' +
             'history_id BIGSERIAL PRIMARY KEY, scope_id TEXT NOT NULL, kind TEXT NOT NULL,' +
             'record_key TEXT, payload JSONB NOT NULL,' +
@@ -296,6 +294,14 @@ export class PostgresEventStore {
             'adopted_from TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp())',
         ]) {
           await client.query(statement);
+        }
+        if (freshRecords) {
+          await client.query(
+            'CREATE INDEX IF NOT EXISTS "' + this.tablePrefix +
+            '_records_kind_idx" ON ' + this.records + ' (scope_id, kind)',
+          );
+        } else {
+          await this.assertRecordsKindIndex(client);
         }
         await assertPostgresSchemaShape(client, this.tablePrefix);
         // Under the same advisory transaction lock as DDL, require a known
@@ -403,6 +409,40 @@ export class PostgresEventStore {
       this.initialized = true;
     }
     return this.restoredCounts();
+  }
+
+  async assertRecordsKindIndex(client = this.pool) {
+    const indexName = this.tablePrefix + '_records_kind_idx';
+    const result = await client.query(
+      'SELECT i.indisvalid AS valid, i.indisready AS ready, ' +
+      'i.indpred IS NOT NULL AS partial, i.indisunique AS is_unique, ' +
+      'am.amname AS method, i.indnkeyatts AS key_count, ' +
+      'tbl.relname AS table_name, ' +
+      'pg_get_indexdef(i.indexrelid, 1, true) AS key1, ' +
+      'pg_get_indexdef(i.indexrelid, 2, true) AS key2 ' +
+      'FROM pg_class idx JOIN pg_index i ON i.indexrelid = idx.oid ' +
+      'JOIN pg_class tbl ON tbl.oid = i.indrelid ' +
+      'JOIN pg_am am ON am.oid = idx.relam ' +
+      'JOIN pg_namespace n ON n.oid = idx.relnamespace ' +
+      'WHERE n.nspname = current_schema() AND idx.relname = $1',
+      [indexName],
+    );
+    const row = result.rows[0];
+    const normalize = value => String(value ?? '').replace(/\s+/g, '').replace(/[()]/g, '');
+    if (!row || row.valid !== true || row.ready !== true || row.partial !== false ||
+        row.is_unique !== false || row.method !== 'btree' ||
+        row.table_name !== this.tablePrefix + '_records' || Number(row.key_count) !== 2 ||
+        normalize(row.key1) !== 'scope_id' || normalize(row.key2) !== 'kind') {
+      const error = new Error(
+        'Existing Event Intelligence PostgreSQL records table needs a valid ' +
+        '(scope_id, kind) index; inspect or repair ' + indexName + ' before startup.',
+      );
+      error.code = row
+        ? 'EVENT_INTELLIGENCE_POSTGRES_RECORDS_KIND_INDEX_INVALID'
+        : 'EVENT_INTELLIGENCE_POSTGRES_RECORDS_KIND_INDEX_REQUIRED';
+      throw error;
+    }
+    return indexName;
   }
 
   async assertRetentionIndex(client = this.pool) {

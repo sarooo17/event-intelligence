@@ -233,10 +233,13 @@ test('PostgreSQL 16 HTTP smoke uses two OS workers, real CEP, remote wake receip
   const indexCheck = new Pool({ connectionString: databaseUrl });
   try {
     const index = await indexCheck.query(
-      `SELECT i.indisvalid AS valid, i.indisready AS ready FROM pg_class idx JOIN pg_index i ON i.indexrelid=idx.oid WHERE idx.relname=$1`,
-      [`${prefix}_records_match_trigger_idx`],
+      `SELECT idx.relname AS name, i.indisvalid AS valid, i.indisready AS ready FROM pg_class idx JOIN pg_index i ON i.indexrelid=idx.oid WHERE idx.relname=ANY($1::text[]) ORDER BY idx.relname`,
+      [[`${prefix}_records_kind_idx`, `${prefix}_records_match_trigger_idx`]],
     );
-    assert.deepEqual(index.rows, [{ valid: true, ready: true }]);
+    assert.deepEqual(index.rows, [
+      { name: `${prefix}_records_kind_idx`, valid: true, ready: true },
+      { name: `${prefix}_records_match_trigger_idx`, valid: true, ready: true },
+    ]);
   } finally { await indexCheck.end(); }
 
   const unauthorized = await fetch(`${workerAUrl}/v1/events`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
