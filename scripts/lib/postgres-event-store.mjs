@@ -1021,17 +1021,19 @@ export class PostgresEventStore {
    * A durable metadata claim serializes concurrent worker startup; the DDL
    * runs outside a transaction because CREATE INDEX CONCURRENTLY requires it.
    */
-  async migrateTriggerMatchLookupIndex({ waitTimeoutMs = 120000, statementTimeoutMs = 900000 } = {}) {
+  async migrateTriggerMatchLookupIndex(options = {}) {
+    const statementTimeoutMs = options.statementTimeoutMs ?? 900000;
+    const waitTimeoutMs = options.waitTimeoutMs ?? statementTimeoutMs + 120000;
     if (!this.initialized) {
       const error = new Error('Initialize store before trigger-match index migration');
       error.code = 'EVENT_INTELLIGENCE_TRIGGER_MATCH_LOOKUP_MIGRATION_NOT_INITIALIZED';
       throw error;
     }
-    if (!Number.isSafeInteger(waitTimeoutMs) || waitTimeoutMs < 1000 || waitTimeoutMs > 900000) {
-      throw new TypeError('waitTimeoutMs must be an integer from 1000 to 900000');
+    if (!Number.isSafeInteger(waitTimeoutMs) || waitTimeoutMs < 1000 || waitTimeoutMs > 1020000) {
+      throw new TypeError('waitTimeoutMs must be an integer from 1000 to 1020000');
     }
-    if (!Number.isSafeInteger(statementTimeoutMs) || statementTimeoutMs < 1000 || statementTimeoutMs > 3600000) {
-      throw new TypeError('statementTimeoutMs must be an integer from 1000 to 3600000');
+    if (!Number.isSafeInteger(statementTimeoutMs) || statementTimeoutMs < 1000 || statementTimeoutMs > 900000) {
+      throw new TypeError('statementTimeoutMs must be an integer from 1000 to 900000');
     }
     const indexName = this.tablePrefix + '_records_match_trigger_idx';
     const existing = await this.triggerMatchLookupIndexStatus();
