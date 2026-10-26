@@ -156,6 +156,7 @@ test('Railway validation config files select the PostgreSQL entrypoints and read
   const benchmark = JSON.parse(await readFile(resolve(dirname(fileURLToPath(import.meta.url)), '../railway.validation-benchmark.json'), 'utf8'));
   assert.equal(worker.deploy.startCommand, 'npm run start:validation-worker');
   assert.equal(worker.deploy.healthcheckPath, '/readyz');
+  assert.equal(worker.deploy.healthcheckTimeout, 900);
   assert.equal(benchmark.deploy.startCommand, 'npm run start:validation-benchmark');
   assert.equal(benchmark.deploy.healthcheckPath, '/readyz');
 });

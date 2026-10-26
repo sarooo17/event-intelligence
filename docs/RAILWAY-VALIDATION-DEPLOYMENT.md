@@ -32,7 +32,7 @@ npm ci --no-audit --no-fund && npm run build
 npm run start:validation-benchmark
 ```
 
-Use Node.js 22. The worker config path selects the PostgreSQL worker and the benchmark config path selects the campaign host. Both use healthcheck `/readyz`, listen on Railway's injected `PORT` (defaulting to 3000 if run outside Railway), and restart on failure. Keep automatic sleep disabled and set one replica per worker and benchmark service. Set all four services to the same region. The supplied project context selected Amsterdam (EU West); verify that each service actually uses that region.
+Use Node.js 22. The worker config path selects the PostgreSQL worker and the benchmark config path selects the campaign host. Workers use healthcheck `/readyz` with a 900-second deployment timeout to allow the online index migration and recovery scan to finish; the benchmark uses a 30-second timeout. All listen on Railway's injected `PORT` (defaulting to 3000 if run outside Railway), and restart on failure. Keep automatic sleep disabled and set one replica per worker and benchmark service. Set all four services to the same region. The supplied project context selected Amsterdam (EU West); verify that each service actually uses that region.
 
 Do not generate public domains for the workers, benchmark, or PostgreSQL service. The worker admin, ingest, callback, and campaign endpoints are intended for the project/environment private network. Railway private DNS uses `<service-name>.railway.internal`; private HTTP traffic uses the service port. See [Railway private domains](https://docs.railway.com/networking/domains/working-with-domains) and [healthchecks](https://docs.railway.com/deployments/healthchecks).
 
