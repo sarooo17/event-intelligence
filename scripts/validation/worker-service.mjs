@@ -93,6 +93,7 @@ export function createWorkerService({ env = process.env, pool: suppliedPool, log
   async function initialize() {
     await pool.query('SELECT 1');
     await rootStore.init();
+    await rootStore.migrateTriggerMatchLookupIndex();
     const knownScopes = (await rootStore.listScopeIds()).filter(scopeId => scopeId.startsWith(`${config.scopeBase}:`));
     if (knownScopes.length > config.recoveryMaxScopes) throw new Error(`validation recovery found ${knownScopes.length} scopes; limit is ${config.recoveryMaxScopes}`);
     for (const scopeId of knownScopes) await context(scopeId);

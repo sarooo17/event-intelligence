@@ -62,6 +62,22 @@ test('PostgreSQL wake-state inventory reports durable delivered rows separately 
   assert.match(calls[0].sql, /payload->>'status'='delivered'/);
 });
 
+test('PostgreSQL trigger-match lookup is constrained by trigger id', async () => {
+  const calls = [];
+  const pool = {
+    async query(sql, values) {
+      calls.push({ sql, values });
+      return { rows: [] };
+    },
+    async connect() { throw new Error('listTriggerMatches must use the indexed pool query'); },
+  };
+  const store = new PostgresEventStore({ pool, scopeId: 'ei-validation:campaign', tablePrefix: 'ei_validation' });
+  assert.deepEqual(await store.listTriggerMatches('trigger-a'), []);
+  assert.deepEqual(calls[0].values, ['ei-validation:campaign', 'trigger-a']);
+  assert.match(calls[0].sql, /kind='trigger_match' AND payload->>'triggerId'/);
+  assert.doesNotMatch(calls[0].sql, /SELECT payload FROM "ei_validation_records" WHERE scope_id=\$1 AND kind='trigger_match' ORDER BY record_key/);
+});
+
 test('consumer exposes worker-local monotonic ingest-to-match and match-to-wake spans', async () => {
   const match = { matchId: 'match-1', triggerId: 'trigger-1', triggerVersion: '1', status: 'matched' };
   const consumer = new CompositeEventConsumer({
@@ -172,6 +188,15 @@ test('PostgreSQL 16 HTTP smoke uses two OS workers, real CEP, remote wake receip
     await rm(artifactDir, { recursive: true, force: true });
   });
   await Promise.all([waitReady(workerAUrl, workerA), waitReady(workerBUrl, workerB), waitReady(benchmarkUrl, benchmark)]);
+
+  const indexCheck = new Pool({ connectionString: databaseUrl });
+  try {
+    const index = await indexCheck.query(
+      `SELECT i.indisvalid AS valid, i.indisready AS ready FROM pg_class idx JOIN pg_index i ON i.indexrelid=idx.oid WHERE idx.relname=$1`,
+      [`${prefix}_records_match_trigger_idx`],
+    );
+    assert.deepEqual(index.rows, [{ valid: true, ready: true }]);
+  } finally { await indexCheck.end(); }
 
   const unauthorized = await fetch(`${workerAUrl}/v1/events`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
   assert.equal(unauthorized.status, 401);
