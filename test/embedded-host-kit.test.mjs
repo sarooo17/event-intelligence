@@ -1346,6 +1346,7 @@ test('canonical facade preserves data-only host tool names and fails closed on h
     { create: '' },
     { unexpected: 'invented_tool' },
     new Proxy({ create: 'x' }, { get() { getterCalls++; throw Error('Proxy trap'); } }),
+    Proxy.revocable({ create: 'revoked' }, {}).proxy,
     { get create() { getterCalls++; throw Error('getter trap'); } },
   ];
   for (const value of invalid) {
