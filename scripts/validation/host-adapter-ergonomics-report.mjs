@@ -1,11 +1,29 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
+import {createHash} from 'node:crypto';
+import {execFileSync} from 'node:child_process';
 import {performance} from 'node:perf_hooks';
 import {resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createEventIntelligence} from '../embedded-host-kit.mjs';
 import {runLocalHostV3Matrix} from '../../conformance/host-v3-matrix.mjs';
 
+// Git SHA-1 is over "blob <byte_length>\0<raw bytes>"; pin exact inputs.
+export const PINNED_SOURCE_BLOBS=Object.freeze({
+  baselineHost:'25d3e24e3ee6481b109915737f52b37599691370',
+  candidateHost:'f94408de67b048c4b02be8e654ed0f8bbdd27210',
+  baselineCore:'dc80fcd2054575e9b42712793fb9147e9640e24d',
+  candidateCore:'21ff0ccfa11e440a937d23c987a6a921201e607c',
+});
+export function gitBlobSha(value){
+  if(typeof value!=='string')throw TypeError('blob text is required');
+  return createHash('sha1').update('blob '+Buffer.byteLength(value)+'\0')
+    .update(value).digest('hex');
+}
+export function assertPinnedSource(key,source) {
+  if(gitBlobSha(source)!==PINNED_SOURCE_BLOBS[key])
+    throw new Error('source pin mismatch: '+key);
+}
 export function countLines(value) {
   if(typeof value!=='string') throw TypeError('source must be text');
   if(!value) return {physical:0,nonblank:0};
@@ -63,16 +81,32 @@ export async function report(paths,pins){
   const candidateHost=readFileSync(resolve(paths.candidateHost),'utf8');
   const baselineCore=readFileSync(resolve(paths.baselineCore),'utf8');
   const candidateCore=readFileSync(resolve(paths.candidateCore),'utf8');
+  for(const [key,source] of Object.entries({
+    baselineHost,candidateHost,baselineCore,candidateCore,
+  }))assertPinnedSource(key,source);
+  // The input bytes and the current revision's recorded tree must agree.
+  // Do not label a supplied path with an unrelated ambient GITHUB_SHA.
+  const currentSha=execFileSync('git',['rev-parse','HEAD'],{
+    encoding:'utf8',cwd:process.cwd(),
+  }).trim();
+  const currentBlob=execFileSync('git',[
+    'rev-parse','HEAD:scripts/embedded-host-kit.mjs',
+  ],{encoding:'utf8',cwd:process.cwd()}).trim();
+  assert.equal(currentBlob,gitBlobSha(candidateCore),
+    'candidate core must match checked-out Git HEAD');
   const consumer=compare(baselineHost,candidateHost);
   const embedded=compare(baselineCore,candidateCore);
   const matrix=await runLocalHostV3Matrix();
   assert.equal(matrix.complete,true);
   assert.equal(matrix.independentExternalHostVerified,false);
   assert.equal(matrix.fixtures.length,3);
-  const [headless,managed]=await Promise.all([measureSetup(false),measureSetup(true)]);
+  // Measure sequentially: Promise.all would charge overlapping fixture work.
+  const headless=await measureSetup(false);
+  const managed=await measureSetup(true);
   return{
     schema:'event-intelligence.host-ergonomics-report.v1',
-    status:'bounded-verified',pins,
+    status:'bounded-verified',pins:{...pins,eiCandidate:currentSha,
+      verifiedBlobs:PINNED_SOURCE_BLOBS},
     fixtures:matrix.fixtures.map(f=>({
       id:f.id,fixtureAuthorship:f.authorship,
       integrationBoundary:f.integrationBoundary,
@@ -116,7 +150,7 @@ if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)){
     },{
       muffinBaseline:'a6e6bfaec5d6847b1985980fe6f524ef0193dc02',
       muffinCandidate:'5f68a51bd99568bd8268d3d5ab9a1947b81d041b',
-      eiBaseline:'v0.11.0',eiCandidate:process.env.GITHUB_SHA??'local-working-tree',
+      eiBaseline:'v0.11.0',
     });
     process.stdout.write(JSON.stringify(result,null,2)+'\n');
   }catch(error){console.error('HOST_ERGONOMICS_REPORT_FAILED:',error);process.exitCode=1;}

@@ -40,3 +40,14 @@ negligible; there is no evidence for a universally "tiny" adapter.
 Keep #269 open for real total-integration-cost improvements without
 moving host policy, credentials, authority or evidence taint into EI.
 The #45/#47/#50 production security, SLO and stable-release gates stay open.
+
+## Independent review hardening — exact inputs and isolated setup measurement
+
+After initial Codex review, the evidence workflow checks out the exact
+`github.event.pull_request.head.sha` instead of GitHub's synthetic PR
+merge commit. The script verifies all four **Git blob SHA-1 hashes** against
+immutable source-pinned blobs and cross-checks the candidate core blob with
+`git rev-parse HEAD:scripts/embedded-host-kit.mjs`. The recorded
+`eiCandidate` is now the actual repository HEAD, not an unrelated
+`GITHUB_SHA` environment variable. The two five-sample startup series
+run **sequentially** to avoid overlapping elapsed-time observations.
