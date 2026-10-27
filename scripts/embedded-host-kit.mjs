@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { isProxy } from 'node:util/types';
 
 import {
   RuntimeTargetSchema,
@@ -1749,6 +1750,42 @@ export async function createEventIntelligence({
     if (typeof method === 'function') optionalCallbacks[name] = method;
   }
 
+  // Tool names are host presentation, not authority. The old embedded kit
+  // accepted custom names; the canonical facade must preserve them without
+  // triggering getter or Proxy code before the host has started.
+  const namesDescriptor = getHostDataDescriptor(runtime, 'names');
+  const rawNames = namesDescriptor?.value;
+  if (namesDescriptor === null ||
+      (rawNames !== undefined && (!rawNames || typeof rawNames !== 'object' ||
+        isProxy(rawNames) || Array.isArray(rawNames)))) {
+    throw hostConfigurationError(
+      'runtime.names must be a plain data-only tool name mapping',
+      'EI_HOST_TOOL_NAMES_INVALID',
+    );
+  }
+  let names;
+  if (rawNames !== undefined) {
+    const descriptors = Object.getOwnPropertyDescriptors(rawNames);
+    const rows = Object.entries(descriptors);
+    if (rows.some(([key, descriptor]) =>
+      !Object.hasOwn(DEFAULT_TOOL_NAMES, key) ||
+      !Object.hasOwn(descriptor, 'value') ||
+      typeof descriptor.value !== 'string' || !descriptor.value.trim())) {
+      throw hostConfigurationError(
+        'runtime.names contains an unknown, accessor or invalid tool name',
+        'EI_HOST_TOOL_NAMES_INVALID',
+      );
+    }
+    names = Object.fromEntries(rows.map(([key, descriptor]) => [key, descriptor.value]));
+    const merged = { ...DEFAULT_TOOL_NAMES, ...names };
+    if (new Set(Object.values(merged)).size !== Object.keys(merged).length) {
+      throw hostConfigurationError(
+        'runtime.names contains duplicate tool names',
+        'EI_HOST_TOOL_NAMES_INVALID',
+      );
+    }
+  }
+
   const namespaceDescriptor = getHostDataDescriptor(runtime, 'receiptNamespace');
   const receiptNamespace = namespaceDescriptor?.value;
   if (namespaceDescriptor === null ||
@@ -1790,6 +1827,7 @@ export async function createEventIntelligence({
         ...(optionalCallbacks.projectError
           ? { projectError: (...args) => optionalCallbacks.projectError.apply(runtime, args) }
           : {}),
+        ...(names ? { names } : {}),
       }
     : undefined;
 

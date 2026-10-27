@@ -1303,6 +1303,67 @@ test('embedded exported schema trees are deeply immutable across consumers', () 
   assert.equal(create.properties.events.items.properties.event.minLength, eventLength);
 });
 
+test('canonical facade preserves data-only host tool names and fails closed on hostile mappings', async () => {
+  let starts = 0;
+  let getterCalls = 0;
+  const fakeHost = {
+    runtime: {},
+    async refreshMcpRegistry() { return []; },
+    async mcpStatus() { return []; },
+    async close() {},
+  };
+  const baseRuntime = {
+    deliver: ({ receiptId }) => ({ runtimeReceiptId: receiptId }),
+    resolveContext: () => ({ target: { runtime: 'test', kind: 'task', id: 'turn-1' } }),
+    control: () => ({ action: 'return', result: { ok: false } }),
+  };
+  const names = {
+    sources: 'event_watch_sources',
+    create: 'event_watch_create',
+    list: 'event_watch_list',
+    inspect: 'event_watch_inspect',
+    pause: 'event_watch_pause',
+    resume: 'event_watch_resume',
+    delete: 'event_watch_delete',
+    update: 'event_watch_update',
+  };
+  const integration = await createEventIntelligence({
+    runtime: { ...baseRuntime, names },
+    createHost: async () => { starts++; return fakeHost; },
+  });
+  try {
+    assert.deepEqual(integration.toolCatalog.all.map(tool => tool.name), Object.values(names));
+    assert.equal(integration.toolCatalog.get('event_watch_create')?.capability.id,
+      'event-intelligence.trigger.create');
+    assert.equal(integration.toolCatalog.get('trigger_create'), null);
+  } finally {
+    await integration.close();
+  }
+  assert.equal(starts, 1);
+
+  const revokedNames = Proxy.revocable({ create: 'revoked' }, {});
+  revokedNames.revoke();
+  const invalid = [
+    { create: 'event_sources_list' }, // Collides with another operation.
+    { create: '' },
+    { unexpected: 'invented_tool' },
+    new Proxy({ create: 'x' }, { get() { getterCalls++; throw Error('Proxy trap'); } }),
+    revokedNames.proxy,
+    { get create() { getterCalls++; throw Error('getter trap'); } },
+  ];
+  for (const value of invalid) {
+    await assert.rejects(
+      () => createEventIntelligence({
+        runtime: { ...baseRuntime, names: value },
+        createHost: async () => { starts++; throw Error('must fail before host startup'); },
+      }),
+      error => error.code === 'EI_HOST_TOOL_NAMES_INVALID',
+    );
+  }
+  assert.equal(getterCalls, 0);
+  assert.equal(starts, 1);
+});
+
 test('neutral facade delegates to the existing host without taking runtime ownership', async () => {
   let captured;
   let closed = false;
