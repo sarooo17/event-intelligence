@@ -3,7 +3,6 @@ import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 
 export const V1_REQUIRED_CRITERIA = Object.freeze([
-  'embedded-host-independent',
   'host-contract-and-package',
   'security-independent-review',
   'security-revocation-and-tenant',
@@ -15,6 +14,9 @@ export const V1_REQUIRED_CRITERIA = Object.freeze([
   'downstream-pin-policy',
 ]);
 export const V1_OPTIONAL_CRITERIA = Object.freeze([
+  // Product owner waived a SECOND developer under issue #42. Never mark
+  // independent external adoption verified without actual external proof.
+  'embedded-host-independent',
   'full-explainability',
   'semantic-triage',
 ]);

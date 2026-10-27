@@ -6,18 +6,28 @@
     {
       "id": "embedded-host-independent",
       "issue": 42,
-      "required": true,
+      "required": false,
       "status": "blocked",
-      "evidence": [],
-      "note": "Three repo-authored host fixtures are not an independently authored external host; #188/#189 await reviews."
+      "evidence": [
+        "https://github.com/sarooo17/event-intelligence/issues/42",
+        "https://github.com/sarooo17/event-intelligence/pull/278",
+        "https://github.com/sarooo17/event-intelligence/pull/282"
+      ],
+      "note": "OPTIONAL by explicit product-owner decision on 2026-10-27: #42 was closed with the second-developer/independent-authorship requirement WAIVED, not verified. EI-maintained three-host and Muffin fork fixtures do not certify independent third-party adoption. This row is informational and MUST stay blocked absent genuine independent evidence; revocation, SLO and release safety are separate required gates."
     },
     {
       "id": "host-contract-and-package",
       "issue": 42,
       "required": true,
       "status": "blocked",
-      "evidence": [],
-      "note": "Canonical HostContract and packed conformance changes are candidate PRs; need reviewed merge and live host proof."
+      "evidence": [
+        "https://github.com/sarooo17/event-intelligence/pull/188",
+        "https://github.com/sarooo17/event-intelligence/pull/189",
+        "https://github.com/sarooo17/event-intelligence/pull/278",
+        "https://github.com/sarooo17/event-intelligence/pull/282",
+        "https://github.com/sarooo17/event-intelligence/actions/runs/40554825385"
+      ],
+      "note": "Canonical v1 HostContract and packed multi-host conformance merged; the npm 0.12.0-next.0 prerelease was published to next and externally consumed by owner-maintained Muffin fork. Still BLOCKED for final stable 1.0.0 package/source/declarations, release signoff and a new exact-head stable candidate review; do not confuse CI green with production readiness."
     },
     {
       "id": "security-independent-review",
@@ -50,7 +60,7 @@
         "https://github.com/sarooo17/event-intelligence/pull/257",
         "https://github.com/sarooo17/event-intelligence/pull/258"
       ],
-      "note": "BLOCKED: source and audit proof archives, detached Ed25519 audit witness, PostgreSQL lossless precision, replay-gap fail-closed fence and offline raw source archive reading have merged (#251/#252/#256/#257). PR #258 adds operator-confirmed isolated PG16 source+dedup+counter restoration with durable metadata provenance, injected rollback, race and empty-archive tests; it is under review, NOT production cutover. Match/wake terminal revision compaction (#254) is proven safe, but off-host immutable WORM, provider opaque cursor replay low-watermark, authenticated source+audit physical TTL/prune, continuation of the genesis-linked audit chain and complete CEP/host-state recovery are NOT implemented. No source/audit purge approved."
+      "note": "BLOCKED: source and audit proof archives, detached Ed25519 audit witness, PostgreSQL lossless precision, replay-gap fail-closed fence and offline raw source archive reading have merged (#251/#252/#256/#257). Merged PR #258 adds operator-confirmed isolated PG16 source+dedup+counter restoration with durable metadata provenance, injected rollback, race and empty-archive tests; this is NOT a production cutover. Match/wake terminal revision compaction (#254) is proven safe, but off-host immutable WORM, provider opaque cursor replay low-watermark, authenticated source+audit physical TTL/prune, continuation of the genesis-linked audit chain and complete CEP/host-state recovery are NOT implemented. No source/audit purge approved."
     },
     {
       "id": "pg-chaos-recovery",
@@ -60,9 +70,10 @@
       "evidence": [
         "https://github.com/sarooo17/event-intelligence/pull/253",
         "https://github.com/sarooo17/event-intelligence/actions/runs/39568691478",
-        "https://github.com/sarooo17/event-intelligence/issues/47"
+        "https://github.com/sarooo17/event-intelligence/issues/47",
+        "https://github.com/sarooo17/event-intelligence/pull/263"
       ],
-      "note": "Partially evidenced: merged #253 produced real PG16 single-node actual-run worker OS SIGKILL and post-host-effect recovery plus rebalance/backend termination fault matrix with source-pinned artifacts. This checks bounded process-worker correctness but NOT sustained ≥600s multiworker network partitions, external-provider outage, PostgreSQL primary failover or long-duration soak; production HA signoff remains BLOCKED."
+      "note": "BLOCKED: merged #263 establishes >=600 seconds of actual active PG16 independent OS SIGKILL worker recovery with verified raw artifacts, on an EI-maintained single-node fixture. This is not remote MCP provider delivery, real network partition, PostgreSQL primary failover, external host SLO or operator RPO/RTO signoff."
     },
     {
       "id": "pg-scale-measured",
@@ -74,17 +85,21 @@
         "https://github.com/sarooo17/event-intelligence/pull/255",
         "https://github.com/sarooo17/event-intelligence/actions/runs/39603115535",
         "https://github.com/sarooo17/event-intelligence/issues/47",
+        "https://github.com/sarooo17/event-intelligence/pull/259",
         "https://github.com/sarooo17/event-intelligence/pull/259"
       ],
-      "note": "BLOCKED: #229 actual isolated 1k/10k/100k durable trigger and indexed active matching runs (small tail sample counts). Merged #255 now publishes actual PG16 1200-event source-pinned raw ingest-to-wake p50/p95/p99, fresh-pool receipts, independent byte/duration/achieved-throughput proof and DB-wide stats; single worker, synthetic provider/local host. PR #259 adds >=600s 3040-event local PG16 sustained baseline, pending real workflow/review. These do NOT measure remote-provider wire, external host execution, PG server CPU, >=2-worker sustained burst/fault and real high-cardinality provider workloads. Production SLO signoff is NOT justified."
+      "note": "BLOCKED: #229 completed actual 1k/10k/100k isolated durable-trigger reporting; #255 logged 1200 actual PG16 source+ingest+wake samples; #259 merged >=600s local PG16 sustained baseline. None proves multi-worker real provider+external-host production traffic, sustained burst/fault tails, server CPU budgets or production SLO. Keep raw metrics and negative results visible."
     },
     {
       "id": "stored-state-upgrade",
       "issue": 50,
       "required": true,
       "status": "blocked",
-      "evidence": [],
-      "note": "Intentional snapshot/reset/restore operator proof or migration needs v1 contract signoff."
+      "evidence": [
+        "https://github.com/sarooo17/event-intelligence/issues/47",
+        "https://github.com/sarooo17/event-intelligence/pull/258"
+      ],
+      "note": "PG schema shape/version mismatch fails closed and an explicit isolated operator snapshot/reset/restore drill exists, but a v1 stable version upgrade/coordinated shared DB deployment rollback plan and production off-host backup proof still need signoff."
     },
     {
       "id": "packed-v1-and-breaking-notes",
@@ -99,8 +114,12 @@
       "issue": 50,
       "required": true,
       "status": "blocked",
-      "evidence": [],
-      "note": "No EI publish should touch exactly pinned Muffin/Artemis consumers; final release policy evidence needed."
+      "evidence": [
+        "https://github.com/sarooo17/event-intelligence/pull/277",
+        "https://github.com/sarooo17/event-intelligence/pull/280",
+        "https://github.com/sarooo17/event-intelligence/actions/runs/40554825385"
+      ],
+      "note": "Manual npm next publication on main with exact expected_version successfully left exactly pinned consumers unchanged; Muffin fork PR #17 upgrades its own package/lockfile and remains DCO blocked. Still BLOCKED for future stable v1 release operator signoff; no automatic consumer deployment."
     },
     {
       "id": "full-explainability",
