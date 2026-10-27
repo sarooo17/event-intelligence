@@ -1,0 +1,73 @@
+name: Host Ergonomics Evidence
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/host-ergonomics-report.yml"
+      - "scripts/validation/host-adapter-ergonomics-report.mjs"
+      - "test/host-adapter-ergonomics-report.test.mjs"
+      - "docs/HOST-ERGONOMICS-CLOSEOUT.md"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  evidence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+      - name: Install and build EI
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm run build
+          node --test test/host-adapter-ergonomics-report.test.mjs
+      - uses: actions/checkout@v5
+        with:
+          repository: sarooo17/event-intelligence
+          ref: v0.11.0
+          path: .audit-ei-011
+          persist-credentials: false
+      - uses: actions/checkout@v5
+        with:
+          repository: sarooo17/muffin-agent
+          ref: a6e6bfaec5d6847b1985980fe6f524ef0193dc02
+          path: .audit-muffin-old
+          persist-credentials: false
+      - uses: actions/checkout@v5
+        with:
+          repository: sarooo17/muffin-agent
+          ref: 5f68a51bd99568bd8268d3d5ab9a1947b81d041b
+          path: .audit-muffin-new
+          persist-credentials: false
+      - name: Produce source-pinned host conformance and LOC report
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          node scripts/validation/host-adapter-ergonomics-report.mjs \
+            --baseline-host .audit-muffin-old/agent/event-intelligence.ts \
+            --candidate-host .audit-muffin-new/agent/event-intelligence.ts \
+            --baseline-core .audit-ei-011/scripts/embedded-host-kit.mjs \
+            --candidate-core scripts/embedded-host-kit.mjs > artifacts/host-ergonomics.json
+          node --input-type=module <<'EOF'
+          import assert from 'node:assert/strict';
+          import fs from 'node:fs';
+          const r=JSON.parse(fs.readFileSync('artifacts/host-ergonomics.json','utf8'));
+          assert.equal(r.status,'bounded-verified');
+          assert.equal(r.independentExternalHostVerified,false);
+          assert.equal(r.fixtures.length,3);
+          assert.ok(r.fixtures.every(x=>x.passed&&x.successful===7&&x.fixtureAuthorship==='ei-repository-maintained'));
+          assert.deepEqual(r.codeCost.wholeMuffinAdapter.baseline,{physical:398,nonblank:365});
+          assert.deepEqual(r.codeCost.wholeMuffinAdapter.candidate,{physical:391,nonblank:360});
+          assert.equal(r.codeCost.majorAdapterSimplificationProven,false);
+          assert.equal(r.setup.headless.samples,5);
+          assert.equal(r.setup.managed.samples,5);
+          EOF
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: host-ergonomics-source-pinned
+          path: artifacts/host-ergonomics.json
+          if-no-files-found: warn
