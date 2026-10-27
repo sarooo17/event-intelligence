@@ -1105,9 +1105,12 @@ export class McpEventsClientManager {
     const descriptor = subscription.descriptor;
     const occurrence = McpEventOccurrenceSchema.parse(raw);
     if (occurrence.name !== descriptor.name) {
-      throw new Error(
-        `MCP event name mismatch: expected ${descriptor.name}, got ${occurrence.name}`,
-      );
+      // Both descriptor and occurrence names originate from the MCP provider.
+      // Never interpolate their values into operator-visible error strings:
+      // they can carry arbitrary private or attacker-controlled text.
+      const error = new Error('MCP Events occurrence does not match subscription');
+      error.code = 'MCP_EVENTS_OCCURRENCE_NAME_MISMATCH';
+      throw error;
     }
     assertJsonSchemaValue(descriptor.payloadSchema, occurrence.data);
 
