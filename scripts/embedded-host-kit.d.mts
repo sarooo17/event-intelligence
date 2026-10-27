@@ -128,6 +128,13 @@ export interface ActivationDispatcherOptions<Target = RuntimeTarget> {
   }) => string | Promise<string>;
   /** Optional deterministic SHA-256 receipt namespace. Mutually exclusive with receiptId. */
   receiptNamespace?: string;
+  /**
+   * Reject an unacknowledged/void delivery instead of synthesizing a
+   * runtimeReceiptId from the candidate wake ID. The canonical facade
+   * enables this when HostContract v1 requires "wake.receipts".
+   * This is acknowledgment checking, NOT proof of host-side atomicity.
+   */
+  requireExplicitReceipt?: boolean;
   deliver(
     input: ActivationDeliveryInput<Target>,
   ): HostWakeReceipt | string | void | Promise<HostWakeReceipt | string | void>;

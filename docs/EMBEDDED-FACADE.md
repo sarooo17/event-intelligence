@@ -66,6 +66,29 @@ const ei = await createEventIntelligence({
 - The host remains responsible for idempotent receipt persistence, scope/tenant access, wake retries at its boundary and lifecycle integration. Only claim exactly-once logical activation for paths whose host receipts prove it.
 - This API does not promise automatic compatibility with an arbitrary private runtime; the runtime must implement the neutral contract.
 
+### Explicit host receipt acknowledgment (issue #271)
+
+The candidate embedded facade opts into **strict acknowledgment** when the
+consumer explicitly declares HostContract v1 `required: ['wake.receipts']`
+(and therefore supplies `hasReceipt` with `receiptNamespace` or `receiptId`).
+
+In that mode, `runtime.deliver()` must return a nonempty receipt string or an
+object with nonempty `runtimeReceiptId`. A void result is **not** converted
+to a successful delivery receipt; it raises stable code
+`EVENT_ACTIVATION_RECEIPT_ACK_REQUIRED`, allowing the normal EI wake retry.
+If the host's authoritative `hasReceipt()` becomes true after a
+post-commit/pre-ack failure, dispatcher reconciliation may still return a
+duplicate receipt. Without `wake.receipts` opt-in, historical low-level
+`createActivationDispatcher()` behavior remains unchanged; advanced callers
+can also pass `requireExplicitReceipt: true` directly.
+
+**Limit:** an acknowledged receipt is still an assertion by the host. EI
+cannot prove an atomic durable enqueue by checking a callback or by probing
+`hasReceipt` before delivery. Two simultaneous deliveries may both see
+`false`. Hosts must atomically deduplicate the actual queued work/effect by
+a stable ID and apply their own scope, identity and revocation rules. No
+runtime identity, Turn, graph or messaging ABI is added to EI.
+
 ## Verification
 
 Run the embedded integration suite:

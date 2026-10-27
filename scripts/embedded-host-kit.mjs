@@ -279,7 +279,7 @@ async function projectPortableResult(projectResult, input) {
   };
 }
 
-function normalizedReceipt(result, fallbackId) {
+function normalizedReceipt(result, fallbackId, requireExplicitReceipt = false) {
   if (typeof result === 'string' && result.trim()) {
     return { runtimeReceiptId: result };
   }
@@ -292,6 +292,15 @@ function normalizedReceipt(result, fallbackId) {
     return result;
   }
   if (result === undefined && fallbackId) {
+    // A deterministic *candidate* ID is not evidence that host work was
+    // committed. Strict mode is opt-in through HostContract wake.receipts.
+    if (requireExplicitReceipt) {
+      const error = new Error(
+        'Host delivery must acknowledge a persisted runtimeReceiptId; an implicit wake-id fallback is not a receipt',
+      );
+      error.code = 'EVENT_ACTIVATION_RECEIPT_ACK_REQUIRED';
+      throw error;
+    }
     return { runtimeReceiptId: fallbackId };
   }
   throw new Error('Activation delivery must return runtimeReceiptId');
@@ -494,7 +503,11 @@ export function createActivationDispatcher({
   receiptId,
   receiptNamespace,
   deliver,
+  requireExplicitReceipt = false,
 } = {}) {
+  if (typeof requireExplicitReceipt !== 'boolean') {
+    throw new TypeError('requireExplicitReceipt must be a boolean');
+  }
   if (resolveTarget !== undefined && typeof resolveTarget !== 'function') {
     throw new Error('resolveTarget must be a function');
   }
@@ -573,6 +586,7 @@ export function createActivationDispatcher({
           receiptId: candidateReceiptId,
         }),
         candidateReceiptId,
+        requireExplicitReceipt,
       );
     } catch (error) {
       if (hasReceipt && await hasReceipt(candidateReceiptId, activation)) {
@@ -1815,6 +1829,11 @@ export async function createEventIntelligence({
       ? { receiptId: (...args) => optionalCallbacks.receiptId.apply(runtime, args) }
       : {}),
     ...(receiptNamespace ? { receiptNamespace } : {}),
+    // A negotiated wake.receipts capability explicitly requires that a host
+    // reports its delivery receipt (or proves it via hasReceipt after failure).
+    // Legacy/uncontracted callers preserve their existing fallback behavior.
+    ...(negotiatedContract?.required.includes('wake.receipts')
+      ? { requireExplicitReceipt: true } : {}),
   };
 
   const tooling = wantsTools
