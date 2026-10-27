@@ -6,9 +6,15 @@ import { assessPostgresProductionSloEvidence } from
 const latency = () => ({
   samples: 1000, p50Ms: 5, p95Ms: 18, p99Ms: 42, maxMs: 90,
 });
+const actualProfileTimes = Object.freeze({
+  steady: ['2026-10-20T08:00:00Z','2026-10-20T08:10:00Z'],
+  burst: ['2026-10-20T09:00:00Z','2026-10-20T09:10:00Z'],
+  'fault-injected': ['2026-10-20T10:00:00Z','2026-10-20T10:10:00Z'],
+});
 function completeProfile(name) {
+  const [startedAt,finishedAt] = actualProfileTimes[name];
   return {
-    name, durationSeconds:600,
+    name, startedAt, finishedAt, durationSeconds:600,
     requestedEventRatePerSecond:10,
     observedEventRatePerSecond:9.5,
     workers:4,partitions:128,
@@ -227,4 +233,35 @@ test('exactly-at-budget measured rate and p99 are admissible, not certified',()=
   const result=assessPostgresProductionSloEvidence(report);
   assert.equal(result.status,'eligible-for-independent-review');
   assert.equal(result.productionSloCertified,false);
+});
+
+test('operator SLO budgets must predate EACH measured profile, not just report creation',()=>{
+  const input=sample();
+  input.profiles[0].startedAt='2026-10-19T11:59:59Z';
+  const result=assessPostgresProductionSloEvidence(input);
+  assert.equal(result.status,'blocked');
+  assert.ok(result.missing.includes('steady:observed-timeline-and-budget-order'));
+  assert.equal(result.productionSloCertified,false);
+});
+
+test('per-profile timeline refuses impossible dates, duration mismatches and post-report runs',()=>{
+  const variants=[
+    ['2026-02-30T08:00:00Z','2026-10-20T08:10:00Z',600],
+    ['2026-10-20T08:10:00Z','2026-10-20T08:00:00Z',600],
+    ['2026-10-20T08:00:00Z','2026-10-20T08:00:10Z',600],
+    ['2026-10-20T12:59:00Z','2026-10-20T13:10:00Z',660],
+    ['2026-10-20T08:00:00Z','2026-10-20T08:09:58Z',600],
+  ];
+  for(const [startedAt,finishedAt,durationSeconds] of variants){
+    const input=sample();
+    Object.assign(input.profiles[0],{startedAt,finishedAt,durationSeconds});
+    const result=assessPostgresProductionSloEvidence(input);
+    assert.equal(result.status,'blocked',JSON.stringify([startedAt,finishedAt,durationSeconds]));
+    assert.ok(result.missing.includes('steady:observed-timeline-and-budget-order'));
+  }
+  const success=sample();
+  success.profiles[2].startedAt='2026-10-20T12:45:00+02:00';
+  success.profiles[2].finishedAt='2026-10-20T12:55:00+02:00';
+  assert.equal(assessPostgresProductionSloEvidence(success).status,
+    'eligible-for-independent-review');
 });
