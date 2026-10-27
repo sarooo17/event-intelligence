@@ -1,12 +1,6 @@
 name: Publish npm
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "package.json"
-    tags:
-      - "v*"
   workflow_dispatch:
     inputs:
       confirm:
@@ -20,9 +14,20 @@ permissions:
 
 jobs:
   publish:
-    if: ${{ github.event_name == 'push' || inputs.confirm == 'publish' }}
     runs-on: ubuntu-latest
     steps:
+      # A skipped job can make the workflow green and accidentally trigger
+      # downstream release.yml. Wrong intent MUST fail the whole job.
+      - name: Enforce explicit main-branch release approval
+        env:
+          RELEASE_CONFIRM: ${{ inputs.confirm }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_EVENT_NAME" = "workflow_dispatch"
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$RELEASE_CONFIRM" = "publish"
+
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
