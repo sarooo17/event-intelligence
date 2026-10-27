@@ -1341,12 +1341,14 @@ test('canonical facade preserves data-only host tool names and fails closed on h
   }
   assert.equal(starts, 1);
 
+  const revokedNames = Proxy.revocable({ create: 'revoked' }, {});
+  revokedNames.revoke();
   const invalid = [
     { create: 'event_sources_list' }, // Collides with another operation.
     { create: '' },
     { unexpected: 'invented_tool' },
     new Proxy({ create: 'x' }, { get() { getterCalls++; throw Error('Proxy trap'); } }),
-    Proxy.revocable({ create: 'revoked' }, {}).proxy,
+    revokedNames.proxy,
     { get create() { getterCalls++; throw Error('getter trap'); } },
   ];
   for (const value of invalid) {
