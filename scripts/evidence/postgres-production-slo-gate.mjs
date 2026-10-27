@@ -125,6 +125,8 @@ export function assessPostgresProductionSloEvidence(report) {
         !Number.isFinite(registeredAt) || !Number.isFinite(observedAt) ||
         !(registeredAt < startedAt && startedAt < finishedAt &&
           finishedAt <= observedAt) ||
+        // Rounding a 599.5s run to a claimed 600s is NOT a valid 600s soak.
+        finishedAt - startedAt < 600_000 ||
         !positive(p.durationSeconds) ||
         Math.abs((finishedAt - startedAt) / 1000 - p.durationSeconds) > 1) {
       missing.push(name + ':observed-timeline-and-budget-order');

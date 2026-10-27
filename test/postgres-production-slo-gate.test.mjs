@@ -250,6 +250,7 @@ test('per-profile timeline refuses impossible dates, duration mismatches and pos
     ['2026-10-20T08:10:00Z','2026-10-20T08:00:00Z',600],
     ['2026-10-20T08:00:00Z','2026-10-20T08:00:10Z',600],
     ['2026-10-20T12:59:00Z','2026-10-20T13:10:00Z',660],
+    ['2026-10-20T08:00:00Z','2026-10-20T08:09:59.500Z',600],
     ['2026-10-20T08:00:00Z','2026-10-20T08:09:58Z',600],
   ];
   for(const [startedAt,finishedAt,durationSeconds] of variants){

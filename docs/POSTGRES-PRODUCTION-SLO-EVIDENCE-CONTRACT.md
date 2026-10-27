@@ -85,3 +85,8 @@ preserved raw measurements. The report can only become
 `eligible-for-independent-review`, never production certified, and
 neither the existing 600s local workload nor this gate claims the
 real provider + external host + PostgreSQL production SLO is met.
+
+A duration statement rounded up from less than **600,000 real elapsed
+milliseconds** fails, even when it differs from a reported 600 seconds by
+under the one-second sampling/rounding tolerance. The 600-second floor
+applies to actual start→finish wall time, not only a user-entered field.
