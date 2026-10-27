@@ -37,3 +37,32 @@ test('every prerelease is explicitly published to npm next, never latest',()=>{
   assert.match(file,/TAG=latest/);
   assert.match(file,/npm publish --access public --tag "\$TAG"/);
 });
+
+const launchWorkflow=readFileSync(new URL('../.github/workflows/mcp-launch-check.yml',import.meta.url),'utf8');
+const releaseWorkflow=readFileSync(new URL('../.github/workflows/release.yml',import.meta.url),'utf8');
+test('manual npm publish requires an exact operator-approved version',()=>{
+  assert.ok(file.includes('expected_version:'));
+  assert.ok(file.includes('test -n "$OPERATOR_VERSION"'));
+  assert.ok(file.includes('version")" = "$OPERATOR_VERSION"'));
+});
+test('MCP Registry prereleases are explicitly unsupported, not falsely certified',()=>{
+  assert.ok(launchWorkflow.includes('node scripts/check-release-manifest.mjs'));
+  assert.ok(launchWorkflow.includes('if [[ "$VERSION" == *-* ]]; then'));
+  assert.ok(launchWorkflow.includes('MCP Registry prerelease unsupported'));
+  assert.ok(launchWorkflow.includes('./mcp-publisher validate server.json'));
+});
+test('npm prerelease cannot trigger a stable MCP Registry/GitHub release',()=>{
+  assert.ok(releaseWorkflow.includes('name: Classify release channel'));
+  assert.ok(releaseWorkflow.includes('mcp_release=false'));
+  assert.ok(releaseWorkflow.includes('mcp_release=true'));
+  for(const step of ['Resolve and verify version','Install mcp-publisher',
+    'Validate server metadata','Check MCP Registry',
+    'Verify MCP Registry publication','Create GitHub Release']){
+    const at=releaseWorkflow.indexOf('- name: '+step);
+    assert.ok(at>=0,step);
+    assert.ok(releaseWorkflow.slice(at,at+200).includes(
+      "steps.channel.outputs.mcp_release == 'true'"),step+' must be stable-only');
+  }
+  assert.ok(releaseWorkflow.includes(
+    "steps.channel.outputs.mcp_release == 'true' && steps.registry.outputs.exists != 'true'"));
+});

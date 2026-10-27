@@ -40,8 +40,19 @@ jobs:
           curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" | tar xz mcp-publisher
           ./mcp-publisher --help >/dev/null
 
-      - name: Validate server.json
-        run: ./mcp-publisher validate server.json
+      - name: Validate server.json on its supported release channel
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/check-release-manifest.mjs
+          VERSION="$(node -p "require('./server.json').version")"
+          if [[ "$VERSION" == *-* ]]; then
+            # MCP Registry rejects npm prerelease versions; do not claim
+            # Registry-valid metadata for an npm-only integration candidate.
+            echo "::notice::MCP Registry prerelease unsupported; never publish this version to MCP Registry"
+          else
+            ./mcp-publisher validate server.json
+          fi
 
       - name: Verify npm package carries Registry ownership metadata
         run: |

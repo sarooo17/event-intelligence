@@ -29,7 +29,23 @@ jobs:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
           fetch-depth: 0
 
+      # npm prereleases stay on the next dist-tag and must never appear as a
+      # registered MCP Registry version or stable GitHub release.
+      - name: Classify release channel
+        id: channel
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./package.json').version")"
+          if [[ "$VERSION" == *-* ]]; then
+            echo "mcp_release=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::npm candidate only; no MCP Registry / stable GitHub release"
+          else
+            echo "mcp_release=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Resolve and verify version
+        if: ${{ steps.channel.outputs.mcp_release == 'true' }}
         id: version
         shell: bash
         run: |
@@ -62,13 +78,16 @@ jobs:
           echo "target=$TARGET" >> "$GITHUB_OUTPUT"
 
       - name: Install mcp-publisher
+        if: ${{ steps.channel.outputs.mcp_release == 'true' }}
         run: |
           curl -L "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" | tar xz mcp-publisher
 
       - name: Validate server metadata
+        if: ${{ steps.channel.outputs.mcp_release == 'true' }}
         run: ./mcp-publisher validate server.json
 
       - name: Check MCP Registry
+        if: ${{ steps.channel.outputs.mcp_release == 'true' }}
         id: registry
         shell: bash
         run: |
@@ -81,20 +100,22 @@ jobs:
           fi
 
       - name: Authenticate to MCP Registry
-        if: steps.registry.outputs.exists != 'true'
+        if: ${{ steps.channel.outputs.mcp_release == 'true' && steps.registry.outputs.exists != 'true' }}
         run: ./mcp-publisher login github-oidc
 
       - name: Publish to MCP Registry
-        if: steps.registry.outputs.exists != 'true'
+        if: ${{ steps.channel.outputs.mcp_release == 'true' && steps.registry.outputs.exists != 'true' }}
         run: ./mcp-publisher publish server.json
 
       - name: Verify MCP Registry publication
+        if: ${{ steps.channel.outputs.mcp_release == 'true' }}
         shell: bash
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           curl -fsS "https://registry.modelcontextprotocol.io/v0.1/servers/io.github.sarooo17%2Fevent-intelligence/versions/$VERSION"
 
       - name: Create GitHub Release
+        if: ${{ steps.channel.outputs.mcp_release == 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
