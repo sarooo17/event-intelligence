@@ -2,7 +2,8 @@
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {spawn,spawnSync} from 'node:child_process';
-import {mkdir,readFile,writeFile} from 'node:fs/promises';
+import {mkdir,readFile} from 'node:fs/promises';
+import {publishContinuousSoakManifest} from './postgres-os-600s-publish.mjs';
 import {cpus,totalmem} from 'node:os';
 import {join,resolve} from 'node:path';
 
@@ -199,8 +200,9 @@ async function main(){
     productionSloCertified:false,
     limitations:'actual process SIGKILL and two competing independent OS workers on isolated PostgreSQL 16; fixture host only; NO remote provider, multi-region partition, DB failover or production SLO',
   };
-  await writeFile(join(outDir,'manifest.json'),
-    JSON.stringify(manifest,null,2)+'\n',{flag:'wx',mode:0o600});
+  await publishContinuousSoakManifest(join(outDir,'manifest.json'),
+    manifest,{isInterrupted:()=>interrupted});
+  alive();
   process.stdout.write(JSON.stringify({
     status:'completed',activeMs,rounds:totalRounds,
     batchCount:batches.length,productionSloCertified:false,
