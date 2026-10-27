@@ -7,6 +7,10 @@ on:
         description: 'Type "publish" to publish the package'
         required: true
         type: string
+      expected_version:
+        description: 'Exact package version approved by the operator'
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -34,6 +38,15 @@ jobs:
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org/
+
+      - name: Verify exact operator-selected version
+        env:
+          OPERATOR_VERSION: ${{ inputs.expected_version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$OPERATOR_VERSION"
+          test "$(node -p "require('./package.json').version")" = "$OPERATOR_VERSION"
 
       - name: Use npm with Trusted Publishing support
         run: npm install --global "npm@^11.15.0"
@@ -68,4 +81,16 @@ jobs:
 
       - name: Publish
         if: steps.npm.outputs.exists != 'true'
-        run: npm publish --access public
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./package.json').version")"
+          # Never make a prerelease the default npm install/latest version.
+          # Stable semver versions are published under latest, only after
+          # the explicit manual main-branch confirmation at job startup.
+          if [[ "$VERSION" == *-* ]]; then
+            TAG=next
+          else
+            TAG=latest
+          fi
+          npm publish --access public --tag "$TAG"

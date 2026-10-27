@@ -8,6 +8,7 @@ on:
       - "docs/examples/packed-simple-trigger.mjs"
       - "docs/examples/packed-headless-host.mjs"
       - "docs/examples/packed-managed-consumer.mjs"
+      - "docs/examples/packed-multi-target-host.mjs"
       - "docs/examples/packed-typed-simple-trigger.mts"
       - "docs/SIMPLE-TRIGGER-AUTHORING.md"
       - "package.json"
@@ -213,6 +214,31 @@ jobs:
           assert.equal(report.replayRedeliveries, 0);
           assert.equal(report.management.length, 6);
           assert.equal(report.independentThirdPartyHost, false);
+          EOF
+
+      - name: Test public multi-target host with installed packed npm tarball
+        shell: bash
+        run: |
+          set -euo pipefail
+          WORKDIR="$(mktemp -d)"
+          cd "$WORKDIR"
+          npm init -y >/dev/null
+          npm install --ignore-scripts --no-audit --no-fund "$TARBALL"
+          cp "$GITHUB_WORKSPACE/docs/examples/packed-multi-target-host.mjs" ./multi-target.mjs
+          node ./multi-target.mjs > multi-target-report.json
+          node --input-type=module <<'EOF'
+          import assert from 'node:assert/strict';
+          import fs from 'node:fs';
+          const r = JSON.parse(fs.readFileSync('multi-target-report.json', 'utf8'));
+          assert.equal(r.schema,'event-intelligence.packed-multi-target-host.v1');
+          assert.equal(r.status,'pass');
+          assert.deepEqual(r.targetKinds,['agent-task','graph-checkpoint','batch-job']);
+          assert.equal(r.scopes,2);
+          assert.equal(r.resumed,3);
+          assert.equal(r.replaysDeduplicated,3);
+          assert.equal(r.deniedTargets,2);
+          assert.equal(r.independentThirdPartyHost,false);
+          assert.equal(r.durableHostReceiptsProven,false);
           EOF
 
       - name: Confirm candidate MCP stdio entrypoint starts
