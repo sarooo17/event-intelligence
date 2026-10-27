@@ -402,6 +402,8 @@ export interface EventIntelligenceRuntimeBindings<
   control?: EmbeddedRuntimeTooling<RuntimeContext>['control'];
   projectResult?: EmbeddedRuntimeTooling<RuntimeContext>['projectResult'];
   projectError?: EmbeddedRuntimeTooling<RuntimeContext>['projectError'];
+  /** Host-owned model tool names (e.g. event_watch_create), never permissions. */
+  names?: EmbeddedRuntimeTooling<RuntimeContext>['names'];
 }
 
 /**
