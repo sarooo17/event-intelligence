@@ -13,7 +13,7 @@ import { assessPostgresProductionSloEvidence } from '../scripts/evidence/postgre
 import { percentileStats, parsePrivateServiceUrl } from '../scripts/validation/common.mjs';
 import { verifyCampaignArtifact, verifyRawSampleArtifact } from '../scripts/validation/artifact.mjs';
 import { readWorkerConfig } from '../scripts/validation/worker-service.mjs';
-import { campaignLaunchAt, readBenchmarkConfig, validateCampaign, waitForLaunch } from '../scripts/validation/benchmark-service.mjs';
+import { assessCampaignWindowCoverage, campaignLaunchAt, readBenchmarkConfig, validateCampaign, waitForLaunch } from '../scripts/validation/benchmark-service.mjs';
 import { buildStartPayload } from '../scripts/validation/campaign-cli.mjs';
 import { PostgresEventStore } from '../scripts/lib/postgres-event-store.mjs';
 import { CompositeEventConsumer } from '../scripts/lib/composite-event-consumer.mjs';
@@ -36,6 +36,44 @@ test('campaign limits require long SLO profiles, explicit 100k opt-in, and fault
   const config = { allow100k: false, faultToken: 'f'.repeat(32) };
   assert.throws(() => validateCampaign({ profile: 'fault-injected', durationSeconds: 600 }, config), /faultConfirmation/);
   assert.throws(() => validateCampaign({ profile: 'fault-injected', durationSeconds: 600, injectWorkerCrash: true, faultConfirmation: 'CRASH_EI_WORKER_A', databaseUnavailable: true }, config), /single-database/);
+});
+
+test('SLO workload volume preflight forbids 600-second fake runs ending early', () => {
+  const cfg = {allow100k:false, faultToken:'f'.repeat(32)};
+  for (const profile of ['steady','burst','fault-injected']) {
+    const options={ profile, durationSeconds:600, requestedRatePerSecond:10, eventCount:5999,
+      ...(profile==='fault-injected'?{injectWorkerCrash:true,faultConfirmation:'CRASH_EI_WORKER_A'}:{})};
+    assert.throws(()=>validateCampaign(options,cfg),/eventCount must cover durationSeconds/);
+    assert.equal(validateCampaign({...options,eventCount:6000},cfg).eventCount,6000);
+  }
+  assert.equal(validateCampaign({profile:'smoke',durationSeconds:5,
+    eventCount:1,requestedRatePerSecond:10},cfg).eventCount,1);
+  assert.throws(()=>validateCampaign({profile:'steady',durationSeconds:600,
+    requestedRatePerSecond:500},cfg),/eventCount must cover/);
+});
+
+test('monotonic measured coverage blocks short, partial and interrupted SLO workloads', () => {
+  const options=validateCampaign({profile:'steady',durationSeconds:600,
+    requestedRatePerSecond:10}, {allow100k:false});
+  assert.deepEqual(assessCampaignWindowCoverage(options,{
+    attemptedEvents:6000,elapsedSeconds:600
+  }),{covered:true,missing:[]});
+  const short=assessCampaignWindowCoverage(options,{
+    attemptedEvents:6000,elapsedSeconds:599.999
+  });
+  assert.equal(short.covered,false);
+  assert.ok(short.missing.includes('actual-duration-below-declared-window'));
+  const partial=assessCampaignWindowCoverage(options,{
+    attemptedEvents:5999,elapsedSeconds:605
+  });
+  assert.equal(partial.covered,false);
+  assert.ok(partial.missing.includes('insufficient-events-attempted'));
+  assert.equal(assessCampaignWindowCoverage(options,{
+    attemptedEvents:6000,elapsedSeconds:600,aborted:true
+  }).covered,false);
+  assert.equal(assessCampaignWindowCoverage({profile:'smoke'},{
+    attemptedEvents:1,elapsedSeconds:0.01
+  }).covered,true);
 });
 
 test('latency aggregation computes nearest-rank p50/p95/p99 and rejects invalid samples', () => {
