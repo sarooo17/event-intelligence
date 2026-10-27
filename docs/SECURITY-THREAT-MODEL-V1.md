@@ -104,3 +104,18 @@ shared versioned authority/fence coupled to transport delivery; that
 stronger contract is *not provided by this standalone owner-read path*.
 No cross-worker in-memory locks or invented provider credentials have
 been added. Independent review and security release CI remain necessary.
+
+## MCP untrusted occurrence-name mismatch error boundary (#45)
+
+An MCP provider's descriptor and occurrence `name` strings are both provider-
+controlled. A mismatch is now rejected with a constant error message and
+stable code `MCP_EVENTS_OCCURRENCE_NAME_MISMATCH` rather than echoing either
+value into a thrown Error. The focused regression verifies no name/payload
+secrets in message, stack or property descriptors and **no** occurrence
+append/activation side effects. The dedicated negative case is run in the
+Public Release Check security evidence gate, not only an optional test.
+
+**Scope limit:** this does not sanitize arbitrary third-party provider
+exceptions, raw transport responses, source-config credentials or host logs;
+those remain separate trust boundaries and #45 stays open. This change does
+not modify a provider's event compatibility or enable unauthenticated tools.
