@@ -68,4 +68,16 @@ jobs:
 
       - name: Publish
         if: steps.npm.outputs.exists != 'true'
-        run: npm publish --access public
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./package.json').version")"
+          # Never make a prerelease the default npm install/latest version.
+          # Stable semver versions are published under latest, only after
+          # the explicit manual main-branch confirmation at job startup.
+          if [[ "$VERSION" == *-* ]]; then
+            TAG=next
+          else
+            TAG=latest
+          fi
+          npm publish --access public --tag "$TAG"

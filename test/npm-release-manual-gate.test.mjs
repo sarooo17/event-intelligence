@@ -27,6 +27,13 @@ test('release packaging verification remains mandatory before npm publish',()=>{
     'npm run check',
     'npm run pack:check',
     'npm view "mcp-event-intelligence@$VERSION" version',
-    'npm publish --access public',
+    'npm publish --access public --tag "$TAG"',
   ])assert.ok(file.includes(step),step);
+});
+
+test('every prerelease is explicitly published to npm next, never latest',()=>{
+  assert.match(file,/if \[\[ "\$VERSION" == \*-\* \]\]; then/);
+  assert.match(file,/TAG=next/);
+  assert.match(file,/TAG=latest/);
+  assert.match(file,/npm publish --access public --tag "\$TAG"/);
 });

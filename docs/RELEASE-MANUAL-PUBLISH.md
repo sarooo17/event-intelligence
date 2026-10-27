@@ -23,3 +23,12 @@ Invalid operator input causes a failed job.
 This is a *control-plane gate*, not automatic validation of semver intent,
 source-to-tag compatibility or production readiness; owners must review
 those separately. Never publish a version merely to make a fork's CI green.
+
+## Safe npm tags
+
+The manually confirmed publish job selects `--tag next` whenever the
+package semver contains a prerelease identifier (`-next.0`, `-rc.1`, etc).
+Only stable semver versions can select `--tag latest`. This prevents an
+integration candidate from changing what unsuspecting users install with
+`npm install mcp-event-intelligence`. The npm registry existence check
+still prevents overwriting an already published version.
