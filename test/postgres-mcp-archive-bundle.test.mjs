@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, generateKeyPairSync } from 'node:crypto';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -9,6 +9,8 @@ import {
   writeMcpOccurrenceArchiveBundle,
   verifyMcpOccurrenceArchiveBundleFile,
   readMcpOccurrenceArchiveReplayWindow,
+  signMcpOccurrenceArchiveWitness,
+  verifyMcpOccurrenceArchiveWitness,
 } from '../scripts/lib/mcp-occurrence-archive-bundle.mjs';
 
 const url=process.env.POSTGRES_URL;
@@ -42,6 +44,26 @@ integration('real PG archive is pinned and independently verifiable after later 
       trustedCheckpoint:pinned,outputPath:path,pageSize:2});
     assert.equal(result.endSequence,4);
     assert.equal(await verifyMcpOccurrenceArchiveBundleFile(path,{trustedCheckpoint:pinned}),true);
+    // Independent offline Ed25519 witness of REAL PG16 source history, not
+    // just an empty/synthetic archive. Full trusted checkpoint defeats
+    // rollback to older legitimately signed prefixes.
+    const signing=generateKeyPairSync('ed25519');
+    const archivedBytes=await readFile(path);
+    const signed=await signMcpOccurrenceArchiveWitness({
+      archiveBytes:archivedBytes,trustedCheckpoint:pinned,
+      privateKeyPem:signing.privateKey.export({type:'pkcs8',format:'pem'}).toString(),
+      keyId:'offline-pg16-source',
+    });
+    const publicKey=signing.publicKey.export({type:'spki',format:'pem'}).toString();
+    const verifySigned=(checkpoint=pinned,archiveBytes=archivedBytes)=>
+      verifyMcpOccurrenceArchiveWitness({
+        witness:signed,archiveBytes,trustedCheckpoint:checkpoint,
+        trustedPublicKeyPem:publicKey,expectedKeyId:'offline-pg16-source',
+        expectedScopeId:'source-tenant',
+      });
+    assert.equal(await verifySigned(),true);
+    assert.equal(await verifySigned({...pinned,endSequence:pinned.endSequence+1}),false);
+    assert.equal(await verifySigned(pinned,Buffer.from(archivedBytes.toString('utf8')+' ')),false);
     const originalBytes=await readFile(path,'utf8');
     const persisted=JSON.parse(originalBytes);
     assert.equal(persisted.pages.length,2);

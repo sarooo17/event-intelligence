@@ -1,4 +1,6 @@
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash, createPrivateKey, createPublicKey, sign, verify } from 'node:crypto';
+import { parseUnambiguousAuditArchiveJson } from './audit-archive-json-integrity.mjs';
+import { assertAuditJsonNumberPrecision } from './audit-precision-safety.mjs';
 import { constants } from 'node:fs';
 import { open, rm, lstat, link } from 'node:fs/promises';
 import { dirname } from 'node:path';
@@ -201,4 +203,122 @@ export function readMcpOccurrenceArchiveReplayWindow(bundle,{
     endSequence,hasMore:endSequence<trustedCheckpoint.endSequence,
     records:Object.freeze(records),
   });
+}
+
+/**
+ * Detached signed SOURCE witness (#47). Neither this signature nor local
+ * archive export proves off-host WORM retention or permits physical TTL.
+ * An independent operator pins the FULL checkpoint, expected signing key ID,
+ * expected tenant and Ed25519 public key outside the database/archive.
+ */
+const SOURCE_WITNESS_SCHEMA = 'event-intelligence.mcp-occurrence-witness.v1';
+const sourceWitnessKeys = Object.freeze([
+  'archiveBytes','archiveSha256','checkpoint','keyId','schema','signature',
+]);
+const sourceCheckpointKeys = Object.freeze([
+  'endSequence','genesisHash','headHash','schema','scopeId',
+]);
+const exactKeys=(obj,keys)=>obj && typeof obj==='object' &&
+  !Array.isArray(obj) && Object.keys(obj).sort().join(',')===keys.join(',');
+const validSourceKeyId=id=>typeof id==='string' &&
+  id.length>=1 && id.length<=128 && /^[A-Za-z0-9_.:-]+$/.test(id);
+const validSourceBytes=bytes=>Buffer.isBuffer(bytes) &&
+  bytes.length>=2 && bytes.length<=MAX_BYTES;
+const sourceDigest=bytes=>createHash('sha256').update(bytes).digest('hex');
+const sourceWitnessMessage=body=>Buffer.from(JSON.stringify([
+  SOURCE_WITNESS_SCHEMA,body.keyId,body.checkpoint.schema,
+  body.checkpoint.scopeId,body.checkpoint.genesisHash,
+  body.checkpoint.endSequence,body.checkpoint.headHash,
+  body.archiveBytes,body.archiveSha256,
+]),'utf8');
+const sourceWitnessBody=(bytes,checkpoint,keyId)=>({
+  schema:SOURCE_WITNESS_SCHEMA,
+  keyId,
+  checkpoint:Object.freeze({
+    schema:checkpoint.schema,scopeId:checkpoint.scopeId,
+    genesisHash:checkpoint.genesisHash,endSequence:checkpoint.endSequence,
+    headHash:checkpoint.headHash,
+  }),
+  archiveBytes:bytes.length,
+  archiveSha256:sourceDigest(bytes),
+});
+function parseStrictSourceArchive(bytes){
+  const result=parseUnambiguousAuditArchiveJson(bytes);
+  // The outer archive uses safe integer sequence/count metadata. The
+  // original arbitrary-precision PG JSONB payloads remain opaque strings.
+  assertAuditJsonNumberPrecision(result.text);
+  return result.parsed;
+}
+
+/**
+ * Sign exact bytes ONLY after verifying the WHOLE source archive against an
+ * independently authenticated checkpoint. No private key is auto-generated,
+ * loaded from a DB or written alongside this artifact.
+ */
+export async function signMcpOccurrenceArchiveWitness({
+  archiveBytes,trustedCheckpoint,privateKeyPem,keyId,
+}={}){
+  if(!validSourceBytes(archiveBytes) ||
+      !exactKeys(trustedCheckpoint,sourceCheckpointKeys) ||
+      !validOptions(trustedCheckpoint,1,1024) ||
+      !validSourceKeyId(keyId) ||
+      typeof privateKeyPem!=='string' || !privateKeyPem.trim()){
+    throw new TypeError('Signed source witness requires exact archive bytes, independently trusted full checkpoint, key ID and Ed25519 private key');
+  }
+  // Copy synchronously: callers may mutate their Buffer during async calls.
+  const snapshot=Buffer.from(archiveBytes);
+  let archive;
+  try{archive=parseStrictSourceArchive(snapshot);}
+  catch{throw new Error('Refusing ambiguous, malformed or unsafe source archive bytes');}
+  if(!verifyMcpOccurrenceArchiveBundle(archive,{trustedCheckpoint})){
+    throw new Error('Refusing to sign incomplete or untrusted source archive');
+  }
+  const key=createPrivateKey(privateKeyPem);
+  if(key.asymmetricKeyType!=='ed25519'){
+    throw new TypeError('Source archive witness only accepts Ed25519 private keys');
+  }
+  const body=sourceWitnessBody(snapshot,trustedCheckpoint,keyId);
+  return Object.freeze({
+    ...body,signature:sign(null,sourceWitnessMessage(body),key).toString('base64'),
+  });
+}
+
+/**
+ * Separate trusted full checkpoint is mandatory even with a valid signature:
+ * this prevents accepting an old legitimate signed prefix as a fresh one.
+ * Exact original archive bytes, not JSON.parse/stringify substitutes.
+ */
+export async function verifyMcpOccurrenceArchiveWitness({
+  witness,archiveBytes,trustedCheckpoint,
+  trustedPublicKeyPem,expectedKeyId,expectedScopeId,
+}={}){
+  if(!exactKeys(witness,sourceWitnessKeys) ||
+      witness.schema!==SOURCE_WITNESS_SCHEMA ||
+      !exactKeys(witness.checkpoint,sourceCheckpointKeys) ||
+      !exactKeys(trustedCheckpoint,sourceCheckpointKeys) ||
+      !validOptions(trustedCheckpoint,1,1024) ||
+      !checkpointEqual(witness.checkpoint,trustedCheckpoint) ||
+      !validSourceKeyId(expectedKeyId) ||
+      witness.keyId!==expectedKeyId ||
+      typeof expectedScopeId!=='string' || !expectedScopeId ||
+      witness.checkpoint.scopeId!==expectedScopeId ||
+      typeof trustedPublicKeyPem!=='string' || !trustedPublicKeyPem.trim() ||
+      !validSourceBytes(archiveBytes) ||
+      !Number.isSafeInteger(witness.archiveBytes) ||
+      witness.archiveBytes!==archiveBytes.length ||
+      !HASH.test(witness.archiveSha256) ||
+      typeof witness.signature!=='string' ||
+      !/^[A-Za-z0-9+/]{86}==$/.test(witness.signature))return false;
+  const snapshot=Buffer.from(archiveBytes);
+  if(sourceDigest(snapshot)!==witness.archiveSha256)return false;
+  try{
+    const key=createPublicKey(trustedPublicKeyPem);
+    if(key.asymmetricKeyType!=='ed25519')return false;
+    const signature=Buffer.from(witness.signature,'base64');
+    if(signature.length!==64)return false;
+    const body=sourceWitnessBody(snapshot,trustedCheckpoint,expectedKeyId);
+    if(!verify(null,sourceWitnessMessage(body),key,signature))return false;
+    return verifyMcpOccurrenceArchiveBundle(
+      parseStrictSourceArchive(snapshot),{trustedCheckpoint});
+  }catch{return false;}
 }

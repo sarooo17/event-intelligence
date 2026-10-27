@@ -57,3 +57,29 @@ export declare function readMcpOccurrenceArchiveReplayWindow(
   hasMore: boolean;
   records: ReadonlyArray<Readonly<{sequence:number;rawPayloadJson:string}>>;
 };
+
+/** Detached Ed25519 witness over EXACT archived PostgreSQL source bytes. */
+export interface McpOccurrenceArchiveWitness {
+  schema: 'event-intelligence.mcp-occurrence-witness.v1';
+  keyId: string;
+  checkpoint: McpOccurrenceArchiveCheckpoint;
+  archiveBytes: number;
+  archiveSha256: string;
+  signature: string;
+}
+/** Operator-held private key; full checkpoint must be authenticated externally. */
+export declare function signMcpOccurrenceArchiveWitness(options:{
+  archiveBytes: Buffer;
+  trustedCheckpoint: McpOccurrenceArchiveCheckpoint;
+  privateKeyPem: string;
+  keyId: string;
+}): Promise<McpOccurrenceArchiveWitness>;
+/** Rejects stale signed prefixes without a separately pinned full checkpoint. */
+export declare function verifyMcpOccurrenceArchiveWitness(options:{
+  witness: McpOccurrenceArchiveWitness;
+  archiveBytes: Buffer;
+  trustedCheckpoint: McpOccurrenceArchiveCheckpoint;
+  trustedPublicKeyPem: string;
+  expectedKeyId: string;
+  expectedScopeId: string;
+}): Promise<boolean>;
