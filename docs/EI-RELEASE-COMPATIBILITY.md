@@ -186,3 +186,27 @@ unknown external store implementations. The test suite includes JSONL
 reopen/legacy marker corruption and PG16 wrong/missing marker rollback;
 a full backup-reset-replay operator exercise remains a separate #50 release
 acceptance item. No npm release or downstream consumer upgrade is performed.
+
+## 2026-10-27 acceptance update: #42 authored-host waiver is NOT a v1 readiness signoff
+
+Issue [#42](https://github.com/sarooo17/event-intelligence/issues/42)
+was already closed and its owner explicitly **waived requiring a second
+independently authoring developer**. This is a change to an *adoption/validation
+provenance* requirement only, **not** a finding of independent external
+adoption. Accordingly the former `embedded-host-independent` ledger row is
+an **optional, still-unverified** informational signal, with
+`independentExternalHostVerified:false` in current EI fixture reports.
+
+The other **nine mandatory v1 criteria** still require evidence and explicit
+independent/manual release review: the actual stable 1.0.0 HostContract/package,
+security/revocation, production-grade PG retention/HA/scale, safe stored-state
+upgrade and deliberate downstream consumer version policy. A zero-error
+`v1-readiness` report is NOT an eligible release: status stays
+`blocked` until every required row has real reviewer/date/procedure evidence
+**and** the checked package version is 1.0.0. Publishing prerelease
+`0.12.0-next.0` under npm `next` does not satisfy the stable 1.0 release.
+
+The manifest evidence descriptions have been updated to reflect merges of
+#188/#189/#258/#259/#263 and the actual manual npm `next` publication.
+No security or durability risk is waived, no hosted MCP tool is exposed, no
+consumer lockfile or deployment is changed by this release-ledger update.

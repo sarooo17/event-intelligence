@@ -15,9 +15,13 @@ test('current pre-v1 candidate remains explicitly blocked without fake approval'
   assert.deepEqual(report.errors,[]);
   assert.equal(report.status,'blocked');
   assert.equal(report.autoPublish,false);
-  assert.equal(report.requiredCount,10);
-  assert.equal(report.optionalCount,2);
-  assert.equal(report.blocked.includes('embedded-host-independent'),true);
+  assert.equal(report.requiredCount,9);
+  assert.equal(report.optionalCount,3);
+  assert.equal(report.blocked.includes('embedded-host-independent'),false);
+  assert.equal(ledger.criteria.find(x=>x.id==='embedded-host-independent').required,false);
+  assert.equal(ledger.criteria.find(x=>x.id==='embedded-host-independent').status,'blocked');
+  assert.ok(report.blocked.includes('security-independent-review'));
+  assert.ok(report.blocked.includes('pg-retention-audit'));
   assert.equal(report.blocked.includes('pg-scale-measured'),true);
   assert.equal(report.blocked.includes('package-version-not-1.0.0'),true);
 });
@@ -99,4 +103,19 @@ test('audit date must be a real past or present UTC calendar day',()=>{
     assert.equal(report.status,'blocked',invalid);
     assert.ok(report.errors.some(x=>x.includes('audit evidence')),invalid);
   }
+});
+
+test('owner-waived independent authoring is optional but cannot bypass v1 P0 release gates',()=>{
+  const waived=clone(ledger);
+  const row=waived.criteria.find(x=>x.id==='embedded-host-independent');
+  assert.equal(row.required,false);
+  assert.equal(row.status,'blocked');
+  assert.equal(evaluateV1Readiness(waived,'1.0.0').status,'blocked');
+  const malicious=clone(ledger);
+  malicious.criteria.find(x=>x.id==='embedded-host-independent').required=true;
+  assert.ok(evaluateV1Readiness(malicious,'1.0.0').errors.some(x=>x.includes('embedded-host-independent')));
+  const bypass=clone(ledger);
+  for(const r of bypass.criteria)if(r.required)r.status='verified';
+  assert.ok(evaluateV1Readiness(bypass,'1.0.0').errors.length>=9,
+    'independent/manual reviewer and specific evidence mandatory for all nine gates');
 });
