@@ -399,6 +399,41 @@ export function summarizeEventSourceStatus(
   });
 }
 
+/**
+ * Optional host-neutral tool descriptor bridge.
+ *
+ * This wraps existing PortableAgentTool.execute() without changing its result,
+ * applying authorization, catching host interrupts, or registering tools.
+ * The host owns makeTool() and any native result/taint presentation; installation
+ * remains via bindEmbeddedRuntimeIntegration() and its strict allowlist.
+ */
+export function createPortableToolAdapter({ makeTool } = {}) {
+  if (typeof makeTool !== 'function') {
+    throw new TypeError('portable tool adapter requires host makeTool()');
+  }
+  return (portable) => {
+    if (!portable || typeof portable !== 'object' ||
+        typeof portable.execute !== 'function' ||
+        typeof portable.name !== 'string' || !portable.name.trim() ||
+        typeof portable.description !== 'string' ||
+        !portable.inputSchema || typeof portable.inputSchema !== 'object' ||
+        !portable.capability || typeof portable.capability !== 'object') {
+      throw new TypeError('portable tool adapter requires a valid portable tool');
+    }
+    // Keep the canonical capability/schema identity; never infer permissions
+    // from a tool name or substitute a successful result after host denial.
+    return makeTool(Object.freeze({
+      name: portable.name,
+      description: portable.description,
+      inputSchema: portable.inputSchema,
+      ...(portable.outputSchema === undefined
+        ? {} : { outputSchema: portable.outputSchema }),
+      capability: portable.capability,
+      execute: (args, runtimeContext) => portable.execute(args, runtimeContext),
+    }));
+  };
+}
+
 export function bindEmbeddedRuntimeIntegration(
   integration,
   { adapt, register, onClose, capabilityIds } = {},

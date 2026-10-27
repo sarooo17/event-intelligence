@@ -341,6 +341,24 @@ export function summarizeEventSourceStatus(
   refreshOutcomes?: readonly any[],
 ): EventSourceDiagnostics;
 
+/**
+ * The host specifies the native tool ABI. The portable execute() callback
+ * returns the original PortableToolResult, including denied/interrupt/error
+ * outcomes; only the host may format, classify or expose it.
+ */
+export type PortableToolPresentation<RuntimeContext = unknown> =
+  Pick<PortableAgentTool<RuntimeContext>,
+    'name' | 'description' | 'inputSchema' | 'outputSchema' | 'capability'> & {
+  execute(args: unknown, runtimeContext: RuntimeContext): Promise<PortableToolResult>;
+};
+
+export function createPortableToolAdapter<
+  RuntimeContext = unknown,
+  HostTool = unknown,
+>(options: {
+  makeTool(descriptor: Readonly<PortableToolPresentation<RuntimeContext>>): HostTool;
+}): (portable: PortableAgentTool<RuntimeContext>) => HostTool;
+
 export function bindEmbeddedRuntimeIntegration<
   RuntimeContext = unknown,
   HostTool = unknown,
