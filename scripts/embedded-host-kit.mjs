@@ -449,11 +449,15 @@ export function bindEmbeddedRuntimeIntegration(
     );
   }
 
-  const adapted = selected.map((portableTool) => {
-    const hostTool = adapt(portableTool);
-    register(hostTool, portableTool);
-    return hostTool;
-  });
+  // Adapting a portable descriptor can throw (invalid host ABI, schema,
+  // capability). Finish *all* pure adaptations before allowing the first
+  // host registration side effect; a failure must not expose a partial
+  // tool catalog. Registration itself remains host-owned and is not an
+  // EI-managed transaction.
+  const adapted = selected.map((portableTool) => adapt(portableTool));
+  for (let i = 0; i < selected.length; i += 1) {
+    register(adapted[i], selected[i]);
+  }
 
   if (onClose) {
     onClose(() => integration.close());

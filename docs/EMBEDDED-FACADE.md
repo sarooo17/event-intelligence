@@ -55,6 +55,21 @@ const ei = await createEventIntelligence({
 });
 ```
 
+### Two-phase native tool binding (issue #270)
+
+`integration.bind({ adapt, register, capabilityIds })` keeps the host's
+existing policy and native tool ABI. In addition to filtering the static
+capability allowlist **before** adaptation, it now finishes **all**
+`adapt(portableTool)` calls before calling any `register` callback. A
+native ABI/descriptor conversion failure therefore exposes **zero** tool
+registrations; half-adapted tool sets never become partially visible.
+
+The host must still make its own registry transactional or roll back if a
+`register` callback itself throws after earlier registrations. EI cannot
+undo host-owned tool registration or authorization. This is a deliberate
+small pre-v1 behavioral change from interleaved adapt/register calls, not
+an SDK wrapper, second API, or proof of independent host adoption.
+
 ### Contract and limits
 
 - `runtime.deliver()` is mandatory; the host must own and secure continuation delivery.
