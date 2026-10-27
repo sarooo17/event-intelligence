@@ -1757,7 +1757,7 @@ export async function createEventIntelligence({
   const rawNames = namesDescriptor?.value;
   if (namesDescriptor === null ||
       (rawNames !== undefined && (!rawNames || typeof rawNames !== 'object' ||
-        Array.isArray(rawNames) || isProxy(rawNames)))) {
+        isProxy(rawNames) || Array.isArray(rawNames)))) {
     throw hostConfigurationError(
       'runtime.names must be a plain data-only tool name mapping',
       'EI_HOST_TOOL_NAMES_INVALID',
