@@ -116,6 +116,21 @@ export function assessPostgresProductionSloEvidence(report) {
         !Number.isSafeInteger(p.partitions) || p.partitions < 2) {
       missing.push(name + ':sustained-multiworker-workload');
     }
+    // A report-created-after-the-run timestamp cannot prove SLO budgets
+    // were frozen before a measurement actually began. Bind registration
+    // to every per-profile observed start, not just the final report time.
+    const startedAt = evidenceTimestamp(p.startedAt);
+    const finishedAt = evidenceTimestamp(p.finishedAt);
+    if (!Number.isFinite(startedAt) || !Number.isFinite(finishedAt) ||
+        !Number.isFinite(registeredAt) || !Number.isFinite(observedAt) ||
+        !(registeredAt < startedAt && startedAt < finishedAt &&
+          finishedAt <= observedAt) ||
+        // Rounding a 599.5s run to a claimed 600s is NOT a valid 600s soak.
+        finishedAt - startedAt < 600_000 ||
+        !positive(p.durationSeconds) ||
+        Math.abs((finishedAt - startedAt) / 1000 - p.durationSeconds) > 1) {
+      missing.push(name + ':observed-timeline-and-budget-order');
+    }
     if (!Number.isSafeInteger(p.expectedWakes) ||
         p.expectedWakes < 1000 ||
         p.persistedDeliveredWakes !== p.expectedWakes ||

@@ -14,6 +14,12 @@ in-process host and absent provider transport cannot satisfy this contract.
    *workload-specific* p99 budgets for provider→ingest, EI ingest→match,
    match→wake and **external host effect** plus minimum accepted throughput
    and duplicate rate. Record budget registration timestamp before any run.
+   Each steady/burst/fault-injected result now **must include canonical
+   `startedAt` and `finishedAt` timestamps**; the SLO budget timestamp
+   must predate every start, every finish must predate the final report's
+   `observedAt`, and start→finish must agree with the reported duration
+   within one second. An operator registering budgets after a workload but
+   before assembling its report cannot pass the completeness checker.
    The gate intentionally does **not** invent universal milliseconds/second.
 2. Run independent **steady**, **burst** and **fault-injected** workloads,
    each at least 600 seconds, with ≥2 real workers, ≥2 partitions and ≥1000
@@ -61,3 +67,26 @@ in-process host and absent provider transport cannot satisfy this contract.
 no runtime, persistence schema, MCP tools, provider integrations or package
 publication changes. Test fixtures with synthetic `cpuModel` and URL
 placeholders are *validator test inputs*, not benchmark results.
+
+## Profile timing validation limitation (#47)
+
+The static checker now rejects profiles missing per-run wall timestamps,
+a start before pre-registered targets, malformed timezones/calendar days,
+finish-before-start, runs finishing after the final report, and durations
+inconsistent with elapsed wall time by more than one second. This closes
+an earlier **retrospective-SLO-budget loophole** where `registeredAt`
+only had to precede report creation, not actual workload execution.
+Timezone offsets are normalized during comparison, not guessed.
+
+These are still **untrusted report declarations**, not trusted timing
+attestations or a hash of raw hardware logs. Independent review must
+verify frozen SLO thresholds, event series and clock integrity against
+preserved raw measurements. The report can only become
+`eligible-for-independent-review`, never production certified, and
+neither the existing 600s local workload nor this gate claims the
+real provider + external host + PostgreSQL production SLO is met.
+
+A duration statement rounded up from less than **600,000 real elapsed
+milliseconds** fails, even when it differs from a reported 600 seconds by
+under the one-second sampling/rounding tolerance. The 600-second floor
+applies to actual start→finish wall time, not only a user-entered field.
