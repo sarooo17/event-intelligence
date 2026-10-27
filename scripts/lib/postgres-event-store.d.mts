@@ -159,6 +159,13 @@ export declare class PostgresEventStore {
   }): Promise<any[]>;
   /** Operator-only online migration for pre-existing populated PG stores. */
   migrateOrphanRecoveryIndexes(): Promise<{ ok: true; indexes: string[] }>;
+  /** Safe online index migration, serialized across worker startup. */
+  migrateTriggerMatchLookupIndex(options?: {
+    waitTimeoutMs?: number;
+    statementTimeoutMs?: number;
+  }): Promise<{ ok: true; index: string }>;
+  assertTriggerMatchLookupIndex(): Promise<string>;
+  assertRecordsKindIndex(client?: any): Promise<string>;
   /** Refuse unindexed recurring historical scans; fail closed. */
   assertOrphanRecoveryIndexes(): Promise<void>;
   /** Session-scoped transactional-revocation fence across the real host callback. */

@@ -6,7 +6,7 @@
   "deploy": {
     "startCommand": "npm run start:validation-worker",
     "healthcheckPath": "/readyz",
-    "healthcheckTimeout": 30,
+    "healthcheckTimeout": 1800,
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 10
   }

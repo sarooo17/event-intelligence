@@ -110,6 +110,7 @@ const POSTGRES_OBJECT_SUFFIXES = Object.freeze([
   '_records_age_idx',
   '_records_orphan_status_idx',
   '_records_wake_match_idx',
+  '_records_match_trigger_idx',
   '_history',
   '_history_scope_kind_idx',
   '_history_key_idx',
@@ -267,8 +268,6 @@ export class PostgresEventStore {
             'scope_id TEXT NOT NULL, kind TEXT NOT NULL, record_key TEXT NOT NULL,' +
             'payload JSONB NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),' +
             'PRIMARY KEY (scope_id, kind, record_key))',
-          'CREATE INDEX IF NOT EXISTS ' + this.tablePrefix +
-            '_records_kind_idx ON ' + this.records + ' (scope_id, kind)',
           'CREATE TABLE IF NOT EXISTS ' + this.history + ' (' +
             'history_id BIGSERIAL PRIMARY KEY, scope_id TEXT NOT NULL, kind TEXT NOT NULL,' +
             'record_key TEXT, payload JSONB NOT NULL,' +
@@ -297,6 +296,14 @@ export class PostgresEventStore {
           await client.query(statement);
         }
         await assertPostgresSchemaShape(client, this.tablePrefix);
+        if (freshRecords) {
+          await client.query(
+            'CREATE INDEX IF NOT EXISTS "' + this.tablePrefix +
+            '_records_kind_idx" ON ' + this.records + ' (scope_id, kind)',
+          );
+        } else {
+          await this.assertRecordsKindIndex(client);
+        }
         // Under the same advisory transaction lock as DDL, require a known
         // persisted contract BEFORE exposing the store to workers. Unknown
         // versions or unversioned nonempty state must never be reinterpreted.
@@ -402,6 +409,43 @@ export class PostgresEventStore {
       this.initialized = true;
     }
     return this.restoredCounts();
+  }
+
+  async assertRecordsKindIndex(client = this.pool) {
+    const indexName = this.tablePrefix + '_records_kind_idx';
+    const legacyIndexName = indexName.toLowerCase();
+    const indexNames = [...new Set([indexName, legacyIndexName])];
+    const result = await client.query(
+      'SELECT idx.relname AS name, i.indisvalid AS valid, i.indisready AS ready, ' +
+      'i.indpred IS NOT NULL AS partial, i.indisunique AS is_unique, ' +
+      'am.amname AS method, i.indnkeyatts AS key_count, ' +
+      'tbl.relname AS table_name, ' +
+      'pg_get_indexdef(i.indexrelid, 1, true) AS key1, ' +
+      'pg_get_indexdef(i.indexrelid, 2, true) AS key2 ' +
+      'FROM pg_class idx JOIN pg_index i ON i.indexrelid = idx.oid ' +
+      'JOIN pg_class tbl ON tbl.oid = i.indrelid ' +
+      'JOIN pg_am am ON am.oid = idx.relam ' +
+      'JOIN pg_namespace n ON n.oid = idx.relnamespace ' +
+      'WHERE n.nspname = current_schema() AND idx.relname = ANY($1::text[]) ' +
+      'ORDER BY CASE WHEN idx.relname = $2 THEN 0 ELSE 1 END',
+      [indexNames, indexName],
+    );
+    const row = result.rows[0];
+    const normalize = value => String(value ?? '').replace(/\s+/g, '').replace(/[()]/g, '');
+    if (!row || row.valid !== true || row.ready !== true || row.partial !== false ||
+        row.is_unique !== false || row.method !== 'btree' ||
+        row.table_name !== this.tablePrefix + '_records' || Number(row.key_count) !== 2 ||
+        normalize(row.key1) !== 'scope_id' || normalize(row.key2) !== 'kind') {
+      const error = new Error(
+        'Existing Event Intelligence PostgreSQL records table needs a valid ' +
+        '(scope_id, kind) index; inspect or repair ' + indexNames.join(' or ') + ' before startup.',
+      );
+      error.code = row
+        ? 'EVENT_INTELLIGENCE_POSTGRES_RECORDS_KIND_INDEX_INVALID'
+        : 'EVENT_INTELLIGENCE_POSTGRES_RECORDS_KIND_INDEX_REQUIRED';
+      throw error;
+    }
+    return indexName;
   }
 
   async assertRetentionIndex(client = this.pool) {
@@ -966,6 +1010,164 @@ export class PostgresEventStore {
         [component, claim],
       );
     }
+  }
+
+  async triggerMatchLookupIndexStatus() {
+    const indexName = this.tablePrefix + '_records_match_trigger_idx';
+    const result = await this.pool.query(
+      'SELECT i.indisvalid AS valid, i.indisready AS ready, ' +
+      'i.indpred IS NOT NULL AS partial, i.indisunique AS is_unique, ' +
+      'am.amname AS method, i.indnkeyatts AS key_count, ' +
+      'tbl.relname AS table_name, ' +
+      'ARRAY[pg_get_indexdef(i.indexrelid, 1, true), ' +
+      'pg_get_indexdef(i.indexrelid, 2, true)] AS key_columns, ' +
+      'pg_get_expr(i.indpred, i.indrelid) AS predicate ' +
+      'FROM pg_class idx JOIN pg_index i ON i.indexrelid = idx.oid ' +
+      'JOIN pg_class tbl ON tbl.oid = i.indrelid ' +
+      'JOIN pg_am am ON am.oid = idx.relam ' +
+      'JOIN pg_namespace n ON n.oid = idx.relnamespace ' +
+      'WHERE n.nspname = current_schema() AND idx.relname = $1',
+      [indexName],
+    );
+    const row = result.rows[0];
+    if (!row) return { exists: false, indexName };
+    const normalize = value => String(value ?? '')
+      .replace(/::text/g, '').replace(/\s+/g, '').replace(/[()]/g, '');
+    const valid = row.valid === true && row.ready === true &&
+      row.partial === true && row.is_unique === false &&
+      row.method === 'btree' &&
+      row.table_name === this.tablePrefix + '_records' &&
+      Number(row.key_count) === 2 &&
+      normalize(row.key_columns?.[0]) === 'scope_id' &&
+      normalize(row.key_columns?.[1]) === "payload->>'triggerId'" &&
+      normalize(row.predicate) === "kind='trigger_match'";
+    return { exists: true, valid, indexName };
+  }
+
+  async assertTriggerMatchLookupIndex() {
+    const status = await this.triggerMatchLookupIndexStatus();
+    if (!status.valid) {
+      const error = new Error(
+        'PostgreSQL trigger-match lookup needs the verified scoped trigger index; ' +
+        'run store.migrateTriggerMatchLookupIndex() after store.init() and inspect any conflicting index.',
+      );
+      error.code = status.exists
+        ? 'EVENT_INTELLIGENCE_TRIGGER_MATCH_LOOKUP_INDEX_INVALID'
+        : 'EVENT_INTELLIGENCE_TRIGGER_MATCH_LOOKUP_INDEX_REQUIRED';
+      throw error;
+    }
+    return status.indexName;
+  }
+
+  /**
+   * Safe online index migration for matching against a specific trigger.
+   * A durable metadata claim serializes concurrent worker startup; the DDL
+   * runs outside a transaction because CREATE INDEX CONCURRENTLY requires it.
+   */
+  async migrateTriggerMatchLookupIndex(options = {}) {
+    const statementTimeoutMs = options.statementTimeoutMs ?? 900000;
+    const waitTimeoutMs = options.waitTimeoutMs ?? statementTimeoutMs + 120000;
+    if (!this.initialized) {
+      const error = new Error('Initialize store before trigger-match index migration');
+      error.code = 'EVENT_INTELLIGENCE_TRIGGER_MATCH_LOOKUP_MIGRATION_NOT_INITIALIZED';
+      throw error;
+    }
+    if (!Number.isSafeInteger(waitTimeoutMs) || waitTimeoutMs < 1000 || waitTimeoutMs > 1020000) {
+      throw new TypeError('waitTimeoutMs must be an integer from 1000 to 1020000');
+    }
+    if (!Number.isSafeInteger(statementTimeoutMs) || statementTimeoutMs < 1000 || statementTimeoutMs > 900000) {
+      throw new TypeError('statementTimeoutMs must be an integer from 1000 to 900000');
+    }
+    const indexName = this.tablePrefix + '_records_match_trigger_idx';
+    const existing = await this.triggerMatchLookupIndexStatus();
+    if (existing.exists && existing.valid) {
+      await this.assertTriggerMatchLookupIndex();
+      return { ok: true, index: indexName };
+    }
+
+    const component = 'trigger-match-lookup-index-migration';
+    const claim = randomUUID();
+    const deadline = Date.now() + waitTimeoutMs;
+    const migrationInProgress = async () => {
+      const result = await this.pool.query(
+        'SELECT 1 FROM ' + this.metadata + ' WHERE component=$1',
+        [component],
+      );
+      return result.rows.length > 0;
+    };
+    if (existing.exists && !(await migrationInProgress())) {
+      await this.assertTriggerMatchLookupIndex();
+    }
+    while (Date.now() < deadline) {
+      const inserted = await this.tx(client => client.query(
+        'INSERT INTO ' + this.metadata +
+        ' (component, version, adopted_from) VALUES ($1, 1, $2)' +
+        ' ON CONFLICT (component) DO NOTHING RETURNING component',
+        [component, claim],
+      ));
+      if (inserted.rows.length === 1) {
+        let verified = false;
+        try {
+          const beforeDdl = await this.triggerMatchLookupIndexStatus();
+          if (!beforeDdl.exists) {
+            const client = await this.pool.connect();
+            let originalStatementTimeout;
+            let discardClient = false;
+            try {
+              const setting = await client.query('SHOW statement_timeout');
+              originalStatementTimeout = setting.rows[0]?.statement_timeout;
+              if (typeof originalStatementTimeout !== 'string') {
+                throw new Error('Could not read PostgreSQL statement_timeout before index migration');
+              }
+              await client.query("SELECT set_config('statement_timeout', $1, false)", [`${statementTimeoutMs}ms`]);
+              await client.query(
+              'CREATE INDEX CONCURRENTLY IF NOT EXISTS "' + indexName +
+              '" ON ' + this.records +
+                " (scope_id, (payload->>'triggerId')) WHERE kind = 'trigger_match'",
+              );
+            } catch (error) {
+              discardClient = true;
+              throw error;
+            } finally {
+              if (originalStatementTimeout !== undefined) {
+                try {
+                  await client.query("SELECT set_config('statement_timeout', $1, false)", [originalStatementTimeout]);
+                } catch {
+                  discardClient = true;
+                }
+              }
+              client.release(discardClient ? new Error('Discard connection after trigger-match index migration') : undefined);
+            }
+          }
+          await this.assertTriggerMatchLookupIndex();
+          verified = true;
+          return { ok: true, index: indexName };
+        } finally {
+          // Keep the durable claim if DDL or verification is ambiguous. An
+          // operator must inspect the catalog before clearing a stale claim.
+          if (verified) await this.pool.query(
+            'DELETE FROM ' + this.metadata +
+            ' WHERE component=$1 AND adopted_from=$2',
+            [component, claim],
+          );
+        }
+      }
+
+      const status = await this.triggerMatchLookupIndexStatus();
+      if (status.exists) {
+        if (status.valid) {
+          await this.assertTriggerMatchLookupIndex();
+          return { ok: true, index: indexName };
+        }
+        if (!(await migrationInProgress())) {
+          await this.assertTriggerMatchLookupIndex();
+        }
+      }
+      await new Promise(resolve => setTimeout(resolve, 250));
+    }
+    const error = new Error('Timed out waiting for trigger-match lookup index migration');
+    error.code = 'EVENT_INTELLIGENCE_TRIGGER_MATCH_LOOKUP_MIGRATION_BUSY';
+    throw error;
   }
 
   async listOrphanedMatchedWakeCandidates({
@@ -1969,9 +2171,19 @@ export class PostgresEventStore {
   }
 
   async listTriggerMatches(triggerId) {
-    return (await this.list('trigger_match'))
-      .map(parseTriggerMatchRecord)
-      .filter((record) => !triggerId || record.triggerId === triggerId);
+    const result = triggerId
+      ? await this.pool.query(
+          'SELECT payload FROM ' + this.records +
+          ' WHERE scope_id=$1 AND kind=\'trigger_match\' AND payload->>\'triggerId\'=$2' +
+          ' ORDER BY record_key',
+          [this.scopeId, String(triggerId)],
+        )
+      : await this.pool.query(
+          'SELECT payload FROM ' + this.records +
+          ' WHERE scope_id=$1 AND kind=\'trigger_match\' ORDER BY record_key',
+          [this.scopeId],
+        );
+    return result.rows.map(row => parseTriggerMatchRecord(row.payload));
   }
 
   async listTriggerMatchHistory(matchId) {

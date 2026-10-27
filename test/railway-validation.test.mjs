@@ -62,6 +62,83 @@ test('PostgreSQL wake-state inventory reports durable delivered rows separately 
   assert.match(calls[0].sql, /payload->>'status'='delivered'/);
 });
 
+test('PostgreSQL trigger-match lookup is constrained by trigger id', async () => {
+  const calls = [];
+  const pool = {
+    async query(sql, values) {
+      calls.push({ sql, values });
+      return { rows: [] };
+    },
+    async connect() { throw new Error('listTriggerMatches must use the indexed pool query'); },
+  };
+  const store = new PostgresEventStore({ pool, scopeId: 'ei-validation:campaign', tablePrefix: 'ei_validation' });
+  assert.deepEqual(await store.listTriggerMatches('trigger-a'), []);
+  assert.deepEqual(calls[0].values, ['ei-validation:campaign', 'trigger-a']);
+  assert.match(calls[0].sql, /kind='trigger_match' AND payload->>'triggerId'/);
+  assert.doesNotMatch(calls[0].sql, /SELECT payload FROM "ei_validation_records" WHERE scope_id=\$1 AND kind='trigger_match' ORDER BY record_key/);
+});
+
+test('existing records kind index accepts the legacy folded mixed-case name', async () => {
+  let values;
+  const pool = {
+    async query(sql, params) {
+      values = params;
+      return { rows: [{
+        name: 'ei_ret_example_records_kind_idx', valid: true, ready: true,
+        partial: false, is_unique: false, method: 'btree', key_count: 2,
+        table_name: 'EI_Ret_example_records', key1: 'scope_id', key2: 'kind',
+      }] };
+    },
+    async connect() { throw new Error('assertRecordsKindIndex should use the supplied query client'); },
+  };
+  const store = new PostgresEventStore({ pool, scopeId: 'scope', tablePrefix: 'EI_Ret_example' });
+  assert.equal(await store.assertRecordsKindIndex(), 'EI_Ret_example_records_kind_idx');
+  assert.deepEqual(values, [
+    ['EI_Ret_example_records_kind_idx', 'ei_ret_example_records_kind_idx'],
+    'EI_Ret_example_records_kind_idx',
+  ]);
+});
+
+test('trigger-match index migration overrides and restores the request statement timeout', async () => {
+  const ddlTimeouts = [];
+  let indexCreated = false;
+  const client = {
+    async query(sql, values) {
+      if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') return { rows: [] };
+      if (sql.includes('INSERT INTO "ei_validation_metadata"')) return { rows: [{ component: values[0] }] };
+      if (sql === 'SHOW statement_timeout') return { rows: [{ statement_timeout: '15s' }] };
+      if (sql.includes("set_config('statement_timeout'")) {
+        ddlTimeouts.push(values[0]);
+        return { rows: [] };
+      }
+      if (sql.startsWith('CREATE INDEX CONCURRENTLY')) {
+        indexCreated = true;
+        return { rows: [] };
+      }
+      throw new Error(`unexpected migration SQL: ${sql}`);
+    },
+    release() {},
+  };
+  const pool = {
+    async connect() { return client; },
+    async query(sql) {
+      if (sql.includes('FROM pg_class idx')) return { rows: indexCreated ? [{
+        valid: true, ready: true, partial: true, is_unique: false, method: 'btree', key_count: 2,
+        table_name: 'ei_validation_records', key_columns: ['scope_id', "payload ->> 'triggerId'::text"],
+        predicate: "kind = 'trigger_match'::text",
+      }] : [] };
+      if (sql.startsWith('DELETE FROM "ei_validation_metadata"')) return { rows: [] };
+      throw new Error(`unexpected pool SQL: ${sql}`);
+    },
+  };
+  const store = new PostgresEventStore({ pool, scopeId: 'ei-validation:campaign', tablePrefix: 'ei_validation' });
+  store.initialized = true;
+  assert.deepEqual(await store.migrateTriggerMatchLookupIndex({ statementTimeoutMs: 60000 }), {
+    ok: true, index: 'ei_validation_records_match_trigger_idx',
+  });
+  assert.deepEqual(ddlTimeouts, ['60000ms', '15s']);
+});
+
 test('consumer exposes worker-local monotonic ingest-to-match and match-to-wake spans', async () => {
   const match = { matchId: 'match-1', triggerId: 'trigger-1', triggerVersion: '1', status: 'matched' };
   const consumer = new CompositeEventConsumer({
@@ -100,6 +177,7 @@ test('Railway validation config files select the PostgreSQL entrypoints and read
   const benchmark = JSON.parse(await readFile(resolve(dirname(fileURLToPath(import.meta.url)), '../railway.validation-benchmark.json'), 'utf8'));
   assert.equal(worker.deploy.startCommand, 'npm run start:validation-worker');
   assert.equal(worker.deploy.healthcheckPath, '/readyz');
+  assert.equal(worker.deploy.healthcheckTimeout, 1800);
   assert.equal(benchmark.deploy.startCommand, 'npm run start:validation-benchmark');
   assert.equal(benchmark.deploy.healthcheckPath, '/readyz');
 });
@@ -172,6 +250,18 @@ test('PostgreSQL 16 HTTP smoke uses two OS workers, real CEP, remote wake receip
     await rm(artifactDir, { recursive: true, force: true });
   });
   await Promise.all([waitReady(workerAUrl, workerA), waitReady(workerBUrl, workerB), waitReady(benchmarkUrl, benchmark)]);
+
+  const indexCheck = new Pool({ connectionString: databaseUrl });
+  try {
+    const index = await indexCheck.query(
+      `SELECT idx.relname AS name, i.indisvalid AS valid, i.indisready AS ready FROM pg_class idx JOIN pg_index i ON i.indexrelid=idx.oid WHERE idx.relname=ANY($1::text[]) ORDER BY idx.relname`,
+      [[`${prefix}_records_kind_idx`, `${prefix}_records_match_trigger_idx`]],
+    );
+    assert.deepEqual(index.rows, [
+      { name: `${prefix}_records_kind_idx`, valid: true, ready: true },
+      { name: `${prefix}_records_match_trigger_idx`, valid: true, ready: true },
+    ]);
+  } finally { await indexCheck.end(); }
 
   const unauthorized = await fetch(`${workerAUrl}/v1/events`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
   assert.equal(unauthorized.status, 401);
