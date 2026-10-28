@@ -259,3 +259,22 @@ Operator steps after a reviewed/green merge:
 This change fixes private-network bind compatibility; **it does not**
 provide remote provider/host SLO evidence, immutable WORM retention,
 database HA/failover, or a valid #47 production signoff.
+
+## Read-only authenticated campaign inventory
+
+The private `ei-benchmark` service exposes `GET /v1/campaigns` **only
+behind the same bearer control-token check as campaign creation and status**.
+This operator inventory returns at most 100 entries (active campaigns first),
+`activeCount`, and `truncated`. Each entry includes the opaque campaign ID,
+status, profile, start/end timestamps and aggregate attempt/accept counters.
+It intentionally omits provider payloads, credentials, errors, scope IDs,
+event IDs, latency records and raw evidence. Use the returned ID with the
+existing authenticated `GET /v1/campaigns/{id}` to inspect a specific
+campaign without starting a duplicate. This route does **not** auto-stop,
+clean, restart, or certify any running campaign.
+
+An HTTP 409 from `POST /v1/campaigns` may mean **another campaign is
+already active**. Inspect the authenticated inventory before retrying;
+repeatedly redeploying a one-shot client cannot finish or validate the
+existing campaign. Avoid exposing the private control token or making this
+operator endpoint public.
