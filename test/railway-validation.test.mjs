@@ -77,6 +77,17 @@ test('timing coverage identifies censored p99 evidence even when 1000+ samples r
   });
   assert.equal(extra.stages.matchToWake.extra,1);
   assert.equal(extra.complete,false);
+  // ingestToMatch is measured per successfully ingested event, including
+  // valid nonmatching events; it must not use the lower match count.
+  const partialMatches={...input,matchedEvents:1192,
+    matchToWakeSamples:Array(1192).fill(1)};
+  const independent=assessCampaignTimingCoverage(partialMatches);
+  assert.equal(independent.stages.ingestToMatch.complete,true);
+  assert.equal(independent.stages.matchToWake.complete,true);
+  assert.equal(assessCampaignTimingCoverage({...partialMatches,
+    ingestToMatchSamples:Array(1192).fill(1)
+  }).stages.ingestToMatch.missing,8);
+
   const unknown=assessCampaignTimingCoverage({
     ...input,hostEffectSamples:null
   });
