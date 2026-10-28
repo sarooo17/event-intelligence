@@ -93,6 +93,31 @@ test('untrusted events/list exception does not reach discoverAll or status', asy
   }
 });
 
+test('duplicate provider-controlled discovery name cannot escape in a thrown error', async () => {
+  const leakedName = 'secret.' + PROBE;
+  const descriptor = {
+    name: leakedName,
+    delivery: ['poll'],
+    inputSchema: { type: 'object' },
+    payloadSchema: { type: 'object' },
+  };
+  const f = fixture({
+    request: async () => ({ events: [{ ...descriptor }, { ...descriptor }] }),
+  });
+  await assert.rejects(
+    f.manager.discoverConnection(f.connection.connectionId),
+    error => {
+      assert.equal(error.code, 'MCP_EVENTS_DUPLICATE_DESCRIPTOR_NAME');
+      assert.equal(error.message, 'MCP Events discovery rejected: duplicate event descriptor');
+      f.assertNoSecret({ message: error.message, code: error.code });
+      return true;
+    },
+  );
+  const result = await f.manager.discoverAll();
+  assert.equal(result[0].status, 'error');
+  f.assertNoSecret({ result, observations: f.observations });
+});
+
 test('provider poll failure returns fixed status without raw payload or telemetry leakage', async () => {
   const f = fixture({
     request: async () => { throw new Error(unsafe); },
