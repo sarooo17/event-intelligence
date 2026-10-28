@@ -9,7 +9,7 @@ import pg from 'pg';
 import { assessPostgresProductionSloEvidence } from '../evidence/postgres-production-slo-gate.mjs';
 import { verifyCampaignArtifact, verifyRawSampleArtifact } from './artifact.mjs';
 import { MAX_POSTGRES_TABLE_PREFIX_BYTES } from '../lib/postgres-event-store.mjs';
-import { bearerMatches, httpPort, parsePrivateServiceUrl, percentileStats, readJson, requiredEnv, safeError, safeIdentifier, sendJson } from './common.mjs';
+import { bearerMatches, httpPort, listenValidationPrivateServer, parsePrivateServiceUrl, percentileStats, readJson, requiredEnv, safeError, safeIdentifier, sendJson } from './common.mjs';
 
 const { Pool } = pg;
 const HOST_TABLE = 'ei_validation_host_receipts';
@@ -590,7 +590,7 @@ export function createBenchmarkService({ env = process.env, pool: suppliedPool, 
 
   return {
     config,
-    async listen() { await initialize(); server = http.createServer(handle); await new Promise((resolve, reject) => { server.once('error', reject); server.listen(config.port, '0.0.0.0', resolve); }); return server; },
+    async listen() { await initialize(); server = http.createServer(handle); await listenValidationPrivateServer(server, config.port); return server; },
     async close() { for (const controller of activeAborters.values()) controller.abort(); if (server) await new Promise(resolve => server.close(resolve)); await Promise.allSettled([...campaignTasks.values()]); await pool.end(); ready = false; },
     handle,
     campaigns,
