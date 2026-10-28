@@ -439,9 +439,27 @@ test('PostgreSQL 16 HTTP smoke uses two OS workers, real CEP, remote wake receip
   const noPublicHostAuth = await fetch(`${benchmarkUrl}/v1/host/wake`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
   assert.equal(noPublicHostAuth.status, 401);
 
+  const unauthenticatedInventory = await fetch(`${benchmarkUrl}/v1/campaigns`);
+  assert.equal(unauthenticatedInventory.status, 401, 'list must require operator token');
+  const emptyInventoryResponse = await fetch(`${benchmarkUrl}/v1/campaigns`, {
+    headers: { authorization: `Bearer ${controlToken}` },
+  });
+  assert.equal(emptyInventoryResponse.status, 200);
+  assert.deepEqual((await emptyInventoryResponse.json()).campaigns, []);
+
   const campaignResponse = await fetch(`${benchmarkUrl}/v1/campaigns`, { method: 'POST', headers: { authorization: `Bearer ${controlToken}`, 'content-type': 'application/json' }, body: JSON.stringify({ profile: 'smoke', triggerCount: 4, eventCount: 4, durationSeconds: 3, requestedRatePerSecond: 10, partitions: 2 }) });
   assert.equal(campaignResponse.status, 202);
   const { campaignId } = await campaignResponse.json();
+  const inventoryResponse = await fetch(`${benchmarkUrl}/v1/campaigns`, {
+    headers: { authorization: `Bearer ${controlToken}` },
+  });
+  assert.equal(inventoryResponse.status, 200);
+  const inventory = await inventoryResponse.json();
+  assert.ok(inventory.campaigns.some(item => item.id === campaignId));
+  assert.equal(inventory.activeCount, 1);
+  assert.ok(!JSON.stringify(inventory).includes(controlToken));
+  assert.ok(!JSON.stringify(inventory).includes(token));
+
   const deadline = Date.now() + 25000;
   let status;
   do {
