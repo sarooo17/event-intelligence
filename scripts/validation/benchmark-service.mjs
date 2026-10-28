@@ -91,6 +91,13 @@ export function validateCampaign(body, config) {
  * monotonic span must not be reported as a completed SLO campaign.
  * Coverage is distinct from matching/wake correctness and production signoff.
  */
+// Exclude send starts beyond the exact requested window, including the
+// unused remainder of a partial final 60-second bucket.
+export function monotonicAttemptBucket(elapsedMs, durationSeconds) {
+  if (!Number.isFinite(elapsedMs) || elapsedMs < 0 || elapsedMs >= durationSeconds * 1000) return null;
+  return Math.floor(elapsedMs / (LOAD_BUCKET_SECONDS * 1000));
+}
+
 export function assessCampaignWindowCoverage(options, { attemptedEvents, elapsedSeconds, attemptedMinuteBuckets, aborted = false } = {}) {
   if (options.profile === 'smoke') return Object.freeze({ covered: !aborted, missing: aborted ? ['interrupted'] : [] });
   const missing = [];
@@ -390,8 +397,8 @@ export function createBenchmarkService({ env = process.env, pool: suppliedPool, 
       const eventId = `${campaign.id}-event-${eventIndex}`;
       const sample = { eventId, workerId: worker.id, startedAt: performance.now(), providerToWorkerResponseMs: null, ingestToMatchMs: null, matchToWakeMs: null, hostEffectMs: null, providerToHostEndToEndMs: null, hostReceipt: false };
       campaign.attemptedEvents++;
-      const minute = Math.floor((sample.startedAt - start) / (LOAD_BUCKET_SECONDS * 1000));
-      if (minute >= 0 && minute < Math.ceil(options.durationSeconds / LOAD_BUCKET_SECONDS)) {
+      const minute = monotonicAttemptBucket(sample.startedAt - start, options.durationSeconds);
+      if (minute !== null) {
         campaign.attemptedMinuteBuckets[minute] = (campaign.attemptedMinuteBuckets[minute] ?? 0) + 1;
       } else {
         campaign.outOfWindowAttemptCount++;
