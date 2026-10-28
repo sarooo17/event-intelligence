@@ -934,9 +934,11 @@ export class McpEventsClientManager {
       for (const raw of safeDescriptors) {
         const descriptor = sourceDescriptor(raw, profile);
         if (names.has(descriptor.name)) {
-          throw new Error(
-            `MCP server ${connectionId} returned duplicate event descriptor ${descriptor.name}`,
-          );
+          // The descriptor name is producer-controlled and may contain
+          // sensitive event data. Never reflect it in host-visible errors.
+          const error = new Error('MCP Events discovery rejected: duplicate event descriptor');
+          error.code = 'MCP_EVENTS_DUPLICATE_DESCRIPTOR_NAME';
+          throw error;
         }
         names.add(descriptor.name);
         descriptors.push(descriptor);
