@@ -90,3 +90,25 @@ A duration statement rounded up from less than **600,000 real elapsed
 milliseconds** fails, even when it differs from a reported 600 seconds by
 under the one-second sampling/rounding tolerance. The 600-second floor
 applies to actual start→finish wall time, not only a user-entered field.
+
+## Full-window campaign load coverage (#287, child of #47)
+
+The Railway validation benchmark rejects non-smoke steady/burst/fault
+campaigns *before preparing triggers or the database workload* if their
+configured event count is below `durationSeconds × requestedRatePerSecond`.
+A default 600-second campaign at 10 attempted events/second therefore
+requires at least 6,000 configured events. Large requested rates must be
+explicitly reduced when the 250,000-event harness cap would be exceeded;
+the harness cannot falsely represent the resulting smaller event budget
+as an equivalent load rate.
+
+After sending, the benchmark observes the **full monotonic 600-second wall
+window** (including the final gap between scheduled five-second burst groups)
+and records coverage failures as `completed-with-errors` if the real elapsed
+window or attempted event count is insufficient. An explicitly stopped run
+remains `stopped`. This proves only correct *campaign duration and attempt
+coverage*: it does not imply successful delivery of all attempts or a
+measured production SLO. Queue settlement, matched receipts, real network
+provider latency, independent external host effects, genuine database HA
+failure injection and immutable source/audit retention remain separately
+unverified. The public v1 readiness ledger remains blocked.

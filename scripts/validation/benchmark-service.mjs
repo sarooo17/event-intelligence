@@ -73,10 +73,29 @@ export function validateCampaign(body, config) {
     ['eventCount', eventCount, 1, MAX_EVENTS], ['partitions', partitions, 2, 256],
   ]) if (!Number.isSafeInteger(value) || value < min || value > max) throw new Error(`${name} must be an integer from ${min} to ${max}`);
   if (body.profile !== 'smoke' && durationSeconds < 600) throw new Error('SLO profiles require at least 600 seconds');
+  // A 600s declaration is not a 600s workload if its configured event budget
+  // runs out after only a few seconds at the requested injection rate.
+  if (body.profile !== 'smoke' && eventCount < durationSeconds * requestedRate) {
+    throw new Error('SLO eventCount must cover durationSeconds × requestedRatePerSecond; reduce the requested rate or duration instead of reporting idle time as load');
+  }
   if (triggerCount === 100_000 && (!config.allow100k || body.allow100k !== true)) throw new Error('100k triggers require EI_ALLOW_100K=true and allow100k=true on this campaign');
   if (body.profile === 'fault-injected' && (body.injectWorkerCrash !== true || body.faultConfirmation !== 'CRASH_EI_WORKER_A' || config.faultToken.length < 32)) throw new Error('fault-injected profile requires enabled worker fault injection, EI_FAULT_TOKEN, and faultConfirmation=CRASH_EI_WORKER_A');
   if (body.profile === 'fault-injected' && body.databaseUnavailable === true) throw new Error('database interruption is disabled for this single-database setup; use an isolated HA fault-test environment');
   return { profile: body.profile, triggerCount, durationSeconds, requestedRatePerSecond: requestedRate, concurrency, eventCount, partitions, injectWorkerCrash: body.injectWorkerCrash === true };
+}
+
+/**
+ * A candidate workload with incomplete event injection or <target observed
+ * monotonic span must not be reported as a completed SLO campaign.
+ * Coverage is distinct from matching/wake correctness and production signoff.
+ */
+export function assessCampaignWindowCoverage(options, { attemptedEvents, elapsedSeconds, aborted = false } = {}) {
+  if (options.profile === 'smoke') return Object.freeze({ covered: !aborted, missing: aborted ? ['interrupted'] : [] });
+  const missing = [];
+  if (aborted) missing.push('interrupted');
+  if (!Number.isFinite(elapsedSeconds) || elapsedSeconds < options.durationSeconds) missing.push('actual-duration-below-declared-window');
+  if (!Number.isSafeInteger(attemptedEvents) || attemptedEvents < options.eventCount) missing.push('insufficient-events-attempted');
+  return Object.freeze({ covered: missing.length === 0, missing: Object.freeze(missing) });
 }
 
 export async function waitForLaunch(launchAt, { now = () => performance.now(), sleep = ms => new Promise(resolve => setTimeout(resolve, ms)), signal } = {}) {
@@ -390,7 +409,25 @@ export function createBenchmarkService({ env = process.env, pool: suppliedPool, 
       inFlight.add(task);
     }
     await Promise.all(inFlight);
+    // A valid full-size burst naturally ends its last burst up to 5s before
+    // the window boundary. Finish the announced observation window without
+    // fabricating any additional injection or counting a shorter actual run.
+    if (!controller.signal.aborted && options.profile !== 'smoke') {
+      await waitForLaunch(due, { signal: controller.signal });
+    }
     campaign.elapsedSeconds = (performance.now() - start) / 1000;
+    const coverage = assessCampaignWindowCoverage(options, {
+      attemptedEvents: campaign.attemptedEvents,
+      elapsedSeconds: campaign.elapsedSeconds,
+      aborted: controller.signal.aborted,
+    });
+    if (!coverage.covered && !controller.signal.aborted) {
+      campaign.errorCount++;
+      campaign.errors.push({
+        worker: 'workload-coverage',
+        message: 'SLO workload is incomplete: ' + coverage.missing.join(', '),
+      });
+    }
     campaign.status = 'finalizing';
     await persistCampaign(campaign);
     campaign.wakeSettlement = await waitForWakeSettlement(campaign);
