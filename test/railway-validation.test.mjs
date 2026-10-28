@@ -13,7 +13,7 @@ import { assessPostgresProductionSloEvidence } from '../scripts/evidence/postgre
 import { percentileStats, parsePrivateServiceUrl } from '../scripts/validation/common.mjs';
 import { verifyCampaignArtifact, verifyRawSampleArtifact } from '../scripts/validation/artifact.mjs';
 import { readWorkerConfig } from '../scripts/validation/worker-service.mjs';
-import { assessCampaignWindowCoverage, campaignLaunchAt, readBenchmarkConfig, validateCampaign, waitForLaunch } from '../scripts/validation/benchmark-service.mjs';
+import { assessCampaignWindowCoverage, campaignLaunchAt, monotonicAttemptBucket, readBenchmarkConfig, validateCampaign, waitForLaunch } from '../scripts/validation/benchmark-service.mjs';
 import { buildStartPayload } from '../scripts/validation/campaign-cli.mjs';
 import { PostgresEventStore } from '../scripts/lib/postgres-event-store.mjs';
 import { CompositeEventConsumer } from '../scripts/lib/composite-event-consumer.mjs';
@@ -75,6 +75,17 @@ test('monotonic measured coverage blocks short, partial and interrupted SLO work
   assert.equal(assessCampaignWindowCoverage({profile:'smoke'},{
     attemptedEvents:1,elapsedSeconds:0.01
   }).covered,true);
+});
+
+test('monotonic attempts beyond a partial final minute never count toward declared load', () => {
+  assert.equal(monotonicAttemptBucket(0,605),0);
+  assert.equal(monotonicAttemptBucket(599999,605),9);
+  assert.equal(monotonicAttemptBucket(600000,605),10);
+  assert.equal(monotonicAttemptBucket(604999,605),10);
+  assert.equal(monotonicAttemptBucket(605000,605),null);
+  assert.equal(monotonicAttemptBucket(600000,600),null);
+  assert.equal(monotonicAttemptBucket(-1,605),null);
+  assert.equal(monotonicAttemptBucket(Number.NaN,605),null);
 });
 
 test('actual monotonic per-minute send attempts expose idle gaps hidden by aggregate load', () => {
