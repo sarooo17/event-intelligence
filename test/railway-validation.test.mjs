@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import net from 'node:net';
+import http from 'node:http';
 import { once } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
@@ -10,13 +11,36 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { Pool } from 'pg';
 import { assessPostgresProductionSloEvidence } from '../scripts/evidence/postgres-production-slo-gate.mjs';
-import { percentileStats, parsePrivateServiceUrl } from '../scripts/validation/common.mjs';
+import { percentileStats, parsePrivateServiceUrl, listenValidationPrivateServer } from '../scripts/validation/common.mjs';
 import { verifyCampaignArtifact, verifyRawSampleArtifact } from '../scripts/validation/artifact.mjs';
 import { readWorkerConfig } from '../scripts/validation/worker-service.mjs';
 import { assessCampaignWindowCoverage, campaignLaunchAt, monotonicAttemptBucket, readBenchmarkConfig, validateCampaign, waitForLaunch } from '../scripts/validation/benchmark-service.mjs';
 import { buildStartPayload } from '../scripts/validation/campaign-cli.mjs';
 import { PostgresEventStore } from '../scripts/lib/postgres-event-store.mjs';
 import { CompositeEventConsumer } from '../scripts/lib/composite-event-consumer.mjs';
+
+test('validation private listener is reachable over both IPv6 and IPv4', async () => {
+  const server = http.createServer((_request, response) => {
+    response.writeHead(200, { 'content-type': 'text/plain' });
+    response.end('ready');
+  });
+  try {
+    await listenValidationPrivateServer(server, 0);
+    const address = server.address();
+    assert.equal(address.family, 'IPv6');
+    assert.equal(address.address, '::');
+    const port = address.port;
+    for (const host of ['[::1]', '127.0.0.1']) {
+      const response = await fetch(`http://${host}:${port}/readyz`, {
+        signal: AbortSignal.timeout(3000),
+      });
+      assert.equal(response.status, 200, host);
+      assert.equal(await response.text(), 'ready', host);
+    }
+  } finally {
+    await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+  }
+});
 
 test('validation config fails closed and permits only explicitly enabled local test URLs', () => {
   assert.throws(() => readWorkerConfig({}), /EI_WORKER_ID is required/);
