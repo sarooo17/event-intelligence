@@ -118,7 +118,7 @@ export function assessCampaignWindowCoverage(options, { attemptedEvents, elapsed
     for (let bucket = 0; bucket < bucketCount; bucket++) {
       const seconds = Math.min(LOAD_BUCKET_SECONDS, options.durationSeconds - bucket * LOAD_BUCKET_SECONDS);
       // Harness-integrity threshold only; NOT production SLO certification.
-      const minimum = Math.max(1, Math.floor(seconds * options.requestedRatePerSecond * MIN_BUCKET_COVERAGE));
+      const minimum = Math.max(1, Math.ceil(seconds * options.requestedRatePerSecond * MIN_BUCKET_COVERAGE));
       if ((attemptedMinuteBuckets[bucket] ?? 0) < minimum) missing.push(`insufficient-minute-${bucket}-load`);
     }
   }
