@@ -123,6 +123,19 @@ test('actual monotonic per-minute send attempts expose idle gaps hidden by aggre
     attemptedEvents:6050,elapsedSeconds:605,attemptedMinuteBuckets:[...Array(10).fill(600),0]
   }).covered,false);
 
+  // A two-second final minute requires ceil(2 * 0.8) = 2 attempts,
+  // not floor(1.6) = 1. Compensating early sends must not hide its 50% load.
+  const fractional=validateCampaign({profile:'steady',durationSeconds:602,
+    requestedRatePerSecond:1}, {allow100k:false});
+  const belowFloor=assessCampaignWindowCoverage(fractional,{
+    attemptedEvents:602,elapsedSeconds:602,attemptedMinuteBuckets:[61,...Array(9).fill(60),1]
+  });
+  assert.equal(belowFloor.covered,false);
+  assert.ok(belowFloor.missing.includes('insufficient-minute-10-load'));
+  assert.equal(assessCampaignWindowCoverage(fractional,{
+    attemptedEvents:602,elapsedSeconds:602,attemptedMinuteBuckets:[...Array(10).fill(60),2]
+  }).covered,true);
+
   // The intended five-second burst schedule has sustained minute coverage,
   // not a false failure merely because sends are grouped within each minute.
   const burst=validateCampaign({profile:'burst',durationSeconds:600,
