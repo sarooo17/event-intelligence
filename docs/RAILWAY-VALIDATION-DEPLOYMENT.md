@@ -232,3 +232,30 @@ The verifier rejects checksum mismatches, unknown schemas, self-certification, o
 ## Return to the initial state
 
 Stop any active campaign first. Download and verify all needed artifacts, then use the explicit campaign cleanup command for each disposable campaign. Do not truncate PostgreSQL tables or delete the shared EI prefix. Campaign rows are isolated under `EI_SCOPE_ID:<campaign-uuid>`; cleanup retains the exported files on the Railway volume. To stop compute, stop the deployments in the Railway dashboard; retain PostgreSQL and artifact volumes until evidence is no longer needed. Removing either volume destroys benchmark evidence.
+
+## Private-network binding check (2026-10-28)
+
+The benchmark and workers are **not** public HTTP services. Railway's
+`*.railway.internal` DNS can resolve to IPv6; binding an HTTP listener
+only to `0.0.0.0` can pass local readiness checks but return
+`ECONNREFUSED` to another service using the private hostname. Both
+validation services use a shared Node listener on host `::` with
+`ipv6Only: false` (dual IPv6/IPv4 stack). A regression test sends
+requests over `[::1]` and `127.0.0.1` to the same ephemeral socket.
+
+Operator steps after a reviewed/green merge:
+1. Verify **all** benchmark and worker deployments use the reviewed
+   commit; allow automatic `main` deployments to finish before a campaign.
+2. From an authorized **internal** runner, request `/readyz` on the
+   benchmark service and verify both workers are reachable. Do not expose
+   the control token or open a public control-plane domain as a workaround.
+3. Check the benchmark returns a new campaign ID on successful
+   authorization. A ready healthcheck alone does not prove inter-service
+   networking or sustained load; perform the smoke profile first.
+4. Run steady/burst/fault-injected long campaigns only in a dedicated
+   environment with pre-registered workload budgets, separate host/provider
+   failure domains, safe fault authorization, and exportable raw artifacts.
+
+This change fixes private-network bind compatibility; **it does not**
+provide remote provider/host SLO evidence, immutable WORM retention,
+database HA/failover, or a valid #47 production signoff.
