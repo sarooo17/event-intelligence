@@ -98,6 +98,31 @@ export function monotonicAttemptBucket(elapsedMs, durationSeconds) {
   return Math.floor(elapsedMs / (LOAD_BUCKET_SECONDS * 1000));
 }
 
+/** Authenticated operator-only, bounded inventory; never project source payloads,
+ * tokens, event IDs, raw errors or evidence into the campaign list.
+ * Keep active campaigns visible even when many past runs exist.
+ */
+export function campaignInventory(campaigns) {
+  const items = [...campaigns.values()];
+  items.sort((left, right) => {
+    const active = Number(ACTIVE_CAMPAIGN_STATES.has(right.status)) -
+      Number(ACTIVE_CAMPAIGN_STATES.has(left.status));
+    return active || String(right.createdAt).localeCompare(String(left.createdAt)) ||
+      String(right.id).localeCompare(String(left.id));
+  });
+  return {
+    schema: 'event-intelligence.validation-campaign-inventory.v1',
+    activeCount: items.filter(item => ACTIVE_CAMPAIGN_STATES.has(item.status)).length,
+    truncated: items.length > 100,
+    campaigns: items.slice(0, 100).map(item => ({
+      id: item.id, status: item.status, profile: item.options?.profile ?? null,
+      createdAt: item.createdAt, startedAt: item.startedAt,
+      completedAt: item.completedAt,
+      attemptedEvents: item.attemptedEvents, acceptedEvents: item.acceptedEvents,
+    })),
+  };
+}
+
 export function assessCampaignWindowCoverage(options, { attemptedEvents, elapsedSeconds, attemptedMinuteBuckets, aborted = false } = {}) {
   if (options.profile === 'smoke') return Object.freeze({ covered: !aborted, missing: aborted ? ['interrupted'] : [] });
   const missing = [];
@@ -507,6 +532,9 @@ export function createBenchmarkService({ env = process.env, pool: suppliedPool, 
       if (request.method === 'POST' && url.pathname === '/v1/host/wake') return await receiveWake(request, response);
       if (!bearerMatches(request, config.controlToken)) return sendJson(response, 401, { error: 'unauthorized' });
       if (!ready) return sendJson(response, 503, { error: 'not-ready' });
+      if (request.method === 'GET' && url.pathname === '/v1/campaigns') {
+        return sendJson(response, 200, campaignInventory(campaigns));
+      }
       if (request.method === 'POST' && url.pathname === '/v1/campaigns') {
         if ([...campaigns.values()].some(campaign => ACTIVE_CAMPAIGN_STATES.has(campaign.status))) return sendJson(response, 409, { error: 'campaign-already-running' });
         if (campaigns.size >= 1000) return sendJson(response, 409, { error: 'campaign-history-capacity-reached' });
