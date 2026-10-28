@@ -195,7 +195,7 @@ export function assessCampaignTimingCoverage({ acceptedEvents, matchedEvents, ve
   providerToWorkerSamples, ingestToMatchSamples, matchToWakeSamples, hostEffectSamples, endToEndSamples }) {
   const entries = [
     ['providerToWorkerResponse', acceptedEvents, providerToWorkerSamples],
-    ['ingestToMatch', matchedEvents, ingestToMatchSamples],
+    ['ingestToMatch', acceptedEvents, ingestToMatchSamples],
     ['matchToWake', matchedEvents, matchToWakeSamples],
     ['hostEffect', verifiedWakes, hostEffectSamples],
     ['providerToHostEndToEnd', verifiedWakes, endToEndSamples],
