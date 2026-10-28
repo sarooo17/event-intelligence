@@ -13,7 +13,7 @@ import { assessPostgresProductionSloEvidence } from '../scripts/evidence/postgre
 import { percentileStats, parsePrivateServiceUrl } from '../scripts/validation/common.mjs';
 import { verifyCampaignArtifact, verifyRawSampleArtifact } from '../scripts/validation/artifact.mjs';
 import { readWorkerConfig } from '../scripts/validation/worker-service.mjs';
-import { assessCampaignWindowCoverage, campaignLaunchAt, readBenchmarkConfig, validateCampaign, waitForLaunch } from '../scripts/validation/benchmark-service.mjs';
+import { assessCampaignWindowCoverage, campaignLaunchAt, monotonicAttemptBucket, readBenchmarkConfig, validateCampaign, waitForLaunch } from '../scripts/validation/benchmark-service.mjs';
 import { buildStartPayload } from '../scripts/validation/campaign-cli.mjs';
 import { PostgresEventStore } from '../scripts/lib/postgres-event-store.mjs';
 import { CompositeEventConsumer } from '../scripts/lib/composite-event-consumer.mjs';
@@ -55,24 +55,98 @@ test('SLO workload volume preflight forbids 600-second fake runs ending early', 
 test('monotonic measured coverage blocks short, partial and interrupted SLO workloads', () => {
   const options=validateCampaign({profile:'steady',durationSeconds:600,
     requestedRatePerSecond:10}, {allow100k:false});
+  const buckets=Array(10).fill(600);
   assert.deepEqual(assessCampaignWindowCoverage(options,{
-    attemptedEvents:6000,elapsedSeconds:600
+    attemptedEvents:6000,elapsedSeconds:600,attemptedMinuteBuckets:buckets
   }),{covered:true,missing:[]});
   const short=assessCampaignWindowCoverage(options,{
-    attemptedEvents:6000,elapsedSeconds:599.999
+    attemptedEvents:6000,elapsedSeconds:599.999,attemptedMinuteBuckets:buckets
   });
   assert.equal(short.covered,false);
   assert.ok(short.missing.includes('actual-duration-below-declared-window'));
   const partial=assessCampaignWindowCoverage(options,{
-    attemptedEvents:5999,elapsedSeconds:605
+    attemptedEvents:5999,elapsedSeconds:605,attemptedMinuteBuckets:buckets
   });
   assert.equal(partial.covered,false);
   assert.ok(partial.missing.includes('insufficient-events-attempted'));
   assert.equal(assessCampaignWindowCoverage(options,{
-    attemptedEvents:6000,elapsedSeconds:600,aborted:true
+    attemptedEvents:6000,elapsedSeconds:600,attemptedMinuteBuckets:buckets,aborted:true
   }).covered,false);
   assert.equal(assessCampaignWindowCoverage({profile:'smoke'},{
     attemptedEvents:1,elapsedSeconds:0.01
+  }).covered,true);
+});
+
+test('monotonic attempts beyond a partial final minute never count toward declared load', () => {
+  assert.equal(monotonicAttemptBucket(0,605),0);
+  assert.equal(monotonicAttemptBucket(599999,605),9);
+  assert.equal(monotonicAttemptBucket(600000,605),10);
+  assert.equal(monotonicAttemptBucket(604999,605),10);
+  assert.equal(monotonicAttemptBucket(605000,605),null);
+  assert.equal(monotonicAttemptBucket(600000,600),null);
+  assert.equal(monotonicAttemptBucket(-1,605),null);
+  assert.equal(monotonicAttemptBucket(Number.NaN,605),null);
+});
+
+test('actual monotonic per-minute send attempts expose idle gaps hidden by aggregate load', () => {
+  const options=validateCampaign({profile:'steady',durationSeconds:600,
+    requestedRatePerSecond:10}, {allow100k:false});
+  const clustered=Array(10).fill(600);
+  clustered[4]=0;
+  clustered[5]=1200; // catches up: same 6000 attempts, same elapsed 600s
+  const gap=assessCampaignWindowCoverage(options,{
+    attemptedEvents:6000,elapsedSeconds:600,attemptedMinuteBuckets:clustered
+  });
+  assert.equal(gap.covered,false);
+  assert.ok(gap.missing.includes('insufficient-minute-4-load'));
+
+  const late=assessCampaignWindowCoverage(options,{
+    attemptedEvents:6000,elapsedSeconds:600,attemptedMinuteBuckets:[...Array(9).fill(600),599]
+  });
+  assert.equal(late.covered,false);
+  assert.ok(late.missing.includes('insufficient-in-window-attempts'));
+
+  for (const invalid of [undefined,[-1,...Array(9).fill(600)],[...Array(10).fill(600),1]]) {
+    const result=assessCampaignWindowCoverage(options,{
+      attemptedEvents:6000,elapsedSeconds:600,attemptedMinuteBuckets:invalid
+    });
+    assert.equal(result.covered,false);
+    assert.ok(result.missing.includes('invalid-monotonic-load-buckets'));
+  }
+
+  const partialMinute=validateCampaign({profile:'steady',durationSeconds:605,
+    requestedRatePerSecond:10}, {allow100k:false});
+  assert.equal(assessCampaignWindowCoverage(partialMinute,{
+    attemptedEvents:6050,elapsedSeconds:605,attemptedMinuteBuckets:[...Array(10).fill(600),50]
+  }).covered,true);
+  assert.equal(assessCampaignWindowCoverage(partialMinute,{
+    attemptedEvents:6050,elapsedSeconds:605,attemptedMinuteBuckets:[...Array(10).fill(600),0]
+  }).covered,false);
+
+  // A two-second final minute requires ceil(2 * 0.8) = 2 attempts,
+  // not floor(1.6) = 1. Compensating early sends must not hide its 50% load.
+  const fractional=validateCampaign({profile:'steady',durationSeconds:602,
+    requestedRatePerSecond:1}, {allow100k:false});
+  const belowFloor=assessCampaignWindowCoverage(fractional,{
+    attemptedEvents:602,elapsedSeconds:602,attemptedMinuteBuckets:[61,...Array(9).fill(60),1]
+  });
+  assert.equal(belowFloor.covered,false);
+  assert.ok(belowFloor.missing.includes('insufficient-minute-10-load'));
+  assert.equal(assessCampaignWindowCoverage(fractional,{
+    attemptedEvents:602,elapsedSeconds:602,attemptedMinuteBuckets:[...Array(10).fill(60),2]
+  }).covered,true);
+
+  // The intended five-second burst schedule has sustained minute coverage,
+  // not a false failure merely because sends are grouped within each minute.
+  const burst=validateCampaign({profile:'burst',durationSeconds:600,
+    requestedRatePerSecond:10}, {allow100k:false});
+  const burstBuckets=Array(10).fill(0);
+  for (let event=0;event<6000;event++) {
+    const minute=Math.floor(campaignLaunchAt('burst',0,event,10)/60000);
+    burstBuckets[minute]++;
+  }
+  assert.equal(assessCampaignWindowCoverage(burst,{
+    attemptedEvents:6000,elapsedSeconds:600,attemptedMinuteBuckets:burstBuckets
   }).covered,true);
 });
 

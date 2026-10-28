@@ -112,3 +112,35 @@ measured production SLO. Queue settlement, matched receipts, real network
 provider latency, independent external host effects, genuine database HA
 failure injection and immutable source/audit retention remain separately
 unverified. The public v1 readiness ledger remains blocked.
+
+## Sustained synthetic load distribution (#47; post-#288 hardening)
+
+A campaign declaring a ten-minute load must not pass merely because it
+attempted all configured events **at some time** and observed a ten-minute
+elapsed wall clock. A stalled generator could catch up later while leaving an
+entire minute idle. The Railway synthetic harness now records **actual send
+attempt starts** in monotonic 60-second buckets (not scheduled timestamps),
+plus attempts that begin outside the requested window.
+
+For non-smoke campaigns, `completed` requires all of the following:
+- the configured count/rate preflight, real monotonic elapsed window and
+  complete aggregate attempts from #288;
+- all configured attempts start **inside** the requested load window;
+- each minute (including a shorter final minute) contains at least **80%**
+  of its declared attempted-events-per-second budget. A missing minute or
+  compensating catch-up burst fails the campaign as `completed-with-errors`.
+
+This 80% threshold is an explicit **test-generator integrity floor**, not a
+pre-registered production service SLO or permission to silently lower the
+requested rate. The artifact reports each minute's attempts, out-of-window
+attempts and exact coverage failure codes, so reviewers can assess the raw
+distribution rather than trusting a summary. Long fault-injected recovery
+that prevents the promised sustained injection load correctly fails that
+campaign even if host correctness eventually recovers. Smoke remains fast
+and is not subject to this synthetic long-run criterion.
+
+**No production certification:** synthetic generator and host share a Railway
+failure domain; real external MCP provider timing, independent host effect,
+WORM retention, PostgreSQL primary failover, service CPU and independent
+security signoff remain outside this evidence. #47 and the v1 readiness
+production gates stay blocked.
