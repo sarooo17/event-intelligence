@@ -24,6 +24,27 @@ export function httpPort(env = process.env) {
   return Number(raw);
 }
 
+// Railway's *.railway.internal private service DNS uses IPv6. An IPv4-only
+// 0.0.0.0 listener passes local and public health checks yet refuses requests
+// from other services on the private IPv6 network. Dual-stack is deliberate.
+export async function listenValidationPrivateServer(server, port) {
+  if (!server || typeof server.listen !== 'function') throw new TypeError('server required');
+  await new Promise((resolve, reject) => {
+    const failed = error => {
+      server.off('listening', ready);
+      reject(error);
+    };
+    const ready = () => {
+      server.off('error', failed);
+      resolve();
+    };
+    server.once('error', failed);
+    server.once('listening', ready);
+    server.listen({ port, host: '::', ipv6Only: false });
+  });
+  return server;
+}
+
 export function safeIdentifier(value, label) {
   if (typeof value !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,119}$/.test(value)) {
     throw new ValidationConfigError(`${label} has an invalid format`);
