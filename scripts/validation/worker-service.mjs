@@ -9,7 +9,7 @@ import { CompositeEventConsumer } from '../lib/composite-event-consumer.mjs';
 import { CompositeWakeCoordinator } from '../lib/composite-wake-coordinator.mjs';
 import { PostgresEventStore } from '../lib/postgres-event-store.mjs';
 import { WakeRetryScheduler } from '../lib/wake-retry-scheduler.mjs';
-import { bearerMatches, httpPort, parsePrivateServiceUrl, readJson, requiredEnv, safeError, safeIdentifier, sendJson } from './common.mjs';
+import { bearerMatches, httpPort, listenValidationPrivateServer, parsePrivateServiceUrl, readJson, requiredEnv, safeError, safeIdentifier, sendJson } from './common.mjs';
 
 const { Pool } = pg;
 
@@ -182,7 +182,7 @@ export function createWorkerService({ env = process.env, pool: suppliedPool, log
 
   return {
     config,
-    async listen() { await initialize(); server = http.createServer(handle); await new Promise((resolve, reject) => { server.once('error', reject); server.listen(config.port, '0.0.0.0', resolve); }); return server; },
+    async listen() { await initialize(); server = http.createServer(handle); await listenValidationPrivateServer(server, config.port); return server; },
     async close() { if (server) await new Promise(resolve => server.close(resolve)); for (const ctx of scopes.values()) await ctx.scheduler.close(); await pool.end(); ready = false; },
     handle,
   };
