@@ -14,10 +14,45 @@ import { assessPostgresProductionSloEvidence } from '../scripts/evidence/postgre
 import { percentileStats, parsePrivateServiceUrl, listenValidationPrivateServer } from '../scripts/validation/common.mjs';
 import { verifyCampaignArtifact, verifyRawSampleArtifact } from '../scripts/validation/artifact.mjs';
 import { readWorkerConfig } from '../scripts/validation/worker-service.mjs';
-import { assessCampaignWindowCoverage, campaignLaunchAt, monotonicAttemptBucket, readBenchmarkConfig, validateCampaign, waitForLaunch } from '../scripts/validation/benchmark-service.mjs';
+import { assessCampaignWindowCoverage, campaignInventory, campaignLaunchAt, monotonicAttemptBucket, readBenchmarkConfig, validateCampaign, waitForLaunch } from '../scripts/validation/benchmark-service.mjs';
 import { buildStartPayload } from '../scripts/validation/campaign-cli.mjs';
 import { PostgresEventStore } from '../scripts/lib/postgres-event-store.mjs';
 import { CompositeEventConsumer } from '../scripts/lib/composite-event-consumer.mjs';
+
+test('operator inventory exposes active benchmark, never events, tokens, internal errors or scopes', () => {
+  const campaigns=new Map();
+  for (let i=0;i<140;i++) {
+    const id=String(i).padStart(3,'0');
+    campaigns.set(id,{
+      id, status:'completed', createdAt:'2026-10-28T12:00:00.000Z',
+      startedAt:null, completedAt:'2026-10-28T12:01:00Z',
+      attemptedEvents:1,acceptedEvents:1,
+      options:{profile:'smoke',secret:'do-not-leak'},scopeId:'private-secret-scope',
+      error:{message:'do-not-leak'},report:{payload:'do-not-leak'}
+    });
+  }
+  campaigns.set('active-old',{
+    id:'active-old',status:'running',createdAt:'2026-10-25T00:00:00Z',
+    startedAt:'2026-10-28T12:03:00Z',completedAt:null,
+    attemptedEvents:500,acceptedEvents:498,
+    options:{profile:'steady',rawProviderToken:'do-not-leak'},
+    scopeId:'private-secret-scope',errors:[{stack:'do-not-leak'}]
+  });
+  const report=campaignInventory(campaigns);
+  assert.equal(report.schema,'event-intelligence.validation-campaign-inventory.v1');
+  assert.equal(report.activeCount,1);
+  assert.equal(report.truncated,true);
+  assert.equal(report.campaigns.length,100);
+  assert.equal(report.campaigns[0].id,'active-old');
+  assert.equal(report.campaigns[0].status,'running');
+  assert.equal(report.campaigns[0].profile,'steady');
+  assert.equal(report.campaigns[0].attemptedEvents,500);
+  assert.doesNotMatch(JSON.stringify(report),/do-not-leak|private-secret-scope/);
+  assert.deepEqual(campaignInventory(new Map()),{
+    schema:'event-intelligence.validation-campaign-inventory.v1',
+    activeCount:0,truncated:false,campaigns:[]
+  });
+});
 
 test('validation private listener is reachable over both IPv6 and IPv4', async () => {
   const server = http.createServer((_request, response) => {
