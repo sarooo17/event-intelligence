@@ -739,7 +739,7 @@ export class McpEventsClientManager {
     const connection = this.addConnection(input);
     const pending = (async () => {
       let events = [];
-      await this.prepareConnectionAuthority(connection);
+      if (connection.enabled !== false)await this.prepareConnectionAuthority(connection);
       if (connection.enabled !== false && discover) {
         events = await this.discoverConnection(connection.connectionId);
       }
