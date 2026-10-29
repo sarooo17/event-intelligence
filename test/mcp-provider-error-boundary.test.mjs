@@ -591,3 +591,36 @@ test('multiple safe stream teardown candidates fall back after an async rejectio
     'failed cancel cannot prevent the safe unsubscribe fallback');
   assert.equal(f.manager.deliverySessions.size, 0);
 });
+
+test('producer-selected unlabelled event names never enter push failure/termination telemetry', async()=>{
+  const canaries=Array.from({length:40},(_,i)=>
+    'confidential-private-reference-'+i.toString(36)+'-qqZ'+(i*7351).toString(36));
+  for(const secret of canaries){
+    let callbacks;
+    const f=fixture({
+      delivery:'push',
+      openEventStream:async args=>{
+        callbacks=args;
+        return {close(){}};
+      },
+    });
+    // Discovery names belong to the producer. These do not resemble
+    // credential key/value syntax, so regex-based redaction cannot help.
+    f.subscription.eventName=secret;
+    f.subscription.descriptor.name=secret;
+    const context=await f.manager.scopeContext(f.connection);
+    const state=await f.manager.ensureDeliverySession(
+      f.connection,context,f.subscription,'push',
+    );
+    assert.equal(state.status,'active');
+    callbacks.onError(new Error('unknown secret '+secret));
+    await callbacks.onTerminated('unknown secret '+secret);
+    assert.ok(f.observations.length>=2);
+    for(const record of f.observations){
+      assert.ok(!JSON.stringify(record).includes(secret),
+        'provider event name must never become an observability dimension');
+      assert.equal(record.eventName,undefined);
+    }
+    await f.manager.close();
+  }
+});
