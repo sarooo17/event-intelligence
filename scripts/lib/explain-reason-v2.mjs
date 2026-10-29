@@ -49,7 +49,8 @@ export function classifyExplainReason({
   } else if (matchStatus === 'fired') kind = 'fired';
   else if (matchStatus === 'emitted') kind = 'derived_emitted';
   else if (matchStatus === 'matched') {
-    kind = 'waiting_delivery';
+    kind = own(trigger, 'conditionOnly') === true
+      ? 'condition_satisfied' : 'waiting_delivery';
     scope = 'selected_match';
   } else {
     const verifiedFact = scopedFact(fact, trigger, match);
