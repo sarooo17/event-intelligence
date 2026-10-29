@@ -1,6 +1,7 @@
 import * as z from 'zod/v4';
 import { isProxy } from 'node:util/types';
 import { createCausalTimeline } from './causal-timeline.mjs';
+import { classifyExplainReason } from './explain-reason-v2.mjs';
 import { sha256Hex } from '../../dist/src/intelligenceProtocol/index.js';
 
 import {
@@ -349,6 +350,15 @@ export class TriggerInspector {
         ? rawHistory : rawHistory.slice(-this.matchHistoryLimit);
       historyTruncated = rawHistory.length > recentHistory.length;
     }
+    // Only an explicitly implemented scoped store capability supplies
+    // additional persisted explain facts. No provider event data is trusted
+    // as a source availability, watermark or evaluator-completeness proof.
+    const explainFact = typeof this.store.getInspectionFact === 'function'
+      ? await this.store.getInspectionFact({
+          triggerId: definition.triggerId,
+          triggerVersion: definition.version,
+          matchId: match?.matchId ?? null,
+        }) : null;
     const matchHistory = recentHistory.map((record) => ({
       status: record.status,
       updatedAt: record.updatedAt,
@@ -437,6 +447,10 @@ export class TriggerInspector {
       causalTimeline: createCausalTimeline({ match, wake }),
       diagnosis: diagnosticState({
         state, match, wake, clauses, pendingDeadlines, definition,
+      }),
+      diagnosisV2: classifyExplainReason({
+        state, trigger: definition, match, wake, pendingDeadlines,
+        fact: explainFact,
       }),
     };
   }
