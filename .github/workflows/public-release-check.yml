@@ -53,6 +53,7 @@ jobs:
         run: |
           node --test \
             test/security-threat-boundary-matrix.test.mjs \
+            test/security-negative-evidence-ledger.test.mjs \
             test/mcp-occurrence-ingress-security.test.mjs \
             test/mcp-decoded-byte-budget-security.test.mjs \
             test/mcp-revoked-session-fencing.test.mjs \
@@ -150,4 +151,5 @@ jobs:
           node --test \
             test/postgres-inspector-restart.test.mjs \
             test/postgres-logical-dump-restore.test.mjs \
-            test/postgres-owner-revocation-snapshot.test.mjs
+            test/postgres-owner-revocation-snapshot.test.mjs \
+            test/postgres-audit-proof-windows.test.mjs

@@ -1,0 +1,133 @@
+{
+  "schema": "event-intelligence.security-negative-evidence.v1",
+  "independentSignoff": "pending-independent-review",
+  "acceptedTrustModel": "event evidence is untrusted input, never an authorization decision",
+  "noEiOwnedPowers": [
+    "provider OAuth and token acquisition",
+    "principal authorization and policy engine",
+    "host approvals and tool permissions",
+    "external runtime effect authorization"
+  ],
+  "negativeHypotheses": [
+    {
+      "boundaryId": "transport-auth",
+      "authorityOwner": "host",
+      "proof": {
+        "file": "test/mcp-occurrence-ingress-security.test.mjs",
+        "testTitle": "MCP converter rejects nested and outer proxies with zero traps"
+      },
+      "residual": "Transport OAuth, raw HTTP body/time cap not implemented by EI",
+      "riskAcceptedForRelease": false
+    },
+    {
+      "boundaryId": "registry-rebind",
+      "authorityOwner": "host+ei",
+      "proof": {
+        "file": "test/mcp-revoked-session-fencing.test.mjs",
+        "testTitle": "revoked poll callbacks cannot ingest after the same connection ID is reattached"
+      },
+      "residual": "Cross-worker fencing and accepted append after revocation remain unverified",
+      "riskAcceptedForRelease": false
+    },
+    {
+      "boundaryId": "principal-authorization",
+      "authorityOwner": "host",
+      "proof": {
+        "file": "test/neutral-facade-conformance.test.mjs",
+        "testTitle": "neutral facade consults host control before creating any durable trigger"
+      },
+      "residual": "Final external side-effect permission belongs to host",
+      "riskAcceptedForRelease": false
+    },
+    {
+      "boundaryId": "tenant-scope",
+      "authorityOwner": "host+ei",
+      "proof": {
+        "file": "test/mcp-owner-read-guard.test.mjs",
+        "testTitle": "wake hydration rechecks tenant when transfer precedes final lookup"
+      },
+      "residual": "Global host identity/queued effect cancellation not atomic",
+      "riskAcceptedForRelease": false
+    },
+    {
+      "boundaryId": "event-json-ingress",
+      "authorityOwner": "ei",
+      "proof": {
+        "file": "test/untrusted-event-own-path-security.test.mjs",
+        "testTitle": "ingress snapshots payload before a schema parser can execute event getters"
+      },
+      "residual": "Raw transport byte/CPU/time and per-tenant rate budgets remain",
+      "riskAcceptedForRelease": false
+    },
+    {
+      "boundaryId": "source-gaps",
+      "authorityOwner": "ei+host",
+      "proof": {
+        "file": "test/mcp-gap-atomic-finality-race.test.mjs",
+        "testTitle": "atomic finality fence rejects an MCP gap committed after CEP reads its snapshot"
+      },
+      "residual": "Opaque provider replay and cross-worker gap closure not independently verified",
+      "riskAcceptedForRelease": false
+    },
+    {
+      "boundaryId": "derived-lineage",
+      "authorityOwner": "ei+host",
+      "proof": {
+        "file": "test/trigger-explain-bounds.test.mjs",
+        "testTitle": "inspector rejects payload-shaped derived metadata without executing accessors"
+      },
+      "residual": "Host must never upgrade event text to authorization",
+      "riskAcceptedForRelease": false
+    },
+    {
+      "boundaryId": "semantic-evaluation",
+      "authorityOwner": "host",
+      "proof": {
+        "file": "test/semantic-scope-budget-conformance.test.mjs",
+        "testTitle": "an unavailable semantic evaluator cannot invent importance judgments"
+      },
+      "residual": "Host controls model vendor, prompts, credentials and total cost",
+      "riskAcceptedForRelease": false
+    },
+    {
+      "boundaryId": "wake-receipts",
+      "authorityOwner": "host+ei",
+      "proof": {
+        "file": "test/activation-provenance-security.test.mjs",
+        "testTitle": "hydration rejects a delivery row pointing to a different trigger identity"
+      },
+      "residual": "Host external effects require durable idempotency and fresh authorization",
+      "riskAcceptedForRelease": false
+    },
+    {
+      "boundaryId": "operational-telemetry",
+      "authorityOwner": "ei+host",
+      "proof": {
+        "file": "test/observability-redaction-adversarial.test.mjs",
+        "testTitle": "synthetic mutation matrix varies JSON quoting, Unicode forms, case and separators"
+      },
+      "residual": "Unlabelled secrets and host log sinks not provably redacted",
+      "riskAcceptedForRelease": false
+    },
+    {
+      "boundaryId": "audit-and-retention",
+      "authorityOwner": "operator",
+      "proof": {
+        "file": "test/postgres-audit-proof-windows.test.mjs",
+        "testTitle": "PostgreSQL bounded audit proofs verify across restart, tenants and tampering without history deletion"
+      },
+      "residual": "WORM custody, deletion policy and physical pruning validation remain #47",
+      "riskAcceptedForRelease": false
+    },
+    {
+      "boundaryId": "release-publish",
+      "authorityOwner": "operator",
+      "proof": {
+        "file": "test/release-manifest-parity.test.mjs",
+        "testTitle": "release contract rejects every independently drifting version and package name"
+      },
+      "residual": "Independent security signoff is pending; release CI is not certification",
+      "riskAcceptedForRelease": false
+    }
+  ]
+}
