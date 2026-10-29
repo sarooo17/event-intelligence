@@ -232,7 +232,7 @@ test('Failed forbidden epoch revocation is not falsely reported as success and r
     throw unavailable(-32024,'connection');
   },{authorityEpoch:epoch,onRevoke:async()=>{
     calls++;
-    if(calls===1)throw Error('private-db-connection-failure');
+    if(calls<=2)throw Error('private-db-connection-failure');
     return true;
   }});
   try {
@@ -240,10 +240,16 @@ test('Failed forbidden epoch revocation is not falsely reported as success and r
       e.code==='MCP_SESSION_REVOCATION_INCOMPLETE' &&
       !e.message.includes('private-db'));
     assert.equal(fixture.manager.pendingAuthorityRevocations.size,1);
-    const later=await fixture.manager.pollConnection('conn');
-    assert.equal(later[0].reason,'forbidden');
-    await fixture.manager.close();
-    assert.equal(calls,2);
+    await assert.rejects(()=>fixture.manager.pollConnection('conn'),e=>
+      e.code==='MCP_SESSION_REVOCATION_INCOMPLETE');
+    assert.equal(calls,2,
+      'a second poll must re-attempt PG revoke, not return fake terminal success');
+    const confirmed=await fixture.manager.pollConnection('conn');
+    assert.equal(confirmed[0].reason,'forbidden');
+    assert.equal(calls,3);
     assert.equal(fixture.manager.pendingAuthorityRevocations.size,0);
+    await fixture.manager.close();
+    assert.equal(calls,3,
+      'already revoked epoch is not retried during shutdown');
   }finally {await fixture.close()}
 });
