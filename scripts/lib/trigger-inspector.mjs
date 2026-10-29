@@ -252,6 +252,10 @@ export class TriggerInspector {
           matchHistoryLimit < 1 || matchHistoryLimit > 500)) {
       throw new RangeError('matchHistoryLimit must be an integer from 1 to 500');
     }
+    if(inspectionWindowLimit!==null &&
+       (evidenceRefLimit===null || matchHistoryLimit===null)) {
+      throw new RangeError('Strict inspection requires evidenceRefLimit and matchHistoryLimit');
+    }
     this.store = store;
     this.now = now;
     this.matchHistoryLimit = matchHistoryLimit;
@@ -264,6 +268,12 @@ export class TriggerInspector {
     version,
     matchId,
   }) {
+    if(this.inspectionWindowLimit!==null && (!version ||
+       typeof this.store.getBoundedInspectionMatch!=='function')) {
+      const error=new Error('Strict inspection requires version and bounded match store');
+      error.code='EVENT_INTELLIGENCE_INSPECTION_STORE_UNSUPPORTED';
+      throw error;
+    }
     // A precise, versioned inspection should not read all definitions from
     // a high-cardinality scope. Legacy host stores retain the list fallback.
     const directDefinition = version && typeof this.store.getTrigger === 'function'
@@ -299,7 +309,12 @@ export class TriggerInspector {
     );
 
     let match;
-    if (matchId && typeof this.store.getTriggerMatch === 'function') {
+    if(this.inspectionWindowLimit!==null){
+      match=await this.store.getBoundedInspectionMatch({
+        triggerId:definition.triggerId,version:definition.version,
+        matchId:matchId??null,
+      });
+    } else if (matchId && typeof this.store.getTriggerMatch === 'function') {
       const row = await this.store.getTriggerMatch(matchId);
       match = row?.triggerId === definition.triggerId &&
         row?.triggerVersion === definition.version ? row : null;
@@ -323,6 +338,14 @@ export class TriggerInspector {
       throw error;
     }
 
+    // Strict mode refuses unexpectedly large definition/output state rather
+    // than fabricating an incomplete reason from a truncated Pattern AST.
+    if(this.inspectionWindowLimit!==null &&
+       Buffer.byteLength(JSON.stringify(definition),'utf8')>65536) {
+      const error=new Error('Definition exceeds inspection byte budget');
+      error.code='EVENT_INTELLIGENCE_INSPECTION_BUDGET_EXCEEDED';
+      throw error;
+    }
     const evidenceProjection = clauseState(definition, match, this.evidenceRefLimit);
     const clauses = evidenceProjection.clauses;
     const totalSourceRefs = match?.sourceEvents?.length ?? 0;
