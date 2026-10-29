@@ -40,11 +40,14 @@ export async function persistedGapInspectionFact(store, {triggerId, triggerVersi
   // incorrectly claiming the selected source is available/unavailable.
   const page = boundedSourceLimit === null ? null
     : await store.listBoundedEventSources({limit:boundedSourceLimit});
-  if(page && (page.hasMore!==false ||
-    !Array.isArray(page.records) ||
-    page.records.length>boundedSourceLimit)) return null;
-  const sources=page ? page.records.filter(source=>
-    source.enabled!==false && attached.includes(source.connectionId))
+  // An unavailable/invalid bounded API must NEVER fall back to a full scan.
+  if(boundedSourceLimit!==null &&
+     (!page || page.hasMore!==false ||
+      !Array.isArray(page.records) ||
+      page.records.length>boundedSourceLimit)) return null;
+  const sources=boundedSourceLimit!==null
+    ? page.records.filter(source=>
+        source.enabled!==false && attached.includes(source.connectionId))
     : await store.listEventSources({connectionIds:attached,enabledOnly:true});
   // Fail closed when source identity is ambiguous or the scoped backing
   // store has not durably recorded this connection's capability.
