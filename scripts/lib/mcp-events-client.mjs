@@ -713,24 +713,33 @@ export class McpEventsClientManager {
     return result;
   }
 
+  async prepareConnectionAuthority(connection) {
+    if (!connection.authorityEpoch) return;
+    await this.withConnectionMutation(connection.connectionId, async()=>{
+      this.assertConnectionAttached(connection);
+      const context=await this.scopeContext(connection);
+      if (context.store.requireMcpSessionFence!==true ||
+          typeof context.store.beginMcpConnectionAuthority!=='function') {
+        throw new Error('Host MCP connection requires an enabled PostgreSQL authority fence');
+      }
+      await context.store.beginMcpConnectionAuthority({
+        connectionId:connection.connectionId,epoch:connection.authorityEpoch,
+      });
+      this.assertConnectionAttached(connection);
+    });
+  }
+
+  async prepareConnectionAuthorities() {
+    for(const connection of this.connections.values()) {
+      await this.prepareConnectionAuthority(connection);
+    }
+  }
+
   async attachConnection(input, { discover = true } = {}) {
     const connection = this.addConnection(input);
     const pending = (async () => {
       let events = [];
-      if (connection.authorityEpoch) {
-        await this.withConnectionMutation(connection.connectionId, async()=>{
-          this.assertConnectionAttached(connection);
-          const context=await this.scopeContext(connection);
-          if (context.store.requireMcpSessionFence!==true ||
-              typeof context.store.beginMcpConnectionAuthority!=='function') {
-            throw new Error('Host MCP connection requires an enabled PostgreSQL authority fence');
-          }
-          await context.store.beginMcpConnectionAuthority({
-            connectionId:connection.connectionId,epoch:connection.authorityEpoch,
-          });
-          this.assertConnectionAttached(connection);
-        });
-      }
+      await this.prepareConnectionAuthority(connection);
       if (connection.enabled !== false && discover) {
         events = await this.discoverConnection(connection.connectionId);
       }
