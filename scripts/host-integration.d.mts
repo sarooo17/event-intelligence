@@ -140,6 +140,8 @@ export interface EventIntelligenceHostOptions {
   semanticEvaluator?: unknown;
   /** Runtime-neutral structured operational events. Sink failures never affect EI semantics. */
   observability?: EventIntelligenceObservabilitySink;
+  /** Minimal by default; explicit diagnostic opt-in may expose private identifiers. */
+  observabilityOptions?: { privacyLevel?: 'minimal' | 'diagnostic' };
 }
 
 export interface EventIntelligenceScopedHost {

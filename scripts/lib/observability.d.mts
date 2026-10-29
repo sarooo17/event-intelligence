@@ -76,6 +76,8 @@ export function createObservabilityEmitter(
   options?: {
     now?: () => Date;
     component?: string;
+    /** Default minimal removes all arbitrary IDs, metadata and error text. */
+    privacyLevel?: 'minimal' | 'diagnostic';
   },
 ): EventIntelligenceObservabilityEmitter;
 

@@ -70,6 +70,7 @@ jobs:
             test/semantic-scope-budget-conformance.test.mjs \
             test/activation-provenance-security.test.mjs \
             test/observability-redaction-adversarial.test.mjs \
+            test/observability-minimal-default-privacy.test.mjs \
             test/observability-own-data-security.test.mjs \
             test/release-manifest-parity.test.mjs
 

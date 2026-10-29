@@ -48,9 +48,11 @@ function fixture({
     store,
     compositeEventConsumer: { async ingestMcpOccurrence() {} },
     registerEventSource: async () => {},
+    // The legacy diagnostic contract is exercised only by explicit opt-in.
+    // Runtime default is now payload/opaque-field-free.
     observability: createObservabilityEmitter({
       emit(record) { observations.push(record); },
-    }),
+    },{privacyLevel:'diagnostic'}),
   });
   const connection = manager.addConnection({
     connectionId: 'source-connection',

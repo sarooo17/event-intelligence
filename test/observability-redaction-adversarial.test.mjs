@@ -1,9 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  createObservabilityEmitter,
+  createObservabilityEmitter as createDiagnosticEmitter,
   serializeObservabilityError,
 } from '../scripts/lib/observability.mjs';
+
+const createObservabilityEmitter=(sink,options={})=>
+  createDiagnosticEmitter(sink,{...options,privacyLevel:'diagnostic'});
+
 
 // Deterministic adversarial telemetry corpus. No real credentials.
 const secrets = Array.from({length:64},(_,index)=>

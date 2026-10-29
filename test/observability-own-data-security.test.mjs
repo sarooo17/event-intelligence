@@ -2,9 +2,13 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
-  createObservabilityEmitter,
+  createObservabilityEmitter as createDiagnosticEmitter,
   serializeObservabilityError,
 } from '../scripts/lib/observability.mjs';
+
+const createObservabilityEmitter=(sink,options={})=>
+  createDiagnosticEmitter(sink,{...options,privacyLevel:'diagnostic'});
+
 
 test('telemetry skips nested getters and does not execute Proxy traps', async () => {
   let executed = 0;

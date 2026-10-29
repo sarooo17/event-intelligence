@@ -1488,6 +1488,7 @@ export async function createEmbeddedEventIntelligence({
   mcpClients = [],
   semanticEvaluator,
   observability,
+  observabilityOptions,
   activation,
   wake,
   wakeHandlers = {},
@@ -1518,6 +1519,7 @@ export async function createEmbeddedEventIntelligence({
     mcpClients,
     semanticEvaluator,
     observability,
+    observabilityOptions,
     ...(wakeHandler ? { wake: wakeHandler } : {}),
     wakeHandlers,
   });
