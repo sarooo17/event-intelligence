@@ -153,3 +153,38 @@ lookup, not an unbounded wake scan). A `conditionOnly` match with no
 effect reports `condition_satisfied`, not `effect_pending`. The
 stdio `inspect` and nested `simulate.inspection` output contracts
 both require and validate the versioned diagnosis shape.
+
+
+## Opt-in reference-count bounds for high-volume explanations (#48)
+
+Hosts can now construct `new TriggerInspector({ store, matchHistoryLimit: 100,
+evidenceRefLimit: 100 })`. `evidenceRefLimit` is optional, integer 1–500.
+It caps the number of **source evidence references** projected across all
+clauses and `lineage.evidence`, and separately caps the number of
+`lineage.derivedOutputs` projections. A missing limit preserves the
+existing full-inspection shape and all original evidence.
+
+The inspector **scans** the selected match's stored source references to
+count *every* observed clause, even when that clause's evidence appears
+after the projection cap. It never labels a clause as missing solely
+because its references were omitted. The additive
+`evidenceSummary.sourceRefCount`, `derivedRefCount`,
+`sourceRefsTruncated`, `derivedRefsTruncated`, and
+`evidenceRefLimit` fields expose the intentional omission. The
+existing `diagnosis.sourceCertainty = "unverified"` remains unchanged:
+a source may have produced events that never reached this store.
+
+These caps constrain **serialization/projected reference cardinality**,
+not the number of rows read by `listTriggerMatches()`, the number of
+source-event references scanned for accurate counts, the definition
+AST/semantic state projection, operator/owner discovery, or all
+high-cardinality PostgreSQL query/CPU costs. An actual bounded-storage
+snapshot/selector API, adversarial high-cardinality time/memory
+measurement and authority-path audit are still required before
+checking #48's full cost/security acceptance. They must not be
+represented as solved by a result-only cap.
+
+Run: `npm run build && node --test test/trigger-inspector-evidence-cap.test.mjs`.
+No new scheduler, model, SDK dependency, storage migration, or host
+policy. The public stdio output schema permits these additive fields
+and preserves the existing strict `diagnosis` v1 shape.
