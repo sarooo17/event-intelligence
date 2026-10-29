@@ -11,7 +11,8 @@ const bytesSnapshot = value => {
 };
 const validUntil = value => value instanceof Date && Number.isFinite(value.getTime()) &&
   value.getTime() >= Date.now() + 7 * 24 * 60 * 60 * 1000;
-const safeKey = value => typeof value === 'string' && /^[a-z0-9][a-z0-9/_-]{0,160}$/.test(value) && !value.includes('..');
+const safeKey = value => typeof value === 'string' && /^[a-z0-9][a-z0-9/_.-]{0,160}$/.test(value) &&
+  !value.includes('..') && !value.includes('//') && !value.endsWith('/');
 
 /**
  * This is an operator-side WORM publisher, not an EI worker integration.
@@ -23,8 +24,9 @@ const safeKey = value => typeof value === 'string' && /^[a-z0-9][a-z0-9/_-]{0,16
  */
 export async function uploadComplianceLockedObject({ client, commands, bucket, key, bytes, retainUntil }) {
   const contents = bytesSnapshot(bytes);
+  const lockedUntil = retainUntil instanceof Date ? new Date(retainUntil.getTime()) : null;
   if (!client || typeof client.send !== 'function' || !commands ||
-      typeof bucket !== 'string' || !bucket || !safeKey(key) || !validUntil(retainUntil)) {
+      typeof bucket !== 'string' || !bucket || !safeKey(key) || !validUntil(lockedUntil)) {
     fail('INVALID_UPLOAD_CONFIG');
   }
   for (const name of ['PutObjectCommand','HeadObjectCommand','GetObjectCommand']) {
@@ -33,7 +35,7 @@ export async function uploadComplianceLockedObject({ client, commands, bucket, k
   const hash = checksum(contents);
   const put = await client.send(new commands.PutObjectCommand({
     Bucket: bucket, Key: key, Body: contents,
-    ObjectLockMode: 'COMPLIANCE', ObjectLockRetainUntilDate: retainUntil,
+    ObjectLockMode: 'COMPLIANCE', ObjectLockRetainUntilDate: new Date(lockedUntil.getTime()),
     Metadata: { 'ei-sha256': hash },
     ContentType: 'application/octet-stream',
   }));
@@ -43,7 +45,7 @@ export async function uploadComplianceLockedObject({ client, commands, bucket, k
   const until = head?.ObjectLockRetainUntilDate;
   const remoteTime = until instanceof Date ? until.getTime() : Date.parse(until);
   if (head?.VersionId !== versionId || head?.ObjectLockMode !== 'COMPLIANCE' ||
-      !Number.isFinite(remoteTime) || remoteTime < retainUntil.getTime() ||
+      !Number.isFinite(remoteTime) || remoteTime < lockedUntil.getTime() ||
       Number(head?.ContentLength) !== contents.length ||
       head?.Metadata?.['ei-sha256'] !== hash) fail('REMOTE_LOCK_ATTESTATION_FAILED');
   const read = await client.send(new commands.GetObjectCommand({ Bucket: bucket, Key: key, VersionId: versionId }));
@@ -53,7 +55,7 @@ export async function uploadComplianceLockedObject({ client, commands, bucket, k
     fail('REMOTE_BYTES_MISMATCH');
   }
   return Object.freeze({key,versionId,sha256:hash,bytes:contents.length,
-    objectLockMode:'COMPLIANCE',retainUntil:retainUntil.toISOString(),readBackVerified:true});
+    objectLockMode:'COMPLIANCE',retainUntil:lockedUntil.toISOString(),readBackVerified:true});
 }
 
 async function requireObjectLockBucket(client, commands, bucket) {
@@ -88,20 +90,30 @@ export async function publishSignedSourceAndAuditWorm({
       auditCheckpoint?.scopeId !== expectedScopeId ||
       typeof trustedPublicKeyPem !== 'string' || !trustedPublicKeyPem.trim()) fail('TRUST_ROOT_REQUIRED');
 
+  // Snapshot all mutable operator inputs BEFORE the first asynchronous check.
+  // The same exact bytes/checkpoints are used for signing verification, S3
+  // publication and the manifest. Caller mutation cannot swap signed content.
+  const lockedUntil = new Date(retainUntil.getTime());
   const source = bytesSnapshot(sourceArchiveBytes);
   const audit = bytesSnapshot(auditArchiveBytes);
+  const pinnedSource = structuredClone(sourceCheckpoint);
+  const pinnedAudit = structuredClone(auditCheckpoint);
+  const signedSource = structuredClone(sourceWitness);
+  const signedAudit = structuredClone(auditWitness);
+  const sourceWitnessBytes = Buffer.from(JSON.stringify(signedSource));
+  const auditWitnessBytes = Buffer.from(JSON.stringify(signedAudit));
   const sourceOk = await verifyMcpOccurrenceArchiveWitness({
-    witness:sourceWitness,archiveBytes:source,trustedCheckpoint:sourceCheckpoint,
+    witness:signedSource,archiveBytes:source,trustedCheckpoint:pinnedSource,
     trustedPublicKeyPem,expectedKeyId:sourceKeyId,expectedScopeId,
   });
   const auditOk = await verifyPostgresAuditArchiveWitness({
-    witness:auditWitness,archiveBytes:audit,trustedPublicKeyPem,
+    witness:signedAudit,archiveBytes:audit,trustedPublicKeyPem,
     expectedKeyId:auditKeyId,expectedScopeId,
   });
-  if (!sourceOk || !auditOk || auditWitness?.checkpoint?.scopeId !== auditCheckpoint.scopeId ||
-      auditWitness?.checkpoint?.firstHash !== auditCheckpoint.firstHash ||
-      auditWitness?.checkpoint?.endSequence !== auditCheckpoint.endSequence ||
-      auditWitness?.checkpoint?.headHash !== auditCheckpoint.headHash) {
+  if (!sourceOk || !auditOk || signedAudit?.checkpoint?.scopeId !== pinnedAudit.scopeId ||
+      signedAudit?.checkpoint?.firstHash !== pinnedAudit.firstHash ||
+      signedAudit?.checkpoint?.endSequence !== pinnedAudit.endSequence ||
+      signedAudit?.checkpoint?.headHash !== pinnedAudit.headHash) {
     fail('PINNED_WITNESS_INVALID');
   }
   await requireObjectLockBucket(client,commands,bucket);
@@ -111,26 +123,26 @@ export async function publishSignedSourceAndAuditWorm({
   const namespace = 'ei-archive/' + checksum(Buffer.from(expectedScopeId)).slice(0,24) + '/' + randomUUID();
   const items = [
     ['source-archive.json',source],
-    ['source-witness.json',Buffer.from(JSON.stringify(sourceWitness))],
+    ['source-witness.json',sourceWitnessBytes],
     ['audit-archive.json',audit],
-    ['audit-witness.json',Buffer.from(JSON.stringify(auditWitness))],
+    ['audit-witness.json',auditWitnessBytes],
   ];
   const receipts = [];
   for (const [name,body] of items) {
     receipts.push(await uploadComplianceLockedObject({
-      client,commands,bucket,key:namespace+'/'+name,bytes:body,retainUntil,
+      client,commands,bucket,key:namespace+'/'+name,bytes:body,retainUntil:lockedUntil,
     }));
   }
   const manifest = Buffer.from(JSON.stringify({
     schema:'event-intelligence.external-worm-archive-receipt.v1',
     scopeSha256:checksum(Buffer.from(expectedScopeId)),
-    sourceCheckpointSha256:checksum(Buffer.from(JSON.stringify(sourceCheckpoint))),
-    auditCheckpointSha256:checksum(Buffer.from(JSON.stringify(auditCheckpoint))),
+    sourceCheckpointSha256:checksum(Buffer.from(JSON.stringify(pinnedSource))),
+    auditCheckpointSha256:checksum(Buffer.from(JSON.stringify(pinnedAudit))),
     objects:receipts,
     productionRetentionCertified:false,physicalPruneAuthorized:false,
   })+'\n');
   const receipt = await uploadComplianceLockedObject({
-    client,commands,bucket,key:namespace+'/manifest.json',bytes:manifest,retainUntil,
+    client,commands,bucket,key:namespace+'/manifest.json',bytes:manifest,retainUntil:lockedUntil,
   });
   return Object.freeze({
     schema:'event-intelligence.external-worm-archive-receipt.v1',
