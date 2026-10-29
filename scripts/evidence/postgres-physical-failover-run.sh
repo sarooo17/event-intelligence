@@ -43,6 +43,12 @@ done
 docker exec -e PGPASSWORD=ei_disposable_primary_password "$primary" \
   psql -v ON_ERROR_STOP=1 -U postgres -d postgres \
   -c "CREATE ROLE ei_repl WITH LOGIN REPLICATION PASSWORD 'ei_disposable_replication_password';" >/dev/null
+# Default postgres Docker pg_hba may omit a remote REPLICATION rule.
+# Permit only disposable replication role inside the isolated test network.
+docker exec "$primary" sh -ec 'printf "%s\\n" "host replication ei_repl all scram-sha-256" >> "$PGDATA/pg_hba.conf"'
+docker exec -e PGPASSWORD=ei_disposable_primary_password "$primary" \
+  psql -v ON_ERROR_STOP=1 -U postgres -d postgres \
+  -c "SELECT pg_reload_conf();" >/dev/null
 # Genuine physical WAL base backup, not pg_dump or independent databases.
 docker run --rm --network "$network" \
   -e PGDATA=/var/lib/postgresql/data/pgdata \
