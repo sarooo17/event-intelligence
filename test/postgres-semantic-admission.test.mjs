@@ -125,3 +125,56 @@ integration('PG16 host-authored trigger/batch deadlines survive independent pool
     await pool.end();await independent.end();
   }
 });
+
+integration('PG16 refuses budget-amplifying rolling deploy on same epoch after restart',async()=>{
+  const firstPool=new Pool({connectionString:url,max:3});
+  const secondPool=new Pool({connectionString:url,max:3});
+  const st=storage(firstPool,'policy-fence-a');
+  const peer=storage(secondPool,'policy-fence-a');
+  const otherTenant=storage(secondPool,'policy-fence-b');
+  const enlarged={...budget,maxTriggerCalls:100,maxTriggerTokens:300,
+    maxTriggerCostMicros:700,maxBatchCalls:90,
+    maxBatchTokens:270,maxBatchCostMicros:630};
+  try {
+    await st.init();await peer.init();await otherTenant.init();
+    assert.equal(await gate(st,'first').reserve(req),true);
+    const stored=await st.get('semantic_budget',
+      'trigger:'+JSON.stringify(['issue@1','policy-1']));
+    assert.equal(typeof stored.policyFingerprint,'string');
+    assert(stored.policyFingerprint.includes('maxTriggerCalls'));
+    const inflated=createPostgresSemanticAdmission({
+      store:peer,budget:enlarged,batchId:'fresh-batch',
+      budgetEpoch:'policy-1',estimate:estimator,
+    });
+    await assert.rejects(()=>inflated.reserve(req),error=>
+      error?.code==='EVENT_INTELLIGENCE_SEMANTIC_BUDGET_POLICY_CONFLICT',
+      'same epoch cannot silently authorize higher quota, even in new batch');
+    const downgraded=createPostgresSemanticAdmission({
+      store:peer,budget:{...budget,maxBatchCostMicros:8},
+      batchId:'fresh-batch',budgetEpoch:'policy-1',estimate:estimator,
+    });
+    await assert.rejects(()=>downgraded.reserve(req),error=>
+      error?.code==='EVENT_INTELLIGENCE_SEMANTIC_BUDGET_POLICY_CONFLICT');
+    const restarted=new Pool({connectionString:url,max:2});
+    try{
+      const reopened=storage(restarted,'policy-fence-a');
+      await reopened.init();
+      assert.equal(await gate(reopened,'second').reserve(req),true,
+        'same pinned policy remains usable across independent PG connection pool');
+      assert.equal(await createPostgresSemanticAdmission({
+        store:reopened,budget:enlarged,batchId:'new-policy',
+        budgetEpoch:'policy-2',estimate:estimator,
+      }).reserve(req),true,
+      'explicit new host-owned budget epoch can update quotas');
+    }finally{await restarted.end();}
+    assert.equal(await createPostgresSemanticAdmission({
+      store:otherTenant,budget:enlarged,batchId:'first',
+      budgetEpoch:'policy-1',estimate:estimator,
+    }).reserve(req),true,'another tenant independently owns its budget policy');
+  }finally{
+    for(const suffix of ['metadata','leases','history','records','counters']){
+      await firstPool.query('DROP TABLE IF EXISTS "'+prefix+'_'+suffix+'" CASCADE');
+    }
+    await firstPool.end();await secondPool.end();
+  }
+});
