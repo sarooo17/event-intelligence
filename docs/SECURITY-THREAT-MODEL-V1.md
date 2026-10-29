@@ -119,3 +119,27 @@ Public Release Check security evidence gate, not only an optional test.
 exceptions, raw transport responses, source-config credentials or host logs;
 those remain separate trust boundaries and #45 stays open. This change does
 not modify a provider's event compatibility or enable unauthenticated tools.
+
+## Pre-revocation durable append vs detached session (#45)
+
+For a **single** host MCP client manager, detach prevents newly admitted
+occurrences, rejects late poll responses and fences further cursor/source
+mutations. There is one deliberate linearization rule for an append already
+admitted before detach: if `appendMcpOccurrence` durably accepts its event,
+the accepted occurrence **must** still be ingested by the EI composite
+consumer, even if detach happened while storage was awaiting. Otherwise a
+persisted dedup receipt with zero CEP activation could permanently lose that
+source occurrence on provider replay. Already deduplicated events do not
+activate again. A revoked session cannot create NEW accepted occurrences.
+
+The processing result can arrive after detach: this is *pre-accepted work*,
+not retained live session authority. A cursor write from the stale session
+must remain forbidden. **The host must independently re-check access to
+queued or subsequently resumed external effects**; EI does not authorize
+them based on accepted source evidence.
+
+This does **not** grant atomic revocation across separate EI processes
+sharing PostgreSQL, guarantee a producer credential has stopped producing,
+or cancel already queued host work. The cross-worker host registry/authority
+generation fence and exact source append/CEP transactional boundary remain
+#45 blockers. No provider OAuth or host policy engine was added to EI.
