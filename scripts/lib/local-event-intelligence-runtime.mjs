@@ -427,9 +427,16 @@ export async function createLocalEventIntelligenceRuntime({
     },
     async close() {
       await observer.emit({ event: 'ei.lifecycle.closing', level: 'debug' });
-      await mcpEventsClient.close();
+      // A failed authority revoke must NOT leave schedulers running, but
+      // the PostgreSQL store must remain available for a later retry.
+      let revocationError=null;
+      try { await mcpEventsClient.close(); }
+      catch(error){ revocationError=error; }
       const contexts = [...scopeContexts.values()];
-      await Promise.all(contexts.map((context) => context.close()));
+      const stopped=await Promise.allSettled(contexts.map((context) => context.close()));
+      if(revocationError)throw revocationError;
+      const failedScheduler=stopped.find(x=>x.status==='rejected');
+      if(failedScheduler)throw new Error('EI scheduler shutdown incomplete');
 
       const stores = new Set(contexts.map((context) => context.store));
       for (const store of stores) {
