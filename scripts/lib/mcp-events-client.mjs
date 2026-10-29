@@ -583,6 +583,9 @@ export class McpEventsClientManager {
     // Push/webhook providers may retain callback references after session
     // cleanup. Track callbacks accepted before shutdown; reject later ones.
     this.deliveryCallbackInFlight = new Set();
+    // Never key these tasks by reusable connectionId: detached accepted
+    // appends/CEP must complete before host.close() releases the store.
+    this.occurrenceInFlight = new Set();
 
     for (const connection of connections) {
       this.addConnection(connection);
@@ -1117,29 +1120,36 @@ export class McpEventsClientManager {
     assertJsonSchemaValue(descriptor.payloadSchema, occurrence.data);
 
     const receivedAt = this.now().toISOString();
-    const receipt = await context.store.appendMcpOccurrence(
-      connection.serverId,
-      occurrence,
-      subscription.subscriptionId,
-    );
-    if (!receipt.accepted) return { accepted: false, occurrence };
-    // Linearization boundary: an occurrence already admitted and DURABLY
-    // accepted before revoke must still reach CEP. Silently discarding it
-    // here strands its dedup ID: a subsequent provider replay can report
-    // 'already accepted' and never activate the event. Detach fences NEW
-    // calls and cursor writes, not post-accept processing. The host must
-    // reauthorize any queued downstream effect after wake.
-    // This is a local-session safety rule, not cross-process atomic revoke.
-    await context.compositeEventConsumer.ingestMcpOccurrence({
-      event: occurrence,
-      serverId: connection.serverId,
-      provider: 'mcp',
-      traceId:
-        `mcp:${connection.serverId}:${subscription.subscriptionId}:${occurrence.eventId}`,
-      subscriptionArguments: subscription.arguments,
-      receivedAt,
-    });
-    return { accepted: true, occurrence };
+    // Track BEFORE the first storage await. A concurrent detach may remove
+    // the connection-ID poll slot; this task is still an admitted append
+    // and must finish or fail before host shutdown releases the store.
+    const processing = (async () => {
+      const receipt = await context.store.appendMcpOccurrence(
+        connection.serverId,
+        occurrence,
+        subscription.subscriptionId,
+      );
+      if (!receipt.accepted) return { accepted: false, occurrence };
+      // Pre-revoke durably accepted work must complete CEP, otherwise a
+      // stored dedup ID could strand the event permanently on replay.
+      // New work, stale cursors and host effect authority remain fenced.
+      await context.compositeEventConsumer.ingestMcpOccurrence({
+        event: occurrence,
+        serverId: connection.serverId,
+        provider: 'mcp',
+        traceId:
+          `mcp:${connection.serverId}:${subscription.subscriptionId}:${occurrence.eventId}`,
+        subscriptionArguments: subscription.arguments,
+        receivedAt,
+      });
+      return { accepted: true, occurrence };
+    })();
+    this.occurrenceInFlight.add(processing);
+    try {
+      return await processing;
+    } finally {
+      this.occurrenceInFlight.delete(processing);
+    }
   }
 
   async saveSubscriptionState(
@@ -1980,6 +1990,11 @@ export class McpEventsClientManager {
       await this.drain();
       while (this.deliveryCallbackInFlight.size > 0) {
         await Promise.allSettled([...this.deliveryCallbackInFlight]);
+      }
+      // A detached poll is not in pollInFlight anymore; independently
+      // tracked admitted occurrence writes/CEP must still drain.
+      while (this.occurrenceInFlight.size > 0) {
+        await Promise.allSettled([...this.occurrenceInFlight]);
       }
     }).then(resolveClose, rejectClose);
     return this.closePromise;
