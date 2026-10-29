@@ -66,3 +66,21 @@ evidence is available.
 ## Review fix — selected match refreshes buffer completeness
 
 Successful Pattern evaluations can leave a retained buffer under its original match ID while emitting a selected match under another ID. Previously its last `trigger.partial` audit could remain truncated even after the newer successful evaluation. The engine now writes current `trigger.partial` evaluator-completeness audit against the **buffer ID** also when results are produced, so the latest-scoped-audit fact is not stale. The original `!results.length` audit path remains unchanged. Codex P2 on #325.
+
+
+## Strict-mode high-cardinality exclusion (Codex P2)
+
+Generic `getInspectionFact` currently enumerates the source inventory for
+source-gap evidence; its legacy PostgreSQL `listEventSources` path is **not
+strictly bounded on the server**, even when the inspector has an
+`inspectionWindowLimit`. Strict-mode inspection therefore **does not call**
+this optional fact provider: it returns only the locally persisted bounded
+match/deadline/derived evidence, with `upstreamCompleteness:'unknown'`.
+This conservative omission prevents extra source reads from bypassing the
+strict mode's cost guard. Normal inspection continues to expose durable
+`source_gap_unresolved` and `budget_truncated` facts.
+
+A future strict fact capability must add genuinely scope/key/indexed,
+statement-timeout/byte-bounded evidence access; output-only caps or a
+JS-filtered full source inventory are insufficient. Added a regression
+with poisoned unbounded `getInspectionFact`/`listEventSources` methods.
