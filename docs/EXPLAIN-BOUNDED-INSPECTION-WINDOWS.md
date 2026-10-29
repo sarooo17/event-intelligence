@@ -40,3 +40,25 @@ matching runtime/p99 memory benchmarks on 1k/10k/100k real rows still
 need a separate production-representative stress gate. Strict mode
 bounds returned deadline/derived rows and makes incompleteness an
 explicit refusal; it does not satisfy all #48 acceptance #5.
+
+
+## Raw PostgreSQL16 1k / 10k / 100k read experiment
+
+The opt-in CI workflow
+`.github/workflows/postgres-inspector-high-cardinality.yml` checks out
+the exact PR commit and stores **raw JSON percentiles plus host specs**
+as an artifact. It seeds isolated real PG16 tables with increasing
+1,000 / 10,000 / 100,000 unrelated deadline/derived records, then
+inspects one fixed trigger/match containing four actual deadline and
+four derived records (35 samples after 5 warmups per tier). Per tier,
+it records p50/p95/p99/max elapsed milliseconds and positive heap
+delta bytes; wrong-match leakage and output cardinality are asserted.
+A maximum measured end-to-end call of 2,000 ms is enforced as a
+**CI synthetic read envelope**, not a claim that this is a production
+SLO. The dedicated strict-mode database statement timeout is 2 s.
+
+This experiment has *no provider network, no independent host* and
+does not represent arbitrary production distributions, storage
+compaction, mixed tenants under contention, or external failover.
+The acceptance #5 may only be checked if the raw workflow evidence is
+successful, reviewed, and scoped clearly to the measured envelope.
