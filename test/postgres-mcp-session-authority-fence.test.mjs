@@ -101,3 +101,42 @@ integration('PG16 accepted append transaction linearizes before remote revoke; l
   const checkpoint=await b.getMcpOccurrenceArchiveCheckpoint();
   assert.equal(checkpoint.endSequence,1);
 }));
+
+integration('PG16 revoke-before-begin permanently tombstones delayed registration',()=>fixture(async({a,b,other})=>{
+  const neverRegistered=token('never-registered');
+  assert.equal(await a.revokeMcpConnectionAuthority({
+    connectionId:'early',epoch:neverRegistered,
+  }),false);
+  await assert.rejects(b.beginMcpConnectionAuthority({
+    connectionId:'early',epoch:neverRegistered,
+  }),denied);
+  await assert.rejects(b.appendMcpOccurrence('provider',occurrence('early-rejected'),'sub',{
+    connectionId:'early',epoch:neverRegistered,
+  }),denied);
+  const first=token('current-active'),conflicting=token('conflicting');
+  await a.beginMcpConnectionAuthority({connectionId:'reused',epoch:first});
+  await assert.rejects(b.beginMcpConnectionAuthority({
+    connectionId:'reused',epoch:conflicting,
+  }),e=>e.code==='MCP_SESSION_EPOCH_CONFLICT');
+  // The failed B registration is revocable even while A stays active.
+  assert.equal(await b.revokeMcpConnectionAuthority({
+    connectionId:'reused',epoch:conflicting,
+  }),false);
+  assert.equal((await a.appendMcpOccurrence('provider',occurrence('A-still-active'),'sub',{
+    connectionId:'reused',epoch:first,
+  })).accepted,true);
+  assert.equal(await a.revokeMcpConnectionAuthority({
+    connectionId:'reused',epoch:first,
+  }),true);
+  await assert.rejects(b.beginMcpConnectionAuthority({
+    connectionId:'reused',epoch:conflicting,
+  }),denied);
+  await assert.rejects(b.beginMcpConnectionAuthority({
+    connectionId:'reused',epoch:first,
+  }),denied);
+  const fresh=token('after-tombstones');
+  await b.beginMcpConnectionAuthority({connectionId:'reused',epoch:fresh});
+  await assert.rejects(other.appendMcpOccurrence('provider',occurrence('foreign-replay'),'sub',{
+    connectionId:'reused',epoch:fresh,
+  }),denied);
+});
