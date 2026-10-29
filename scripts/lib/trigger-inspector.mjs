@@ -260,8 +260,9 @@ export class TriggerInspector {
     // a high-cardinality scope. Legacy host stores retain the list fallback.
     const directDefinition = version && typeof this.store.getTrigger === 'function'
       ? await this.store.getTrigger(triggerId, version) : null;
-    const candidates = directDefinition ? [directDefinition] :
-      (await this.store.listTriggers())
+    const candidates = version && typeof this.store.getTrigger === 'function'
+      ? (directDefinition ? [directDefinition] : [])
+      : (await this.store.listTriggers())
         .filter((definition) => definition.triggerId === triggerId)
         .filter((definition) => !version || definition.version === version);
 
