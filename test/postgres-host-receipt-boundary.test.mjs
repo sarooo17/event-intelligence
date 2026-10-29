@@ -79,7 +79,7 @@ function rendezvous(participants) {
   };
 }
 
-function makeHost(pool, targetsTable, workTable, { barrier, failAfterCommit } = {}) {
+function makeHost(pool, targetsTable, workTable, { barrier, failAfterCommit, beforeDelivery } = {}) {
   let shouldLoseAck = Boolean(failAfterCommit);
   const receiptId = async ({ activation }) => {
     // Host-owned authoritative scope mapping, NOT data from a received event
@@ -109,33 +109,62 @@ function makeHost(pool, targetsTable, workTable, { barrier, failAfterCommit } = 
     return { targetId: target.id, scopeId: rows.rows[0].scope_id };
   };
   const deliver = async ({ activation, target, receiptId: id }) => {
-    // This one statement is the external host's *real* work enqueue and
-    // receipt. Both are committed atomically by the host DB. In a different
-    // runtime it might be a durable queue / transaction / equivalent API.
-    const rows = await pool.query(
-      `INSERT INTO ${workTable}
-        (receipt_id, target_id, scope_id, wake_id)
-        VALUES ($1, $2, $3, $4)
-        ON CONFLICT (receipt_id) DO NOTHING
-        RETURNING receipt_id`,
-      [id, target.targetId, target.scopeId, activation.wake.wakeId],
-    );
-    if (rows.rowCount === 0) {
-      const existing = await pool.query(
-        `SELECT target_id, scope_id, wake_id
-           FROM ${workTable} WHERE receipt_id = $1`, [id],
+    // Deliberately allow an adversarial test to revoke the host target AFTER
+    // resolveTarget() reads active=true but BEFORE the authoritative effect.
+    if (beforeDelivery) await beforeDelivery({ activation, target });
+
+    // Authorize at the actual host effect boundary, not only at the
+    // earlier resolveTarget() preflight. Lock the host-owned authorization
+    // row in the SAME transaction that inserts the durable effect/receipt.
+    // A competing revoke UPDATE takes this same row lock: whichever
+    // transaction commits first is the clear authority linearization order.
+    const client = await pool.connect();
+    let inserted;
+    try {
+      await client.query('BEGIN');
+      const authority = await client.query(
+        `SELECT scope_id, active FROM ${targetsTable}
+          WHERE target_id = $1 FOR UPDATE`,
+        [target.targetId],
       );
-      assert.deepEqual(existing.rows[0], {
-        target_id: target.targetId,
-        scope_id: target.scopeId,
-        wake_id: activation.wake.wakeId,
-      }, 'host receipt must never be reused for another target/scope/wake');
+      if (authority.rowCount !== 1 ||
+          !authority.rows[0].active ||
+          authority.rows[0].scope_id !== target.scopeId) {
+        const error = new Error('Host target authorization revoked');
+        error.code = 'HOST_TARGET_REVOKED';
+        throw error;
+      }
+      inserted = await client.query(
+        `INSERT INTO ${workTable}
+          (receipt_id, target_id, scope_id, wake_id)
+          VALUES ($1, $2, $3, $4)
+          ON CONFLICT (receipt_id) DO NOTHING
+          RETURNING receipt_id`,
+        [id, target.targetId, target.scopeId, activation.wake.wakeId],
+      );
+      if (inserted.rowCount === 0) {
+        const existing = await client.query(
+          `SELECT target_id, scope_id, wake_id
+             FROM ${workTable} WHERE receipt_id = $1`, [id],
+        );
+        assert.deepEqual(existing.rows[0], {
+          target_id: target.targetId,
+          scope_id: target.scopeId,
+          wake_id: activation.wake.wakeId,
+        }, 'host receipt must never be reused for another target/scope/wake');
+      }
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally {
+      client.release();
     }
     if (shouldLoseAck) {
       shouldLoseAck = false;
       throw new Error('host simulated crash AFTER committed queue row BEFORE acknowledgment');
     }
-    return { runtimeReceiptId: id, duplicate: rows.rowCount === 0 };
+    return { runtimeReceiptId: id, duplicate: inserted.rowCount === 0 };
   };
   return createActivationDispatcher({
     receiptId, hasReceipt, resolveTarget, deliver,
@@ -164,7 +193,7 @@ integration('an external-host PostgreSQL ledger atomically deduplicates parallel
     )`);
     await poolA.query(`INSERT INTO ${targets} (target_id, scope_id)
       VALUES ('job-a', 'tenant-a'), ('job-b', 'tenant-b'),
-        ('revoked-job', 'tenant-a')`);
+        ('revoked-job', 'tenant-a'), ('revocable-race', 'tenant-a')`);
 
     await t.test('two independent PG pools, eight concurrent deliveries => one durable host work row', async () => {
       const barrier = rendezvous(8);
@@ -226,6 +255,33 @@ integration('an external-host PostgreSQL ledger atomically deduplicates parallel
       } finally {
         await restartPool.end();
       }
+    });
+
+    await t.test('revocation committed after preflight but before host effect denies queued work', async () => {
+      let releaseDelivery;
+      let reachedPrecommit;
+      const entered = new Promise(resolve => { reachedPrecommit = resolve; });
+      const gate = new Promise(resolve => { releaseDelivery = resolve; });
+      const dispatch = makeHost(poolA, targets, work, {
+        beforeDelivery: async () => {
+          reachedPrecommit();
+          await gate;
+        },
+      });
+      const activation = signal('revocable-race', 'wake-revoke-precommit');
+      const pending = dispatch({ wake_id: activation.wake.wakeId }, activation);
+      await entered;
+      // Independent PostgreSQL pool commits host-side revocation while the
+      // earlier target resolver had already returned active=true.
+      await poolB.query(
+        `UPDATE ${targets} SET active = FALSE WHERE target_id = 'revocable-race'`,
+      );
+      releaseDelivery();
+      await assert.rejects(pending, error => error?.code === 'HOST_TARGET_REVOKED');
+      const rows = await poolB.query(
+        `SELECT receipt_id FROM ${work} WHERE wake_id = 'wake-revoke-precommit'`,
+      );
+      assert.equal(rows.rowCount, 0, 'revoked queued work must not commit a host effect or receipt');
     });
 
     await t.test('revocation prevents uncommitted target continuation', async () => {
