@@ -104,6 +104,7 @@ export async function createLocalEventIntelligenceRuntime({
   semanticEvaluator,
   store: providedStore,
   observability,
+  observabilityOptions,
 } = {}) {
   // Configuration errors must fail before the store initializes. Otherwise a
   // misspelled shared-mode flag silently selects unsafe single-process mode.
@@ -116,7 +117,7 @@ export async function createLocalEventIntelligenceRuntime({
     error.code = 'EVENT_INTELLIGENCE_SHARED_STORE_MODE_INVALID';
     throw error;
   }
-  const observer = createObservabilityEmitter(observability);
+  const observer = createObservabilityEmitter(observability,observabilityOptions);
   const dataDir = env.DATA_DIR ?? './data';
   const rootStore = providedStore ?? new PersistentEventStore(dataDir);
   const restored = await initializeStore(rootStore);
