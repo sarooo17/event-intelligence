@@ -147,3 +147,64 @@ test('disabled host connection with an epoch remains a no-op, not an error',asyn
   assert.equal(events.revoke.length,0);
   await manager.close();
 });
+
+
+test('shutdown revokes all healthy scopes, drains admitted work and retries failed epoch',async()=>{
+  const attempts=[],contexts=[];
+  let failFirst=true,firstCloseResult;
+  const scopes=new Map(['scope-a','scope-b','scope-c'].map(scope=>{
+    const store={
+      requireMcpSessionFence:true,
+      async revokeMcpConnectionAuthority({connectionId,epoch}) {
+        attempts.push(connectionId);
+        if(connectionId==='a'&&failFirst)throw Error('temporary PG outage SECRET');
+        return true;
+      },
+    };
+    return [scope,{store,compositeEventConsumer:{async ingestMcpOccurrence(){}}}];
+  }));
+  const opts=(id,scopeId)=>({
+    connectionId:id,serverId:'server-'+id,scopeId,
+    authorityEpoch:'host-epoch-'+id.padEnd(42,'q'),
+    request:async()=>({events:[]}),getCapabilities:async()=>({}),
+  });
+  const manager=new McpEventsClientManager({
+    store:scopes.get('scope-a').store,
+    registerEventSource:async()=>{},
+    compositeEventConsumer:{async ingestMcpOccurrence(){}},
+    resolveScope:async scope=>{
+      contexts.push(scope);return scopes.get(scope);
+    },
+    connections:[opts('a','scope-a'),opts('b','scope-b'),opts('c','scope-c')],
+  });
+  await assert.rejects(()=>manager.close(),e=>{
+    assert.equal(e.code,'MCP_SESSION_REVOCATION_INCOMPLETE');
+    assert.ok(!e.message.includes('SECRET'));
+    return true;
+  });
+  assert.deepEqual(attempts,['a','b','c'],
+    'one failed scope must never strand other healthy scope epochs');
+  assert.equal(manager.pendingAuthorityRevocations.size,1);
+  failFirst=false;
+  await manager.close();
+  assert.deepEqual(attempts,['a','b','c','a']);
+  assert.equal(manager.pendingAuthorityRevocations.size,0);
+});
+
+test('failed detach must retain authoritative epoch for later shutdown retry',async()=>{
+  let failure=true,attempts=0;
+  const {manager,store,opts}=fixture();
+  store.revokeMcpConnectionAuthority=async()=>{
+    attempts++;
+    if(failure)throw Error('external database unavailable');
+    return true;
+  };
+  await manager.attachConnection(opts,{discover:false});
+  await assert.rejects(manager.detachConnection('session'),/external database unavailable/);
+  assert.equal(manager.connections.has('session'),false);
+  assert.equal(manager.pendingAuthorityRevocations.size,1);
+  failure=false;
+  await manager.close();
+  assert.equal(manager.pendingAuthorityRevocations.size,0);
+  assert.equal(attempts,2);
+});
