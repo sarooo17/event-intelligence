@@ -62,7 +62,7 @@ integration('real PG16 scoped MCP persisted gap shows no cross-tenant explanatio
       status:'partial',openedAt:'2026-10-29T10:00:00.000Z',
       updatedAt:'2026-10-29T10:00:00.000Z',
       expiresAt:'2026-10-29T11:00:00.000Z',partitionKey:null,
-      sourceEvents:[],patternState:null,firedWakeId:null,derivedEventIds:[],
+      sourceEvents:[],semanticDecision:null,firedWakeId:null,derivedEventIds:[],
     };
     await newA.appendTriggerMatch(partial);
     await newB.appendTriggerMatch(partial);
