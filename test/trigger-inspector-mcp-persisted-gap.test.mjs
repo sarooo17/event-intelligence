@@ -89,7 +89,7 @@ test('real canonical evaluator truncation is audit-persisted, stable after resta
     status:'partial',openedAt:now,updatedAt:now,
     expiresAt:'2026-10-29T11:00:00.000Z',
     partitionKey:null,sourceEvents:[],
-    patternState:null,firedWakeId:null,derivedEventIds:[],
+    semanticDecision:null,firedWakeId:null,derivedEventIds:[],
   };
   try{
     await store.init();await setup(store);
