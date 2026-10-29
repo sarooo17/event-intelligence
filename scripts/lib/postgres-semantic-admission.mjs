@@ -67,14 +67,14 @@ export function createPostgresSemanticAdmission({
         await store.lock(client,'semantic-budget',triggerKey);
         const trigger=await store.get('semantic_budget',triggerKey,client);
         const batch=await store.get('semantic_budget',batchKey,client);
+        if(!check(trigger)||!check(batch)){
+          throw new Error('Corrupt semantic budget ledger: fail closed');
+        }
         if((trigger && trigger.policyFingerprint!==policyFingerprint) ||
            (batch && batch.policyFingerprint!==policyFingerprint)) {
           const error=new Error('Semantic budget policy conflict: choose a new host epoch');
           error.code='EVENT_INTELLIGENCE_SEMANTIC_BUDGET_POLICY_CONFLICT';
           throw error;
-        }
-        if(!check(trigger)||!check(batch)){
-          throw new Error('Corrupt semantic budget ledger: fail closed');
         }
         // Authoritative database clock: no worker-local time or restart can
         // extend a trigger/batch admission window. The same lock protects
