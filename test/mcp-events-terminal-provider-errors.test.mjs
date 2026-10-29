@@ -13,6 +13,7 @@ import {
   classifyTerminalMcpProviderError,
 } from '../scripts/lib/mcp-provider-terminal-error.mjs';
 import { PersistentEventStore } from '../scripts/lib/persistent-event-store.mjs';
+import { TriggerInspector } from '../scripts/lib/trigger-inspector.mjs';
 import { TriggerControlPlane } from '../scripts/lib/trigger-control-plane.mjs';
 
 const secret='provider-bearer-DO-NOT-LOG';
@@ -76,7 +77,7 @@ async function setup(onPoll,{now=()=>new Date(),authorityEpoch=null,onRevoke=nul
       connectionIds:['conn'],actor:user,owner:user,
     });
   }
-  return {store,manager,close:async()=>{
+  return {store,manager,dir,close:async()=>{
     await manager.close();await store.close();
     await rm(dir,{recursive:true,force:true});
   }};
@@ -124,8 +125,26 @@ test('NotFound fences only the affected subscription; healthy sources continue',
     assert.equal(second.find(x=>x.eventName==='b.updated').status,'ok');
     assert.deepEqual(calls,['a.updated','b.updated','b.updated'],
       'terminal NotFound must not retry or disable an unrelated source');
-    assert.equal(fixture.store.getMcpClientState(
-      'conn','a.updated'),null,'terminal failure must not checkpoint a cursor');
+    const unavailableState=fixture.store.getMcpClientState('conn','a.updated');
+    assert.equal(unavailableState?.sourceAvailability,'not_found',
+      'only the validated subscription NotFound marker is persisted');
+    assert.equal(unavailableState?.cursor,null,'terminal failure must not checkpoint cursor');
+    assert.equal(fixture.store.getMcpClientState('conn','b.updated').sourceAvailability,
+      'available','healthy subscription must be independent');
+    assert.equal((await new TriggerInspector({store:fixture.store})
+      .inspect({triggerId:'test-0',version:'1'})).diagnosisV2.kind,
+      'source_unavailable');
+    assert.equal((await new TriggerInspector({store:fixture.store})
+      .inspect({triggerId:'test-1',version:'1'})).diagnosisV2.kind,
+      'not_yet_satisfied');
+    const independentRead=new PersistentEventStore(fixture.dir);
+    await independentRead.init();
+    assert.equal((await new TriggerInspector({store:independentRead})
+      .inspect({triggerId:'test-0',version:'1'})).diagnosisV2.kind,
+      'source_unavailable','source observation survives store reopen');
+    await independentRead.close();
+    assert.ok(!JSON.stringify(fixture.store.listMcpClientStates()).includes(secret),
+      'provider private error message must never be persisted');
     assert.equal(fixture.store.getMcpClientState(
       'conn','b.updated').cursor,'b-cursor');
     assert.ok(!JSON.stringify(first).includes(secret));
