@@ -9,7 +9,9 @@ An **additive** `diagnosisV2` object carries
 - `candidate_expired` for the *selected match*, not all potential future matches;
 - `deadline_pending` from a stored pending temporal deadline;
 - `wake_failed` from an actual dead-letter wake;
-- `waiting_delivery`, `fired`, `derived_emitted` from stored matched/terminal states;
+- `waiting_delivery` for a target-bound matched trigger, or `condition_satisfied`
+  for matched condition-only triggers with **no runtime delivery**, plus
+  `fired`, `derived_emitted` from durable terminal states;
 - `source_unavailable`, `watermark_pending`, `budget_truncated`, and
   `candidate_impossible` **only if a trusted, scoped store provides
   extra durable explanatory evidence.**
