@@ -92,6 +92,8 @@ export interface CompositeTriggerEngineOptions {
   semanticContextRevision?: string;
   /** Opt-in bounded lifetime of a cached decision (fixed-duration buckets). */
   semanticCacheTtlMs?: number | null;
+  /** Monotonic clock upper bound for semantic evaluation within one batch. */
+  semanticMaxBatchElapsedMs?: number | null;
 }
 
 export class CompositeTriggerEngine {
@@ -101,6 +103,7 @@ export class CompositeTriggerEngine {
   private readonly semanticAdmission: PatternV2SemanticAdmission | null;
   private readonly semanticContextRevision: string;
   private readonly semanticCacheTtlMs: number | null;
+  private readonly semanticMaxBatchElapsedMs: number | null;
 
   constructor(
     private readonly store: CompositeTriggerStore & CompositeTriggerAudit,
@@ -122,6 +125,13 @@ export class CompositeTriggerEngine {
     }
     this.semanticContextRevision=options.semanticContextRevision ?? '';
     this.semanticCacheTtlMs=options.semanticCacheTtlMs ?? null;
+    if(options.semanticMaxBatchElapsedMs != null &&
+       (!Number.isSafeInteger(options.semanticMaxBatchElapsedMs) ||
+        options.semanticMaxBatchElapsedMs<10 ||
+        options.semanticMaxBatchElapsedMs>600000)) {
+      throw new RangeError('Invalid semantic batch elapsed-time budget');
+    }
+    this.semanticMaxBatchElapsedMs=options.semanticMaxBatchElapsedMs ?? null;
     if(options.semanticAdmission != null &&
        typeof options.semanticAdmission.reserve !== 'function') {
       throw new TypeError('Invalid semantic admission gate');
@@ -863,6 +873,7 @@ export class CompositeTriggerEngine {
         `${definition.triggerId}@${definition.version}`,
       semanticContextRevision:this.semanticContextRevision,
       semanticCacheTtlMs:this.semanticCacheTtlMs,
+      maxBatchElapsedMs:this.semanticMaxBatchElapsedMs,
     });
 
     for (const semantic of evaluation.semanticTrace) {
