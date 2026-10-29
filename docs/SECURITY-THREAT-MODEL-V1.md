@@ -288,8 +288,10 @@ authority-epoch mode, EI now commits the session epoch revocation to
 PostgreSQL before returning a successfully quarantined terminal outcome;
 all other workers fail session-epoch checks when appending events. If
 PostgreSQL cannot confirm revocation, the operation reports a fixed
-revocation-incomplete error and retains the pending epoch for a host
-shutdown retry. This is never silently treated as successful global
+revocation-incomplete error and retains the pending epoch for repeated
+local-poll or host shutdown retries. Repeated polls stay terminal **for the
+provider**, never making another provider RPC, but do not report a normal
+terminal outcome until PostgreSQL confirms the distributed revocation. This is never silently treated as successful global
 suspension. The host also owns immediate MCP transport credential
 revocation and stopping any separate runtime worker.
 
