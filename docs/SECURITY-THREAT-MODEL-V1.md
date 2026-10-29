@@ -187,7 +187,7 @@ Unknown event names collapse to `ei.unknown` rather than reflecting an
 arbitrary string. This is necessary because regular-expression redaction
 cannot recognize an unlabelled private event field.
 
-Operator-only `privacyLevel:'diagnostic'` restores the old sanitized
+Operator-only `privacyLevel:'diagnostic'` (or `observabilityOptions:{privacyLevel:'diagnostic'}` on `createEventIntelligenceHost`, `createEmbeddedEventIntelligence` and the facade) restores the old sanitized
 field-level telemetry shape, **but arbitrary unlabelled text remains
 possible**: use only after explicit opt-in in access-controlled private
 sinks. Treat diagnostic text as sensitive and apply host retention policy.
