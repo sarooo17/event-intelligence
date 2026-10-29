@@ -2179,6 +2179,35 @@ export class PostgresEventStore {
     return raw ? parseTriggerMatchRecord(raw) : null;
   }
 
+  /**
+   * Scope-local latest-match selector: single result row instead of
+   * deserializing every match for a trigger in the Node inspector.
+   * Numeric UTC order is enforced through timestamptz, not lexical text.
+   * Existing PostgreSQL indexes restrict scope/kind; this query may still
+   * scan/sort matches server-side until a dedicated index is deployed.
+   */
+  async getLatestTriggerMatch(triggerId, version) {
+    const result = await this.pool.query(
+      'SELECT payload FROM ' + this.records +
+      " WHERE scope_id=$1 AND kind='trigger_match'" +
+      " AND payload->>'triggerId'=$2 AND payload->>'triggerVersion'=$3" +
+      " ORDER BY (payload->>'updatedAt')::timestamptz DESC," +
+      " CASE" +
+      " WHEN payload->>'status'='fired' THEN 5" +
+      " WHEN payload->>'status'='emitted' THEN 4" +
+      " WHEN payload->>'status'='matched' THEN 3" +
+      " WHEN payload->>'status'='partial' AND" +
+      " payload->'patternState'->>'role'='match' THEN 2" +
+      " WHEN payload->>'status'='partial' THEN 1 ELSE 0 END DESC," +
+      ' record_key ASC LIMIT 1',
+      [this.scopeId, String(triggerId), String(version)],
+    );
+    const raw = result.rows[0]?.payload;
+    const record = raw ? parseTriggerMatchRecord(raw) : null;
+    return record?.triggerId === triggerId &&
+      record?.triggerVersion === version ? record : null;
+  }
+
   async listTriggerMatches(triggerId) {
     const result = triggerId
       ? await this.pool.query(
