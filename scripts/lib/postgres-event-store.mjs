@@ -2483,6 +2483,11 @@ export class PostgresEventStore {
         error.code='MCP_SESSION_REVOKED';
         throw error;
       }
+      if(prior?.active===true && prior.epochHash!==epochHash) {
+        const error=new Error('Host must revoke old connection epoch before replacement');
+        error.code='MCP_SESSION_EPOCH_CONFLICT';
+        throw error;
+      }
       const generation=Number(prior?.generation??0)+
         (prior?.epochHash===epochHash?0:1);
       if(!Number.isSafeInteger(generation)||generation<1) {
