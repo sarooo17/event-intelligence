@@ -91,26 +91,39 @@ function sourceRef(event) {
   };
 }
 
-function clauseState(definition, match) {
+function clauseState(definition, match, evidenceRefLimit = null) {
   const seen = new Map();
+  const counts = new Map();
+  const selected = [];
+  // Scan every persisted reference so that a bounded output does NOT
+  // misclassify a later observed clause as missing. Project sourceRef()
+  // only for the requested bounded number; no raw payload is returned.
   for (const event of match?.sourceEvents ?? []) {
+    counts.set(event.clauseId, (counts.get(event.clauseId) ?? 0) + 1);
+    if (evidenceRefLimit !== null && selected.length >= evidenceRefLimit) continue;
+    const ref = sourceRef(event);
+    selected.push(ref);
     const current = seen.get(event.clauseId) ?? [];
-    current.push(sourceRef(event));
+    current.push(ref);
     seen.set(event.clauseId, current);
   }
 
-  return definition.clauses.map((clause) => {
-    const evidence = seen.get(clause.id) ?? [];
-    return {
-      clauseId: clause.id,
-      event: clause.event,
-      serverId: clause.serverId ?? null,
-      contractVersion: clause.contractVersion ?? null,
-      status: evidence.length ? 'observed' : 'waiting',
-      observedCount: evidence.length,
-      evidence,
-    };
-  });
+  return {
+    selected,
+    clauses: definition.clauses.map((clause) => {
+      const evidence = seen.get(clause.id) ?? [];
+      const observedCount = counts.get(clause.id) ?? 0;
+      return {
+        clauseId: clause.id,
+        event: clause.event,
+        serverId: clause.serverId ?? null,
+        contractVersion: clause.contractVersion ?? null,
+        status: observedCount ? 'observed' : 'waiting',
+        observedCount,
+        evidence,
+      };
+    }),
+  };
 }
 
 function explain({ state, match, wake }) {
@@ -220,7 +233,13 @@ export class TriggerInspector {
     store,
     now = () => new Date(),
     matchHistoryLimit = null,
+    evidenceRefLimit = null,
   }) {
+    if (evidenceRefLimit !== null &&
+        (!Number.isInteger(evidenceRefLimit) ||
+          evidenceRefLimit < 1 || evidenceRefLimit > 500)) {
+      throw new RangeError('evidenceRefLimit must be an integer from 1 to 500');
+    }
     if (matchHistoryLimit !== null &&
         (!Number.isInteger(matchHistoryLimit) ||
           matchHistoryLimit < 1 || matchHistoryLimit > 500)) {
@@ -229,6 +248,7 @@ export class TriggerInspector {
     this.store = store;
     this.now = now;
     this.matchHistoryLimit = matchHistoryLimit;
+    this.evidenceRefLimit = evidenceRefLimit;
   }
 
   async inspect({
@@ -271,7 +291,9 @@ export class TriggerInspector {
       throw error;
     }
 
-    const clauses = clauseState(definition, match);
+    const evidenceProjection = clauseState(definition, match, this.evidenceRefLimit);
+    const clauses = evidenceProjection.clauses;
+    const totalSourceRefs = match?.sourceEvents?.length ?? 0;
     const deadlines = match && this.store.listTemporalDeadlines
       ? await this.store.listTemporalDeadlines({ matchId: match.matchId })
       : [];
@@ -295,6 +317,8 @@ export class TriggerInspector {
     const derivedOutputs = match
       ? (await this.store.listDerivedEvents?.({ matchId: match.matchId }) ?? [])
       : [];
+    const selectedDerivedOutputs = this.evidenceRefLimit === null
+      ? derivedOutputs : derivedOutputs.slice(0, this.evidenceRefLimit);
 
     // Use the storage adapter's indexed recent-history query when the
     // caller explicitly requests a bounded window. For custom stores without
@@ -371,6 +395,11 @@ export class TriggerInspector {
         ).map((clause) => clause.clauseId),
         pendingDeadlineCount: pendingDeadlines.length,
         nextEvaluationAt,
+        evidenceRefLimit: this.evidenceRefLimit,
+        sourceRefCount: totalSourceRefs,
+        sourceRefsTruncated: totalSourceRefs > evidenceProjection.selected.length,
+        derivedRefCount: derivedOutputs.length,
+        derivedRefsTruncated: derivedOutputs.length > selectedDerivedOutputs.length,
       },
       deadlines: deadlines.map((deadline) => ({
         deadlineId: deadline.deadlineId,
@@ -389,8 +418,8 @@ export class TriggerInspector {
           }
         : null,
       lineage: {
-        evidence: match?.sourceEvents.map(sourceRef) ?? [],
-        derivedOutputs: derivedOutputs.map((record) => ({
+        evidence: evidenceProjection.selected,
+        derivedOutputs: selectedDerivedOutputs.map((record) => ({
           eventId: record.event.sourceEventId,
           eventName: record.event.name,
           ...derivedMetadata(record.event.data),
