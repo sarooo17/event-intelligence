@@ -1,6 +1,7 @@
 import { readOwnEventPath } from '../protocol/ownPath.js';
 import {
   SemanticConditionEngine,
+  projectSemanticInput,
 } from '../semantic/conditionEngine.js';
 import type {
   SemanticDecision,
