@@ -60,6 +60,11 @@ test('off-host WORM uploader demands pinned version, COMPLIANCE lock and exact r
   void invalid;
   await assert.rejects(upload(good,{retainUntil:new Date(Date.now()-1000)}),/EI WORM archive refused/);
   assert.ok(!good.calls.includes('DeleteObject'));
+  const deadline=retainUntil();
+  const original=deadline.toISOString();
+  const pending=upload(new FakeS3(),{retainUntil:deadline});
+  deadline.setUTCFullYear(2040); // caller mutates after first async S3 request
+  assert.equal((await pending).retainUntil,original);
 });
 
 async function signedEmptyArchives() {
@@ -106,6 +111,25 @@ test('publisher requires independently pinned signatures and real versioned Obje
     assert.equal(good.objects.get(receipt.key).input.ObjectLockMode,'COMPLIANCE');
     assert.equal(receipt.readBackVerified,true);
   }
+  // Snapshot witness/checkpoint objects synchronously before awaits.
+  const mutable={...fixture,
+    sourceWitness:{...fixture.sourceWitness},
+    sourceCheckpoint:{...fixture.sourceCheckpoint},
+    auditWitness:{...fixture.auditWitness},
+    auditCheckpoint:{...fixture.auditCheckpoint},
+  };
+  const snapshotS3=new FakeS3();
+  const snap=publishSignedSourceAndAuditWorm({
+    ...mutable,client:snapshotS3,commands,
+    bucket:'external-locked-bucket',retainUntil:retainUntil(),
+  });
+  mutable.sourceWitness.signature='tampered-after-call';
+  mutable.sourceCheckpoint.endSequence=998;
+  mutable.auditCheckpoint.endSequence=998;
+  const verified=await snap;
+  assert.equal(verified.objects.length,4);
+  assert.equal(snapshotS3.objects.size,5);
+
   const wrongScope=new FakeS3();
   await assert.rejects(publishSignedSourceAndAuditWorm({
     ...fixture,expectedScopeId:'other',client:wrongScope,commands,
