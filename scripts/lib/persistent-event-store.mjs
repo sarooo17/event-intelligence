@@ -718,6 +718,11 @@ export class PersistentEventStore {
     });
   }
 
+  getTrigger(triggerId, version) {
+    const record = this.#triggers.get(String(triggerId) + '@' + String(version));
+    return record ? structuredClone(record) : null;
+  }
+
   listTriggers() {
     return [...this.#triggers.values()].map((definition) =>
       structuredClone(definition));
