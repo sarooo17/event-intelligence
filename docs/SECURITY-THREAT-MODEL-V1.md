@@ -186,7 +186,10 @@ producer/model payload. An attached host-managed connection with
 scope-local `mcp_connection_authority` record before discovery. Host detach
 and close revoke its current epoch; a late revoke from an old session
 cannot revoke a replacement with the same connection ID. Only the epoch's
-SHA-256 hash is stored, never the raw host token.
+SHA-256 hash is stored, never the raw host token. Each revoked epoch
+leaves a scope-local immutable tombstone so a stale worker cannot resurrect
+A after A→B→A reconnects. Tombstones have storage/retention cost and must not
+be blindly pruned without a host-managed minimum live session generation.
 
 `appendMcpOccurrence` checks this active authority epoch **inside the
 same transaction** that writes the event and dedup receipt, using a shared
