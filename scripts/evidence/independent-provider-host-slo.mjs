@@ -4,6 +4,7 @@ const MAX_BYTES=8*1024*1024;
 const MAX_EVENTS=100000;
 const NAME=/^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,127}$/;
 const SHA=/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
+const validName=value=>typeof value==='string'&&NAME.test(value);
 const REFUSED='EI_INDEPENDENT_SLO_EVIDENCE_REFUSED';
 const fail=code=>{const error=new Error(REFUSED+':'+code);error.code=REFUSED;throw error;};
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
@@ -30,7 +31,7 @@ function uniqueMap(records,field) {
   if(!Array.isArray(records)||records.length<1000||records.length>MAX_EVENTS)fail('INVALID_SAMPLE_COUNT');
   const out=new Map();
   for(const record of records) {
-    if(!record||!NAME.test(record[field])||out.has(record[field]))fail('MISSING_OR_DUPLICATE_ID');
+    if(!record||!validName(record[field])||out.has(record[field]))fail('MISSING_OR_DUPLICATE_ID');
     out.set(record[field],record);
   }
   return out;
@@ -54,9 +55,9 @@ export function assessIndependentProviderHostEvidence({
   trustedProviderPublicKeyPem,trustedHostPublicKeyPem,
   expectedProviderId,expectedHostId,ei,preRegisteredSloBudgets,
 }={}) {
-  if(!NAME.test(expectedProviderId)||!NAME.test(expectedHostId) ||
+  if(!validName(expectedProviderId)||!validName(expectedHostId) ||
       expectedProviderId===expectedHostId||
-      !NAME.test(expectedProviderKeyId)||!NAME.test(expectedHostKeyId)||
+      !validName(expectedProviderKeyId)||!validName(expectedHostKeyId)||
       !ei || !preRegisteredSloBudgets ||
       typeof trustedProviderPublicKeyPem!=='string'||typeof trustedHostPublicKeyPem!=='string')fail('MISSING_INDEPENDENT_TRUST_ROOT');
   const p=authenticatedFixture(provider,expectedProviderKeyId,trustedProviderPublicKeyPem);
@@ -66,7 +67,7 @@ export function assessIndependentProviderHostEvidence({
       h.body?.schema!=='event-intelligence.host-observations.v1' ||
       p.body.providerId!==expectedProviderId ||
       h.body.hostId!==expectedHostId ||
-      !NAME.test(p.body.workloadId) || p.body.workloadId!==h.body.workloadId ||
+      !validName(p.body.workloadId) || p.body.workloadId!==h.body.workloadId ||
       ei.workloadId!==p.body.workloadId)fail('SIGNED_IDENTITY_MISMATCH');
 
   const started=asTime(p.body.startedAt);
@@ -100,7 +101,7 @@ export function assessIndependentProviderHostEvidence({
   const wakeIds=new Set(),receiptIds=new Set(),hostTimes=[];
   let latestHostCompletionElapsedMs=0;
   for(const [id,e] of receipts) {
-    if(!events.has(id)||!NAME.test(e.wakeId)||!NAME.test(e.runtimeReceiptId)||
+    if(!events.has(id)||!validName(e.wakeId)||!validName(e.runtimeReceiptId)||
         wakeIds.has(e.wakeId)||receiptIds.has(e.runtimeReceiptId)||
         e.effectCommitted!==true||!finiteRate(e.hostEffectMs)||
         !finiteRate(e.completedElapsedMs)||
