@@ -20,11 +20,19 @@ export function createOwnerReadGuard({ triggerControl, store, owner }) {
     return error;
   };
 
+  // Defense in depth: never trust a malformed/buggy listTriggers adapter
+  // merely because it accepted {owner}. Recheck persisted owner/tenant on
+  // every returned row before an ID or version is considered authorized.
+  const sameOwner=(a,b)=>a?.type===b.type &&
+    a?.principal_id===b.principal_id &&
+    (a?.tenant_id??null)===(b?.tenant_id??null);
+
   async function assertTrigger(triggerId, version) {
     const rows = await triggerControl.listTriggers({ owner });
     const owned = rows
       .filter((row) =>
         row?.definition?.triggerId === triggerId &&
+        sameOwner(row?.state?.owner,owner) &&
         (version === undefined || row.definition.version === version)
       )
       .sort((left, right) =>
