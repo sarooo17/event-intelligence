@@ -142,3 +142,19 @@ Pending: cross-worker revocation/queued work semantics; externally enforced
 transport body/time quotas and tenant rate/backpressure; all-unlabelled
 telemetry canary protection; private independent reviewer signoff. Do not
 check #45's security certification acceptance on this ledger alone.
+
+## Provider-controlled diagnostic event names (#45)
+
+Provider-selected event descriptor names may themselves be private data:
+a string without `token=` or `Bearer` is still sensitive when supplied
+by an untrusted source. The push/webhook failure and termination
+observability records no longer copy raw `subscription.eventName`; retain
+fixed, host-controlled correlation fields and constant failure code only.
+A deterministic forty-case unlabelled secret corpus exercises both provider
+callbacks through the public release security gate.
+
+**Limit:** this protects the MCP client provider-error paths, not arbitrary
+caller-provided observability metadata or unlabelled data in host-selected
+scope/connection IDs; those require sink access restrictions and a broader
+privacy review before #45 Acceptance #3 can be checked. No provider secrets,
+OAuth or runtime authorization are added to EI.
