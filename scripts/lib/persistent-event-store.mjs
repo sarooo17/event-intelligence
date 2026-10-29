@@ -899,6 +899,11 @@ export class PersistentEventStore {
     });
   }
 
+  /** JSONL reference store's in-memory current-match index. */
+  getTriggerMatch(matchId) {
+    return this.#triggerMatches.get(String(matchId)) ?? null;
+  }
+
   listTriggerMatches(triggerId) {
     return [...this.#triggerMatches.values()]
       .filter((record) => !triggerId || record.triggerId === triggerId);
