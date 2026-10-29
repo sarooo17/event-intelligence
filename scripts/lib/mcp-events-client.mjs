@@ -1377,6 +1377,15 @@ export class McpEventsClientManager {
         this.assertConnectionAttached(connection);
         if (error?.terminalReason === 'forbidden') {
           this.terminalConnections.add(connection);
+          // Provider Forbidden is a terminal suspension, not only a local
+          // poll-cache hint. With strict shared PostgreSQL sessions, revoke
+          // the host-owned epoch so other workers also lose append rights.
+          // A PG failure stays in the retry queue and is surfaced, never
+          // reported as successful global revocation.
+          if(connection.authorityEpoch) {
+            this.queueAuthorityRevocation(connection);
+            await this.flushAuthorityRevocations();
+          }
         } else if (error?.terminalReason === 'not_found') {
           let perConnection = this.terminalPollSubscriptions.get(connection);
           if (!perConnection) {
