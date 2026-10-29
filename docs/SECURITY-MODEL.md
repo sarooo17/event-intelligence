@@ -445,3 +445,25 @@ MCP event conversion that must reject oversized input **before hashing**,
 multibyte aggregate overflow, semantic preservation of valid own keys, and
 non-execution of malicious getters/Proxy traps. This is a partial #45
 resource-exhaustion defense, not independent security certification.
+
+## MCP Events decoded ingress byte budgets (#45)
+
+Each host-managed MCP connection now admits only bounded *decoded JSON*:
+`maxOccurrenceBytes` defaults to 256 KiB (configurable 1 KiB–1 MiB),
+`maxPollPageBytes` defaults to 1 MiB (1 KiB–4 MiB), and
+`maxDiscoveryBytes` defaults to 1 MiB per discovery page (1 KiB–4 MiB).
+The poll page counts all event bytes before the first durable append.
+The identical occurrence bound applies to push/webhook events and callback
+state updates; discovery descriptors are bounded before registration.
+Rejections use a fixed error and code
+`MCP_EVENTS_DECODED_BYTE_LIMIT_EXCEEDED`, never embedding event data.
+The failed page or callback does not advance its durable cursor or activate
+consumers. Earlier successful poll pages and concurrent already-accepted
+callbacks may have committed and are not undone.
+
+**Scope:** these limits operate only *after* a host MCP transport has decoded
+and materialized its response. They do **not** limit raw network body bytes,
+HTTP decompression, request execution time, cross-worker per-tenant rate,
+shared queue depth, or process-level memory consumed before decode. Those
+remain host/gateway deployment controls and require separate evidence.
+This change does not turn EI into a provider authentication or policy engine.
