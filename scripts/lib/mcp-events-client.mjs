@@ -629,6 +629,9 @@ export class McpEventsClientManager {
     // cleanup. Track callbacks accepted before shutdown; reject later ones.
     this.deliveryCallbackInFlight = new Set();
     this.occurrenceInFlight = new Set();
+    // Retain failed revocations even when detach removed connection objects.
+    // A host may retry close after an unavailable PostgreSQL scope recovers.
+    this.pendingAuthorityRevocations = new Map();
 
     for (const connection of connections) {
       this.addConnection(connection);
@@ -800,22 +803,61 @@ export class McpEventsClientManager {
     }
   }
 
+  queueAuthorityRevocation(connection) {
+    if(!connection?.authorityEpoch)return null;
+    const key=JSON.stringify([
+      connection.scopeId,connection.connectionId,connection.authorityEpoch,
+    ]);
+    if(!this.pendingAuthorityRevocations.has(key)) {
+      this.pendingAuthorityRevocations.set(key,connection);
+    }
+    return key;
+  }
+
+  async flushAuthorityRevocations() {
+    // Continue attempting healthy independent scopes after one failed scope.
+    // A failure must never be treated as success or discarded from the
+    // retry queue. Only successfully processed keys are removed.
+    const failures=[];
+    for(const [key,connection] of [...this.pendingAuthorityRevocations]) {
+      try {
+        const context=await this.scopeContext(connection);
+        if(typeof context.store.revokeMcpConnectionAuthority!=='function') {
+          throw new Error('Missing shared MCP authority revocation capability');
+        }
+        await context.store.revokeMcpConnectionAuthority({
+          connectionId:connection.connectionId,epoch:connection.authorityEpoch,
+        });
+        this.pendingAuthorityRevocations.delete(key);
+      }catch {
+        failures.push(key);
+      }
+    }
+    if(failures.length) {
+      const error=new Error('MCP session revocations incomplete; retry host shutdown');
+      error.code='MCP_SESSION_REVOCATION_INCOMPLETE';
+      throw error;
+    }
+  }
+
   async detachConnectionUnchecked(connectionId) {
     // Revoke authority synchronously. Reserve cleanup in the *same* durable
     // mutation queue before the first await, so new sessions cannot discover
     // sources or persist cursors ahead of the old disable operation.
     const connection = this.connections.get(connectionId);
     const removed = this.connections.delete(connectionId);
+    const authorityKey = removed ? this.queueAuthorityRevocation(connection) : null;
     const cleanup = removed
       ? this.withConnectionMutation(connectionId, async () => {
           const context = await this.scopeContext(connection);
-          if(connection.authorityEpoch) {
+          if(authorityKey) {
             if(typeof context.store.revokeMcpConnectionAuthority!=='function') {
               throw new Error('Host MCP connection authority fence unavailable');
             }
             await context.store.revokeMcpConnectionAuthority({
               connectionId,epoch:connection.authorityEpoch,
             });
+            this.pendingAuthorityRevocations.delete(authorityKey);
           }
           const sources = await context.store.listEventSources({
             connectionIds: [connectionId],
@@ -2065,7 +2107,9 @@ export class McpEventsClientManager {
       rejectClose = reject;
     });
     Promise.resolve().then(async () => {
-      await this.stop({ shutdown: true });
+      let closeFailure = null;
+      try { await this.stop({ shutdown: true }); }
+      catch { closeFailure = new Error('MCP shutdown session teardown failed'); }
       // Already-accepted manual/scoped attachments may be awaiting an
       // untrusted provider. All must settle (or fail on assertOpen) while
       // the runtime/store is still available, never after it has closed.
@@ -2081,12 +2125,10 @@ export class McpEventsClientManager {
       // Otherwise a pending scope resolver could activate an epoch after
       // shutdown's premature revoke and leave other workers authorized.
       for(const connection of [...this.connections.values()]) {
-        if(!connection.authorityEpoch)continue;
-        const context=await this.scopeContext(connection);
-        await context.store.revokeMcpConnectionAuthority({
-          connectionId:connection.connectionId,epoch:connection.authorityEpoch,
-        });
+        this.queueAuthorityRevocation(connection);
       }
+      try { await this.flushAuthorityRevocations(); }
+      catch (error) { closeFailure ??= error; }
       // Gaps acknowledged before the close fence can still have a
       // pending authoritative store write; finish them before runtime.close.
       while (this.reconciliationInFlight.size > 0) {
@@ -2100,7 +2142,13 @@ export class McpEventsClientManager {
       while (this.occurrenceInFlight.size > 0) {
         await Promise.allSettled([...this.occurrenceInFlight]);
       }
-    }).then(resolveClose, rejectClose);
+      if (closeFailure) throw closeFailure;
+    }).then(resolveClose, error => {
+      // Keep all failed keys for a repeat close() after transient recovery.
+      // A rejected cached closePromise must not permanently poison cleanup.
+      this.closePromise = null;
+      rejectClose(error);
+    });
     return this.closePromise;
   }
 
