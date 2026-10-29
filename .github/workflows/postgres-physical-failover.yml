@@ -5,6 +5,7 @@ on:
   pull_request:
     paths:
       - "scripts/evidence/postgres-physical-failover-drill.mjs"
+      - "scripts/evidence/postgres-physical-ei-ledger.mjs"
       - "scripts/evidence/postgres-physical-failover-run.sh"
       - ".github/workflows/postgres-physical-failover.yml"
       - "docs/POSTGRES-PHYSICAL-FAILOVER-DRILL.md"
@@ -34,6 +35,8 @@ jobs:
           test "$(git rev-parse HEAD)" = "$EI_FAILOVER_SOURCE_SHA"
       - name: Install pinned pg driver without running package hooks
         run: npm ci --ignore-scripts
+      - name: Compile EI runtime for real durable-match and wake recovery
+        run: npm run build
       - name: Run disposable physical streaming PostgreSQL16 primary/standby kill and promotion
         run: bash scripts/evidence/postgres-physical-failover-run.sh
       - name: Preserve raw measured evidence
