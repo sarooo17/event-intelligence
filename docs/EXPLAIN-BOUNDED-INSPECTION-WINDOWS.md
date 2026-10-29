@@ -62,3 +62,7 @@ does not represent arbitrary production distributions, storage
 compaction, mixed tenants under contention, or external failover.
 The acceptance #5 may only be checked if the raw workflow evidence is
 successful, reviewed, and scoped clearly to the measured envelope.
+
+## Review fixes — complete bounded capability and identity gates
+
+Strict mode now **requires** all bounded store capabilities, notably keyed definition lookup and bounded recent-history; an unsupported custom store cannot silently fall back to `listTriggers()` or materialize all history. A bounded selector result must match the requested trigger ID and version and any explicit match ID before any derived/deadline/history read. A poisoned foreign result is refused as `EVENT_INTELLIGENCE_INSPECTION_MATCH_IDENTITY_INVALID`. These are Codex P2 repairs for #326 and are covered by adversarial custom-store tests.
