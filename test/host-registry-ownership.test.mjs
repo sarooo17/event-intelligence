@@ -324,7 +324,7 @@ test('registry rotates host authority epoch on same MCP client identity',async()
     assert.deepEqual(begin.map(x=>x.epoch),[a]);
     registryEntries=[{...registryEntries[0],authorityEpoch:b}];
     const result=await host.refreshMcpRegistry();
-    assert.ok(result.some(x=>x.status==='attached'));
+    assert.ok(result.some(x=>x.status==='reattached'));
     assert.deepEqual(revoke.map(x=>x.epoch),[a]);
     assert.deepEqual(begin.map(x=>x.epoch),[a,b]);
     assert.equal(host.runtime.mcpEventsClient.connections.get('rotate').authorityEpoch,b);
