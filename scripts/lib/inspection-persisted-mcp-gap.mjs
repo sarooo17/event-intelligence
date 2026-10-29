@@ -1,6 +1,14 @@
 // Read-only bridge from already persisted MCP source completeness state.
 // Never accept provider payload claims about unavailable sources or watermarks.
-export async function persistedGapInspectionFact(store, {triggerId, triggerVersion, matchId}) {
+export async function persistedGapInspectionFact(store, {triggerId, triggerVersion, matchId}, {
+  boundedSourceLimit=null,
+}={}) {
+  if(boundedSourceLimit!==null &&
+     (!Number.isSafeInteger(boundedSourceLimit) ||
+       boundedSourceLimit<1||boundedSourceLimit>100 ||
+       typeof store.listBoundedEventSources!=='function')) {
+    return null; // Strict mode refuses to fall back to unbounded list.
+  }
   if (typeof triggerId !== 'string' || !triggerId ||
       typeof triggerVersion !== 'string' || !triggerVersion ||
       (matchId !== null && typeof matchId !== 'string')) return null;
@@ -27,7 +35,17 @@ export async function persistedGapInspectionFact(store, {triggerId, triggerVersi
   if (!Array.isArray(attached) || attached.length === 0 || attached.length > 64 ||
       !attached.every(id=>typeof id==='string' && id.length>0)) return null;
   if (!Array.isArray(definition.clauses) || definition.clauses.length>64) return null;
-  const sources = await store.listEventSources({connectionIds:attached,enabledOnly:true});
+  // The strict PG capability reads a server-side PK ordered LIMIT N+1,
+  // never a JS-filtered full event-source inventory. If incomplete, avoid
+  // incorrectly claiming the selected source is available/unavailable.
+  const page = boundedSourceLimit === null ? null
+    : await store.listBoundedEventSources({limit:boundedSourceLimit});
+  if(page && (page.hasMore!==false ||
+    !Array.isArray(page.records) ||
+    page.records.length>boundedSourceLimit)) return null;
+  const sources=page ? page.records.filter(source=>
+    source.enabled!==false && attached.includes(source.connectionId))
+    : await store.listEventSources({connectionIds:attached,enabledOnly:true});
   // Fail closed when source identity is ambiguous or the scoped backing
   // store has not durably recorded this connection's capability.
   if (!Array.isArray(sources) || sources.length > 1024) return null;
