@@ -137,7 +137,7 @@ const stdioInspect = z.object({
     kind: z.enum([
       'paused', 'lifecycle_ended', 'wake_failed', 'candidate_expired',
       'fired', 'derived_emitted', 'condition_satisfied', 'waiting_delivery',
-      'source_unavailable', 'watermark_pending', 'budget_truncated',
+      'source_unavailable', 'watermark_pending', 'source_gap_unresolved', 'budget_truncated',
       'candidate_impossible', 'deadline_pending', 'not_yet_satisfied',
     ]),
     basis: z.enum(['persisted_local', 'scoped_store_fact']),
