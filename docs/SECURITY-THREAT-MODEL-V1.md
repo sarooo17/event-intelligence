@@ -278,3 +278,20 @@ be halted by a different host process. Operational stop/credential revoke
 at the host transport and protection of downstream queued effects remain
 required. Never delete a tombstone before the host has established a
 replay-safe epoch retirement floor.
+
+## Event-derived text cannot authorize host trigger mutations (#45)
+
+The neutral portable agent tool facade explicitly calls the host
+`control({action:'trigger.create', ...})` before a durable trigger
+mutation. `test/host-policy-untrusted-instruction-adversarial.test.mjs`
+exercises 256 distinct prompt-injection/policy-spoofed untrusted event
+instruction strings and asserts the runtime-controlled denial remains
+unchanged, host policy is consulted on each valid operation, and **zero**
+trigger writes occur. A native host approval interrupt is also asserted to
+propagate unchanged, not converted into an EI-owned permission grant.
+
+This evidence is a negative authorization regression for the **create**
+capability, not certification that the host's own policy, OAuth, runtime
+permissions, or side effects are always safe. Cross-scope ownership and
+wake identity are verified separately, and host authorization must be
+rechecked when actually executing queued downstream work.
