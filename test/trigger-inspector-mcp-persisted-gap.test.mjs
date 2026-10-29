@@ -58,3 +58,65 @@ test('real JSONL durable MCP truncated page is explained as gap after restart an
     try{await store.close();}finally{await rm(dir,{recursive:true,force:true});}
   }
 });
+
+test('real canonical evaluator truncation is audit-persisted, stable after restart and not stale',async()=>{
+  const {evaluatePatternV2,PatternAstV2DefinitionSchema}=await import(
+    '../dist/src/intelligenceProtocol/index.js');
+  const now='2026-10-29T10:00:00.000Z';
+  const ast=PatternAstV2DefinitionSchema.parse({
+    version:'2',
+    root:{kind:'sequence',contiguity:'next',children:[
+      {kind:'anyOf',children:[{kind:'event',ref:'a'},{kind:'event',ref:'z'}]},
+      {kind:'event',ref:'b'},
+    ]},
+    partitionBy:[],
+    selection:{overlap:'allow',afterMatch:'keepAll',maxMatchesPerEvent:100},
+    execution:{maxCandidates:2,maxSemanticEvaluations:0,maxBufferedEvents:16},
+  });
+  const events=['a','a','z','b'].map((ref,i)=>({
+    clauseId:ref,sourceEventId:'evt-'+i,traceId:'trace-'+i,
+    eventName:ref,occurredAt:new Date(Date.parse(now)+i*1000).toISOString(),
+    serverId:'provider',subscriptionArguments:{},data:{},
+  }));
+  const evaluated=await evaluatePatternV2({definition:ast,events});
+  assert.equal(evaluated.truncated,true,'must be a real evaluator budget exhaustion');
+  assert.equal(evaluated.matches.length,0);
+  const dir=await mkdtemp(path.join(os.tmpdir(),'ei-explain-budget-audit-'));
+  let store=new PersistentEventStore(dir);
+  const partial={
+    protocolVersion:'0.2.0',schemaVersion:'trigger.v0.2',
+    matchId:'candidate',triggerId:'guarded-gap',triggerVersion:'1',
+    status:'partial',openedAt:now,updatedAt:now,
+    expiresAt:'2026-10-29T11:00:00.000Z',
+    partitionKey:null,sourceEvents:[],
+    patternState:null,firedWakeId:null,derivedEventIds:[],
+  };
+  try{
+    await store.init();await setup(store);
+    await store.appendTriggerMatch(partial);
+    await store.appendAudit({
+      auditId:'audit-budget-one',traceId:'trace',
+      timestamp:now,kind:'trigger.partial',entityType:'trigger_match',
+      entityId:'candidate',
+      details:{triggerId:'guarded-gap',triggerVersion:'1',
+        truncated:evaluated.truncated},
+    });
+    const explain=()=>new TriggerInspector({store})
+      .inspect({triggerId:'guarded-gap',version:'1',matchId:'candidate'});
+    assert.equal((await explain()).diagnosisV2.kind,'budget_truncated');
+    await store.close();
+    store=new PersistentEventStore(dir);await store.init();
+    assert.equal((await explain()).diagnosisV2.kind,'budget_truncated');
+    await store.appendAudit({
+      auditId:'audit-budget-two',traceId:'trace',
+      timestamp:'2026-10-29T10:00:01.000Z',
+      kind:'trigger.partial',entityType:'trigger_match',entityId:'candidate',
+      details:{triggerId:'guarded-gap',triggerVersion:'1',truncated:false},
+    });
+    assert.equal((await explain()).diagnosisV2.kind,'not_yet_satisfied',
+      'old evaluator exhaustion cannot override a newer complete evaluation');
+    assert.equal(await store.verifyAudit(),true);
+  }finally{
+    try{await store.close();}finally{await rm(dir,{recursive:true,force:true});}
+  }
+});
