@@ -28,7 +28,7 @@ function fixture(){
     providerId:'external-provider',workloadId,startedAt:start,finishedAt:finish,events};
   const h={schema:'event-intelligence.host-observations.v1',
     hostId:'external-host',workloadId,startedAt:start,finishedAt:finish,receipts};
-  const ei={workloadId,sourceCommitSha:'a'.repeat(40),
+  const ei={workloadId,sourceCommitSha:'a'.repeat(64),
     productionSloCertified:false,expectedWakes:1200,
     persistedDeliveredWakes:1200,verifiedWakes:1200,duplicateHostEffects:0,
     wakeSettlement:{settled:true,verifiedHostReceipts:1200,dueWakeBacklog:0,
