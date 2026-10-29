@@ -7,6 +7,21 @@ export async function persistedGapInspectionFact(store, {triggerId, triggerVersi
   const definition = await store.getTrigger(triggerId,triggerVersion);
   if (!definition || definition.triggerId !== triggerId ||
       definition.version !== triggerVersion) return null;
+  // The canonical Pattern evaluator already persists bounded-search
+  // completeness in trigger.partial audit details. Read the latest match
+  // transition, not a stale historical truncated=true from an older run.
+  if (matchId && typeof store.getLatestTriggerEvaluationAudit==='function') {
+    const audited=await store.getLatestTriggerEvaluationAudit(matchId);
+    if (audited?.kind==='trigger.partial' &&
+        audited?.entityType==='trigger_match' &&
+        audited?.entityId===matchId &&
+        audited?.details?.triggerId===triggerId &&
+        audited?.details?.triggerVersion===triggerVersion &&
+        audited?.details?.truncated===true) {
+      return {contract:'ei.inspection-fact.v1',triggerId,triggerVersion,
+        matchId,durable:true,kind:'budget_truncated'};
+    }
+  }
   const state = await store.getTriggerState(triggerId,triggerVersion);
   const attached = state?.connectionIds;
   if (!Array.isArray(attached) || attached.length === 0 || attached.length > 64 ||
