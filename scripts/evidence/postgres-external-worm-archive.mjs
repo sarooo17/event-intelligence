@@ -98,7 +98,10 @@ export async function publishSignedSourceAndAuditWorm({
     witness:auditWitness,archiveBytes:audit,trustedPublicKeyPem,
     expectedKeyId:auditKeyId,expectedScopeId,
   });
-  if (!sourceOk || !auditOk || JSON.stringify(auditWitness.checkpoint) !== JSON.stringify(auditCheckpoint)) {
+  if (!sourceOk || !auditOk || auditWitness?.checkpoint?.scopeId !== auditCheckpoint.scopeId ||
+      auditWitness?.checkpoint?.firstHash !== auditCheckpoint.firstHash ||
+      auditWitness?.checkpoint?.endSequence !== auditCheckpoint.endSequence ||
+      auditWitness?.checkpoint?.headHash !== auditCheckpoint.headHash) {
     fail('PINNED_WITNESS_INVALID');
   }
   await requireObjectLockBucket(client,commands,bucket);
