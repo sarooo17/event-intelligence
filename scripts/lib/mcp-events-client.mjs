@@ -618,6 +618,7 @@ export class McpEventsClientManager {
     // Push/webhook providers may retain callback references after session
     // cleanup. Track callbacks accepted before shutdown; reject later ones.
     this.deliveryCallbackInFlight = new Set();
+    this.occurrenceInFlight = new Set();
 
     for (const connection of connections) {
       this.addConnection(connection);
@@ -1156,29 +1157,36 @@ export class McpEventsClientManager {
     assertJsonSchemaValue(descriptor.payloadSchema, occurrence.data);
 
     const receivedAt = this.now().toISOString();
-    const receipt = await context.store.appendMcpOccurrence(
-      connection.serverId,
-      occurrence,
-      subscription.subscriptionId,
-    );
-    if (!receipt.accepted) return { accepted: false, occurrence };
-    // The host might revoke the MCP session while appendMcpOccurrence was
-    // awaiting storage. Failing closed takes precedence over delivery.
-    // A raced append may remain durable: see explicit race limitation docs.
-    if (!this.isConnectionAttached(connection)) {
-      return { accepted: false, reason: 'detached' };
+    // Track BEFORE the first storage await. A concurrent detach may remove
+    // the connection-ID poll slot; this task is still an admitted append
+    // and must finish or fail before host shutdown releases the store.
+    const processing = (async () => {
+      const receipt = await context.store.appendMcpOccurrence(
+        connection.serverId,
+        occurrence,
+        subscription.subscriptionId,
+      );
+      if (!receipt.accepted) return { accepted: false, occurrence };
+      // Pre-revoke durably accepted work must complete CEP, otherwise a
+      // stored dedup ID could strand the event permanently on replay.
+      // New work, stale cursors and host effect authority remain fenced.
+      await context.compositeEventConsumer.ingestMcpOccurrence({
+        event: occurrence,
+        serverId: connection.serverId,
+        provider: 'mcp',
+        traceId:
+          `mcp:${connection.serverId}:${subscription.subscriptionId}:${occurrence.eventId}`,
+        subscriptionArguments: subscription.arguments,
+        receivedAt,
+      });
+      return { accepted: true, occurrence };
+    })();
+    this.occurrenceInFlight.add(processing);
+    try {
+      return await processing;
+    } finally {
+      this.occurrenceInFlight.delete(processing);
     }
-
-    await context.compositeEventConsumer.ingestMcpOccurrence({
-      event: occurrence,
-      serverId: connection.serverId,
-      provider: 'mcp',
-      traceId:
-        `mcp:${connection.serverId}:${subscription.subscriptionId}:${occurrence.eventId}`,
-      subscriptionArguments: subscription.arguments,
-      receivedAt,
-    });
-    return { accepted: true, occurrence };
   }
 
   async saveSubscriptionState(
@@ -2033,6 +2041,10 @@ export class McpEventsClientManager {
       await this.drain();
       while (this.deliveryCallbackInFlight.size > 0) {
         await Promise.allSettled([...this.deliveryCallbackInFlight]);
+      }
+      // Detached, already-admitted appends still drain before store closure.
+      while (this.occurrenceInFlight.size > 0) {
+        await Promise.allSettled([...this.occurrenceInFlight]);
       }
     }).then(resolveClose, rejectClose);
     return this.closePromise;
