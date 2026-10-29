@@ -198,6 +198,7 @@ export class PostgresEventStore {
     adoptUnversionedSchema = false,
     dispatchPoolMax = null,
     dispatchPoolIdentity = null,
+    requireMcpSessionFence = false,
   } = {}) {
     if (!pool || typeof pool.query !== 'function' || typeof pool.connect !== 'function') {
       throw new Error(
@@ -216,6 +217,7 @@ export class PostgresEventStore {
         (typeof dispatchPoolIdentity !== 'object' || !dispatchPoolIdentity)) {
       throw new TypeError('dispatchPoolIdentity must be an object representing the physical pool');
     }
+    this.requireMcpSessionFence = requireMcpSessionFence === true;
     this.dispatchPoolMax = dispatchPoolMax;
     this.dispatchPoolIdentity = dispatchPoolIdentity;
     this.pool = pool;
@@ -712,6 +714,7 @@ export class PostgresEventStore {
       adoptUnversionedSchema: this.adoptUnversionedSchema,
       dispatchPoolMax: this.dispatchPoolMax,
       dispatchPoolIdentity: this.dispatchPoolIdentity,
+      requireMcpSessionFence: this.requireMcpSessionFence,
     });
     scoped.initialized = this.initialized;
     if (!scoped.initialized) await scoped.init();
@@ -2456,7 +2459,83 @@ export class PostgresEventStore {
     }
   }
 
-  async appendMcpOccurrence(serverId, eventInput, subscriptionIdInput = null) {
+  // Host-controlled authority epoch, unrelated to provider OAuth.
+  // The epoch is deliberately a high-entropy host-generated opaque string,
+  // persisted only as a SHA-256 digest, never raw credentials.
+  mcpAuthorityInputs(input={}) {
+    const {connectionId,epoch}=input??{};
+    if(typeof connectionId!=='string'||!connectionId||
+       Buffer.byteLength(connectionId,'utf8')>256 ||
+       typeof epoch!=='string'||epoch.length<32||epoch.length>256) {
+      const error=new Error('MCP session authority requires host connection and epoch');
+      error.code='MCP_SESSION_AUTHORITY_INVALID';
+      throw error;
+    }
+    return {connectionId,epochHash:createHash('sha256').update(epoch).digest('hex')};
+  }
+
+  async beginMcpConnectionAuthority(input) {
+    const {connectionId,epochHash}=this.mcpAuthorityInputs(input);
+    return this.tx(async client=>{
+      await this.lock(client,'mcp-connection-authority',connectionId);
+      const prior=await this.get('mcp_connection_authority',connectionId,client);
+      const retiredKey=connectionId+':'+epochHash;
+      const retired=await this.get('mcp_connection_retired_epoch',retiredKey,client);
+      if(retired) {
+        const error=new Error('Retired MCP session epoch cannot be reused');
+        error.code='MCP_SESSION_REVOKED';
+        throw error;
+      }
+      if(prior?.epochHash===epochHash && prior?.active!==true) {
+        const error=new Error('Revoked MCP session epoch cannot be reused');
+        error.code='MCP_SESSION_REVOKED';
+        throw error;
+      }
+      if(prior?.active===true && prior.epochHash!==epochHash) {
+        const error=new Error('Host must revoke old connection epoch before replacement');
+        error.code='MCP_SESSION_EPOCH_CONFLICT';
+        throw error;
+      }
+      const generation=Number(prior?.generation??0)+
+        (prior?.epochHash===epochHash?0:1);
+      if(!Number.isSafeInteger(generation)||generation<1) {
+        throw new Error('MCP session generation exhausted');
+      }
+      await this.upsert('mcp_connection_authority',connectionId,{
+        connectionId,epochHash,active:true,generation,
+      },client);
+      return {connectionId,generation,active:true};
+    });
+  }
+
+  async revokeMcpConnectionAuthority(input) {
+    const {connectionId,epochHash}=this.mcpAuthorityInputs(input);
+    return this.tx(async client=>{
+      await this.lock(client,'mcp-connection-authority',connectionId);
+      const prior=await this.get('mcp_connection_authority',connectionId,client);
+      // Commit the tombstone under the same advisory lock EVEN IF this
+      // epoch is absent or not the current active session. Otherwise a host
+      // revocation racing a delayed registration would succeed with false
+      // and the later registration could resurrect revoked authority.
+      const isCurrent=prior?.epochHash===epochHash && prior?.active===true;
+      if(isCurrent) {
+        await this.upsert('mcp_connection_authority',connectionId,{
+          ...prior,active:false,
+        },client);
+      }
+      // Never revoke a replacement with a different epoch. Tombstone only
+      // the requested SHA256 epoch; idempotent historical markers are safe.
+      await this.upsert('mcp_connection_retired_epoch',
+        connectionId+':'+epochHash,{
+          epochHash,connectionId,retired:true,
+          generation:isCurrent?prior.generation:null,
+        },client);
+      return isCurrent;
+    });
+  }
+
+  async appendMcpOccurrence(serverId, eventInput, subscriptionIdInput = null,
+    authority = null) {
     const event = McpEventOccurrenceSchema.parse(eventInput);
     const subscriptionId = subscriptionIdInput == null
       ? null
@@ -2468,6 +2547,16 @@ export class PostgresEventStore {
       // commit including the first INSERT when no counter row exists.
       // Preserve consistent advisory-lock ordering before the key lock.
       await this.lock(client, 'mcp-archive-sequence', 'scope');
+      if(this.requireMcpSessionFence || authority!==null) {
+        const {connectionId,epochHash}=this.mcpAuthorityInputs(authority);
+        await this.lock(client,'mcp-connection-authority',connectionId);
+        const current=await this.get('mcp_connection_authority',connectionId,client);
+        if(!current||current.active!==true||current.epochHash!==epochHash) {
+          const error=new Error('MCP session not authorized for occurrence append');
+          error.code='MCP_SESSION_REVOKED';
+          throw error;
+        }
+      }
       await this.lock(client, 'mcp-occurrence', key);
       const existing = await this.get('mcp_occurrence_key', key, client);
       if (existing) {

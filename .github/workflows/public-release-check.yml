@@ -57,6 +57,7 @@ jobs:
             test/mcp-occurrence-ingress-security.test.mjs \
             test/mcp-decoded-byte-budget-security.test.mjs \
             test/mcp-revoked-session-fencing.test.mjs \
+            test/mcp-session-authority-host-contract.test.mjs \
             test/mcp-accepted-append-revoke-replay.test.mjs \
             test/mcp-provider-occurrence-name-error-boundary.test.mjs \
             test/mcp-provider-error-boundary.test.mjs \
@@ -156,4 +157,5 @@ jobs:
             test/postgres-inspector-restart.test.mjs \
             test/postgres-logical-dump-restore.test.mjs \
             test/postgres-owner-revocation-snapshot.test.mjs \
+            test/postgres-mcp-session-authority-fence.test.mjs \
             test/postgres-audit-proof-windows.test.mjs
