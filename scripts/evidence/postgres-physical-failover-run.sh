@@ -69,6 +69,10 @@ done
 docker exec -e PGPASSWORD=ei_disposable_primary_password "$primary" \
   psql -v ON_ERROR_STOP=1 -U postgres -d postgres \
   -c "ALTER SYSTEM SET synchronous_standby_names = 'ei_standby';" >/dev/null
+# Default for all NEW EI store connections as well, not only the 200 raw receipts.
+docker exec -e PGPASSWORD=ei_disposable_primary_password "$primary" \
+  psql -v ON_ERROR_STOP=1 -U postgres -d postgres \
+  -c "ALTER SYSTEM SET synchronous_commit = 'remote_apply';" >/dev/null
 docker exec -e PGPASSWORD=ei_disposable_primary_password "$primary" \
   psql -v ON_ERROR_STOP=1 -U postgres -d postgres -c "SELECT pg_reload_conf();" >/dev/null
 synced=no
