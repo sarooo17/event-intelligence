@@ -59,3 +59,13 @@ test('unknown version never launches a full-definition scan',async()=>{
   error=>error?.code==='TRIGGER_NOT_FOUND');
   assert.deepEqual(store.calls,['getTrigger']);
 });
+
+test('ambiguous trigger ID/version delimiters cannot cross-read another definition',async()=>{
+  const store=directStore();
+  // Both original pairs map to the same legacy key alpha@beta@1.
+  store.getTrigger=async()=>({...definition,triggerId:'alpha@beta',version:'1'});
+  await assert.rejects(()=>new TriggerInspector({store})
+    .inspect({triggerId:'alpha',version:'beta@1',matchId:'wanted'}),
+  error=>error?.code==='TRIGGER_NOT_FOUND');
+  assert.deepEqual(store.calls,[],'foreign match must never be fetched after misbound definition');
+});
