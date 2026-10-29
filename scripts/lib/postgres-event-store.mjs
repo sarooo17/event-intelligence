@@ -2953,6 +2953,55 @@ export class PostgresEventStore {
     }
   }
 
+  /**
+   * Strict bounded inspection proof for one selected match. Read latest
+   * scope-local evaluator audit only; do NOT scan the unbounded source
+   * inventory or guess availability/watermark from missing data.
+   * The SQL time budget and conditional payload projection prevent a
+   * large audit row from reaching Node before the size check.
+   */
+  async getBoundedInspectionFact({triggerId,triggerVersion,matchId}={}) {
+    if(typeof triggerId!=='string'||!triggerId||
+       typeof triggerVersion!=='string'||!triggerVersion||
+       typeof matchId!=='string'||!matchId)return null;
+    try {
+      return await this.tx(async client=>{
+        await client.query("SELECT set_config('statement_timeout',$1,true)",['2000ms']);
+        const result=await client.query(
+          'SELECT CASE WHEN octet_length(payload::text)<=8192 THEN payload ELSE NULL END AS payload'+
+          ' FROM '+this.history+
+          " WHERE scope_id=$1 AND kind='audit'"+
+          " AND payload->>'entityType'='trigger_match'"+
+          " AND payload->>'entityId'=$2"+
+          ' ORDER BY history_id DESC LIMIT 1',
+          [this.scopeId,matchId],
+        );
+        if(!result.rows.length)return null;
+        if(result.rows[0].payload===null){
+          const error=new Error('Inspection audit row exceeded strict byte limit');
+          error.code='EVENT_INTELLIGENCE_INSPECTION_BUDGET_EXCEEDED';
+          throw error;
+        }
+        const fact=result.rows[0].payload;
+        if(fact?.kind!=='trigger.partial' ||
+           fact?.entityType!=='trigger_match' ||
+           fact?.entityId!==matchId ||
+           fact?.details?.triggerId!==triggerId ||
+           fact?.details?.triggerVersion!==triggerVersion ||
+           fact?.details?.truncated!==true)return null;
+        return {contract:'ei.inspection-fact.v1',triggerId,triggerVersion,
+          matchId,durable:true,kind:'budget_truncated'};
+      });
+    }catch(error){
+      if(error?.code==='57014'){
+        const err=new Error('Strict evaluation audit read timed out');
+        err.code='EVENT_INTELLIGENCE_INSPECTION_BUDGET_EXCEEDED';
+        throw err;
+      }
+      throw error;
+    }
+  }
+
   async getInspectionFact({triggerId,triggerVersion,matchId=null}={}) {
     const {persistedGapInspectionFact} = await import('./inspection-persisted-mcp-gap.mjs');
     return persistedGapInspectionFact(this,{triggerId,triggerVersion,matchId});
