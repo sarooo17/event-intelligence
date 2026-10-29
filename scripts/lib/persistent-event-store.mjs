@@ -356,6 +356,12 @@ export class PersistentEventStore {
         ...(raw.nextPollAt ? { nextPollAt: String(raw.nextPollAt) } : {}),
         ...(raw.lastEventAt ? { lastEventAt: String(raw.lastEventAt) } : {}),
         ...(raw.lastError ? { lastError: String(raw.lastError) } : {}),
+        ...(['available','not_found'].includes(raw.sourceAvailability)
+          ? {sourceAvailability:raw.sourceAvailability,
+              ...(typeof raw.sourceAvailabilityObservedAt==='string'
+                ? {sourceAvailabilityObservedAt:raw.sourceAvailabilityObservedAt}
+                : {})}
+          : {}),
         ...(typeof raw.truncated === 'boolean' ? { truncated: raw.truncated } : {}),
         gapUnresolved: raw.gapUnresolved === true ||
           (raw.gapUnresolved === undefined && raw.truncated === true),
