@@ -1,6 +1,7 @@
 import { readOwnEventPath } from '../protocol/ownPath.js';
 import {
   SemanticConditionEngine,
+  projectSemanticInput,
 } from '../semantic/conditionEngine.js';
 import type {
   SemanticDecision,
@@ -41,6 +42,18 @@ export interface PatternV2SemanticTrace {
   decision: SemanticDecision;
 }
 
+/** Host-owned durable admission gate, invoked only on a cache miss. */
+export interface PatternV2SemanticAdmission {
+  reserve(request: {
+    namespace: string;
+    nodeId: string;
+    candidateSignature: string;
+    evaluatorIdentity: string;
+    inputBytes: number;
+    instructionBytes: number;
+  }): Promise<boolean> | boolean;
+}
+
 export interface PatternV2SemanticCache {
   get(key: string): Promise<SemanticDecision | null> | SemanticDecision | null;
   set(
@@ -79,6 +92,7 @@ interface EvaluationContext {
   workExhausted: boolean;
   semanticCache: Map<string, SemanticDecision>;
   durableSemanticCache: PatternV2SemanticCache | null;
+  semanticAdmission: PatternV2SemanticAdmission | null;
   semanticCacheNamespace: string;
   semanticContextRevision: string;
   semanticCacheTtlMs: number | null;
@@ -1648,6 +1662,26 @@ async function evaluateNode(
         context.truncated = true;
         continue;
       }
+      if(context.semanticAdmission) {
+        // Send only safe reference IDs and projected byte counts; never event data.
+        const projected=projectSemanticInput(
+          semanticSource(candidate,node.refs),node.input);
+        const approved=await context.semanticAdmission.reserve({
+          namespace:context.semanticCacheNamespace,
+          nodeId:node.id,
+          candidateSignature:candidateSignature(candidate),
+          evaluatorIdentity:String(context.evaluator?.cacheIdentity??''),
+          inputBytes:new TextEncoder().encode(JSON.stringify(projected)).byteLength,
+          instructionBytes:new TextEncoder().encode(node.instruction).byteLength,
+        });
+        if(approved !== true && approved !== false) {
+          throw new TypeError('Semantic admission must return a boolean');
+        }
+        if(!approved) {
+          context.truncated=true;
+          continue;
+        }
+      }
       context.semanticCacheMisses += 1;
       context.semanticEvaluations += 1;
       decision = await withTimeout(
@@ -1725,6 +1759,7 @@ export async function evaluatePatternV2({
   allowedLatenessMs = 0,
   semanticCache = null,
   semanticCacheNamespace = '',
+  semanticAdmission = null,
   semanticContextRevision = '',
   semanticCacheTtlMs = null,
   incompleteSourceRefs = new Set<string>(),
@@ -1736,6 +1771,7 @@ export async function evaluatePatternV2({
   allowedLatenessMs?: number;
   semanticCache?: PatternV2SemanticCache | null;
   semanticCacheNamespace?: string;
+  semanticAdmission?: PatternV2SemanticAdmission | null;
   semanticContextRevision?: string;
   semanticCacheTtlMs?: number | null;
   incompleteSourceRefs?: ReadonlySet<string>;
@@ -1746,6 +1782,11 @@ export async function evaluatePatternV2({
       (!Number.isSafeInteger(semanticCacheTtlMs) ||
        semanticCacheTtlMs < 1000 || semanticCacheTtlMs > 86400000))) {
     throw new RangeError('Invalid semantic context revision or cache TTL');
+  }
+  if(semanticAdmission !== null &&
+     (typeof semanticAdmission !== 'object' ||
+      typeof semanticAdmission.reserve !== 'function')) {
+    throw new TypeError('Invalid semantic admission gate');
   }
   // Bounded preflight before input cloning/sort or AST recursion.
   if (events.length > MAX_EVALUATION_INPUT_EVENTS ||
@@ -1782,6 +1823,7 @@ export async function evaluatePatternV2({
     workExhausted: false,
     semanticCache: new Map(),
     durableSemanticCache: semanticCache,
+    semanticAdmission,
     semanticCacheNamespace,
     semanticContextRevision,
     semanticCacheTtlMs,

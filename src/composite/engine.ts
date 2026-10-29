@@ -4,6 +4,7 @@ import {
   evaluatePatternV2,
   patternV2CandidateSignature,
   type PatternV2Candidate,
+  type PatternV2SemanticAdmission,
 } from '../patternV2/evaluator.js';
 import type { SemanticEvaluator } from '../semantic/types.js';
 import { sha256Hex } from '../intelligenceProtocol/canonical.js';
@@ -86,6 +87,7 @@ function patternPhysicalIdentity(
 export interface CompositeTriggerEngineOptions {
   workerId?: string;
   partitionLeaseMs?: number;
+  semanticAdmission?: PatternV2SemanticAdmission | null;
   /** Host-controlled semantic context version; bump when decision policy changes. */
   semanticContextRevision?: string;
   /** Opt-in bounded lifetime of a cached decision (fixed-duration buckets). */
@@ -96,6 +98,7 @@ export class CompositeTriggerEngine {
   private readonly support: CompositeTriggerRuntimeSupport;
   private readonly workerId: string;
   private readonly partitionLeaseMs: number;
+  private readonly semanticAdmission: PatternV2SemanticAdmission | null;
   private readonly semanticContextRevision: string;
   private readonly semanticCacheTtlMs: number | null;
 
@@ -119,6 +122,11 @@ export class CompositeTriggerEngine {
     }
     this.semanticContextRevision=options.semanticContextRevision ?? '';
     this.semanticCacheTtlMs=options.semanticCacheTtlMs ?? null;
+    if(options.semanticAdmission != null &&
+       typeof options.semanticAdmission.reserve !== 'function') {
+      throw new TypeError('Invalid semantic admission gate');
+    }
+    this.semanticAdmission = options.semanticAdmission ?? null;
     this.support = new CompositeTriggerRuntimeSupport(store, now);
     this.workerId =
       String(options.workerId || 'event-intelligence-engine');
@@ -850,6 +858,7 @@ export class CompositeTriggerEngine {
       allowedLatenessMs:
         definition.eventTime?.allowedLatenessMs ?? 0,
       semanticCache,
+      semanticAdmission:this.semanticAdmission,
       semanticCacheNamespace:
         `${definition.triggerId}@${definition.version}`,
       semanticContextRevision:this.semanticContextRevision,
