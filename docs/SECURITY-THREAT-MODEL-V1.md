@@ -256,3 +256,25 @@ serialize all trigger-management and cursor mutation paths across workers.
 Pre-accepted work can finish after revocation. Host must cancel/recheck
 permissions at actual side effect. Therefore #45 Acceptance #2 is not
 automatically complete from this capability alone.
+
+
+### Revocation failure and recoverable shutdown
+
+A shared PostgreSQL scope can fail to resolve or revoke while other scopes
+remain healthy. Final host shutdown now attempts every scope independently,
+retains failed epoch records in memory for a later retry, and drains accepted
+append/CEP work before reporting a stable failure. It never reports global
+revocation success if one epoch remains active. A successful epoch is not
+re-revoked on retry (protecting newer replacements). Scope schedulers are
+stopped even after a revocation error, while the store is held open to
+retry instead of closing the only path to PostgreSQL authority. Retrying
+`host.close()`/manager `close()` after a transient outage attempts the
+previously failed epochs, rather than returning an irrevocably rejected
+cached promise.
+
+This does NOT guarantee that a detached worker's host connection is revoked
+while PostgreSQL remains unavailable, or a network-isolated worker can
+be halted by a different host process. Operational stop/credential revoke
+at the host transport and protection of downstream queued effects remain
+required. Never delete a tombstone before the host has established a
+replay-safe epoch retirement floor.
