@@ -49,6 +49,45 @@ integration('PG16 bounded scoped inspection uses rows not full lists and fails o
     assert.equal(deriv.hasMore,true);
     assert.equal((await b.getBoundedInspectionDerivedEvents('m',{limit:2}))
       .records.length,0);
+
+    const currentMatch=(id,scope,updatedAt)=>({
+      matchId:id,triggerId:'t',triggerVersion:'1',
+      status:'partial',partitionKey:null,
+      openedAt:'2026-10-29T10:00:00.000Z',
+      expiresAt:'2026-10-29T11:00:00.000Z',
+      updatedAt,sourceEvents:[],patternState:null,
+      firedWakeId:null,derivedEventIds:[],
+      schemaVersion:'trigger.v0.2',protocolVersion:'0.2.0',
+    });
+    await a.upsert('trigger_match','m1',currentMatch(
+      'm1','a','2026-10-29T10:00:00.000Z'));
+    await b.upsert('trigger_match','m1',currentMatch(
+      'm1','b','2026-10-29T10:00:00.000Z'));
+    await a.upsert('trigger_match','m2',currentMatch(
+      'm2','a','2026-10-29T10:02:00.000Z'));
+    const exact=await a.getBoundedInspectionMatch({
+      triggerId:'t',version:'1',matchId:'m1'});
+    assert.equal(exact.matchId,'m1');
+    assert.equal((await a.getBoundedInspectionMatch({
+      triggerId:'t',version:'1'})).matchId,'m2');
+    assert.equal((await b.getBoundedInspectionMatch({
+      triggerId:'t',version:'1'})).matchId,'m1');
+    assert.equal(await a.getBoundedInspectionMatch({
+      triggerId:'other',version:'1',matchId:'m1'}),null);
+    await a.upsert('trigger_match','huge', {
+      ...currentMatch('huge','a','2026-10-29T10:03:00.000Z'),
+      sourceEvents:[{clauseId:'a',traceId:'trace',
+        sourceEventId:'huge-source',eventName:'changed',
+        serverId:'provider',occurredAt:'2026-10-29T10:03:00.000Z',
+        data:{privatePayload:'S'.repeat(70000)}}],
+    });
+    await assert.rejects(()=>a.getBoundedInspectionMatch({
+      triggerId:'t',version:'1',matchId:'huge',maxRowBytes:4096,
+    }),e=>e?.code==='EVENT_INTELLIGENCE_INSPECTION_BUDGET_EXCEEDED');
+    await assert.rejects(()=>a.getBoundedInspectionMatch({
+      triggerId:'t',version:'1',maxRowBytes:4096,
+    }),e=>e?.code==='EVENT_INTELLIGENCE_INSPECTION_BUDGET_EXCEEDED');
+
     await a.upsert('derived_event','large-row',{
       triggerId:'t',matchId:'huge-match',
       event:{name:'private-derivative',data:{secret:'S'.repeat(33000)}},
