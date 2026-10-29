@@ -3051,6 +3051,15 @@ export class PostgresEventStore {
         ...(input.lastEventAt || previous?.lastEventAt
           ? { lastEventAt: String(input.lastEventAt || previous.lastEventAt) }
           : {}),
+        // Accepted only from a host-owned validated terminal MCP poll.
+        // This is per-subscription not_found, NOT global network outage.
+        ...(['available','not_found'].includes(input.sourceAvailability)
+          ? {sourceAvailability:input.sourceAvailability,
+              sourceAvailabilityObservedAt:new Date().toISOString()}
+          : ['available','not_found'].includes(previous?.sourceAvailability)
+            ? {sourceAvailability:previous.sourceAvailability,
+                sourceAvailabilityObservedAt:previous.sourceAvailabilityObservedAt}
+            : {}),
         ...(input.lastError ? { lastError: String(input.lastError) } : {}),
         ...(input.gapReconciled === true
           ? { truncated: false }
