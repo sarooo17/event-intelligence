@@ -41,6 +41,19 @@ export interface PatternV2SemanticTrace {
   decision: SemanticDecision;
 }
 
+/** Host-owned, potentially durable admission gate, run only on a cache miss
+ * and before any external evaluator call. Denial means incomplete evidence. */
+export interface PatternV2SemanticAdmission {
+  reserve(request: {
+    namespace: string;
+    nodeId: string;
+    candidateSignature: string;
+    evaluatorIdentity: string;
+    inputBytes: number;
+    instructionBytes: number;
+  }): Promise<boolean> | boolean;
+}
+
 export interface PatternV2SemanticCache {
   get(key: string): Promise<SemanticDecision | null> | SemanticDecision | null;
   set(
@@ -79,6 +92,7 @@ interface EvaluationContext {
   workExhausted: boolean;
   semanticCache: Map<string, SemanticDecision>;
   durableSemanticCache: PatternV2SemanticCache | null;
+  semanticAdmission: PatternV2SemanticAdmission | null;
   semanticCacheNamespace: string;
   semanticTrace: PatternV2SemanticTrace[];
   allowedLatenessMs: number;
@@ -1637,6 +1651,27 @@ async function evaluateNode(
         context.truncated = true;
         continue;
       }
+      if(context.semanticAdmission) {
+        // Admission takes only bounded counts, stable IDs and host scope.
+        // Never supply original provider event text or projected values.
+        const projected=projectSemanticInput(
+          semanticSource(candidate,node.refs),node.input);
+        const approved=await context.semanticAdmission.reserve({
+          namespace:context.semanticCacheNamespace,
+          nodeId:node.id,
+          candidateSignature:candidateSignature(candidate),
+          evaluatorIdentity:String(context.evaluator?.cacheIdentity??''),
+          inputBytes:new TextEncoder().encode(JSON.stringify(projected)).byteLength,
+          instructionBytes:new TextEncoder().encode(node.instruction).byteLength,
+        });
+        if(approved !== true && approved !== false) {
+          throw new TypeError('Semantic admission must return a boolean');
+        }
+        if(!approved) {
+          context.truncated=true;
+          continue;
+        }
+      }
       context.semanticCacheMisses += 1;
       context.semanticEvaluations += 1;
       decision = await withTimeout(
@@ -1714,6 +1749,7 @@ export async function evaluatePatternV2({
   allowedLatenessMs = 0,
   semanticCache = null,
   semanticCacheNamespace = '',
+  semanticAdmission = null,
   incompleteSourceRefs = new Set<string>(),
 }: {
   definition: PatternAstV2Definition;
@@ -1723,8 +1759,14 @@ export async function evaluatePatternV2({
   allowedLatenessMs?: number;
   semanticCache?: PatternV2SemanticCache | null;
   semanticCacheNamespace?: string;
+  semanticAdmission?: PatternV2SemanticAdmission | null;
   incompleteSourceRefs?: ReadonlySet<string>;
 }): Promise<PatternV2Evaluation> {
+  if(semanticAdmission !== null &&
+     (typeof semanticAdmission !== 'object' ||
+      typeof semanticAdmission.reserve !== 'function')) {
+    throw new TypeError('Invalid semantic admission gate');
+  }
   // Bounded preflight before input cloning/sort or AST recursion.
   if (events.length > MAX_EVALUATION_INPUT_EVENTS ||
     !boundedAst(definition.root)) {
@@ -1760,6 +1802,7 @@ export async function evaluatePatternV2({
     workExhausted: false,
     semanticCache: new Map(),
     durableSemanticCache: semanticCache,
+    semanticAdmission,
     semanticCacheNamespace,
     semanticTrace: [],
     allowedLatenessMs,
