@@ -98,15 +98,19 @@ export function assessIndependentProviderHostEvidence({
   const eiRows=uniqueMap(ei.durableReceipts,'eventId');
   if(eiRows.size!==events.size)fail('EI_DURABLE_ROW_COUNT_MISMATCH');
   const wakeIds=new Set(),receiptIds=new Set(),hostTimes=[];
+  let latestHostCompletionElapsedMs=0;
   for(const [id,e] of receipts) {
     if(!events.has(id)||!NAME.test(e.wakeId)||!NAME.test(e.runtimeReceiptId)||
         wakeIds.has(e.wakeId)||receiptIds.has(e.runtimeReceiptId)||
-        e.effectCommitted!==true||!finiteRate(e.hostEffectMs))fail('INVALID_HOST_RECEIPT');
+        e.effectCommitted!==true||!finiteRate(e.hostEffectMs)||
+        !finiteRate(e.completedElapsedMs)||
+        e.completedElapsedMs > hostFinish-hostStart)fail('INVALID_HOST_RECEIPT');
     const stored=eiRows.get(id);
     if(!stored||stored.wakeId!==e.wakeId ||
         stored.runtimeReceiptId!==e.runtimeReceiptId ||
         stored.status!=='delivered')fail('SIGNED_HOST_RECEIPT_DISAGREES_WITH_EI');
     wakeIds.add(e.wakeId);receiptIds.add(e.runtimeReceiptId);hostTimes.push(e.hostEffectMs);
+    latestHostCompletionElapsedMs=Math.max(latestHostCompletionElapsedMs,e.completedElapsedMs);
   }
   const b=preRegisteredSloBudgets;
   if(!finiteRate(b.providerAcknowledgementP99MaxMs)||!finiteRate(b.hostEffectP99MaxMs)||
@@ -121,7 +125,12 @@ export function assessIndependentProviderHostEvidence({
       ei.wakeSettlement?.verifiedHostReceipts!==events.size)fail('EI_DURABLE_RECONCILIATION_FAILED');
 
   const providerP99=p99(providerTimes),hostP99=p99(hostTimes);
-  const observedWakesPerSecond=events.size/((finished-started)/1000);
+  // Measure durable effect throughput over BOTH signed local measurement
+  // windows, not just provider send time: a slow external host must not pass
+  // by eventually completing a backlog long after provider traffic stopped.
+  // Never subtract provider and host timestamps from different clocks.
+  const measuredWindowMs=Math.max(finished-started,hostFinish-hostStart,latestHostCompletionElapsedMs);
+  const observedWakesPerSecond=events.size/(measuredWindowMs/1000);
   const metBudgets=providerP99<=b.providerAcknowledgementP99MaxMs &&
     hostP99<=b.hostEffectP99MaxMs &&
     observedWakesPerSecond>=b.minVerifiedWakesPerSecond;
@@ -131,7 +140,7 @@ export function assessIndependentProviderHostEvidence({
     workloadId:ei.workloadId,samples:events.size,providerEvidenceSha256:p.sha256,
     hostEvidenceSha256:h.sha256,providerKeySha256:p.keySha256,
     hostKeySha256:h.keySha256,providerAckP99Ms:providerP99,
-    hostEffectP99Ms:hostP99,observedWakesPerSecond,
+    hostEffectP99Ms:hostP99,observedWakesPerSecond,measuredWindowSeconds:measuredWindowMs/1000,
     statusDoesNotCertifySeparateInfrastructure:true,
     independentEnvironmentAttestationRequired:true,
     productionSloCertified:false,
