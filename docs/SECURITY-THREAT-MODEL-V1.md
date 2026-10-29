@@ -278,3 +278,22 @@ be halted by a different host process. Operational stop/credential revoke
 at the host transport and protection of downstream queued effects remain
 required. Never delete a tombstone before the host has established a
 replay-safe epoch retirement floor.
+
+
+### Terminal MCP Forbidden and distributed session suspension
+
+An MCP provider's validated connection-scope `Forbidden` error is
+terminal for the specific host-managed connection. In strict shared-PG
+authority-epoch mode, EI now commits the session epoch revocation to
+PostgreSQL before returning a successfully quarantined terminal outcome;
+all other workers fail session-epoch checks when appending events. If
+PostgreSQL cannot confirm revocation, the operation reports a fixed
+revocation-incomplete error and retains the pending epoch for a host
+shutdown retry. This is never silently treated as successful global
+suspension. The host also owns immediate MCP transport credential
+revocation and stopping any separate runtime worker.
+
+NotFound is **subscription-scoped** and must not revoke other event
+subscriptions. Previously accepted append/CEP work can finish; remote
+host effects queued before suspension remain subject to host-side
+permission checks at actual execution.
