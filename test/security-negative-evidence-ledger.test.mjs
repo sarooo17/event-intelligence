@@ -42,10 +42,22 @@ test('externally owned authentication, approval and permissions never become EI 
     'host approvals and tool permissions',
     'external runtime effect authorization',
   ]);
-  const publicExports=Object.keys(manifest.exports);
-  assert.ok(publicExports.length>0);
-  for(const entry of publicExports){
-    assert.doesNotMatch(entry,/oauth|login|credential|approval|permission|policy-engine/i);
+  // Inspect actual named exports of every public runtime module, not only
+  // package subpaths ("./host" can export any newly added function).
+  // This is a public API regression guard, NOT proof of absence of hidden
+  // credential-handling behavior in internal/third-party dependencies.
+  const exports=Object.entries(manifest.exports);
+  assert.ok(exports.length>0);
+  for(const [subpath,entry] of exports) {
+    const entrypoint=entry.import;
+    assert.ok(typeof entrypoint==='string' && entrypoint.startsWith('./'));
+    const module=await import(new URL('../'+entrypoint.slice(2),import.meta.url).href);
+    for(const name of Object.keys(module)) {
+      assert.doesNotMatch(name,
+        /oauth|tokenExchange|acquireProviderCredential|approvalEngine|policyEngine|toolPermission|grantRuntimePermission/i,
+        'Host-owned authorization capability leaked from '+subpath+': '+name,
+      );
+    }
   }
   // Host supplies an already connected MCP transport. EI has no OAuth
   // exchange, credential acquisition or fallback unauthenticated request.
