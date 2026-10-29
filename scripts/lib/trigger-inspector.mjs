@@ -235,7 +235,13 @@ export class TriggerInspector {
     now = () => new Date(),
     matchHistoryLimit = null,
     evidenceRefLimit = null,
+    inspectionWindowLimit = null,
   }) {
+    if(inspectionWindowLimit !== null &&
+        (!Number.isSafeInteger(inspectionWindowLimit) ||
+         inspectionWindowLimit<1 || inspectionWindowLimit>100)) {
+      throw new RangeError('inspectionWindowLimit must be an integer 1..100');
+    }
     if (evidenceRefLimit !== null &&
         (!Number.isInteger(evidenceRefLimit) ||
           evidenceRefLimit < 1 || evidenceRefLimit > 500)) {
@@ -246,10 +252,15 @@ export class TriggerInspector {
           matchHistoryLimit < 1 || matchHistoryLimit > 500)) {
       throw new RangeError('matchHistoryLimit must be an integer from 1 to 500');
     }
+    if(inspectionWindowLimit!==null &&
+       (evidenceRefLimit===null || matchHistoryLimit===null)) {
+      throw new RangeError('Strict inspection requires evidenceRefLimit and matchHistoryLimit');
+    }
     this.store = store;
     this.now = now;
     this.matchHistoryLimit = matchHistoryLimit;
     this.evidenceRefLimit = evidenceRefLimit;
+    this.inspectionWindowLimit = inspectionWindowLimit;
   }
 
   async inspect({
@@ -257,6 +268,16 @@ export class TriggerInspector {
     version,
     matchId,
   }) {
+    if(this.inspectionWindowLimit!==null && (!version ||
+       typeof this.store.getTrigger!=='function' ||
+       typeof this.store.getRecentTriggerMatchHistory!=='function' ||
+       typeof this.store.getBoundedInspectionMatch!=='function' ||
+       typeof this.store.getBoundedInspectionDeadlines!=='function' ||
+       typeof this.store.getBoundedInspectionDerivedEvents!=='function')) {
+      const error=new Error('Strict inspection requires version and bounded match store');
+      error.code='EVENT_INTELLIGENCE_INSPECTION_STORE_UNSUPPORTED';
+      throw error;
+    }
     // A precise, versioned inspection should not read all definitions from
     // a high-cardinality scope. Legacy host stores retain the list fallback.
     const directDefinition = version && typeof this.store.getTrigger === 'function'
@@ -292,7 +313,12 @@ export class TriggerInspector {
     );
 
     let match;
-    if (matchId && typeof this.store.getTriggerMatch === 'function') {
+    if(this.inspectionWindowLimit!==null){
+      match=await this.store.getBoundedInspectionMatch({
+        triggerId:definition.triggerId,version:definition.version,
+        matchId:matchId??null,
+      });
+    } else if (matchId && typeof this.store.getTriggerMatch === 'function') {
       const row = await this.store.getTriggerMatch(matchId);
       match = row?.triggerId === definition.triggerId &&
         row?.triggerVersion === definition.version ? row : null;
@@ -310,18 +336,54 @@ export class TriggerInspector {
         : latest(matches);
     }
 
+    if(this.inspectionWindowLimit!==null && match &&
+       (match.triggerId!==definition.triggerId ||
+        match.triggerVersion!==definition.version ||
+        (matchId && match.matchId!==matchId))) {
+      const error=new Error('Bounded inspection selector returned foreign match identity');
+      error.code='EVENT_INTELLIGENCE_INSPECTION_MATCH_IDENTITY_INVALID';
+      throw error;
+    }
+
     if (matchId && !match) {
       const error = new Error(`Unknown trigger match: ${matchId}`);
       error.code = 'TRIGGER_MATCH_NOT_FOUND';
       throw error;
     }
 
+    // Strict mode refuses unexpectedly large definition/output state rather
+    // than fabricating an incomplete reason from a truncated Pattern AST.
+    if(this.inspectionWindowLimit!==null &&
+       Buffer.byteLength(JSON.stringify(definition),'utf8')>65536) {
+      const error=new Error('Definition exceeds inspection byte budget');
+      error.code='EVENT_INTELLIGENCE_INSPECTION_BUDGET_EXCEEDED';
+      throw error;
+    }
     const evidenceProjection = clauseState(definition, match, this.evidenceRefLimit);
     const clauses = evidenceProjection.clauses;
     const totalSourceRefs = match?.sourceEvents?.length ?? 0;
-    const deadlines = match && this.store.listTemporalDeadlines
-      ? await this.store.listTemporalDeadlines({ matchId: match.matchId })
-      : [];
+    let deadlines=[];
+    if(match && this.inspectionWindowLimit !== null) {
+      if(typeof this.store.getBoundedInspectionDeadlines!=='function') {
+        const error=new Error('Store does not support bounded inspection deadlines');
+        error.code='EVENT_INTELLIGENCE_INSPECTION_STORE_UNSUPPORTED';
+        throw error;
+      }
+      const page=await this.store.getBoundedInspectionDeadlines(match.matchId,{
+        limit:this.inspectionWindowLimit,
+      });
+      if(!page || !Array.isArray(page.records) ||
+          page.records.length>this.inspectionWindowLimit ||
+          typeof page.hasMore!=='boolean' || page.hasMore) {
+        const error=new Error('Inspection deadlines exceeded bounded proof window');
+        error.code='EVENT_INTELLIGENCE_INSPECTION_BUDGET_EXCEEDED';
+        throw error;
+      }
+      deadlines=page.records;
+    } else {
+      deadlines=match && this.store.listTemporalDeadlines
+        ? await this.store.listTemporalDeadlines({matchId:match.matchId}) : [];
+    }
     const pendingDeadlines = deadlines.filter(
       (deadline) => deadline.status === 'pending',
     );
@@ -339,9 +401,28 @@ export class TriggerInspector {
       : null);
     const wake = wakeId ? await this.store.latestWake(wakeId) : null;
 
-    const derivedOutputs = match
-      ? (await this.store.listDerivedEvents?.({ matchId: match.matchId }) ?? [])
-      : [];
+    let derivedOutputs=[];
+    if(match && this.inspectionWindowLimit !== null) {
+      if(typeof this.store.getBoundedInspectionDerivedEvents!=='function') {
+        const error=new Error('Store does not support bounded inspection derived events');
+        error.code='EVENT_INTELLIGENCE_INSPECTION_STORE_UNSUPPORTED';
+        throw error;
+      }
+      const page=await this.store.getBoundedInspectionDerivedEvents(match.matchId,{
+        limit:this.inspectionWindowLimit,
+      });
+      if(!page || !Array.isArray(page.records) ||
+          page.records.length>this.inspectionWindowLimit ||
+          typeof page.hasMore!=='boolean' || page.hasMore) {
+        const error=new Error('Inspection derived records exceeded bounded proof window');
+        error.code='EVENT_INTELLIGENCE_INSPECTION_BUDGET_EXCEEDED';
+        throw error;
+      }
+      derivedOutputs=page.records;
+    } else {
+      derivedOutputs=match
+        ? (await this.store.listDerivedEvents?.({matchId:match.matchId}) ?? []) : [];
+    }
     const selectedDerivedOutputs = this.evidenceRefLimit === null
       ? derivedOutputs : derivedOutputs.slice(0, this.evidenceRefLimit);
 
@@ -430,6 +511,7 @@ export class TriggerInspector {
         pendingDeadlineCount: pendingDeadlines.length,
         nextEvaluationAt,
         evidenceRefLimit: this.evidenceRefLimit,
+        inspectionWindowLimit: this.inspectionWindowLimit,
         sourceRefCount: totalSourceRefs,
         sourceRefsTruncated: totalSourceRefs > evidenceProjection.selected.length,
         derivedRefCount: derivedOutputs.length,

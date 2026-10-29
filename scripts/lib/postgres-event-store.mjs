@@ -2187,6 +2187,65 @@ export class PostgresEventStore {
    * Existing PostgreSQL indexes restrict scope/kind; this query may still
    * scan/sort matches server-side until a dedicated index is deployed.
    */
+  /**
+   * Explicit strict inspector mode: return the current match only if its
+   * logical persisted bytes fit the configured cap. Never send oversized
+   * JSONB rows to the Node process. Match selection and statement time
+   * share one PG transaction; no exact-key or latest-match fallback scan.
+   */
+  async getBoundedInspectionMatch({triggerId,version,matchId=null,
+    maxRowBytes=65536,maxScanMs=2000}={}) {
+    if(typeof triggerId!=='string'||!triggerId||
+       typeof version!=='string'||!version||
+       (matchId!==null&&(typeof matchId!=='string'||!matchId))||
+       !Number.isSafeInteger(maxRowBytes)||maxRowBytes<1024||maxRowBytes>131072||
+       !Number.isSafeInteger(maxScanMs)||maxScanMs<100||maxScanMs>5000) {
+      throw new RangeError('Invalid bounded match inspection');
+    }
+    const exact=matchId!==null;
+    const constraint=exact?' AND record_key=$4':'';
+    const ordering=exact?'':(
+      " ORDER BY date_trunc('millisecond', (payload->>'updatedAt')::timestamptz) DESC,"+
+      " CASE WHEN payload->>'status'='fired' THEN 5"+
+      " WHEN payload->>'status'='emitted' THEN 4"+
+      " WHEN payload->>'status'='matched' THEN 3"+
+      " WHEN payload->>'status'='partial' AND payload->'patternState'->>'role'='match' THEN 2"+
+      " WHEN payload->>'status'='partial' THEN 1 ELSE 0 END DESC, record_key ASC");
+    const sizeParam=exact?'$5':'$4';
+    const args=exact?[this.scopeId,triggerId,version,matchId,maxRowBytes]:
+      [this.scopeId,triggerId,version,maxRowBytes];
+    try {
+      return await this.tx(async client=>{
+        await client.query("SELECT set_config('statement_timeout',$1,true)",
+          [String(maxScanMs)+'ms']);
+        const found=await client.query(
+          'SELECT CASE WHEN octet_length(payload::text)<='+sizeParam+
+          ' THEN payload ELSE NULL END AS payload,'+
+          ' octet_length(payload::text) AS byte_count FROM '+this.records+
+          " WHERE scope_id=$1 AND kind='trigger_match'"+
+          " AND payload->>'triggerId'=$2 AND payload->>'triggerVersion'=$3"+
+          constraint+ordering+' LIMIT 1',args);
+        if(!found.rows.length)return null;
+        if(found.rows[0].payload===null) {
+          const error=new Error('Selected match exceeds inspection byte budget');
+          error.code='EVENT_INTELLIGENCE_INSPECTION_BUDGET_EXCEEDED';
+          throw error;
+        }
+        const parsed=parseTriggerMatchRecord(found.rows[0].payload);
+        return parsed.triggerId===triggerId &&
+          parsed.triggerVersion===version &&
+          (!exact||parsed.matchId===matchId)?parsed:null;
+      });
+    }catch(error){
+      if(error?.code==='57014'){
+        const refused=new Error('Inspection match selection exceeded SQL time budget');
+        refused.code='EVENT_INTELLIGENCE_INSPECTION_BUDGET_EXCEEDED';
+        throw refused;
+      }
+      throw error;
+    }
+  }
+
   async getLatestTriggerMatch(triggerId, version) {
     const result = await this.pool.query(
       'SELECT payload FROM ' + this.records +
@@ -3104,6 +3163,52 @@ export class PostgresEventStore {
       'derived_event',
       String(serverId) + '::' + String(sourceEventId),
     );
+  }
+
+  /** Return at most limit rows in an explicit scope/match window. */
+  async inspectionWindow(kind, matchId, {limit=50,maxScanMs=2000,maxRowBytes=16384}={}) {
+    if (!['derived_event','temporal_deadline'].includes(kind) ||
+        typeof matchId !== 'string' || !matchId ||
+        !Number.isSafeInteger(limit) || limit<1 || limit>100 ||
+        !Number.isSafeInteger(maxScanMs) || maxScanMs<100 || maxScanMs>5000 ||
+        !Number.isSafeInteger(maxRowBytes) || maxRowBytes<1024 || maxRowBytes>32768) {
+      throw new RangeError('Invalid bounded inspection window');
+    }
+    try {
+      return await this.tx(async client=>{
+        await client.query("SELECT set_config('statement_timeout',$1,true)",
+          [String(maxScanMs)+'ms']);
+        const result=await client.query(
+          'SELECT CASE WHEN octet_length(payload::text)<=$5 THEN payload ELSE NULL END AS payload' +
+          ' FROM '+this.records+
+          " WHERE scope_id=$1 AND kind=$2 AND payload->>'matchId'=$3" +
+          ' ORDER BY record_key LIMIT $4',
+          [this.scopeId,kind,matchId,limit+1,maxRowBytes],
+        );
+        if(result.rows.some(row=>row.payload===null)){
+          const error=new Error('Inspection persisted row exceeds byte budget');
+          error.code='EVENT_INTELLIGENCE_INSPECTION_BUDGET_EXCEEDED';
+          throw error;
+        }
+        return {records:result.rows.slice(0,limit).map(row=>row.payload),
+          hasMore:result.rows.length>limit,limit};
+      });
+    } catch(error) {
+      if(error?.code==='57014'){
+        const refused=new Error('Inspection database scan exceeded time budget');
+        refused.code='EVENT_INTELLIGENCE_INSPECTION_BUDGET_EXCEEDED';
+        throw refused;
+      }
+      throw error;
+    }
+  }
+
+  async getBoundedInspectionDeadlines(matchId,opts) {
+    return this.inspectionWindow('temporal_deadline',matchId,opts);
+  }
+
+  async getBoundedInspectionDerivedEvents(matchId,opts) {
+    return this.inspectionWindow('derived_event',matchId,opts);
   }
 
   async listDerivedEvents({ triggerId, matchId, name } = {}) {
