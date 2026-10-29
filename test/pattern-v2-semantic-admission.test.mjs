@@ -164,3 +164,48 @@ test('short per-node timeout still throws when batch deadline has ample time',as
   }),/Semantic node importance timed out after 20ms/);
   assert.equal(calls,1);
 });
+
+test('host-neutral evaluator sees cooperative AbortSignal when cumulative batch deadline ends',async()=>{
+  let calls=0,aborted=0;
+  const result=await evaluatePatternV2({
+    definition:pattern(),events:[ev('1')],
+    maxBatchElapsedMs:25,
+    evaluator:{cacheIdentity:'cooperative-batch-abort',
+      async evaluate(request,options){
+        calls++;
+        assert.equal(typeof request.instruction,'string');
+        assert(options?.signal instanceof AbortSignal);
+        return new Promise((resolve,reject)=>{
+          options.signal.addEventListener('abort',()=>{
+            aborted++;
+            reject(new Error('host evaluator abort acknowledged'));
+          },{once:true});
+        });
+      },
+    },
+  });
+  assert.equal(calls,1);
+  assert.equal(aborted,1,'host provider adapter receives abort signal');
+  assert.equal(result.truncated,true,'batch budget exhaustion remains incomplete');
+  assert.deepEqual(result.matches,[]);
+});
+test('node timeout also signals cooperative provider abort without changing error contract',async()=>{
+  const ast=pattern();
+  let aborts=0;
+  await assert.rejects(()=>evaluatePatternV2({
+    definition:{...ast,root:{...ast.root,
+      execution:{...ast.root.execution,timeoutMs:25}}},
+    events:[ev('1')],maxBatchElapsedMs:1000,
+    evaluator:{cacheIdentity:'cooperative-node-abort',
+      async evaluate(request,options){
+        assert(options?.signal instanceof AbortSignal);
+        return new Promise((resolve,reject)=>{
+          options.signal.addEventListener('abort',()=>{
+            aborts++;
+            reject(new Error('abort acknowledged'));
+          },{once:true});
+        });
+      }},
+  }),/Semantic node importance timed out after 25ms/);
+  assert.equal(aborts,1);
+});
