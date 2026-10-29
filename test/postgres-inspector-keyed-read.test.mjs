@@ -39,6 +39,10 @@ integration('real PostgreSQL keyed inspector reads exact tenant match without wi
     await a.putTrigger(definition);await b.putTrigger(definition);
     await a.appendTriggerMatch(match('tenant-a','same-match'));
     await b.appendTriggerMatch(match('tenant-b','same-match'));
+    await a.appendTriggerMatch({
+      ...match('tenant-a','newer-match'),
+      updatedAt:'2026-10-29T10:01:00.000Z',
+    });
     // Enforce SQL index-key read path, not an accidentally small wide scan.
     a.listTriggers=()=>{throw Error('unbounded listTriggers prohibited')};
     a.listTriggerMatches=()=>{throw Error('unbounded listTriggerMatches prohibited')};
