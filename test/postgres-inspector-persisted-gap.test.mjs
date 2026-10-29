@@ -56,6 +56,31 @@ integration('real PG16 scoped MCP persisted gap shows no cross-tenant explanatio
     assert.equal((await new TriggerInspector({store:newA})
       .inspect({triggerId:'same-trigger',version:'1'})).diagnosisV2.kind,
       'not_yet_satisfied');
+    const partial={
+      protocolVersion:'0.2.0',schemaVersion:'trigger.v0.2',
+      matchId:'candidate-budget',triggerId:'same-trigger',triggerVersion:'1',
+      status:'partial',openedAt:'2026-10-29T10:00:00.000Z',
+      updatedAt:'2026-10-29T10:00:00.000Z',
+      expiresAt:'2026-10-29T11:00:00.000Z',partitionKey:null,
+      sourceEvents:[],patternState:null,firedWakeId:null,derivedEventIds:[],
+    };
+    await newA.appendTriggerMatch(partial);
+    await newB.appendTriggerMatch(partial);
+    await newA.appendAudit({
+      auditId:'audit-gap-budget',traceId:'trace-budget',
+      timestamp:'2026-10-29T10:00:00.000Z',
+      kind:'trigger.partial',entityType:'trigger_match',
+      entityId:'candidate-budget',
+      details:{triggerId:'same-trigger',triggerVersion:'1',truncated:true},
+    });
+    const inspectedA=await new TriggerInspector({store:newA}).inspect({
+      triggerId:'same-trigger',version:'1',matchId:'candidate-budget'});
+    const inspectedB=await new TriggerInspector({store:newB}).inspect({
+      triggerId:'same-trigger',version:'1',matchId:'candidate-budget'});
+    assert.equal(inspectedA.diagnosisV2.kind,'budget_truncated');
+    assert.equal(inspectedB.diagnosisV2.kind,'not_yet_satisfied');
+    assert.equal(await newA.verifyAudit(),true);
+
   }finally{
     const cleanupPool=replacement??pool;
     for(const suffix of ['metadata','leases','history','records','counters']){
