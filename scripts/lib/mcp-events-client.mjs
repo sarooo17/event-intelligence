@@ -1123,13 +1123,13 @@ export class McpEventsClientManager {
       subscription.subscriptionId,
     );
     if (!receipt.accepted) return { accepted: false, occurrence };
-    // The host might revoke the MCP session while appendMcpOccurrence was
-    // awaiting storage. Failing closed takes precedence over delivery.
-    // A raced append may remain durable: see explicit race limitation docs.
-    if (!this.isConnectionAttached(connection)) {
-      return { accepted: false, reason: 'detached' };
-    }
-
+    // Linearization boundary: an occurrence already admitted and DURABLY
+    // accepted before revoke must still reach CEP. Silently discarding it
+    // here strands its dedup ID: a subsequent provider replay can report
+    // 'already accepted' and never activate the event. Detach fences NEW
+    // calls and cursor writes, not post-accept processing. The host must
+    // reauthorize any queued downstream effect after wake.
+    // This is a local-session safety rule, not cross-process atomic revoke.
     await context.compositeEventConsumer.ingestMcpOccurrence({
       event: occurrence,
       serverId: connection.serverId,
