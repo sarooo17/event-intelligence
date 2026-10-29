@@ -88,3 +88,27 @@ test('durably cached decision skips admission and external model calls',async()=
   assert.equal(cached.semanticCacheHits,1);
   assert.equal(calls,1);assert.equal(approved,1);
 });
+
+test('monotonic batch wall-time budget refuses a model call after slow shared admission',async()=>{
+  let providerCalls=0;
+  const evaluation=await evaluatePatternV2({
+    definition:pattern(),events:[ev('1')],
+    evaluator:{cacheIdentity:'deadline-v1',async evaluate(){
+      providerCalls++;
+      return {evaluator:'deadline-v1',probability:.99};
+    }},
+    maxBatchElapsedMs:20,
+    semanticAdmission:{async reserve(){
+      await new Promise(resolve=>setTimeout(resolve,65));
+      return true;
+    }},
+  });
+  assert.equal(providerCalls,0,'reserve after deadline must never invoke provider');
+  assert.equal(evaluation.truncated,true,'deadline overrun is incomplete, not rejection');
+  assert.deepEqual(evaluation.matches,[]);
+  for(const invalid of [0,9,-1,600001,1.5,NaN,'1000']) {
+    await assert.rejects(()=>evaluatePatternV2({
+      definition:pattern(),events:[ev('1')],maxBatchElapsedMs:invalid,
+    }),/Invalid semantic batch elapsed-time budget/);
+  }
+});
