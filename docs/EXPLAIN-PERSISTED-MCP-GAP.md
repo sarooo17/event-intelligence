@@ -112,3 +112,13 @@ lack a dedicated bounded provider; this prioritizes valid bounded-cost
 inspection over emitting an unbounded source availability claim. A complete
 #48 classification still requires distinct authoritative watermark-pending
 and terminally impossible candidate proofs, not inferred from these facts.
+
+
+**Recovery review hardening:** JSONL initialization explicitly restores the
+validated `sourceAvailability`/observation timestamp from the durable
+journal. A successful **push or webhook** session opening, `onActive`
+callback or accepted `onEvent` also replaces a stale `not_found` marker
+with `available`, just like a successful poll. No provider error message
+or credential-bearing object is ever persisted. The two streaming paths
+have real host-client integration regressions preloaded with an old
+NotFound marker.
