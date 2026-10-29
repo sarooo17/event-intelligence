@@ -104,6 +104,45 @@ integrationTest('Postgres inspector is replay-stable, bounded and scope/owner is
       () => foreignGuard.assertTrigger(triggerId, '1'),
       error => error?.code === 'EVENT_INTELLIGENCE_RESOURCE_NOT_FOUND',
     );
+    // Simulate the actual host-managed inspection order: authorization
+    // BEFORE invoking the low-level trusted TriggerInspector. Using the
+    // identical trigger/version/match IDs in two real PG16 tenant stores
+    // makes any incorrect selection or leaked payload observable.
+    const bobGuard = createOwnerReadGuard({
+      store: b, triggerControl: new TriggerControlPlane({ store: b }),
+      owner: ownB,
+    });
+    const wrongTenantGuard = createOwnerReadGuard({
+      store: b, triggerControl: new TriggerControlPlane({ store: b }),
+      owner: ownA,
+    });
+    let delegatedInspections = 0;
+    const guardedInspect = async (guard, inspector) => {
+      await guard.assertTrigger(triggerId, '1');
+      delegatedInspections++;
+      return inspector.inspect({ triggerId, version: '1', matchId });
+    };
+    for (const [guard, inspector] of [
+      [foreignGuard, readA], [wrongTenantGuard, readB],
+    ]) {
+      await assert.rejects(() => guardedInspect(guard, inspector), error =>
+        error?.code === 'EVENT_INTELLIGENCE_RESOURCE_NOT_FOUND' &&
+        !String(error.message).includes('SECRET-') &&
+        !String(error.message).includes('source-tenant-'),
+      );
+    }
+    assert.equal(delegatedInspections, 0,
+      'denied owner or tenant must not access inspector evidence at all');
+    const ownedA = await guardedInspect(aliceGuard, readA);
+    const ownedB = await guardedInspect(bobGuard, readB);
+    assert.equal(delegatedInspections, 2);
+    assert.equal(ownedA.lineage.evidence[0].sourceEventId, 'source-tenant-a');
+    assert.equal(ownedB.lineage.evidence[0].sourceEventId, 'source-tenant-b');
+    assert.equal(JSON.stringify(ownedA).includes('source-tenant-b'), false);
+    assert.equal(JSON.stringify(ownedB).includes('source-tenant-a'), false);
+    assert.equal(JSON.stringify(ownedA).includes('SECRET-'), false);
+    assert.equal(JSON.stringify(ownedB).includes('SECRET-'), false);
+
     const beforeA = await readA.inspect({ triggerId, version: '1', matchId });
     const beforeB = await readB.inspect({ triggerId, version: '1', matchId });
     assert.equal(beforeA.evidenceSummary.selectionBasis, 'explicit_match');
