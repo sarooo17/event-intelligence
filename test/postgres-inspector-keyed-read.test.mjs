@@ -20,7 +20,7 @@ function match(scope,id){
   return {
     protocolVersion:'0.2.0',schemaVersion:'trigger.v0.2',
     matchId:id,triggerId:'same-trigger',triggerVersion:'1',
-    status:'partial',partitionKey:null,openedAt:at,expiresAt:null,updatedAt:at,
+    status:'partial',partitionKey:null,openedAt:at,expiresAt:'2026-10-29T11:00:00.000Z',updatedAt:at,
     sourceEvents:[{clauseId:'x',traceId:'trace-'+scope,
       sourceEventId:'source-'+scope,eventName:'source.changed',
       serverId:'provider',occurredAt:at,
