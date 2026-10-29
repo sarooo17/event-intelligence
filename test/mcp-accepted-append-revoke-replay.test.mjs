@@ -87,3 +87,56 @@ test('revocation before append admission still rejects with no side effects',asy
   ),{accepted:false,reason:'detached'});
   assert.equal(count,0);
 });
+
+
+test('detached poll accepted append stays in close drain until CEP completes',async()=>{
+  const entered=deferred(),release=deferred();
+  let activated=0,storeClosed=false,closeResolved=false;
+  const store={
+    async listTriggers(){return [{
+      triggerId:'invoice-trigger',version:'1',
+      clauses:[{id:'c',serverId:'untrusted-provider',event:descriptor.name,arguments:{}}],
+    }]},
+    async getTriggerState(){return {status:'active'}},
+    async getMcpClientState(){return null},
+    async listEventSources(){return []},
+    async appendMcpOccurrence(){
+      entered.resolve();
+      await release.promise;
+      if(storeClosed)throw Error('append continued after store shutdown');
+      return {accepted:true};
+    },
+    async putMcpClientState(){throw Error('stale cursor update must not commit')},
+  };
+  const manager=new McpEventsClientManager({
+    store,registerEventSource:async()=>{},
+    compositeEventConsumer:{
+      async ingestMcpOccurrence(){
+        assert.equal(storeClosed,false);
+        activated++;
+      },
+    },
+  });
+  manager.addConnection({
+    connectionId:'session',serverId:'untrusted-provider',
+    request:async()=>({events:[event],cursor:'old',hasMore:false}),
+    getCapabilities:async()=>({}),
+  });
+  manager.descriptors.set('session',[descriptor]);
+  manager.profiles.set('session',{pollMethod:'events/poll'});
+  const pending=manager.pollConnection('session');
+  await entered.promise;
+  await manager.detachConnection('session');
+  const close=manager.close().then(()=>{
+    closeResolved=true;
+    storeClosed=true;
+  });
+  await Promise.resolve();
+  assert.equal(closeResolved,false,'close cannot release store before preaccepted append/CEP');
+  release.resolve();
+  await assert.rejects(pending,error=>error.code==='MCP_EVENTS_CONNECTION_DETACHED');
+  await close;
+  assert.equal(activated,1);
+  assert.equal(closeResolved,true);
+  assert.equal(manager.occurrenceInFlight.size,0);
+});
