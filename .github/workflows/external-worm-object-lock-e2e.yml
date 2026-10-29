@@ -41,7 +41,7 @@ jobs:
             -p 127.0.0.1:29000:9000 \
             -e MINIO_ROOT_USER=ei_disposable_minio \
             -e MINIO_ROOT_PASSWORD=ei_disposable_minio_password \
-            minio/minio:RELEASE.2025-09-07T16-13-09Z \
+            dappros/minio:RELEASE.2025-09-07T16-13-09Z \
             server /data --address :9000
           ready=0
           for i in $(seq 1 90); do
