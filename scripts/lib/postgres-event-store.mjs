@@ -2462,7 +2462,8 @@ export class PostgresEventStore {
   // Host-controlled authority epoch, unrelated to provider OAuth.
   // The epoch is deliberately a high-entropy host-generated opaque string,
   // persisted only as a SHA-256 digest, never raw credentials.
-  mcpAuthorityInputs({connectionId,epoch}={}) {
+  mcpAuthorityInputs(input={}) {
+    const {connectionId,epoch}=input??{};
     if(typeof connectionId!=='string'||!connectionId||
        Buffer.byteLength(connectionId,'utf8')>256 ||
        typeof epoch!=='string'||epoch.length<32||epoch.length>256) {
