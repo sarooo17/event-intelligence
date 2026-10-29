@@ -1,0 +1,88 @@
+name: PostgreSQL Inspector 1k 10k 100k Bounded Evidence
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/postgres-inspector-high-cardinality.yml'
+      - 'scripts/evidence/postgres-inspector-100k.mjs'
+      - 'scripts/lib/postgres-event-store.mjs'
+      - 'scripts/lib/trigger-inspector.mjs'
+      - 'scripts/lib/persistent-event-store.mjs'
+      - 'docs/EXPLAIN-BOUNDED-INSPECTION-WINDOWS.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspector-bounded:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: event_intelligence
+        ports: [5432:5432]
+        options: >-
+          --health-cmd "pg_isready -U postgres -d event_intelligence"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      POSTGRES_URL: postgresql://postgres:postgres@127.0.0.1:5432/event_intelligence
+      EI_INSPECT_BENCH_CONFIRM: YES_ISOLATED
+      BENCH_SOURCE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Require exact source HEAD
+        run: test "$(git rev-parse HEAD)" = "$BENCH_SOURCE_COMMIT"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install dependencies
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm install --no-save --ignore-scripts --no-audit --no-fund pg@8.16.3
+          npm run build
+      - name: Record environment and driver version
+        run: |
+          {
+            echo "source-sha=$BENCH_SOURCE_COMMIT"
+            node -p "'pg-driver=' + require('pg/package.json').version"
+            node --version
+            uname -a
+            lscpu
+            free -m
+          } > pg-inspector-host.txt
+      - name: Run 1k 10k 100k real PostgreSQL scoped inspector experiment
+        run: |
+          set -euo pipefail
+          node scripts/evidence/postgres-inspector-100k.mjs \
+            > pg-inspector-raw.json \
+            2> pg-inspector-errors.jsonl
+          cat pg-inspector-raw.json
+      - name: Report bounded failure code from benchmark
+        if: failure()
+        run: |
+          if [ -f pg-inspector-errors.jsonl ]; then
+            head -c 1600 pg-inspector-errors.jsonl
+            echo
+          else
+            echo "Inspection failed before structured error was written"
+          fi
+      - name: Archive measured evidence and failure diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ei-pg-inspector-100k-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 90
+          if-no-files-found: warn
+          path: |
+            pg-inspector-host.txt
+            pg-inspector-raw.json
+            pg-inspector-errors.jsonl

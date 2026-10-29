@@ -905,6 +905,28 @@ export class PersistentEventStore {
   }
 
   /** JSONL reference store's in-memory current-match index. */
+  getBoundedInspectionMatch({triggerId,version,matchId=null,
+    maxRowBytes=65536}={}) {
+    if(typeof triggerId!=='string'||!triggerId||
+       typeof version!=='string'||!version||
+       (matchId!==null&&(typeof matchId!=='string'||!matchId))||
+       !Number.isSafeInteger(maxRowBytes) ||
+       maxRowBytes<1024 || maxRowBytes>131072) {
+      throw new RangeError('Invalid bounded match inspection');
+    }
+    const record=matchId ? this.#triggerMatches.get(matchId) :
+      this.getLatestTriggerMatch(triggerId,version);
+    if(!record || record.triggerId!==triggerId ||
+        record.triggerVersion!==version ||
+        (matchId!==null&&record.matchId!==matchId)) return null;
+    if(Buffer.byteLength(JSON.stringify(record),'utf8')>maxRowBytes){
+      const error=new Error('Selected match exceeds inspection byte budget');
+      error.code='EVENT_INTELLIGENCE_INSPECTION_BUDGET_EXCEEDED';
+      throw error;
+    }
+    return record;
+  }
+
   getTriggerMatch(matchId) {
     return this.#triggerMatches.get(String(matchId)) ?? null;
   }
@@ -1264,6 +1286,36 @@ export class PersistentEventStore {
     return this.#derivedEvents.get(
       `${String(serverId)}::${String(sourceEventId)}`,
     ) ?? null;
+  }
+
+  inspectionWindow(kind,matchId,{limit=50,maxRowBytes=16384}={}) {
+    if(!['derived_event','temporal_deadline'].includes(kind) ||
+        typeof matchId!=='string' || !matchId ||
+        !Number.isSafeInteger(limit) || limit<1 || limit>100 ||
+        !Number.isSafeInteger(maxRowBytes) || maxRowBytes<1024 || maxRowBytes>32768) {
+      throw new RangeError('Invalid bounded inspection window');
+    }
+    const source=kind==='derived_event'?this.#derivedEvents.values():this.#temporalDeadlines.values();
+    const records=[];
+    for(const row of source) {
+      if(row.matchId!==matchId)continue;
+      if(Buffer.byteLength(JSON.stringify(row),'utf8')>maxRowBytes){
+        const error=new Error('Inspection persisted row exceeds byte budget');
+        error.code='EVENT_INTELLIGENCE_INSPECTION_BUDGET_EXCEEDED';
+        throw error;
+      }
+      records.push(row);
+      if(records.length>limit)break;
+    }
+    return {records:records.slice(0,limit),hasMore:records.length>limit,limit};
+  }
+
+  getBoundedInspectionDeadlines(matchId,opts) {
+    return this.inspectionWindow('temporal_deadline',matchId,opts);
+  }
+
+  getBoundedInspectionDerivedEvents(matchId,opts) {
+    return this.inspectionWindow('derived_event',matchId,opts);
   }
 
   listDerivedEvents({ triggerId, matchId, name } = {}) {
