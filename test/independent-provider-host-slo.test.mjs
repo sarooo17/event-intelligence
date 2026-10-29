@@ -22,7 +22,7 @@ function fixture(){
   }));
   const receipts=Array.from({length:1200},(_,i)=>({
     eventId:'event:'+i,wakeId:'wake:'+i,
-    runtimeReceiptId:'receipt:'+i,effectCommitted:true,hostEffectMs:4+(i%10),
+    runtimeReceiptId:'receipt:'+i,effectCommitted:true,hostEffectMs:4+(i%10),completedElapsedMs:i*500+20,
   }));
   const p={schema:'event-intelligence.provider-observations.v1',
     providerId:'external-provider',workloadId,startedAt:start,finishedAt:finish,events};
@@ -100,6 +100,20 @@ test('lost/missing/duplicate host wake, partial provider events and retrospectiv
   assert.throws(()=>check(wrong),/EI_DURABLE_RECONCILIATION_FAILED/);
   const missingProvider=evidence({},p=>p.events.pop());
   assert.throws(()=>check(missingProvider),/MISSING_EXTERNAL_HOST_EFFECTS/);
+});
+
+test('verified wake throughput includes a separately signed slow host completion window',()=>{
+  const slow=evidence({},null,h=>{
+    h.finishedAt='2026-10-30T10:00:00.000Z';
+    h.receipts[h.receipts.length-1].completedElapsedMs=86400000;
+  });
+  const result=check(slow);
+  assert.equal(result.status,'budget-failed');
+  assert.ok(result.observedWakesPerSecond < 0.02);
+  assert.equal(result.measuredWindowSeconds,86400);
+  assert.equal(result.productionSloCertified,false);
+  const invalid=evidence({},null,h=>{h.receipts[5].completedElapsedMs=90000000});
+  assert.throws(()=>check(invalid),/INVALID_HOST_RECEIPT/);
 });
 
 test('signed evidence with p99 or verified throughput below precommitted budget is rejected',()=>{
