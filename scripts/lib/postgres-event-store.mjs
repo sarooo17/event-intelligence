@@ -2187,6 +2187,65 @@ export class PostgresEventStore {
    * Existing PostgreSQL indexes restrict scope/kind; this query may still
    * scan/sort matches server-side until a dedicated index is deployed.
    */
+  /**
+   * Explicit strict inspector mode: return the current match only if its
+   * logical persisted bytes fit the configured cap. Never send oversized
+   * JSONB rows to the Node process. Match selection and statement time
+   * share one PG transaction; no exact-key or latest-match fallback scan.
+   */
+  async getBoundedInspectionMatch({triggerId,version,matchId=null,
+    maxRowBytes=65536,maxScanMs=2000}={}) {
+    if(typeof triggerId!=='string'||!triggerId||
+       typeof version!=='string'||!version||
+       (matchId!==null&&(typeof matchId!=='string'||!matchId))||
+       !Number.isSafeInteger(maxRowBytes)||maxRowBytes<1024||maxRowBytes>131072||
+       !Number.isSafeInteger(maxScanMs)||maxScanMs<100||maxScanMs>5000) {
+      throw new RangeError('Invalid bounded match inspection');
+    }
+    const exact=matchId!==null;
+    const constraint=exact?' AND record_key=$4':'';
+    const ordering=exact?'':(
+      " ORDER BY date_trunc('millisecond', (payload->>'updatedAt')::timestamptz) DESC,"+
+      " CASE WHEN payload->>'status'='fired' THEN 5"+
+      " WHEN payload->>'status'='emitted' THEN 4"+
+      " WHEN payload->>'status'='matched' THEN 3"+
+      " WHEN payload->>'status'='partial' AND payload->'patternState'->>'role'='match' THEN 2"+
+      " WHEN payload->>'status'='partial' THEN 1 ELSE 0 END DESC, record_key ASC");
+    const sizeParam=exact?'$5':'$4';
+    const args=exact?[this.scopeId,triggerId,version,matchId,maxRowBytes]:
+      [this.scopeId,triggerId,version,maxRowBytes];
+    try {
+      return await this.tx(async client=>{
+        await client.query("SELECT set_config('statement_timeout',$1,true)",
+          [String(maxScanMs)+'ms']);
+        const found=await client.query(
+          'SELECT CASE WHEN octet_length(payload::text)<='+sizeParam+
+          ' THEN payload ELSE NULL END AS payload,'+
+          ' octet_length(payload::text) AS byte_count FROM '+this.records+
+          " WHERE scope_id=$1 AND kind='trigger_match'"+
+          " AND payload->>'triggerId'=$2 AND payload->>'triggerVersion'=$3"+
+          constraint+ordering+' LIMIT 1',args);
+        if(!found.rows.length)return null;
+        if(found.rows[0].payload===null) {
+          const error=new Error('Selected match exceeds inspection byte budget');
+          error.code='EVENT_INTELLIGENCE_INSPECTION_BUDGET_EXCEEDED';
+          throw error;
+        }
+        const parsed=parseTriggerMatchRecord(found.rows[0].payload);
+        return parsed.triggerId===triggerId &&
+          parsed.triggerVersion===version &&
+          (!exact||parsed.matchId===matchId)?parsed:null;
+      });
+    }catch(error){
+      if(error?.code==='57014'){
+        const refused=new Error('Inspection match selection exceeded SQL time budget');
+        refused.code='EVENT_INTELLIGENCE_INSPECTION_BUDGET_EXCEEDED';
+        throw refused;
+      }
+      throw error;
+    }
+  }
+
   async getLatestTriggerMatch(triggerId, version) {
     const result = await this.pool.query(
       'SELECT payload FROM ' + this.records +
