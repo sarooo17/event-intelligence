@@ -80,6 +80,8 @@ interface EvaluationContext {
   semanticCache: Map<string, SemanticDecision>;
   durableSemanticCache: PatternV2SemanticCache | null;
   semanticCacheNamespace: string;
+  semanticContextRevision: string;
+  semanticCacheTtlMs: number | null;
   semanticTrace: PatternV2SemanticTrace[];
   allowedLatenessMs: number;
 }
@@ -183,8 +185,17 @@ function durableSemanticCacheKey(
   }
 
   const payload = stableValue({
-    schema: 'pattern-v2-semantic-cache.v1',
+    schema: context.semanticCacheTtlMs === null &&
+      context.semanticContextRevision === ''
+      ? 'pattern-v2-semantic-cache.v1'
+      : 'pattern-v2-semantic-cache.v2',
     namespace: context.semanticCacheNamespace,
+    ...(context.semanticContextRevision !== ''
+      ? { contextRevision: context.semanticContextRevision } : {}),
+    ...(context.semanticCacheTtlMs !== null
+      ? { expiryWindow: Math.floor(context.now.getTime() /
+          context.semanticCacheTtlMs),
+          ttlMs: context.semanticCacheTtlMs } : {}),
     evaluator: evaluatorIdentity,
     node: {
       id: node.id,
@@ -1714,6 +1725,8 @@ export async function evaluatePatternV2({
   allowedLatenessMs = 0,
   semanticCache = null,
   semanticCacheNamespace = '',
+  semanticContextRevision = '',
+  semanticCacheTtlMs = null,
   incompleteSourceRefs = new Set<string>(),
 }: {
   definition: PatternAstV2Definition;
@@ -1723,8 +1736,17 @@ export async function evaluatePatternV2({
   allowedLatenessMs?: number;
   semanticCache?: PatternV2SemanticCache | null;
   semanticCacheNamespace?: string;
+  semanticContextRevision?: string;
+  semanticCacheTtlMs?: number | null;
   incompleteSourceRefs?: ReadonlySet<string>;
 }): Promise<PatternV2Evaluation> {
+  if(typeof semanticContextRevision !== 'string' ||
+     semanticContextRevision.length > 128 ||
+     (semanticCacheTtlMs !== null &&
+      (!Number.isSafeInteger(semanticCacheTtlMs) ||
+       semanticCacheTtlMs < 1000 || semanticCacheTtlMs > 86400000))) {
+    throw new RangeError('Invalid semantic context revision or cache TTL');
+  }
   // Bounded preflight before input cloning/sort or AST recursion.
   if (events.length > MAX_EVALUATION_INPUT_EVENTS ||
     !boundedAst(definition.root)) {
@@ -1761,6 +1783,8 @@ export async function evaluatePatternV2({
     semanticCache: new Map(),
     durableSemanticCache: semanticCache,
     semanticCacheNamespace,
+    semanticContextRevision,
+    semanticCacheTtlMs,
     semanticTrace: [],
     allowedLatenessMs,
   };
