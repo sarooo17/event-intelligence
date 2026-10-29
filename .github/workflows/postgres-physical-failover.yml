@@ -1,0 +1,46 @@
+name: PostgreSQL physical standby failover RPO RTO (disposable)
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "scripts/evidence/postgres-physical-failover-drill.mjs"
+      - "scripts/evidence/postgres-physical-failover-run.sh"
+      - ".github/workflows/postgres-physical-failover.yml"
+      - "docs/POSTGRES-PHYSICAL-FAILOVER-DRILL.md"
+
+permissions:
+  contents: read
+
+jobs:
+  physical-standby:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      EI_DISPOSABLE_PHYSICAL_FAILOVER_CONFIRM: YES_TWO_DISPOSABLE_DOCKER_POSTGRES_INSTANCES
+      EI_PG_FAILOVER_OUTPUT: pg-physical-failover.json
+      EI_FAILOVER_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Verify exact source
+        run: |
+          test "$(git rev-parse HEAD)" = "$EI_FAILOVER_SOURCE_SHA"
+      - name: Install pinned pg driver without running package hooks
+        run: npm ci --ignore-scripts
+      - name: Run disposable physical streaming PostgreSQL16 primary/standby kill and promotion
+        run: bash scripts/evidence/postgres-physical-failover-run.sh
+      - name: Preserve raw measured evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pg-physical-failover-rpo-rto
+          path: pg-physical-failover.json
+          if-no-files-found: warn
+          retention-days: 30
