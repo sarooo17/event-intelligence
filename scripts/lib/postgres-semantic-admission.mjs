@@ -9,7 +9,16 @@ function limits(input){
   if(!input || fields.some(k=>!integer(input[k]))) {
     throw new RangeError('Semantic admission requires bounded nonnegative budgets');
   }
-  return Object.fromEntries(fields.map(k=>[k,input[k]]));
+  const windows=['maxTriggerWindowMs','maxBatchWindowMs'];
+  if(windows.some(k=>input[k]!=null &&
+     (!Number.isSafeInteger(input[k])||input[k]<10||input[k]>86400000))) {
+    throw new RangeError('Invalid PG semantic admission time window');
+  }
+  return {
+    ...Object.fromEntries(fields.map(k=>[k,input[k]])),
+    maxTriggerWindowMs:input.maxTriggerWindowMs ?? null,
+    maxBatchWindowMs:input.maxBatchWindowMs ?? null,
+  };
 }
 export function createPostgresSemanticAdmission({
   store,batchId,budgetEpoch='1',budget,estimate,
@@ -57,8 +66,32 @@ export function createPostgresSemanticAdmission({
         if(!check(trigger)||!check(batch)){
           throw new Error('Corrupt semantic budget ledger: fail closed');
         }
-        const a=trigger??{calls:0,tokens:0,costMicros:0};
-        const z=batch??{calls:0,tokens:0,costMicros:0};
+        // Authoritative database clock: no worker-local time or restart can
+        // extend a trigger/batch admission window. The same lock protects
+        // the first start time and every later budget reservation.
+        const clock=await client.query(
+          "SELECT floor(extract(epoch from clock_timestamp())*1000)::bigint AS ms");
+        const nowMs=Number(clock.rows[0]?.ms);
+        if(!Number.isSafeInteger(nowMs))throw Error('Invalid PG budget clock');
+        const windowed=(row,windowMs)=>{
+          if(row && row.deadlineAtMs != null &&
+             !Number.isSafeInteger(row.deadlineAtMs)) {
+            throw new Error('Corrupt semantic budget window: fail closed');
+          }
+          if(row && windowMs !== null && row.deadlineAtMs == null) {
+            throw new Error('Missing persisted budget window: select a new host epoch');
+          }
+          const deadlineAtMs=row?.deadlineAtMs ??
+            (windowMs===null?null:nowMs+windowMs);
+          if(deadlineAtMs !== null &&
+             (!Number.isSafeInteger(deadlineAtMs) || nowMs>=deadlineAtMs)) {
+            return null;
+          }
+          return {...(row??{calls:0,tokens:0,costMicros:0}),deadlineAtMs};
+        };
+        const a=windowed(trigger,policy.maxTriggerWindowMs);
+        const z=windowed(batch,policy.maxBatchWindowMs);
+        if(!a||!z)return false;
         const approve=(used,calls,tokensLimit,costLimit)=>
           used.calls+1<=calls &&
           used.tokens+tokens<=tokensLimit &&
@@ -71,6 +104,7 @@ export function createPostgresSemanticAdmission({
           calls:old.calls+1,
           tokens:old.tokens+tokens,
           costMicros:old.costMicros+costMicros,
+          ...(old.deadlineAtMs===null ? {} : {deadlineAtMs:old.deadlineAtMs}),
         });
         await store.upsert('semantic_budget',triggerKey,next(a),client);
         await store.upsert('semantic_budget',batchKey,next(z),client);
