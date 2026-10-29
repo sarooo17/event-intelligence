@@ -29,6 +29,7 @@ const standby = new Pool({connectionString:standbyUrl,max:2,connectionTimeoutMil
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const sourceCommitSha=process.env.EI_FAILOVER_SOURCE_SHA||process.env.GITHUB_SHA||null;
 let killed=false;
+let primaryPoolClosed=false;
 try {
   const [p,s]=await Promise.all([
     primary.query('SELECT version() AS version, pg_is_in_recovery() AS recovering'),
@@ -61,6 +62,11 @@ try {
       x.payload_sha256===createHash('sha256').update('durably-acked:'+(i+1)).digest('hex'));
   };
   if (!await check(standby)) FAIL('standby-did-not-replay-every-acknowledged-commit');
+  // Close the old-primary client pool before the intentional SIGKILL. An
+  // otherwise idle pg client emits an unhandled error on postmaster death,
+  // which is not the failure we are trying to measure.
+  await primary.end();
+  primaryPoolClosed=true;
 
   const killStarted=performance.now();
   const killedResult=spawnSync('docker',['kill','--signal=SIGKILL',name],
@@ -118,5 +124,5 @@ try {
     acknowledged:rows,rpoTransactions:0,measuredRtoMs:report.measuredRtoMs,
     sourceCommitSha,productionHaCertified:false}));
 } finally {
-  await Promise.allSettled([primary.end(),standby.end()]);
+  await Promise.allSettled([...(primaryPoolClosed?[]:[primary.end()]),standby.end()]);
 }
