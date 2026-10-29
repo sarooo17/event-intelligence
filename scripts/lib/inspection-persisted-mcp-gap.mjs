@@ -42,12 +42,19 @@ export async function persistedGapInspectionFact(store, {triggerId, triggerVersi
     const durable=await store.getMcpClientState(
       source.connectionId,clause.event,clause.arguments ?? {},
     );
-    if (durable?.gapUnresolved !== true ||
-        durable?.connectionId !== source.connectionId ||
+    if (durable?.connectionId !== source.connectionId ||
         durable?.serverId !== clause.serverId ||
         durable?.eventName !== clause.event ||
         !Number.isSafeInteger(durable.completenessRevision) ||
         durable.completenessRevision < 1) continue;
+    if (durable.sourceAvailability === 'not_found') {
+      // Narrow, durable SEP-3415 subscription-level NotFound evidence.
+      // Never infer generic network outage, missing upstream events or
+      // unavailable connection from a local timeout or arbitrary payload.
+      return {contract:'ei.inspection-fact.v1',triggerId,triggerVersion,
+        matchId,durable:true,kind:'source_unavailable'};
+    }
+    if(durable.gapUnresolved !== true)continue;
     // A gap is no proof of source unavailability, watermark or impossible match.
     return {
       contract:'ei.inspection-fact.v1',triggerId,triggerVersion,

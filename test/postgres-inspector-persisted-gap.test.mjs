@@ -56,6 +56,18 @@ integration('real PG16 scoped MCP persisted gap shows no cross-tenant explanatio
     assert.equal((await new TriggerInspector({store:newA})
       .inspect({triggerId:'same-trigger',version:'1'})).diagnosisV2.kind,
       'not_yet_satisfied');
+    await newA.putMcpClientState({...key,sourceAvailability:'not_found'});
+    assert.equal((await new TriggerInspector({store:newA})
+      .inspect({triggerId:'same-trigger',version:'1'})).diagnosisV2.kind,
+      'source_unavailable');
+    assert.equal((await new TriggerInspector({store:newB})
+      .inspect({triggerId:'same-trigger',version:'1'})).diagnosisV2.kind,
+      'not_yet_satisfied','another PG tenant is isolated from not-found evidence');
+    await newA.putMcpClientState({...key,sourceAvailability:'available'});
+    assert.equal((await new TriggerInspector({store:newA})
+      .inspect({triggerId:'same-trigger',version:'1'})).diagnosisV2.kind,
+      'not_yet_satisfied','validated successful poll can supersede NotFound');
+
     const partial={
       protocolVersion:'0.2.0',schemaVersion:'trigger.v0.2',
       matchId:'candidate-budget',triggerId:'same-trigger',triggerVersion:'1',

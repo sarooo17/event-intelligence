@@ -84,3 +84,41 @@ A future strict fact capability must add genuinely scope/key/indexed,
 statement-timeout/byte-bounded evidence access; output-only caps or a
 JS-filtered full source inventory are insufficient. Added a regression
 with poisoned unbounded `getInspectionFact`/`listEventSources` methods.
+
+
+## Real observed source unavailability (SEP-3415 terminal NotFound)
+
+The host-owned MCP Events client already distinguishes a validated terminal
+`-32023` NotFound with scope `subscription` from unrelated provider errors
+and Forbidden authorization failures, without copying the provider's
+untrusted exception message. After validation, it now persists only fixed
+`sourceAvailability:'not_found'` against the exact connection/event/
+subscription-argument cursor state, with a store-generated revision and
+timestamp. A later successful poll for the same attached source writes
+`sourceAvailability:'available'`. The inspector reports
+`diagnosisV2.kind:'source_unavailable'` **only for that specific registered
+host-scoped event source** when the persisted marker and source binding agree.
+This is an observed *subscription not found* fact, **not proof of generic
+network outage, overall provider downtime or all upstream events missing**.
+Unknown errors and Forbidden remain non-evidence of source availability.
+
+The production client and both JSONL/PG16 stores produce/retain this marker.
+Tests exercise real terminal NotFound through the MCP client, unrelated
+healthy subscriptions, absence of provider secret leakage, independent JSONL
+reopen and PostgreSQL tenant-separated recovery.
+
+Strict-cost inspection still excludes all optional source-fact reads that
+lack a dedicated bounded provider; this prioritizes valid bounded-cost
+inspection over emitting an unbounded source availability claim. A complete
+#48 classification still requires distinct authoritative watermark-pending
+and terminally impossible candidate proofs, not inferred from these facts.
+
+
+**Recovery review hardening:** JSONL initialization explicitly restores the
+validated `sourceAvailability`/observation timestamp from the durable
+journal. A successful **push or webhook** session opening, `onActive`
+callback or accepted `onEvent` also replaces a stale `not_found` marker
+with `available`, just like a successful poll. No provider error message
+or credential-bearing object is ever persisted. The two streaming paths
+have real host-client integration regressions preloaded with an old
+NotFound marker.

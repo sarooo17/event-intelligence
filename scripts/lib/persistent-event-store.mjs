@@ -356,6 +356,12 @@ export class PersistentEventStore {
         ...(raw.nextPollAt ? { nextPollAt: String(raw.nextPollAt) } : {}),
         ...(raw.lastEventAt ? { lastEventAt: String(raw.lastEventAt) } : {}),
         ...(raw.lastError ? { lastError: String(raw.lastError) } : {}),
+        ...(['available','not_found'].includes(raw.sourceAvailability)
+          ? {sourceAvailability:raw.sourceAvailability,
+              ...(typeof raw.sourceAvailabilityObservedAt==='string'
+                ? {sourceAvailabilityObservedAt:raw.sourceAvailabilityObservedAt}
+                : {})}
+          : {}),
         ...(typeof raw.truncated === 'boolean' ? { truncated: raw.truncated } : {}),
         gapUnresolved: raw.gapUnresolved === true ||
           (raw.gapUnresolved === undefined && raw.truncated === true),
@@ -1146,6 +1152,15 @@ export class PersistentEventStore {
         ...(input.lastEventAt || previous?.lastEventAt
           ? { lastEventAt: String(input.lastEventAt || previous.lastEventAt) }
           : {}),
+        // Accepted only from a host-owned validated terminal MCP poll.
+        // This is per-subscription not_found, NOT global network outage.
+        ...(['available','not_found'].includes(input.sourceAvailability)
+          ? {sourceAvailability:input.sourceAvailability,
+              sourceAvailabilityObservedAt:new Date().toISOString()}
+          : ['available','not_found'].includes(previous?.sourceAvailability)
+            ? {sourceAvailability:previous.sourceAvailability,
+                sourceAvailabilityObservedAt:previous.sourceAvailabilityObservedAt}
+            : {}),
         ...(input.lastError
           ? { lastError: String(input.lastError) }
           : {}),
