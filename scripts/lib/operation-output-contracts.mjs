@@ -131,6 +131,19 @@ const stdioInspect = z.object({
     missingClauseIds: z.array(z.string()),
     pendingDeadlineCount: z.number().int().nonnegative(),
   }).strict(),
+  // Additive v2: v1 diagnosis is preserved for older consumers and hosts.
+  diagnosisV2: z.object({
+    contract: z.literal('ei.trigger-explain-reason.v2'),
+    kind: z.enum([
+      'paused', 'lifecycle_ended', 'wake_failed', 'candidate_expired',
+      'fired', 'derived_emitted', 'waiting_delivery',
+      'source_unavailable', 'watermark_pending', 'budget_truncated',
+      'candidate_impossible', 'deadline_pending', 'not_yet_satisfied',
+    ]),
+    basis: z.enum(['persisted_local', 'scoped_store_fact']),
+    scope: z.enum(['trigger', 'selected_match']),
+    upstreamCompleteness: z.literal('unknown'),
+  }).strict().optional(),
 }).passthrough();
 
 const stdioSimulation = z.object({
