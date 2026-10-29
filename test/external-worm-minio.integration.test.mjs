@@ -64,14 +64,21 @@ integration('isolated S3-compatible server: five signed immutable objects, readb
     assert.equal(receipt.productionRetentionCertified,false);
     assert.ok(receipt.objects.every(x=>x.objectLockMode==='COMPLIANCE'));
     const protectedObject=receipt.objects[0];
-    await assert.rejects(
-      client.send(new DeleteObjectCommand({
+    let deleteWasDenied=false;
+    let outcome={kind:'unexpected-success'};
+    try {
+      const response=await client.send(new DeleteObjectCommand({
         Bucket:bucket,Key:protectedObject.key,VersionId:protectedObject.versionId,
-      })),
-      error=>['AccessDenied','AccessDeniedException'].includes(error?.name) ||
-        error?.$metadata?.httpStatusCode===403,
-      'retained Object Lock COMPLIANCE object version must deny removal',
-    );
+      }));
+      outcome={kind:'unexpected-success',statusCode:response?.$metadata?.httpStatusCode??null};
+    }catch(error){
+      outcome={kind:'denied',name:error?.name??null,statusCode:error?.$metadata?.httpStatusCode??null};
+      deleteWasDenied=['AccessDenied','AccessDeniedException'].includes(error?.name) ||
+        error?.$metadata?.httpStatusCode===403;
+    }
+    console.log(JSON.stringify({event:'s3-retention-delete-verdict',...outcome}));
+    assert.equal(deleteWasDenied,true,
+      'retained COMPLIANCE Object Lock object version deletion must fail with AccessDenied');
     console.log(JSON.stringify({
       schema:'event-intelligence.disposable-s3-object-lock-e2e.v1',
       status:'completed',objectCount:5,versioned:true,
