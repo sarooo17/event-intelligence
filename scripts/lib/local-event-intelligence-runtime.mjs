@@ -369,7 +369,18 @@ export async function createLocalEventIntelligenceRuntime({
     observability: observer,
   });
 
-  await mcpEventsClient.prepareConnectionAuthorities();
+  try {
+    await mcpEventsClient.prepareConnectionAuthorities();
+  } catch (error) {
+    // A failed multi-connection bootstrap must not leave earlier authority
+    // epochs active, schedulers running or a half-started host exposed.
+    try { await mcpEventsClient.close(); } catch {}
+    await Promise.allSettled([...scopeContexts.values()].map(c=>c.close()));
+    if(!providedStore) {
+      try { await rootStore.close?.(); } catch {}
+    }
+    throw error;
+  }
   const discovery = await mcpEventsClient.discoverAll();
   mcpEventsClient.start();
 
