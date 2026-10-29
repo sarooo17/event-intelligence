@@ -260,8 +260,13 @@ export class TriggerInspector {
     // a high-cardinality scope. Legacy host stores retain the list fallback.
     const directDefinition = version && typeof this.store.getTrigger === 'function'
       ? await this.store.getTrigger(triggerId, version) : null;
+    // Legacy key concatenation (triggerId + '@' + version) can alias
+    // different input pairs containing '@'. Never trust a keyed hit's
+    // identity without comparing its canonical stored fields.
+    const canonicalDefinition = directDefinition?.triggerId === triggerId &&
+      directDefinition?.version === version ? directDefinition : null;
     const candidates = version && typeof this.store.getTrigger === 'function'
-      ? (directDefinition ? [directDefinition] : [])
+      ? (canonicalDefinition ? [canonicalDefinition] : [])
       : (await this.store.listTriggers())
         .filter((definition) => definition.triggerId === triggerId)
         .filter((definition) => !version || definition.version === version);
