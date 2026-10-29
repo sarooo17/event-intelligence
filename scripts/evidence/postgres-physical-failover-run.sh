@@ -11,7 +11,7 @@ primary=ei-pg-ha-disposable-primary
 standby=ei-pg-ha-disposable-standby
 standbyvol=ei-pg-ha-disposable-standby-data
 cleanup() {
-  docker rm -f "$primary" "$standby" >/dev/null 2>&1 || true
+  docker rm -f -v "$primary" "$standby" >/dev/null 2>&1 || true
   docker volume rm "$standbyvol" >/dev/null 2>&1 || true
   docker network rm "$network" >/dev/null 2>&1 || true
 }
