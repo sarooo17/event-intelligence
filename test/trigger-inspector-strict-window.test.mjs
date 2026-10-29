@@ -9,7 +9,9 @@ const definition={triggerId:'t',version:'1',
   clauses:[{id:'a',event:'a'}],pattern:{root:{kind:'event',ref:'a'}}};
 function store({deadlines=[],derived=[]}={}){
   return {
-    listTriggers:()=>[definition],getTriggerState:()=>({status:'active',fireCount:0}),
+    listTriggers:()=>{throw Error('unbounded definition scan forbidden')},
+    getTrigger:()=>definition,
+    getTriggerState:()=>({status:'active',fireCount:0}),
     listTriggerMatches:()=>{throw Error('unbounded match selection forbidden')},
     getBoundedInspectionMatch:async()=>match,
     getBoundedInspectionDeadlines:async(matchId,{limit})=>{
@@ -22,7 +24,11 @@ function store({deadlines=[],derived=[]}={}){
     },
     listTemporalDeadlines:()=>{throw Error('full deadline scan forbidden')},
     listDerivedEvents:()=>{throw Error('full derived scan forbidden')},
-    listTriggerMatchHistory:()=>[match],
+    listTriggerMatchHistory:()=>{throw Error('unbounded history scan forbidden')},
+    getRecentTriggerMatchHistory:async(id,{limit})=>{
+      assert.equal(id,'m');assert(limit>0);
+      return {records:[match],hasMore:false};
+    },
   };
 }
 const deadline=(i)=>({deadlineId:'d'+i,matchId:'m',conditionId:'a',
@@ -77,4 +83,31 @@ test('strict inspection always requires evidence/history limits and bounded matc
     inspectionWindowLimit:2,evidenceRefLimit:2,matchHistoryLimit:2,
   }).inspect({triggerId:'t',version:'1'}),e=>
     e?.code==='EVENT_INTELLIGENCE_INSPECTION_STORE_UNSUPPORTED');
+});
+
+test('strict mode rejects a poisoned cross-trigger/explicit-match result before evidence lookup',async()=>{
+  for(const rogue of [
+    {...match,triggerId:'foreign'},
+    {...match,triggerVersion:'other'},
+    {...match,matchId:'foreign-match'},
+  ]) {
+    const source=store();
+    source.getBoundedInspectionMatch=async()=>rogue;
+    source.getBoundedInspectionDeadlines=()=>{throw Error('evidence leaked');};
+    await assert.rejects(()=>new TriggerInspector({
+      store:source,inspectionWindowLimit:2,
+      evidenceRefLimit:2,matchHistoryLimit:2,
+    }).inspect({triggerId:'t',version:'1',matchId:'m'}),
+    e=>e?.code==='EVENT_INTELLIGENCE_INSPECTION_MATCH_IDENTITY_INVALID');
+  }
+});
+test('strict mode refuses stores missing keyed definition or bounded history capability',async()=>{
+  for(const key of ['getTrigger','getRecentTriggerMatchHistory']){
+    const source=store();
+    delete source[key];
+    await assert.rejects(()=>new TriggerInspector({
+      store:source,inspectionWindowLimit:2,evidenceRefLimit:2,matchHistoryLimit:2,
+    }).inspect({triggerId:'t',version:'1'}),
+    e=>e?.code==='EVENT_INTELLIGENCE_INSPECTION_STORE_UNSUPPORTED');
+  }
 });
