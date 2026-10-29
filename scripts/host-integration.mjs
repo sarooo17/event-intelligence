@@ -231,7 +231,8 @@ export async function createEventIntelligenceHost({
         if (
           existing.identity === connection.identity &&
           existing.serverId === connection.serverId &&
-          existing.scopeId === connection.scopeId
+          existing.scopeId === connection.scopeId &&
+          existing.authorityEpoch === connection.authorityEpoch
         ) {
           registryManaged.add(connectionId);
           outcomes.push({ connectionId, status: 'already_attached' });
