@@ -119,3 +119,26 @@ Public Release Check security evidence gate, not only an optional test.
 exceptions, raw transport responses, source-config credentials or host logs;
 those remain separate trust boundaries and #45 stays open. This change does
 not modify a provider's event compatibility or enable unauthenticated tools.
+
+## Negative test mapping / non-goals release contract (#45)
+
+`docs/security-negative-evidence-v1.json` lists all 12 authority owners,
+a concrete existing negative test case for each hypothesis, and unresolved
+risk. `test/security-negative-evidence-ledger.test.mjs` verifies that every
+referenced **test case**, not merely a filename, remains present, and that
+externally owned authorization/approval powers do not appear as new EI
+package exports or silently usable MCP credentials. The security release
+workflow executes this contract on every PR.
+
+The machine-readable status is **not security certification**. The matrix
+can establish a regression witness for the named attack shape, but cannot
+claim that an entire boundary is comprehensively safe. Provider OAuth,
+transport credential acquisition, host policy engine, agent tool permission
+and execution approval, and post-wake authorization of external effects are
+strictly the host's responsibility. EI's internal trigger-owner checks are
+not an OAuth or downstream effects authorization system.
+
+Pending: cross-worker revocation/queued work semantics; externally enforced
+transport body/time quotas and tenant rate/backpressure; all-unlabelled
+telemetry canary protection; private independent reviewer signoff. Do not
+check #45's security certification acceptance on this ledger alone.
