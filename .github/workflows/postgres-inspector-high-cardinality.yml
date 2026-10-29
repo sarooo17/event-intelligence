@@ -66,6 +66,15 @@ jobs:
             > pg-inspector-raw.json \
             2> pg-inspector-errors.jsonl
           cat pg-inspector-raw.json
+      - name: Report bounded failure code from benchmark
+        if: failure()
+        run: |
+          if [ -f pg-inspector-errors.jsonl ]; then
+            head -c 1600 pg-inspector-errors.jsonl
+            echo
+          else
+            echo "Inspection failed before structured error was written"
+          fi
       - name: Archive measured evidence and failure diagnostics
         if: always()
         uses: actions/upload-artifact@v4
