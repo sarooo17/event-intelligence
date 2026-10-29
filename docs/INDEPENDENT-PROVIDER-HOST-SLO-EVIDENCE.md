@@ -1,0 +1,17 @@
+# Independent MCP provider and external host SLO evidence gate (#47)
+
+**Scope:** independently signed raw telemetry from a provider and a host, not yet a production SLO certification. The same-deployment synthetic Railway campaigns from October 28 cannot be substituted for these inputs.
+
+The operator-only `assessIndependentProviderHostEvidence()` accepts two original raw byte streams (canonical JSON), independently held Ed25519 keys and signatures, separately pinned identities/key IDs, the complete EI durable wake reconciliation snapshot and **pre-registered** latency/throughput budgets. It verifies 600+ seconds, 1,000+ raw event/receipt pairs, unique event/wake/receipt identities, per-source provider acknowledgement latency, separate host effect latency, zero duplicate effects and authoritative EI persisted wake/receipt/accounting **including the full per-event durable EI receipt mapping** (event ID, wake ID and runtime receipt ID), not merely equal aggregate counts. Source and host use their own monotonic local timing series. **Verified wake throughput is measured using the longer of the signed provider traffic window and the host completion window**, so a backlog drained hours later cannot be reported as a 600-second delivery success. Every signed host receipt includes a bounded host-local completion elapsed time. Do not subtract clocks from separate machines.
+
+All signatures bind the **raw original bytes**, not a parsed object later reserialized. The verifier refuses missing/mutated signatures, shared signing keys, malformed/ambiguous raw JSON, missing/duplicate events or wakes, late budgets, fewer than 1000 rows, and EI/accounting mismatch. It recomputes p99 nearest-rank from raw signed timing observations; predeclared budget failures return `budget-failed`. A fully consistent result returns only `eligible-for-independent-review`, **never certified**.
+
+## Work still required to close #47
+
+1. Run an independently operated real MCP Events provider with its own transport/host credentials, stable event identities and a separate signed latency observer **outside the benchmark EI process**.
+2. Run a separate host runtime with independent durable idempotent effect ledger, independent signing key and externally retained receipt telemetry. It must not use the EI benchmark-host callback or its shared DB as its authoritative host effect.
+3. Conduct three preregistered (steady, burst, fault-injected) >=600s campaigns, each >=1000 raw source acknowledgement and effect receipts, with actual EI ingest→match, match→wake and external host p99; independent raw S3/GitHub artifacts, checkout SHA and CPU/memory attribution for workers, provider, host and PostgreSQL. The existing `assessPostgresProductionSloEvidence()` continues to require database failure plus worker kill and partition rebalancing.
+4. Independently audit signing key custody, NTP/monotonic clock provenance, artifact completeness/availability and actual infrastructure isolation. A test-generated Ed25519 key pair or two process-local fixtures **does not prove** independent production parties.
+5. Fully implement and rehearse external WORM retention, replay low-watermarks and safe audit-prefix pruning; the verified uploader alone cannot authorize deletion.
+
+This additive verifier does not create, operate, or claim an independently hosted provider or host. No runtime MCP, PostgreSQL, release, credentials or production safety behavior changes.
