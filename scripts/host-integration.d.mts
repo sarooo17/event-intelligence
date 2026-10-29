@@ -51,6 +51,8 @@ export interface HostMcpConnectionOptions {
   getCapabilities?: () => unknown | Promise<unknown>;
   capabilities?: Record<string, unknown>;
   enabled?: boolean;
+  /** Host-generated unpredictable session epoch; requires strict PG stores. */
+  authorityEpoch?: string;
   /** Isolation partition used by the shared EI host. Defaults to \"default\". */
   scopeId?: string;
   pollIntervalMs?: number;
