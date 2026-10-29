@@ -116,6 +116,31 @@ test('verified wake throughput includes a separately signed slow host completion
   assert.throws(()=>check(invalid),/INVALID_HOST_RECEIPT/);
 });
 
+test('all signed identities must be actual strings, not regex-coerced null/undefined',()=>{
+  const cases=[
+    evidence({},p=>{delete p.events[0].eventId}),
+    evidence({},p=>{p.events[0].eventId=null}),
+    evidence({},null,h=>{delete h.receipts[0].eventId}),
+    evidence({},null,h=>{h.receipts[0].wakeId=null}),
+    evidence({},null,h=>{h.receipts[0].runtimeReceiptId=null}),
+  ];
+  for(const invalid of cases){
+    assert.throws(()=>check(invalid),/MISSING_OR_DUPLICATE_ID|INVALID_HOST_RECEIPT/,
+      'invalid signed source/host identifiers cannot be reconciled');
+  }
+  const colluding=evidence({},p=>{p.events[0].eventId=null},h=>{h.receipts[0].eventId=null});
+  colluding.ei.durableReceipts[0].eventId=null;
+  assert.throws(()=>check(colluding),/MISSING_OR_DUPLICATE_ID/);
+  const absentReceipt=evidence({},null,h=>{h.receipts[0].runtimeReceiptId=null});
+  absentReceipt.ei.durableReceipts[0].runtimeReceiptId=null;
+  assert.throws(()=>check(absentReceipt),/INVALID_HOST_RECEIPT/);
+  for(const field of ['expectedProviderId','expectedHostId','expectedProviderKeyId','expectedHostKeyId']){
+    const invalid=evidence();
+    invalid[field]=null;
+    assert.throws(()=>check(invalid),/MISSING_INDEPENDENT_TRUST_ROOT/);
+  }
+});
+
 test('signed evidence with p99 or verified throughput below precommitted budget is rejected',()=>{
   const e=evidence();
   e.preRegisteredSloBudgets.providerAcknowledgementP99MaxMs=10;
