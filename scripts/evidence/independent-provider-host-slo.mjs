@@ -3,7 +3,7 @@ import { createHash, createPublicKey, verify } from 'node:crypto';
 const MAX_BYTES=8*1024*1024;
 const MAX_EVENTS=100000;
 const NAME=/^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,127}$/;
-const SHA=/^[a-f0-9]{64}$/;
+const SHA=/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
 const REFUSED='EI_INDEPENDENT_SLO_EVIDENCE_REFUSED';
 const fail=code=>{const error=new Error(REFUSED+':'+code);error.code=REFUSED;throw error;};
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
