@@ -87,11 +87,29 @@ async function run(mode) {
 
     const matches = await host.store.listTriggerMatches('telemetry-neutral');
     const lifecycle = await host.store.getTriggerState('telemetry-neutral', '1');
+    const fired = matches.filter(m => m.status === 'fired');
+    assert.equal(fired.length, 1, 'real CEP match must finalize as fired');
+    assert.ok(fired[0].firedWakeId, 'fired match must retain persisted wake id');
+    const persistedWake = await host.store.latestWake(fired[0].firedWakeId);
+    const delivery = await host.store.getWakeDelivery(fired[0].firedWakeId);
+    const audit = await host.store.listAudit();
+    const deliveredAudit = audit.filter(record =>
+      record.kind === 'wake.delivered' && record.entityId === fired[0].firedWakeId);
+    assert.equal(persistedWake?.status, 'delivered');
+    assert.equal(delivery?.status, 'delivered');
+    assert.equal(persistedWake.runtimeReceiptId, 'receipt-for-one-wake');
+    assert.equal(delivery.runtimeReceiptId, persistedWake.runtimeReceiptId);
+    assert.equal(deliveredAudit.length, 1, 'durable wake effect must be audited');
+    assert.equal(deliveredAudit[0].details.runtimeReceiptId, delivery.runtimeReceiptId);
     assert.equal(await host.store.verifyAudit(), true);
     return {
-      matchCount: matches.filter(m => m.status === 'fired').length,
+      matchCount: fired.length,
       firedWakeCount: wakes.length,
-      receipts: wakes.map(() => 'host-acknowledged'),
+      persistedWakeStatus: persistedWake.status,
+      persistedReceipt: persistedWake.runtimeReceiptId,
+      deliveryStatus: delivery.status,
+      deliveryReceipt: delivery.runtimeReceiptId,
+      deliveryAuditCount: deliveredAudit.length,
       lifecycleStatus: lifecycle.status,
       lifecycleFireCount: lifecycle.fireCount,
       records,
@@ -115,7 +133,8 @@ test('real MCP → CEP → durable wake matching is identical with missing, vali
     const { records: _records, ...behavior } = result;
     const { records: _baselineRecords, ...reference } = baseline;
     assert.deepEqual(behavior, reference, mode + ' altered matched/fired behavior');
-    assert.equal(result.receipts.length, 1);
+    assert.equal(result.persistedReceipt, 'receipt-for-one-wake');
+    assert.equal(result.deliveryAuditCount, 1);
     if (mode === 'working') {
       assert.ok(result.records.some(r => r.event === 'ei.wake.delivered'));
       assert.ok(!JSON.stringify(result.records).includes(secret));
