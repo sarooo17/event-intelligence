@@ -2513,18 +2513,24 @@ export class PostgresEventStore {
     return this.tx(async client=>{
       await this.lock(client,'mcp-connection-authority',connectionId);
       const prior=await this.get('mcp_connection_authority',connectionId,client);
-      // Old session revocation must never revoke a same-ID replacement.
-      if(prior?.epochHash!==epochHash||prior?.active!==true)return false;
-      await this.upsert('mcp_connection_authority',connectionId,{
-        ...prior,active:false,
-      },client);
-      // Permanent scope-local tombstone protects any historical epoch, not
-      // just the most recent. Never store raw host-generated session secrets.
+      // Commit the tombstone under the same advisory lock EVEN IF this
+      // epoch is absent or not the current active session. Otherwise a host
+      // revocation racing a delayed registration would succeed with false
+      // and the later registration could resurrect revoked authority.
+      const isCurrent=prior?.epochHash===epochHash && prior?.active===true;
+      if(isCurrent) {
+        await this.upsert('mcp_connection_authority',connectionId,{
+          ...prior,active:false,
+        },client);
+      }
+      // Never revoke a replacement with a different epoch. Tombstone only
+      // the requested SHA256 epoch; idempotent historical markers are safe.
       await this.upsert('mcp_connection_retired_epoch',
         connectionId+':'+epochHash,{
-          epochHash,connectionId,retired:true,generation:prior.generation,
+          epochHash,connectionId,retired:true,
+          generation:isCurrent?prior.generation:null,
         },client);
-      return true;
+      return isCurrent;
     });
   }
 
