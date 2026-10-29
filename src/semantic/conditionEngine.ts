@@ -25,11 +25,12 @@ export class SemanticConditionEngine {
   async evaluate(
     source: Record<string, unknown>,
     condition: SemanticBooleanCondition,
+    options?: {signal?: AbortSignal},
   ): Promise<SemanticDecision> {
     const result = await this.evaluator.evaluate({
       instruction: condition.instruction,
       input: projectSemanticInput(source, condition.input),
-    });
+    }, options);
 
     if (
       !Number.isFinite(result.probability) ||

@@ -27,7 +27,11 @@ export interface SemanticEvaluator {
    * remain eligible only for evaluation-pass caching.
    */
   readonly cacheIdentity?: string;
-  evaluate(request: SemanticEvaluationRequest): Promise<SemanticEvaluation>;
+  /** Optional cooperative cancellation; host provider adapters must honor
+   * it to stop remote work on an EI deadline. Old one-argument adapters
+   * remain source-compatible but may continue billable work after timeout. */
+  evaluate(request: SemanticEvaluationRequest,
+    options?: { signal?: AbortSignal }): Promise<SemanticEvaluation>;
 }
 
 export type SemanticOutcome = 'match' | 'reject' | 'uncertain';

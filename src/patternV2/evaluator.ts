@@ -944,6 +944,7 @@ async function withTimeout<T>(
   timeoutMs: number,
   label: string,
   timeoutCode: string | null = null,
+  onTimeout: (() => void) | null = null,
 ): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | null = null;
   try {
@@ -954,7 +955,11 @@ async function withTimeout<T>(
           const error=Object.assign(
             new Error(`${label} timed out after ${timeoutMs}ms`),
             timeoutCode ? {code:timeoutCode} : {});
+          // Settle the timeout first; an abort-aware host may reject
+          // synchronously when signalled and must not override the
+          // stable EI timeout classification.
           reject(error);
+          try { onTimeout?.(); } catch {}
         }, timeoutMs);
       }),
     ]);
@@ -1705,6 +1710,7 @@ async function evaluateNode(
       }
       context.semanticCacheMisses += 1;
       context.semanticEvaluations += 1;
+      const abortController = new AbortController();
       try {
         decision = await withTimeout(
         new SemanticConditionEngine(
@@ -1719,10 +1725,12 @@ async function evaluateNode(
             rejectThreshold: node.rejectThreshold,
             uncertain: node.uncertain,
           },
+          {signal:abortController.signal},
         ),
         remaining,
         `Semantic node ${node.id}`,
         batchLimited ? 'EI_SEMANTIC_BATCH_TIMEOUT' : null,
+        ()=>abortController.abort(),
       );
       }catch(error){
         if(error && typeof error === 'object' &&
