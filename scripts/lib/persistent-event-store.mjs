@@ -1014,6 +1014,11 @@ export class PersistentEventStore {
       }));
   }
 
+  async getInspectionFact({triggerId,triggerVersion,matchId=null}={}) {
+    const {persistedGapInspectionFact} = await import('./inspection-persisted-mcp-gap.mjs');
+    return persistedGapInspectionFact(this,{triggerId,triggerVersion,matchId});
+  }
+
   getMcpClientState(connectionId, eventName, args = {}) {
     const state = this.#mcpClientStates.get(
       mcpClientStateKey(connectionId, eventName, args),
