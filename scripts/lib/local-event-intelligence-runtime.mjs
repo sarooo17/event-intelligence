@@ -370,6 +370,16 @@ export async function createLocalEventIntelligenceRuntime({
     observability: observer,
   });
 
+  try {
+    await mcpEventsClient.prepareConnectionAuthorities();
+  } catch (error) {
+    try { await mcpEventsClient.close(); } catch {}
+    await Promise.allSettled([...scopeContexts.values()].map(c=>c.close()));
+    if(!providedStore) {
+      try { await rootStore.close?.(); } catch {}
+    }
+    throw error;
+  }
   const discovery = await mcpEventsClient.discoverAll();
   mcpEventsClient.start();
 
