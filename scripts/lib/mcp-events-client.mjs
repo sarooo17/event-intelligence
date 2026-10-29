@@ -2057,6 +2057,15 @@ export class McpEventsClientManager {
     });
     Promise.resolve().then(async () => {
       await this.stop({ shutdown: true });
+      // A final host shutdown must also revoke shared database authority:
+      // other worker processes cannot infer this manager's local closed flag.
+      for(const connection of [...this.connections.values()]) {
+        if(!connection.authorityEpoch)continue;
+        const context=await this.scopeContext(connection);
+        await context.store.revokeMcpConnectionAuthority({
+          connectionId:connection.connectionId,epoch:connection.authorityEpoch,
+        });
+      }
       // Already-accepted manual/scoped attachments may be awaiting an
       // untrusted provider. All must settle (or fail on assertOpen) while
       // the runtime/store is still available, never after it has closed.
