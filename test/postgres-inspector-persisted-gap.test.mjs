@@ -38,6 +38,11 @@ integration('real PG16 scoped MCP persisted gap shows no cross-tenant explanatio
     const inspectB=()=>new TriggerInspector({store:b})
       .inspect({triggerId:'same-trigger',version:'1'});
     assert.equal((await inspectA()).diagnosisV2.kind,'source_gap_unresolved');
+    const strictView=await new TriggerInspector({
+      store:a,inspectionWindowLimit:2,evidenceRefLimit:2,matchHistoryLimit:2,
+    }).inspect({triggerId:'same-trigger',version:'1'});
+    assert.equal(strictView.diagnosisV2.kind,'source_gap_unresolved',
+      'bounded SQL source fact surfaces persisted gap without full inventory');
     assert.equal((await inspectB()).diagnosisV2.kind,'not_yet_satisfied');
     await pool.end();
     replacement=new Pool({connectionString:url,max:4});
@@ -60,6 +65,24 @@ integration('real PG16 scoped MCP persisted gap shows no cross-tenant explanatio
     assert.equal((await new TriggerInspector({store:newA})
       .inspect({triggerId:'same-trigger',version:'1'})).diagnosisV2.kind,
       'source_unavailable');
+    assert.equal((await new TriggerInspector({store:newA,
+      inspectionWindowLimit:2,evidenceRefLimit:2,matchHistoryLimit:2})
+      .inspect({triggerId:'same-trigger',version:'1'})).diagnosisV2.kind,
+      'source_unavailable','strict source fact sees durable verified NotFound');
+    // Add unrelated sources after the valid NotFound. Once a bounded
+    // inventory is incomplete, never claim source evidence based on a subset.
+    for(let idx=0;idx<3;idx++) {
+      await newA.putEventSource({sourceId:'extra-'+idx,
+        connectionId:'unrelated-'+idx,serverId:'other',
+        eventName:'unrelated.changed',delivery:['poll'],enabled:true});
+    }
+    assert.equal((await new TriggerInspector({store:newA,
+      inspectionWindowLimit:2,evidenceRefLimit:2,matchHistoryLimit:2})
+      .inspect({triggerId:'same-trigger',version:'1'})).diagnosisV2.kind,
+      'not_yet_satisfied','oversized source inventory must conservatively remain unknown');
+    assert.equal((await new TriggerInspector({store:newA})
+      .inspect({triggerId:'same-trigger',version:'1'})).diagnosisV2.kind,
+      'source_unavailable','legacy exhaustive inspection remains unchanged');
     assert.equal((await new TriggerInspector({store:newB})
       .inspect({triggerId:'same-trigger',version:'1'})).diagnosisV2.kind,
       'not_yet_satisfied','another PG tenant is isolated from not-found evidence');
