@@ -83,3 +83,45 @@ integration('PG16 budget refuses untrusted malformed costs and corrupt stored co
     await pool.end();
   }
 });
+
+integration('PG16 host-authored trigger/batch deadlines survive independent pools, expire and reset only in new epoch',async()=>{
+  const pool=new Pool({connectionString:url,max:3});
+  const independent=new Pool({connectionString:url,max:3});
+  const scoped=storage(pool,'time-scope');
+  const other=storage(independent,'time-scope');
+  const timed={...budget,maxTriggerWindowMs:350,maxBatchWindowMs:350};
+  const make=(store,epoch='clock-1',batchId='first')=>
+    createPostgresSemanticAdmission({store,batchId,budgetEpoch:epoch,
+      budget:timed,estimate:estimator});
+  try{
+    await scoped.init();await other.init();
+    assert.equal(await make(scoped).reserve(req),true);
+    const triggerKey='trigger:'+JSON.stringify(['issue@1','clock-1']);
+    const initial=await scoped.get('semantic_budget',triggerKey);
+    assert(Number.isSafeInteger(initial.deadlineAtMs));
+    assert.equal(await make(other).reserve(req),true);
+    await new Promise(resolve=>setTimeout(resolve,600));
+    assert.equal(await make(scoped,'clock-1','brand-new-batch').reserve(req),false,
+      'fresh batch must not extend a trigger window after expiry');
+    assert.equal(await make(other).reserve(req),false,
+      'new pool cannot reopen expired budget');
+    assert.equal((await scoped.get('semantic_budget',triggerKey)).deadlineAtMs,
+      initial.deadlineAtMs,'expired budget must remain durable and unmodified');
+    assert.equal(await make(other,'clock-2').reserve(req),true,
+      'operator-selected new policy epoch starts a fresh accounting window');
+    const newWindow=await scoped.get('semantic_budget',
+      'trigger:'+JSON.stringify(['issue@1','clock-2']));
+    assert(newWindow.deadlineAtMs>initial.deadlineAtMs);
+    assert.throws(()=>createPostgresSemanticAdmission({
+      store:scoped,batchId:'first',
+      budget:{...timed,maxBatchWindowMs:2},estimate:estimator,
+    }),/time window/);
+    assert.equal(await make(scoped,'clock-2','first')
+      .reserve({...req,namespace:''}),false,'invalid identity is denied');
+  }finally{
+    for(const suffix of ['metadata','leases','history','records','counters']){
+      await pool.query('DROP TABLE IF EXISTS "'+prefix+'_'+suffix+'" CASCADE');
+    }
+    await pool.end();await independent.end();
+  }
+});

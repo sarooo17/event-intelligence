@@ -96,6 +96,7 @@ interface EvaluationContext {
   semanticCacheNamespace: string;
   semanticContextRevision: string;
   semanticCacheTtlMs: number | null;
+  evaluationDeadlineAt: number | null;
   semanticTrace: PatternV2SemanticTrace[];
   allowedLatenessMs: number;
 }
@@ -942,6 +943,7 @@ async function withTimeout<T>(
   operation: Promise<T>,
   timeoutMs: number,
   label: string,
+  timeoutCode: string | null = null,
 ): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | null = null;
   try {
@@ -949,7 +951,10 @@ async function withTimeout<T>(
       operation,
       new Promise<T>((_, reject) => {
         timer = setTimeout(() => {
-          reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+          const error=Object.assign(
+            new Error(`${label} timed out after ${timeoutMs}ms`),
+            timeoutCode ? {code:timeoutCode} : {});
+          reject(error);
         }, timeoutMs);
       }),
     ]);
@@ -1662,6 +1667,11 @@ async function evaluateNode(
         context.truncated = true;
         continue;
       }
+      if(context.evaluationDeadlineAt !== null &&
+         performance.now()>=context.evaluationDeadlineAt) {
+        context.truncated=true;
+        continue;
+      }
       if(context.semanticAdmission) {
         // Send only safe reference IDs and projected byte counts; never event data.
         const projected=projectSemanticInput(
@@ -1682,9 +1692,21 @@ async function evaluateNode(
           continue;
         }
       }
+      // Admission itself can be slow or wait behind another worker.
+      // Never start an external provider call after the batch deadline.
+      const batchRemaining = context.evaluationDeadlineAt === null
+        ? null : Math.floor(context.evaluationDeadlineAt-performance.now());
+      const batchLimited = batchRemaining !== null &&
+        batchRemaining <= node.execution.timeoutMs;
+      const remaining = batchLimited ? batchRemaining : node.execution.timeoutMs;
+      if(remaining<=0) {
+        context.truncated=true;
+        continue;
+      }
       context.semanticCacheMisses += 1;
       context.semanticEvaluations += 1;
-      decision = await withTimeout(
+      try {
+        decision = await withTimeout(
         new SemanticConditionEngine(
           context.evaluator,
         ).evaluate(
@@ -1698,9 +1720,18 @@ async function evaluateNode(
             uncertain: node.uncertain,
           },
         ),
-        node.execution.timeoutMs,
+        remaining,
         `Semantic node ${node.id}`,
+        batchLimited ? 'EI_SEMANTIC_BATCH_TIMEOUT' : null,
       );
+      }catch(error){
+        if(error && typeof error === 'object' &&
+           'code' in error && error.code === 'EI_SEMANTIC_BATCH_TIMEOUT') {
+          context.truncated=true;
+          continue;
+        }
+        throw error;
+      }
       if (node.execution.cache) {
         context.semanticCache.set(localCacheKey, decision);
         if (
@@ -1762,6 +1793,7 @@ export async function evaluatePatternV2({
   semanticAdmission = null,
   semanticContextRevision = '',
   semanticCacheTtlMs = null,
+  maxBatchElapsedMs = null,
   incompleteSourceRefs = new Set<string>(),
 }: {
   definition: PatternAstV2Definition;
@@ -1774,14 +1806,23 @@ export async function evaluatePatternV2({
   semanticAdmission?: PatternV2SemanticAdmission | null;
   semanticContextRevision?: string;
   semanticCacheTtlMs?: number | null;
+  maxBatchElapsedMs?: number | null;
   incompleteSourceRefs?: ReadonlySet<string>;
-}): Promise<PatternV2Evaluation> {
+ }): Promise<PatternV2Evaluation> {
+  // Include sorting/indexing/AST preprocessing in the batch elapsed budget;
+  // a large valid input may consume its entire allowance before evaluation.
+  const evaluationStartedAt=performance.now();
   if(typeof semanticContextRevision !== 'string' ||
      semanticContextRevision.length > 128 ||
      (semanticCacheTtlMs !== null &&
       (!Number.isSafeInteger(semanticCacheTtlMs) ||
        semanticCacheTtlMs < 1000 || semanticCacheTtlMs > 86400000))) {
     throw new RangeError('Invalid semantic context revision or cache TTL');
+  }
+  if(maxBatchElapsedMs !== null &&
+     (!Number.isSafeInteger(maxBatchElapsedMs) ||
+      maxBatchElapsedMs<10 || maxBatchElapsedMs>600000)) {
+    throw new RangeError('Invalid semantic batch elapsed-time budget');
   }
   if(semanticAdmission !== null &&
      (typeof semanticAdmission !== 'object' ||
@@ -1827,6 +1868,8 @@ export async function evaluatePatternV2({
     semanticCacheNamespace,
     semanticContextRevision,
     semanticCacheTtlMs,
+    evaluationDeadlineAt:maxBatchElapsedMs === null
+      ? null : evaluationStartedAt+maxBatchElapsedMs,
     semanticTrace: [],
     allowedLatenessMs,
   };

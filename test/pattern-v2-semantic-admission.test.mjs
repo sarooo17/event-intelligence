@@ -88,3 +88,79 @@ test('durably cached decision skips admission and external model calls',async()=
   assert.equal(cached.semanticCacheHits,1);
   assert.equal(calls,1);assert.equal(approved,1);
 });
+
+test('monotonic batch wall-time budget refuses a model call after slow shared admission',async()=>{
+  let providerCalls=0;
+  const evaluation=await evaluatePatternV2({
+    definition:pattern(),events:[ev('1')],
+    evaluator:{cacheIdentity:'deadline-v1',async evaluate(){
+      providerCalls++;
+      return {evaluator:'deadline-v1',probability:.99};
+    }},
+    maxBatchElapsedMs:20,
+    semanticAdmission:{async reserve(){
+      await new Promise(resolve=>setTimeout(resolve,65));
+      return true;
+    }},
+  });
+  assert.equal(providerCalls,0,'reserve after deadline must never invoke provider');
+  assert.equal(evaluation.truncated,true,'deadline overrun is incomplete, not rejection');
+  assert.deepEqual(evaluation.matches,[]);
+  for(const invalid of [0,9,-1,600001,1.5,NaN,'1000']) {
+    await assert.rejects(()=>evaluatePatternV2({
+      definition:pattern(),events:[ev('1')],maxBatchElapsedMs:invalid,
+    }),/Invalid semantic batch elapsed-time budget/);
+  }
+});
+
+test('batch elapsed cap includes 50k-event preprocessing, not just evaluator time',async()=>{
+  let providerCalls=0,approvalCalls=0;
+  const events=Array.from({length:49999},(_,i)=>({
+    ...ev('noise-'+i,'noise'),
+    occurredAt:new Date(Date.parse('2026-10-29T08:00:00.000Z')+i).toISOString(),
+  }));
+  events.push(ev('1'));
+  const result=await evaluatePatternV2({
+    definition:pattern(),events,
+    evaluator:{cacheIdentity:'high-cardinality-clock',async evaluate(){
+      providerCalls++;
+      return {evaluator:'high-cardinality-clock',probability:.99};
+    }},
+    semanticAdmission:{reserve:()=>{approvalCalls++;return true;}},
+    maxBatchElapsedMs:10,
+  });
+  assert.equal(providerCalls,0,'sorting/indexing must count against batch deadline');
+  assert.equal(approvalCalls,0,'no admission after pre-evaluation deadline');
+  assert.equal(result.truncated,true);
+});
+test('batch timeout yields explicit incomplete result, not thrown semantic node failure',async()=>{
+  let providerCalls=0;
+  const result=await evaluatePatternV2({
+    definition:pattern(),events:[ev('1')],
+    maxBatchElapsedMs:20,
+    evaluator:{cacheIdentity:'batch-timeout-fixture',async evaluate(){
+      providerCalls++;
+      await new Promise(resolve=>setTimeout(resolve,85));
+      return {evaluator:'batch-timeout-fixture',probability:.99};
+    }},
+  });
+  assert.equal(providerCalls,1,'one already-reserved in-flight evaluation');
+  assert.equal(result.truncated,true);
+  assert.equal(result.semanticEvaluations,1);
+  assert.deepEqual(result.matches,[]);
+});
+
+test('short per-node timeout still throws when batch deadline has ample time',async()=>{
+  const ast=pattern();
+  const node={...ast.root,execution:{...ast.root.execution,timeoutMs:20}};
+  let calls=0;
+  await assert.rejects(()=>evaluatePatternV2({
+    definition:{...ast,root:node},
+    events:[ev('1')],maxBatchElapsedMs:1000,
+    evaluator:{cacheIdentity:'node-short-timeout',async evaluate(){
+      calls++;await new Promise(resolve=>setTimeout(resolve,90));
+      return {evaluator:'node-short-timeout',probability:.99};
+    }},
+  }),/Semantic node importance timed out after 20ms/);
+  assert.equal(calls,1);
+});
