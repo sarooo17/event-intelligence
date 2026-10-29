@@ -1402,6 +1402,12 @@ export class McpEventsClientManager {
             await this.flushAuthorityRevocations();
           }
         } else if (error?.terminalReason === 'not_found') {
+          // A validated SEP terminal NotFound is a durable observation
+          // about this *subscription*, not a network/connection diagnosis.
+          // Persist only fixed host-owned enum, never error.message/cause.
+          await this.saveSubscriptionState(connection,context,subscription,{
+            deliveryMode:'poll',sourceAvailability:'not_found',
+          });
           let perConnection = this.terminalPollSubscriptions.get(connection);
           if (!perConnection) {
             perConnection = new Map();
@@ -1534,6 +1540,7 @@ export class McpEventsClientManager {
         subscription,
         {
           deliveryMode: 'poll',
+          sourceAvailability:'available',
           cursor,
           truncated,
           ...(truncated ? { gapDetectedAt: this.now().toISOString() } : {}),
