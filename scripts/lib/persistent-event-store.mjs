@@ -905,6 +905,28 @@ export class PersistentEventStore {
   }
 
   /** JSONL reference store's in-memory current-match index. */
+  getBoundedInspectionMatch({triggerId,version,matchId=null,
+    maxRowBytes=65536}={}) {
+    if(typeof triggerId!=='string'||!triggerId||
+       typeof version!=='string'||!version||
+       (matchId!==null&&(typeof matchId!=='string'||!matchId))||
+       !Number.isSafeInteger(maxRowBytes) ||
+       maxRowBytes<1024 || maxRowBytes>131072) {
+      throw new RangeError('Invalid bounded match inspection');
+    }
+    const record=matchId ? this.#triggerMatches.get(matchId) :
+      this.getLatestTriggerMatch(triggerId,version);
+    if(!record || record.triggerId!==triggerId ||
+        record.triggerVersion!==version ||
+        (matchId!==null&&record.matchId!==matchId)) return null;
+    if(Buffer.byteLength(JSON.stringify(record),'utf8')>maxRowBytes){
+      const error=new Error('Selected match exceeds inspection byte budget');
+      error.code='EVENT_INTELLIGENCE_INSPECTION_BUDGET_EXCEEDED';
+      throw error;
+    }
+    return record;
+  }
+
   getTriggerMatch(matchId) {
     return this.#triggerMatches.get(String(matchId)) ?? null;
   }
