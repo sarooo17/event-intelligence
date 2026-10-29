@@ -55,7 +55,7 @@ integration('PG16 bounded scoped inspection uses rows not full lists and fails o
       status:'partial',partitionKey:null,
       openedAt:'2026-10-29T10:00:00.000Z',
       expiresAt:'2026-10-29T11:00:00.000Z',
-      updatedAt,sourceEvents:[],patternState:null,
+      updatedAt,sourceEvents:[],semanticDecision:null,
       firedWakeId:null,derivedEventIds:[],
       schemaVersion:'trigger.v0.2',protocolVersion:'0.2.0',
     });
