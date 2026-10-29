@@ -36,10 +36,16 @@ function requestStub(fn){
     },
   };
 }
-async function setup(onPoll,{now=()=>new Date()}={}){
+async function setup(onPoll,{now=()=>new Date(),authorityEpoch=null,onRevoke=null}={}){
   const dir=await mkdtemp(path.join(os.tmpdir(),'ei-terminal-provider-'));
   const store=new PersistentEventStore(dir);
   await store.init();
+  if(authorityEpoch) {
+    store.requireMcpSessionFence=true;
+    store.beginMcpConnectionAuthority=async()=>({active:true});
+    store.revokeMcpConnectionAuthority=async input=>
+      onRevoke ? onRevoke(input) : true;
+  }
   const engine=new CompositeTriggerEngine(store);
   const consumer=new CompositeEventConsumer({
     store,triggerEngine:engine,wakeCoordinators:new Map(),
@@ -47,7 +53,7 @@ async function setup(onPoll,{now=()=>new Date()}={}){
   const control=new TriggerControlPlane({store,triggerEngine:engine});
   const conn=createHostMcpEventsConnection({
     connectionId:'conn',serverId:'server',client:requestStub(onPoll),
-    pollIntervalMs:5000,maxPollBatches:2,
+    pollIntervalMs:5000,maxPollBatches:2,authorityEpoch,
   });
   const manager=new McpEventsClientManager({
     store,compositeEventConsumer:consumer,connections:[conn],now,
@@ -55,6 +61,7 @@ async function setup(onPoll,{now=()=>new Date()}={}){
       type:'system',principal_id:'terminal-provider-fixture',
     }),
   });
+  if(authorityEpoch)await manager.prepareConnectionAuthorities();
   await manager.discoverAll();
   for(const [i,name] of ['a.updated','b.updated'].entries()){
     const user={type:'user',principal_id:'user1'};
@@ -196,4 +203,47 @@ test('terminal error after a good backlog page reports committed effects',async(
     assert.equal(again.find(x=>x.eventName==='a.updated').accepted,0);
     assert.equal(calls,2,'no retries after NotFound');
   }finally{await fx.close();}
+});
+
+
+test('Forbidden from provider revokes shared host epoch, not merely this process poll cache',async()=>{
+  const epoch='host-owned-forbidden-epoch'.padEnd(48,'q');
+  const revoked=[];
+  let calls=0;
+  const fixture=await setup(()=>{
+    calls++;throw unavailable(-32024,'connection');
+  },{authorityEpoch:epoch,onRevoke:async input=>{revoked.push(input);return true}});
+  try {
+    const first=await fixture.manager.pollConnection('conn');
+    assert.equal(first[0].reason,'forbidden');
+    assert.deepEqual(revoked,[{connectionId:'conn',epoch}]);
+    assert.equal(fixture.manager.pendingAuthorityRevocations.size,0);
+    const later=await fixture.manager.pollConnection('conn');
+    assert.equal(later[0].reason,'forbidden');
+    assert.equal(calls,1);
+    assert.equal(revoked.length,1);
+  }finally {await fixture.close()}
+});
+
+test('Failed forbidden epoch revocation is not falsely reported as success and retries on close',async()=>{
+  const epoch='host-owned-outage-epoch'.padEnd(48,'q');
+  let calls=0;
+  const fixture=await setup(()=>{
+    throw unavailable(-32024,'connection');
+  },{authorityEpoch:epoch,onRevoke:async()=>{
+    calls++;
+    if(calls===1)throw Error('private-db-connection-failure');
+    return true;
+  }});
+  try {
+    await assert.rejects(()=>fixture.manager.pollConnection('conn'),e=>
+      e.code==='MCP_SESSION_REVOCATION_INCOMPLETE' &&
+      !e.message.includes('private-db'));
+    assert.equal(fixture.manager.pendingAuthorityRevocations.size,1);
+    const later=await fixture.manager.pollConnection('conn');
+    assert.equal(later[0].reason,'forbidden');
+    await fixture.manager.close();
+    assert.equal(calls,2);
+    assert.equal(fixture.manager.pendingAuthorityRevocations.size,0);
+  }finally {await fixture.close()}
 });
