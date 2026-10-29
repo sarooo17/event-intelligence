@@ -291,7 +291,9 @@ test('shared manager refuses dynamically attached MCP without host-generated epo
     const disabled=await manager.attachConnection({
       ...opts,enabled:false,authorityEpoch:null,
     },{discover:false});
-    assert.equal(disabled.enabled,false);
+    assert.equal(disabled.connectionId,opts.connectionId);
+    assert.deepEqual(disabled.events,[],
+      'disabled attachment returns no discovered events and must register nothing');
     assert.equal(manager.connections.size,0);
   }finally{await manager.close();}
 });
