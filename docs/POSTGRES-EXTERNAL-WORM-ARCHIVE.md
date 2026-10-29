@@ -54,3 +54,7 @@ These checks verify observations made *at upload/readback time*, not a continuou
 - Production PostgreSQL failover/RPO/RTO and independent real MCP provider/host end-to-end SLO measurement.
 
 Neither a successful *mock* upload nor a future real bucket receipt automatically checks #47's full retention checkbox. The publisher always returns physicalPruneAuthorized:false and productionRetentionCertified:false.
+
+## Real disposable S3 protocol test (CI, not off-host certification)
+
+The optional `External S3 Object Lock compliance E2E (disposable)` GitHub Actions workflow runs a *separate disposable MinIO service process* with an S3-compatible API. It exercises actual bucket Object Lock/versioning, five signed-object uploads, version-specific HEAD/GET exact-byte readback, and denial of DeleteObject on a retained COMPLIANCE version. Its credentials and data are disposable test-only; the server is not Railway, AWS, or a third-party evidence custodian. Passing this test verifies our S3 integration, **not** the existence of an independently retained source/audit archive outside the EI failure domain. Actual off-host WORM still requires a separately controlled bucket and custody/restore proof.
