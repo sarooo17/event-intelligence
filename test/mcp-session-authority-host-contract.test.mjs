@@ -6,6 +6,7 @@ import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {PersistentEventStore} from '../scripts/lib/persistent-event-store.mjs';
 import {createLocalEventIntelligenceRuntime} from '../scripts/lib/local-event-intelligence-runtime.mjs';
+import {createEventIntelligenceHost} from '../scripts/host-integration.mjs';
 
 const epoch='host-controlled-epoch-'.padEnd(48,'r');
 const descriptor={name:'safe.changed',delivery:['poll'],
@@ -207,4 +208,50 @@ test('failed detach must retain authoritative epoch for later shutdown retry',as
   await manager.close();
   assert.equal(manager.pendingAuthorityRevocations.size,0);
   assert.equal(attempts,2);
+});
+
+test('host.close remains retryable and retains store after repeated PostgreSQL revoke outages',async()=>{
+  const dir=await mkdtemp(path.join(tmpdir(),'ei-revoke-retry-host-'));
+  const store=new PersistentEventStore(dir);
+  store.requireMcpSessionFence=true;
+  store.beginMcpConnectionAuthority=async()=>({active:true});
+  let attempts=0,storeClosed=false;
+  store.revokeMcpConnectionAuthority=async()=>{
+    attempts++;
+    if(attempts<=2)throw Error('temporary-scope-database-outage');
+    return true;
+  };
+  const storeClose=store.close.bind(store);
+  store.close=async()=>{
+    storeClosed=true;
+    return storeClose();
+  };
+  let host;
+  try {
+    host=await createEventIntelligenceHost({
+      store,env:{EVENT_INTELLIGENCE_REQUIRE_SHARED_STORE:'false'},
+      mcpClients:[{
+        connectionId:'retriable',serverId:'host-provider',
+        authorityEpoch:epoch,
+        request:async()=>({events:[]}),getCapabilities:async()=>({}),
+      }],
+    });
+    await assert.rejects(()=>host.close(),e=>{
+      assert.equal(e.code,'MCP_SESSION_REVOCATION_INCOMPLETE');
+      return true;
+    });
+    assert.equal(storeClosed,false,
+      'no storage teardown until outstanding authoritative epochs are revoked');
+    assert.equal(attempts,2);
+    await host.close();
+    assert.equal(storeClosed,true);
+    assert.equal(attempts,3);
+    assert.equal(host.runtime.mcpEventsClient.pendingAuthorityRevocations.size,0);
+  }finally{
+    if(host && !storeClosed) {
+      try { await host.close(); }catch {}
+    }
+    if(!storeClosed)await store.close();
+    await rm(dir,{recursive:true,force:true});
+  }
 });
