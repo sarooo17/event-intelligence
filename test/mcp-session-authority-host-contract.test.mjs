@@ -136,3 +136,14 @@ test('runtime startup failure unwinds already registered epochs without returnin
     await rm(dir,{recursive:true,force:true});
   }
 });
+
+test('disabled host connection with an epoch remains a no-op, not an error',async()=>{
+  const {manager,opts,events}=fixture();
+  const answer=await manager.attachConnection({...opts,enabled:false},{discover:false});
+  assert.equal(answer.connectionId,'session');
+  assert.deepEqual(answer.events,[]);
+  assert.equal(manager.connections.size,0);
+  assert.equal(events.begin.length,0);
+  assert.equal(events.revoke.length,0);
+  await manager.close();
+});
