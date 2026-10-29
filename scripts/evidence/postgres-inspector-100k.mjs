@@ -42,7 +42,7 @@ async function seed(to,from){
     " 'noise-'||lpad(n::text,9,'0'),"+
     " jsonb_build_object('triggerId','bench','matchId','noise-'||n::text,"+
     " 'status','pending','event',jsonb_build_object('sourceEventId','n'||n::text,"+
-    " 'name','noise','occurredAt',$4,'data',jsonb_build_object('token','NOISE_SECRET')),"+
+    " 'name','noise','occurredAt',$4::text,'data',jsonb_build_object('token','NOISE_SECRET')),"+
     " 'directParents',jsonb_build_array(),'rootEvidence',jsonb_build_array())"+
     ' FROM generate_series($5::int,$6::int) n ON CONFLICT DO NOTHING',
     ['benchmark','derived_event','temporal_deadline',at,from,to]);
