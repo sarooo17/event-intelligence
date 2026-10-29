@@ -2066,15 +2066,6 @@ export class McpEventsClientManager {
     });
     Promise.resolve().then(async () => {
       await this.stop({ shutdown: true });
-      // A final host shutdown must also revoke shared database authority:
-      // other worker processes cannot infer this manager's local closed flag.
-      for(const connection of [...this.connections.values()]) {
-        if(!connection.authorityEpoch)continue;
-        const context=await this.scopeContext(connection);
-        await context.store.revokeMcpConnectionAuthority({
-          connectionId:connection.connectionId,epoch:connection.authorityEpoch,
-        });
-      }
       // Already-accepted manual/scoped attachments may be awaiting an
       // untrusted provider. All must settle (or fail on assertOpen) while
       // the runtime/store is still available, never after it has closed.
@@ -2085,6 +2076,16 @@ export class McpEventsClientManager {
       // records; release the authoritative store only after it settles.
       while (this.detachInFlight.size > 0) {
         await Promise.allSettled([...this.detachInFlight]);
+      }
+      // Attach registration must finish BEFORE last shared-authority revoke.
+      // Otherwise a pending scope resolver could activate an epoch after
+      // shutdown's premature revoke and leave other workers authorized.
+      for(const connection of [...this.connections.values()]) {
+        if(!connection.authorityEpoch)continue;
+        const context=await this.scopeContext(connection);
+        await context.store.revokeMcpConnectionAuthority({
+          connectionId:connection.connectionId,epoch:connection.authorityEpoch,
+        });
       }
       // Gaps acknowledged before the close fence can still have a
       // pending authoritative store write; finish them before runtime.close.
