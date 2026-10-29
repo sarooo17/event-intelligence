@@ -143,3 +143,11 @@ sharing PostgreSQL, guarantee a producer credential has stopped producing,
 or cancel already queued host work. The cross-worker host registry/authority
 generation fence and exact source append/CEP transactional boundary remain
 #45 blockers. No provider OAuth or host policy engine was added to EI.
+
+**Shutdown drain invariant:** an accepted append/CEP task is tracked from
+BEFORE its first asynchronous storage write in a session-independent set.
+Detaching may remove the reusable connection-ID poll slot, but host
+`close()` still drains these admitted tasks before releasing the shared
+store. Regression covers poll append → detach → close → append resolution,
+one CEP activation and no stale cursor commit. This is a single-manager
+lifecycle guarantee; it is not an atomic multiworker revocation fence.
