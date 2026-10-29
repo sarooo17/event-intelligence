@@ -2182,7 +2182,8 @@ export class PostgresEventStore {
   /**
    * Scope-local latest-match selector: single result row instead of
    * deserializing every match for a trigger in the Node inspector.
-   * Numeric UTC order is enforced through timestamptz, not lexical text.
+   * Date.parse truncates submillisecond fractions; date_trunc matches its
+   * millisecond timestamp ordering before applying the status tie-break.
    * Existing PostgreSQL indexes restrict scope/kind; this query may still
    * scan/sort matches server-side until a dedicated index is deployed.
    */
@@ -2191,7 +2192,7 @@ export class PostgresEventStore {
       'SELECT payload FROM ' + this.records +
       " WHERE scope_id=$1 AND kind='trigger_match'" +
       " AND payload->>'triggerId'=$2 AND payload->>'triggerVersion'=$3" +
-      " ORDER BY (payload->>'updatedAt')::timestamptz DESC," +
+      " ORDER BY date_trunc('millisecond', (payload->>'updatedAt')::timestamptz) DESC," +
       " CASE" +
       " WHEN payload->>'status'='fired' THEN 5" +
       " WHEN payload->>'status'='emitted' THEN 4" +
