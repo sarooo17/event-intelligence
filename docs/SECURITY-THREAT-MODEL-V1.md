@@ -216,3 +216,43 @@ role and same-ID/version mutation cases, plus mixed-version and malformed
 owner fields. This is defense-in-depth against a buggy adapter, not proof
 that all external host authorization or store scopes are correctly wired.
 Independent PostgreSQL tenant/owner snapshot tests remain separate.
+
+## Optional shared PostgreSQL MCP connection authority fence (#45)
+
+Hosts using multiple EI workers against PostgreSQL can opt in to
+`new PostgresEventStore({requireMcpSessionFence:true})` on **all** worker
+stores, including each tenant-scoped store. The embedding host generates a
+fresh unpredictable epoch (at least 32 characters), not from any MCP
+producer/model payload. An attached host-managed connection with
+`authorityEpoch` registers the epoch in the authoritative PostgreSQL
+scope-local `mcp_connection_authority` record before discovery. Host detach
+and close revoke its current epoch; a late revoke from an old session
+cannot revoke a replacement with the same connection ID. Only the epoch's
+SHA-256 hash is stored, never the raw host token. Each revoked epoch
+leaves a scope-local immutable tombstone so a stale worker cannot resurrect
+A after A→B→A reconnects. Tombstones have storage/retention cost and must not
+be blindly pruned without a host-managed minimum live session generation.
+
+`appendMcpOccurrence` checks this active authority epoch **inside the
+same transaction** that writes the event and dedup receipt, using a shared
+transaction advisory lock also held by revocation. An append whose lock
+linearizes before revoke can complete and must finish CEP; an append after
+the revoke commits is denied with a fixed code, with no stored event.
+New sessions must register an independent epoch. Unregistered, stale,
+revoked, cross-scope and omitted epoch inputs fail closed when the
+store's require flag is enabled. Test uses two actual PG16 pools with
+accept/revoke races and independent tenant scope.
+
+The strict option is intentional and migration-sensitive: for production
+shared-worker installations, **every process** must enable it, and the
+host must supply secure epochs. Older unfenced host connections continue
+using legacy mode when the flag is off. Never mix protected and legacy
+writers with the same DB if you expect a global revocation guarantee.
+
+Limitations: this gates **occurrence append** only. It is NOT a provider
+OAuth/token or principal policy service, nor does it atomically cancel
+already-queued wakes, automatically reauthorize external effects, or
+serialize all trigger-management and cursor mutation paths across workers.
+Pre-accepted work can finish after revocation. Host must cancel/recheck
+permissions at actual side effect. Therefore #45 Acceptance #2 is not
+automatically complete from this capability alone.
