@@ -21,6 +21,7 @@ test('v2 distinguishes only local proven lifecycle and delivery outcomes',()=>{
     [{match:{...match,status:'expired'}},'candidate_expired'],
     [{wake:{status:'dead_letter'}},'wake_failed'],
     [{match:{...match,status:'matched'}},'waiting_delivery'],
+    [{match:{...match,status:'matched'},trigger:{...trigger,conditionOnly:true}},'condition_satisfied'],
     [{match:{...match,status:'fired'}},'fired'],
     [{pendingDeadlines:[{status:'pending'}]},'deadline_pending'],
     [{match:null},'not_yet_satisfied'],
