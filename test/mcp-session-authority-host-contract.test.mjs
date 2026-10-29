@@ -73,3 +73,27 @@ test('preloaded host connection authority registers before any initial provider 
   await manager.close();
   assert.deepEqual(events.revoke,[{connectionId:'session',epoch}]);
 });
+
+test('close drains pending scope registration before database revoke',async()=>{
+  const {store,opts,events}=fixture();
+  let started,release;
+  const entered=new Promise(resolve=>{started=resolve});
+  const gate=new Promise(resolve=>{release=resolve});
+  const manager=new McpEventsClientManager({
+    store,registerEventSource:async()=>{},
+    resolveScope:async()=>{started();await gate;return {
+      store,compositeEventConsumer:{async ingestMcpOccurrence(){}},
+      triggerControl:null,
+    }},
+    compositeEventConsumer:{async ingestMcpOccurrence(){}},
+  });
+  const attach=manager.attachConnection(opts,{discover:false});
+  await entered;
+  const shutdown=manager.close();
+  release();
+  await assert.rejects(attach,e=>e.code==='EI_HOST_CLOSED');
+  await shutdown;
+  assert.deepEqual(events.begin,[{connectionId:'session',epoch}]);
+  assert.deepEqual(events.revoke,[{connectionId:'session',epoch}],
+    'final revoke must commit after pending registration is settled');
+});
