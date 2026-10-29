@@ -60,6 +60,11 @@ integration('PG16 two independent pools: revoke fences old epoch, rebind permits
     connectionId:'c',epoch:fresh,
   }),denied);
   assert.equal(await b.revokeMcpConnectionAuthority({connectionId:'c',epoch:fresh}),true);
+  // Regression: retired A must stay revoked even after B supersedes it and
+  // B is itself revoked. A→B→A reactivation would bypass revocation.
+  await assert.rejects(a.beginMcpConnectionAuthority({
+    connectionId:'c',epoch:old,
+  }),denied);
   await assert.rejects(b.appendMcpOccurrence('provider',occurrence('late'),'sub',{
     connectionId:'c',epoch:fresh,
   }),denied);
