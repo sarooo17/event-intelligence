@@ -1036,6 +1036,20 @@ export class PersistentEventStore {
       }));
   }
 
+  getLatestTriggerEvaluationAudit(matchId) {
+    const chain=this.#auditChain.list();
+    for(let i=chain.length-1;i>=0;i--){
+      const audit=chain[i];
+      if(audit.entityType==='trigger_match' && audit.entityId===matchId) return audit;
+    }
+    return null;
+  }
+
+  async getInspectionFact({triggerId,triggerVersion,matchId=null}={}) {
+    const {persistedGapInspectionFact} = await import('./inspection-persisted-mcp-gap.mjs');
+    return persistedGapInspectionFact(this,{triggerId,triggerVersion,matchId});
+  }
+
   getMcpClientState(connectionId, eventName, args = {}) {
     const state = this.#mcpClientStates.get(
       mcpClientStateKey(connectionId, eventName, args),

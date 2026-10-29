@@ -2927,6 +2927,37 @@ export class PostgresEventStore {
     });
   }
 
+  async getLatestTriggerEvaluationAudit(matchId) {
+    if(typeof matchId!=='string'||!matchId)return null;
+    try {
+      return await this.tx(async client=>{
+        await client.query("SELECT set_config('statement_timeout',$1,true)",
+          ['2000ms']);
+        const result=await client.query(
+          'SELECT payload FROM '+this.history+
+          " WHERE scope_id=$1 AND kind='audit'"+
+          " AND payload->>'entityType'='trigger_match'"+
+          " AND payload->>'entityId'=$2"+
+          ' ORDER BY history_id DESC LIMIT 1',
+          [this.scopeId,matchId],
+        );
+        return result.rows[0]?.payload??null;
+      });
+    }catch(error){
+      if(error?.code==='57014'){
+        const refused=new Error('Inspection audit lookup exhausted read budget');
+        refused.code='EVENT_INTELLIGENCE_INSPECTION_BUDGET_EXCEEDED';
+        throw refused;
+      }
+      throw error;
+    }
+  }
+
+  async getInspectionFact({triggerId,triggerVersion,matchId=null}={}) {
+    const {persistedGapInspectionFact} = await import('./inspection-persisted-mcp-gap.mjs');
+    return persistedGapInspectionFact(this,{triggerId,triggerVersion,matchId});
+  }
+
   getMcpClientState(connectionId, eventName, args = {}) {
     return this.get(
       'mcp_client_state',

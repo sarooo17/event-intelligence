@@ -1204,6 +1204,18 @@ export class CompositeTriggerEngine {
       await this.store.appendTriggerMatch(updatedBuffer);
     }
 
+    // Selected matches require a contemporaneous completeness audit on the
+    // original buffer to supersede any prior incomplete evaluation record.
+    if (results.length) {
+      await this.support.auditMatch(buffer, 'trigger.partial', {
+        reason: 'pattern_v2_selected',
+        patternVersion: '2',
+        pendingCandidates: evaluation.pending.length,
+        semanticEvaluations: evaluation.semanticEvaluations,
+        truncated: evaluation.truncated,
+      });
+    }
+
     if (!results.length) {
       await this.support.auditMatch(buffer, 'trigger.partial', {
         reason: 'pattern_v2_wait',

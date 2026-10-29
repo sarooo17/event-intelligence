@@ -12,7 +12,7 @@ An **additive** `diagnosisV2` object carries
 - `waiting_delivery` for a target-bound matched trigger, or `condition_satisfied`
   for matched condition-only triggers with **no runtime delivery**, plus
   `fired`, `derived_emitted` from durable terminal states;
-- `source_unavailable`, `watermark_pending`, `budget_truncated`, and
+- `source_unavailable`, `watermark_pending`, `source_gap_unresolved`, `budget_truncated`, and
   `candidate_impossible` **only if a trusted, scoped store provides
   extra durable explanatory evidence.**
 

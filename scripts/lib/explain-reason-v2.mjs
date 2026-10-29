@@ -9,7 +9,7 @@ function own(row, key) {
   return slot && Object.hasOwn(slot, 'value') ? slot.value : undefined;
 }
 const FACTS = new Set([
-  'source_unavailable', 'watermark_pending',
+  'source_unavailable', 'watermark_pending', 'source_gap_unresolved',
   'budget_truncated', 'candidate_impossible',
 ]);
 
