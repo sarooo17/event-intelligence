@@ -86,12 +86,18 @@ function patternPhysicalIdentity(
 export interface CompositeTriggerEngineOptions {
   workerId?: string;
   partitionLeaseMs?: number;
+  /** Host-controlled semantic context version; bump when decision policy changes. */
+  semanticContextRevision?: string;
+  /** Opt-in bounded lifetime of a cached decision (fixed-duration buckets). */
+  semanticCacheTtlMs?: number | null;
 }
 
 export class CompositeTriggerEngine {
   private readonly support: CompositeTriggerRuntimeSupport;
   private readonly workerId: string;
   private readonly partitionLeaseMs: number;
+  private readonly semanticContextRevision: string;
+  private readonly semanticCacheTtlMs: number | null;
 
   constructor(
     private readonly store: CompositeTriggerStore & CompositeTriggerAudit,
@@ -99,6 +105,20 @@ export class CompositeTriggerEngine {
     private readonly now: () => Date = () => new Date(),
     options: CompositeTriggerEngineOptions = {},
   ) {
+    if(options.semanticContextRevision !== undefined &&
+       (typeof options.semanticContextRevision !== 'string' ||
+        options.semanticContextRevision.length > 128)) {
+      throw new RangeError('Invalid semantic context revision');
+    }
+    if(options.semanticCacheTtlMs !== undefined &&
+       options.semanticCacheTtlMs !== null &&
+       (!Number.isSafeInteger(options.semanticCacheTtlMs) ||
+        options.semanticCacheTtlMs < 1000 ||
+        options.semanticCacheTtlMs > 86400000)) {
+      throw new RangeError('Invalid semantic cache TTL');
+    }
+    this.semanticContextRevision=options.semanticContextRevision ?? '';
+    this.semanticCacheTtlMs=options.semanticCacheTtlMs ?? null;
     this.support = new CompositeTriggerRuntimeSupport(store, now);
     this.workerId =
       String(options.workerId || 'event-intelligence-engine');
@@ -832,6 +852,8 @@ export class CompositeTriggerEngine {
       semanticCache,
       semanticCacheNamespace:
         `${definition.triggerId}@${definition.version}`,
+      semanticContextRevision:this.semanticContextRevision,
+      semanticCacheTtlMs:this.semanticCacheTtlMs,
     });
 
     for (const semantic of evaluation.semanticTrace) {
