@@ -174,3 +174,19 @@ Errors retain constant messages and host-selected correlation IDs.
 This does not prove that arbitrary host metadata/scope IDs or third-party
 log sinks cannot contain unlabelled sensitive values; #45 telemetry-wide
 acceptance and independent security review remain open.
+
+## Standalone MCP owner/tenant double authorization against adapter bugs (#45)
+
+The standalone read guard must not trust that a host-supplied trigger-list
+adapter actually filtered the persisted rows for the configured owner.
+After requesting `listTriggers({owner})`, the guard independently compares
+the owner identity in **every returned record**, including exact tenant,
+principal and type. A foreign record is denied with the same nondisclosing
+resource-not-found response as a missing trigger/version; it must not
+access match evidence or call a hydration builder.
+
+The Public Release Check adds 1,000 deterministic foreign-owner, tenant,
+role and same-ID/version mutation cases, plus mixed-version and malformed
+owner fields. This is defense-in-depth against a buggy adapter, not proof
+that all external host authorization or store scopes are correctly wired.
+Independent PostgreSQL tenant/owner snapshot tests remain separate.
