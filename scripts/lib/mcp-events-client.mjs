@@ -1567,7 +1567,9 @@ export class McpEventsClientManager {
         scopeId: connection.scopeId,
         connectionId: connection.connectionId,
         serverId: connection.serverId,
-        eventName: subscription.eventName,
+        // A descriptor name comes from the provider and can be private data.
+        // Never project it into operational telemetry, even if no credential
+        // keyword identifies it. Authorized status inspection is separate.
         error: new Error(PROVIDER_ERROR_MESSAGE),
       });
     };
@@ -1587,7 +1589,7 @@ export class McpEventsClientManager {
         scopeId: connection.scopeId,
         connectionId: connection.connectionId,
         serverId: connection.serverId,
-        eventName: subscription.eventName,
+        // Avoid arbitrary unlabelled provider text in operational telemetry.
         status: 'terminated',
       });
     };
