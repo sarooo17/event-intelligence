@@ -62,3 +62,7 @@ timeout and selects the latest scope-local matching audit row. This
 does not prove source watermarks, connection outages or semantic
 impossibility; those remain unknown unless separate authoritative
 evidence is available.
+
+## Review fix — selected match refreshes buffer completeness
+
+Successful Pattern evaluations can leave a retained buffer under its original match ID while emitting a selected match under another ID. Previously its last `trigger.partial` audit could remain truncated even after the newer successful evaluation. The engine now writes current `trigger.partial` evaluator-completeness audit against the **buffer ID** also when results are produced, so the latest-scoped-audit fact is not stale. The original `!results.length` audit path remains unchanged. Codex P2 on #325.
