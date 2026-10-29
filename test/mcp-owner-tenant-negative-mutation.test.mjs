@@ -93,3 +93,53 @@ test('foreign owners never become authorized through mismatched falsy identity',
     await assert.rejects(()=>guard.assertTrigger('r','1'),notFound);
   }
 });
+
+test('malicious owner getter or proxy cannot execute or leak through a different legitimate version',async()=>{
+  const secret='UNLABELLED-FOREIGN-OWNER-SECRET';
+  let reads=0;
+  const getterOwner={principal_id:'actor-1',tenant_id:'tenant-b'};
+  Object.defineProperty(getterOwner,'type',{
+    enumerable:true,get(){reads++;throw Error(secret)},
+  });
+  const proxyOwner=new Proxy({type:'user',principal_id:'actor-1',tenant_id:'tenant-b'},{
+    get(){reads++;throw Error(secret)},
+    getOwnPropertyDescriptor(){reads++;throw Error(secret)},
+  });
+  const store={async latestWake(){return null},async listTriggerMatches(){return []}};
+  const guard=createOwnerReadGuard({
+    owner,store,triggerControl:{async listTriggers(){return [
+      {definition:{triggerId:'shared',version:'1'},
+        state:{owner:getterOwner}},
+      {definition:{triggerId:'shared',version:'1a'},
+        state:{owner:proxyOwner}},
+      {definition:{triggerId:'shared',version:'2'},state:{owner}},
+    ]}},
+  });
+  assert.equal((await guard.assertTrigger('shared','2')).definition.version,'2');
+  await assert.rejects(()=>guard.assertTrigger('shared','1'),e=>{
+    assert.equal(notFound(e),true);
+    assert.ok(!e.message.includes(secret));
+    return true;
+  });
+  await assert.rejects(()=>guard.assertTrigger('shared','1a'),notFound);
+  assert.equal(reads,0);
+});
+
+test('hostile rows, arrays and foreign accessors fail closed without executing JavaScript',async()=>{
+  let calls=0;
+  const hostile=new Proxy({},{
+    get(){calls++;throw Error('raw-external-payload')},
+    getOwnPropertyDescriptor(){calls++;throw Error('raw-external-payload')},
+  });
+  for(const rows of [[hostile],new Proxy([],{
+    getOwnPropertyDescriptor(){calls++;throw Error('raw-external-payload')},
+  })]){
+    const guard=createOwnerReadGuard({
+      owner,
+      triggerControl:{async listTriggers(){return rows}},
+      store:{async latestWake(){return null},async listTriggerMatches(){return []}},
+    });
+    await assert.rejects(()=>guard.assertTrigger('foreign'),notFound);
+  }
+  assert.equal(calls,0);
+});
