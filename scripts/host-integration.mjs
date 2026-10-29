@@ -130,6 +130,7 @@ export async function createEventIntelligenceHost({
   wakeHandlers = {},
   semanticEvaluator,
   observability,
+  observabilityOptions,
 } = {}) {
   const explicitConnections = mcpClients.map(normalizeMcpConnection);
   const runtime = await createLocalEventIntelligenceRuntime({
@@ -144,6 +145,7 @@ export async function createEventIntelligenceHost({
     semanticEvaluator,
     store,
     observability,
+    observabilityOptions,
   });
   const observer = runtime.observability;
 
