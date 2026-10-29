@@ -1252,6 +1252,36 @@ export class PersistentEventStore {
     ) ?? null;
   }
 
+  inspectionWindow(kind,matchId,{limit=50,maxRowBytes=16384}={}) {
+    if(!['derived_event','temporal_deadline'].includes(kind) ||
+        typeof matchId!=='string' || !matchId ||
+        !Number.isSafeInteger(limit) || limit<1 || limit>100 ||
+        !Number.isSafeInteger(maxRowBytes) || maxRowBytes<1024 || maxRowBytes>32768) {
+      throw new RangeError('Invalid bounded inspection window');
+    }
+    const source=kind==='derived_event'?this.#derivedEvents.values():this.#temporalDeadlines.values();
+    const records=[];
+    for(const row of source) {
+      if(row.matchId!==matchId)continue;
+      if(Buffer.byteLength(JSON.stringify(row),'utf8')>maxRowBytes){
+        const error=new Error('Inspection persisted row exceeds byte budget');
+        error.code='EVENT_INTELLIGENCE_INSPECTION_BUDGET_EXCEEDED';
+        throw error;
+      }
+      records.push(row);
+      if(records.length>limit)break;
+    }
+    return {records:records.slice(0,limit),hasMore:records.length>limit,limit};
+  }
+
+  getBoundedInspectionDeadlines(matchId,opts) {
+    return this.inspectionWindow('temporal_deadline',matchId,opts);
+  }
+
+  getBoundedInspectionDerivedEvents(matchId,opts) {
+    return this.inspectionWindow('derived_event',matchId,opts);
+  }
+
   listDerivedEvents({ triggerId, matchId, name } = {}) {
     return [...this.#derivedEvents.values()]
       .filter((record) => !triggerId || record.triggerId === String(triggerId))
