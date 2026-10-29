@@ -162,3 +162,15 @@ the append/revoke/rebind and append/revoke/close race.
 This guarantee applies within one manager. It is **not** a global revocation
 fence across processes, a transactional shared-store append+match boundary,
 or cancellation of already queued host work; those remain #45 blockers.
+
+## Provider-supplied event name privacy on error telemetry (#45)
+
+Push/webhook provider failures and termination observations no longer
+include raw provider-selected event descriptor names. Forty deterministic
+unlabelled-secret canaries are exercised in the release security gate;
+these strings are private even without `token=` or `Bearer` markers.
+Errors retain constant messages and host-selected correlation IDs.
+
+This does not prove that arbitrary host metadata/scope IDs or third-party
+log sinks cannot contain unlabelled sensitive values; #45 telemetry-wide
+acceptance and independent security review remain open.
