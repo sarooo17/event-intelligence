@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {McpEventsClientManager} from '../scripts/lib/mcp-events-client.mjs';
+import {mkdtemp,rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import path from 'node:path';
+import {PersistentEventStore} from '../scripts/lib/persistent-event-store.mjs';
+import {createLocalEventIntelligenceRuntime} from '../scripts/lib/local-event-intelligence-runtime.mjs';
 
 const epoch='host-controlled-epoch-'.padEnd(48,'r');
 const descriptor={name:'safe.changed',delivery:['poll'],
@@ -96,4 +101,38 @@ test('close drains pending scope registration before database revoke',async()=>{
   assert.deepEqual(events.begin,[{connectionId:'session',epoch}]);
   assert.deepEqual(events.revoke,[{connectionId:'session',epoch}],
     'final revoke must commit after pending registration is settled');
+});
+
+test('runtime startup failure unwinds already registered epochs without returning a live host',async()=>{
+  const dir=await mkdtemp(path.join(tmpdir(),'ei-session-bootstrap-'));
+  const store=new PersistentEventStore(dir);
+  const registered=[],revoked=[];
+  store.requireMcpSessionFence=true;
+  store.beginMcpConnectionAuthority=async({connectionId})=>{
+    if(connectionId==='conflict') {
+      const e=new Error('MCP session epoch conflict');
+      e.code='MCP_SESSION_EPOCH_CONFLICT';throw e;
+    }
+    registered.push(connectionId);
+  };
+  store.revokeMcpConnectionAuthority=async({connectionId})=>{
+    revoked.push(connectionId);
+    return true;
+  };
+  const connection=id=>({
+    connectionId:id,serverId:id,authorityEpoch:epoch,
+    request:async()=>({events:[]}),getCapabilities:async()=>({}),
+  });
+  try{
+    await assert.rejects(()=>createLocalEventIntelligenceRuntime({
+      store,mcpEventConnections:[connection('registered'),connection('conflict')],
+      env:{EVENT_INTELLIGENCE_REQUIRE_SHARED_STORE:'false'},
+    }),e=>e.code==='MCP_SESSION_EPOCH_CONFLICT');
+    assert.deepEqual(registered,['registered']);
+    assert.ok(revoked.includes('registered'),
+      'failure must never leave a successfully enrolled previous host epoch active');
+  }finally{
+    await store.close?.();
+    await rm(dir,{recursive:true,force:true});
+  }
 });
