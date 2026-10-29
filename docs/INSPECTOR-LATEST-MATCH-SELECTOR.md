@@ -5,8 +5,10 @@ An inspector call with a **specific trigger version** and no
 when the store implements this optional capability. PostgreSQL executes
 one scope-local SQL `SELECT ... ORDER BY updatedAt DESC, status-rank
 DESC, record_key ASC LIMIT 1` and deserializes **one current match**.
-The order uses `timestamptz` to match JavaScript Date.parse rather
-than assuming lexical ISO timestamp sort. The JSONL reference store
+The order uses a `timestamptz` conversion **truncated to milliseconds**,
+matching JavaScript `Date.parse` even with submillisecond fractions,
+then applies the existing status-rank tie-breaker. It never assumes
+lexical ISO timestamp sort. The JSONL reference store
 selects by comparing current in-memory Map entries without
 allocating an entire match array. Custom stores still use the
 original `listTriggerMatches` fallback. A poisoned optional selector
