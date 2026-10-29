@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {createObservabilityEmitter} from '../scripts/lib/observability.mjs';
+import {mkdtemp,rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import path from 'node:path';
+import {createEventIntelligenceHost} from '../scripts/host-integration.mjs';
 
 const candidates=Array.from({length:256},(_,i)=>
   'opaque-payload-'+(i*91871).toString(36)+'-no-marker-Xx');
@@ -87,4 +91,31 @@ test('default emitter never executes untrusted getters or proxy traps to suppres
   assert.equal(traps,0);
   assert.equal(records[0].traceId,undefined);
   assert.equal(records[0].metadata,undefined);
+});
+
+test('host and embedded runtime expose explicit private diagnostic opt-in',async()=>{
+  const dataDir=await mkdtemp(path.join(tmpdir(),'ei-private-telemetry-'));
+  try {
+    const minimal=[];
+    const host=await createEventIntelligenceHost({
+      dataDir,
+      observability:record=>minimal.push(record),
+    });
+    await host.close();
+    assert.ok(minimal.some(x=>x.event==='ei.lifecycle.started'));
+    assert.equal(minimal.some(x=>x.metadata!==undefined),false,
+      'production host defaults must never export arbitrary metadata');
+    const diagnostic=[];
+    const optInHost=await createEventIntelligenceHost({
+      dataDir,
+      observability:record=>diagnostic.push(record),
+      observabilityOptions:{privacyLevel:'diagnostic'},
+    });
+    await optInHost.close();
+    const started=diagnostic.find(x=>x.event==='ei.lifecycle.started');
+    assert.ok(started?.metadata?.restoredScopes,
+      'diagnostic opt-in must reach the actual projecting runtime emitter');
+  }finally{
+    await rm(dataDir,{recursive:true,force:true});
+  }
 });
