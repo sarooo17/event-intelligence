@@ -295,6 +295,12 @@ export class TriggerInspector {
       const row = await this.store.getTriggerMatch(matchId);
       match = row?.triggerId === definition.triggerId &&
         row?.triggerVersion === definition.version ? row : null;
+    } else if (!matchId && typeof this.store.getLatestTriggerMatch === 'function') {
+      const row = await this.store.getLatestTriggerMatch(
+        definition.triggerId, definition.version);
+      // Enforce identity even when custom stores supply a poisoned selector.
+      match = row?.triggerId === definition.triggerId &&
+        row?.triggerVersion === definition.version ? row : null;
     } else {
       const matches = (await this.store.listTriggerMatches(definition.triggerId))
         .filter((row) => row.triggerVersion === definition.version);
