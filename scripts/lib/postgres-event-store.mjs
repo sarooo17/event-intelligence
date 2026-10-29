@@ -2479,6 +2479,13 @@ export class PostgresEventStore {
     return this.tx(async client=>{
       await this.lock(client,'mcp-connection-authority',connectionId);
       const prior=await this.get('mcp_connection_authority',connectionId,client);
+      const retiredKey=connectionId+':'+epochHash;
+      const retired=await this.get('mcp_connection_retired_epoch',retiredKey,client);
+      if(retired) {
+        const error=new Error('Retired MCP session epoch cannot be reused');
+        error.code='MCP_SESSION_REVOKED';
+        throw error;
+      }
       if(prior?.epochHash===epochHash && prior?.active!==true) {
         const error=new Error('Revoked MCP session epoch cannot be reused');
         error.code='MCP_SESSION_REVOKED';
@@ -2511,6 +2518,12 @@ export class PostgresEventStore {
       await this.upsert('mcp_connection_authority',connectionId,{
         ...prior,active:false,
       },client);
+      // Permanent scope-local tombstone protects any historical epoch, not
+      // just the most recent. Never store raw host-generated session secrets.
+      await this.upsert('mcp_connection_retired_epoch',
+        connectionId+':'+epochHash,{
+          epochHash,connectionId,retired:true,generation:prior.generation,
+        },client);
       return true;
     });
   }
