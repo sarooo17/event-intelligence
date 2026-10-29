@@ -369,6 +369,7 @@ export async function createLocalEventIntelligenceRuntime({
     observability: observer,
   });
 
+  await mcpEventsClient.prepareConnectionAuthorities();
   const discovery = await mcpEventsClient.discoverAll();
   mcpEventsClient.start();
 
