@@ -221,3 +221,60 @@ test('evaluators without cacheIdentity never use durable cache', async () => {
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test('host-owned semantic context revision and TTL windows invalidate persisted decisions across restart', async()=>{
+  const dir=await mkdtemp(path.join(os.tmpdir(),'ei-semantic-revision-ttl-'));
+  let store=new PersistentEventStore(dir);
+  let calls=0;
+  const evaluator={
+    cacheIdentity:'vendor-neutral-model-v1',
+    async evaluate(){
+      calls++;
+      return {evaluator:'vendor-neutral-model-v1',probability:0.99};
+    },
+  };
+  const run=async({tenant='tenant-a',revision='policy-v1',at='2026-10-29T10:00:00.000Z'}={})=>
+    evaluatePatternV2({
+      definition:definition(),events:events(),evaluator,
+      semanticCache:storeCache(store),
+      semanticCacheNamespace:tenant+':trigger@1',
+      semanticContextRevision:revision,semanticCacheTtlMs:60000,
+      now:new Date(at),
+    });
+  try{
+    await store.init();
+    assert.equal((await run()).semanticEvaluations,1);
+    assert.equal(calls,1);
+    const hit=await run({at:'2026-10-29T10:00:59.000Z'});
+    assert.equal(hit.semanticEvaluations,0);
+    assert.equal(hit.semanticCacheHits,1);
+    await store.close();
+    store=new PersistentEventStore(dir);await store.init();
+    assert.equal((await run({at:'2026-10-29T10:00:59.000Z'}))
+      .semanticEvaluations,0,'revision and TTL cache survives JSONL restart');
+    assert.equal((await run({revision:'policy-v2'})).semanticEvaluations,1);
+    assert.equal((await run({tenant:'tenant-b'})).semanticEvaluations,1);
+    assert.equal((await run({at:'2026-10-29T10:01:00.000Z'}))
+      .semanticEvaluations,1,'TTL bucket change refuses an earlier cached decision');
+    assert.equal(calls,4);
+    assert.equal((await run({at:'2026-10-29T10:01:20.000Z'}))
+      .semanticEvaluations,0);
+    assert.equal(calls,4);
+  }finally{
+    await store.close();
+    await rm(dir,{recursive:true,force:true});
+  }
+});
+
+test('semantic cache TTL/revision rejects malformed options rather than silently reverting',async()=>{
+  for(const ttl of [0,-1,100,86400001,1.2,NaN,'60000']){
+    await assert.rejects(()=>evaluatePatternV2({
+      definition:definition(),events:events(),semanticCacheTtlMs:ttl,
+    }),/Invalid semantic context revision or cache TTL/);
+  }
+  for(const rev of [false,5,'r'.repeat(129)]){
+    await assert.rejects(()=>evaluatePatternV2({
+      definition:definition(),events:events(),semanticContextRevision:rev,
+    }),/Invalid semantic context revision or cache TTL/);
+  }
+});
