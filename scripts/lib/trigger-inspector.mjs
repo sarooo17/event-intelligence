@@ -256,9 +256,20 @@ export class TriggerInspector {
     version,
     matchId,
   }) {
-    const candidates = (await this.store.listTriggers())
-      .filter((definition) => definition.triggerId === triggerId)
-      .filter((definition) => !version || definition.version === version);
+    // A precise, versioned inspection should not read all definitions from
+    // a high-cardinality scope. Legacy host stores retain the list fallback.
+    const directDefinition = version && typeof this.store.getTrigger === 'function'
+      ? await this.store.getTrigger(triggerId, version) : null;
+    // Legacy key concatenation (triggerId + '@' + version) can alias
+    // different input pairs containing '@'. Never trust a keyed hit's
+    // identity without comparing its canonical stored fields.
+    const canonicalDefinition = directDefinition?.triggerId === triggerId &&
+      directDefinition?.version === version ? directDefinition : null;
+    const candidates = version && typeof this.store.getTrigger === 'function'
+      ? (canonicalDefinition ? [canonicalDefinition] : [])
+      : (await this.store.listTriggers())
+        .filter((definition) => definition.triggerId === triggerId)
+        .filter((definition) => !version || definition.version === version);
 
     if (!candidates.length) {
       const error = new Error(`Unknown trigger: ${triggerId}`);
@@ -279,11 +290,18 @@ export class TriggerInspector {
       definition.version,
     );
 
-    const matches = (await this.store.listTriggerMatches(definition.triggerId))
-      .filter((match) => match.triggerVersion === definition.version);
-    const match = matchId
-      ? matches.find((candidate) => candidate.matchId === matchId) ?? null
-      : latest(matches);
+    let match;
+    if (matchId && typeof this.store.getTriggerMatch === 'function') {
+      const row = await this.store.getTriggerMatch(matchId);
+      match = row?.triggerId === definition.triggerId &&
+        row?.triggerVersion === definition.version ? row : null;
+    } else {
+      const matches = (await this.store.listTriggerMatches(definition.triggerId))
+        .filter((row) => row.triggerVersion === definition.version);
+      match = matchId
+        ? matches.find((candidate) => candidate.matchId === matchId) ?? null
+        : latest(matches);
+    }
 
     if (matchId && !match) {
       const error = new Error(`Unknown trigger match: ${matchId}`);

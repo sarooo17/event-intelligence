@@ -2173,6 +2173,12 @@ export class PostgresEventStore {
     }
   }
 
+  /** Exact, scope-bound current match lookup; avoids materializing every match. */
+  async getTriggerMatch(matchId) {
+    const raw = await this.get('trigger_match', String(matchId));
+    return raw ? parseTriggerMatchRecord(raw) : null;
+  }
+
   async listTriggerMatches(triggerId) {
     const result = triggerId
       ? await this.pool.query(
