@@ -1634,6 +1634,7 @@ export class McpEventsClientManager {
           subscription,
           {
             deliveryMode: delivery,
+            sourceAvailability:'available',
             cursor: eventCursor,
             ...(receipt.accepted
               ? { lastEventAt: receipt.occurrence.timestamp }
@@ -1660,6 +1661,7 @@ export class McpEventsClientManager {
       this.assertConnectionAttached(connection);
       const patch = {
         deliveryMode: delivery,
+        sourceAvailability:'available',
         ...(Object.hasOwn(update, 'cursor')
           ? {
               cursor: normalizeCursor(
@@ -1776,6 +1778,7 @@ export class McpEventsClientManager {
           subscription,
           {
             deliveryMode: delivery,
+            sourceAvailability:'available',
             cursor: current?.cursor ?? null,
           },
         );
