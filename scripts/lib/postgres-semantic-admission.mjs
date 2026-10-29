@@ -32,6 +32,10 @@ export function createPostgresSemanticAdmission({
     throw new TypeError('Requires a scoped PG16 store, stable host-owned batch and trusted cost estimator');
   }
   const policy=limits(budget);
+  // Every worker sharing one policy epoch MUST enforce the same quotas.
+  // Without durable pinning, a rolling deploy could silently increase
+  // maxTriggerCalls / cost ceilings while reusing the same counters.
+  const policyFingerprint=JSON.stringify(policy);
   const check=row=>!row || ['calls','tokens','costMicros'].every(k=>
     integer(row[k]));
   return Object.freeze({
@@ -63,6 +67,12 @@ export function createPostgresSemanticAdmission({
         await store.lock(client,'semantic-budget',triggerKey);
         const trigger=await store.get('semantic_budget',triggerKey,client);
         const batch=await store.get('semantic_budget',batchKey,client);
+        if((trigger && trigger.policyFingerprint!==policyFingerprint) ||
+           (batch && batch.policyFingerprint!==policyFingerprint)) {
+          const error=new Error('Semantic budget policy conflict: choose a new host epoch');
+          error.code='EVENT_INTELLIGENCE_SEMANTIC_BUDGET_POLICY_CONFLICT';
+          throw error;
+        }
         if(!check(trigger)||!check(batch)){
           throw new Error('Corrupt semantic budget ledger: fail closed');
         }
@@ -104,6 +114,7 @@ export function createPostgresSemanticAdmission({
           calls:old.calls+1,
           tokens:old.tokens+tokens,
           costMicros:old.costMicros+costMicros,
+          policyFingerprint,
           ...(old.deadlineAtMs===null ? {} : {deadlineAtMs:old.deadlineAtMs}),
         });
         await store.upsert('semantic_budget',triggerKey,next(a),client);
