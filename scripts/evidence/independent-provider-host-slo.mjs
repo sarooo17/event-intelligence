@@ -14,6 +14,7 @@ function authenticatedFixture(input,expectedKeyId,publicKeyPem) {
       typeof input.keyId!=='string'||input.keyId!==expectedKeyId)fail('MISSING_SIGNED_BYTES');
   const snapshot=Buffer.from(input.bytes);
   let parsed;
+  let normalizedKey;
   try {
     parsed=JSON.parse(snapshot.toString('utf8'));
     // No alternate encoding, whitespace or ambiguous duplicate JSON object members.
@@ -21,8 +22,9 @@ function authenticatedFixture(input,expectedKeyId,publicKeyPem) {
     const key=createPublicKey(publicKeyPem);
     if(key.asymmetricKeyType!=='ed25519' ||
         !verify(null,snapshot,key,Buffer.from(input.signature,'base64')))fail('SIGNATURE_MISMATCH');
+    normalizedKey=Buffer.from(key.export({type:'spki',format:'der'}));
   }catch(error){if(error?.code===REFUSED)throw error;fail('INVALID_SIGNED_FIXTURE');}
-  return {body:parsed,sha256:sha(snapshot),keySha256:sha(Buffer.from(publicKeyPem))};
+  return {body:parsed,sha256:sha(snapshot),keySha256:sha(normalizedKey)};
 }
 function uniqueMap(records,field) {
   if(!Array.isArray(records)||records.length<1000||records.length>MAX_EVENTS)fail('INVALID_SAMPLE_COUNT');
@@ -91,11 +93,19 @@ export function assessIndependentProviderHostEvidence({
     providerTimes.push(e.providerAcknowledgementMs);
     if(!receipts.has(id))fail('HOST_RECEIPT_MISSING_EVENT');
   }
+  // Independently read durable EI rows (not only aggregate receipt counts).
+  // A matching count with a different wake or receipt is NOT the same effect.
+  const eiRows=uniqueMap(ei.durableReceipts,'eventId');
+  if(eiRows.size!==events.size)fail('EI_DURABLE_ROW_COUNT_MISMATCH');
   const wakeIds=new Set(),receiptIds=new Set(),hostTimes=[];
   for(const [id,e] of receipts) {
     if(!events.has(id)||!NAME.test(e.wakeId)||!NAME.test(e.runtimeReceiptId)||
         wakeIds.has(e.wakeId)||receiptIds.has(e.runtimeReceiptId)||
         e.effectCommitted!==true||!finiteRate(e.hostEffectMs))fail('INVALID_HOST_RECEIPT');
+    const stored=eiRows.get(id);
+    if(!stored||stored.wakeId!==e.wakeId ||
+        stored.runtimeReceiptId!==e.runtimeReceiptId ||
+        stored.status!=='delivered')fail('SIGNED_HOST_RECEIPT_DISAGREES_WITH_EI');
     wakeIds.add(e.wakeId);receiptIds.add(e.runtimeReceiptId);hostTimes.push(e.hostEffectMs);
   }
   const b=preRegisteredSloBudgets;
