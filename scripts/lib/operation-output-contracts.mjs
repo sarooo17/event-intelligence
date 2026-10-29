@@ -136,7 +136,7 @@ const stdioInspect = z.object({
     contract: z.literal('ei.trigger-explain-reason.v2'),
     kind: z.enum([
       'paused', 'lifecycle_ended', 'wake_failed', 'candidate_expired',
-      'fired', 'derived_emitted', 'waiting_delivery',
+      'fired', 'derived_emitted', 'condition_satisfied', 'waiting_delivery',
       'source_unavailable', 'watermark_pending', 'budget_truncated',
       'candidate_impossible', 'deadline_pending', 'not_yet_satisfied',
     ]),
