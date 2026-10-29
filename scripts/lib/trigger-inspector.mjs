@@ -458,7 +458,11 @@ export class TriggerInspector {
     // Only an explicitly implemented scoped store capability supplies
     // additional persisted explain facts. No provider event data is trusted
     // as a source availability, watermark or evaluator-completeness proof.
-    const explainFact = typeof this.store.getInspectionFact === 'function'
+    // Strict inspection cannot invoke unbounded generic source inventories.
+    // Until this optional fact provider has a dedicated bounded capability,
+    // omit extra facts and preserve the honest local/unknown diagnosis.
+    const explainFact = this.inspectionWindowLimit === null &&
+      typeof this.store.getInspectionFact === 'function'
       ? await this.store.getInspectionFact({
           triggerId: definition.triggerId,
           triggerVersion: definition.version,
