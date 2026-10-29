@@ -1,0 +1,43 @@
+// Read-only bridge from already persisted MCP source completeness state.
+// Never accept provider payload claims about unavailable sources or watermarks.
+export async function persistedGapInspectionFact(store, {triggerId, triggerVersion, matchId}) {
+  if (typeof triggerId !== 'string' || !triggerId ||
+      typeof triggerVersion !== 'string' || !triggerVersion ||
+      (matchId !== null && typeof matchId !== 'string')) return null;
+  const definition = await store.getTrigger(triggerId,triggerVersion);
+  if (!definition || definition.triggerId !== triggerId ||
+      definition.version !== triggerVersion) return null;
+  const state = await store.getTriggerState(triggerId,triggerVersion);
+  const attached = state?.connectionIds;
+  if (!Array.isArray(attached) || attached.length === 0 || attached.length > 64 ||
+      !attached.every(id=>typeof id==='string' && id.length>0)) return null;
+  if (!Array.isArray(definition.clauses) || definition.clauses.length>64) return null;
+  const sources = await store.listEventSources({connectionIds:attached,enabledOnly:true});
+  // Fail closed when source identity is ambiguous or the scoped backing
+  // store has not durably recorded this connection's capability.
+  if (!Array.isArray(sources) || sources.length > 1024) return null;
+  const accepted = new Set(attached);
+  for (const clause of definition.clauses) {
+    if (!clause.serverId || !clause.event) continue;
+    const relevant=sources.filter(s=>
+      s.enabled !== false && accepted.has(s.connectionId) &&
+      s.serverId === clause.serverId && s.eventName === clause.event);
+    if (relevant.length!==1) continue;
+    const source=relevant[0];
+    const durable=await store.getMcpClientState(
+      source.connectionId,clause.event,clause.arguments ?? {},
+    );
+    if (durable?.gapUnresolved !== true ||
+        durable?.connectionId !== source.connectionId ||
+        durable?.serverId !== clause.serverId ||
+        durable?.eventName !== clause.event ||
+        !Number.isSafeInteger(durable.completenessRevision) ||
+        durable.completenessRevision < 1) continue;
+    // A gap is no proof of source unavailability, watermark or impossible match.
+    return {
+      contract:'ei.inspection-fact.v1',triggerId,triggerVersion,
+      matchId,durable:true,kind:'source_gap_unresolved',
+    };
+  }
+  return null;
+}
