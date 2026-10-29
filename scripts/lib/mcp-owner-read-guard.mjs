@@ -33,10 +33,16 @@ export function createOwnerReadGuard({ triggerControl, store, owner }) {
     const slot=Object.getOwnPropertyDescriptor(value,key);
     return slot && Object.hasOwn(slot,'value') ? slot.value : undefined;
   };
-  const sameOwner=(a,b)=>a && typeof a==='object' && !isProxy(a) &&
-    ownValue(a,'type')===b.type &&
-    ownValue(a,'principal_id')===b.principal_id &&
-    (ownValue(a,'tenant_id')??null)===(b.tenant_id??null);
+  const sameOwner=(a,b)=>{
+    if(!a || typeof a!=='object' || isProxy(a))return false;
+    // Absent tenant is allowed for tenantless local hosts, but a getter
+    // MUST NOT be interpreted as absence or a foreign tenant can slip in.
+    const tenant=Object.getOwnPropertyDescriptor(a,'tenant_id');
+    if(tenant && !Object.hasOwn(tenant,'value'))return false;
+    return ownValue(a,'type')===b.type &&
+      ownValue(a,'principal_id')===b.principal_id &&
+      (tenant ? tenant.value : null)===(b.tenant_id??null);
+  };
 
   async function assertTrigger(triggerId, version) {
     const rows = await triggerControl.listTriggers({ owner });
