@@ -235,7 +235,13 @@ export class TriggerInspector {
     now = () => new Date(),
     matchHistoryLimit = null,
     evidenceRefLimit = null,
+    inspectionWindowLimit = null,
   }) {
+    if(inspectionWindowLimit !== null &&
+        (!Number.isSafeInteger(inspectionWindowLimit) ||
+         inspectionWindowLimit<1 || inspectionWindowLimit>100)) {
+      throw new RangeError('inspectionWindowLimit must be an integer 1..100');
+    }
     if (evidenceRefLimit !== null &&
         (!Number.isInteger(evidenceRefLimit) ||
           evidenceRefLimit < 1 || evidenceRefLimit > 500)) {
@@ -250,6 +256,7 @@ export class TriggerInspector {
     this.now = now;
     this.matchHistoryLimit = matchHistoryLimit;
     this.evidenceRefLimit = evidenceRefLimit;
+    this.inspectionWindowLimit = inspectionWindowLimit;
   }
 
   async inspect({
@@ -319,9 +326,28 @@ export class TriggerInspector {
     const evidenceProjection = clauseState(definition, match, this.evidenceRefLimit);
     const clauses = evidenceProjection.clauses;
     const totalSourceRefs = match?.sourceEvents?.length ?? 0;
-    const deadlines = match && this.store.listTemporalDeadlines
-      ? await this.store.listTemporalDeadlines({ matchId: match.matchId })
-      : [];
+    let deadlines=[];
+    if(match && this.inspectionWindowLimit !== null) {
+      if(typeof this.store.getBoundedInspectionDeadlines!=='function') {
+        const error=new Error('Store does not support bounded inspection deadlines');
+        error.code='EVENT_INTELLIGENCE_INSPECTION_STORE_UNSUPPORTED';
+        throw error;
+      }
+      const page=await this.store.getBoundedInspectionDeadlines(match.matchId,{
+        limit:this.inspectionWindowLimit,
+      });
+      if(!page || !Array.isArray(page.records) ||
+          page.records.length>this.inspectionWindowLimit ||
+          typeof page.hasMore!=='boolean' || page.hasMore) {
+        const error=new Error('Inspection deadlines exceeded bounded proof window');
+        error.code='EVENT_INTELLIGENCE_INSPECTION_BUDGET_EXCEEDED';
+        throw error;
+      }
+      deadlines=page.records;
+    } else {
+      deadlines=match && this.store.listTemporalDeadlines
+        ? await this.store.listTemporalDeadlines({matchId:match.matchId}) : [];
+    }
     const pendingDeadlines = deadlines.filter(
       (deadline) => deadline.status === 'pending',
     );
@@ -339,9 +365,28 @@ export class TriggerInspector {
       : null);
     const wake = wakeId ? await this.store.latestWake(wakeId) : null;
 
-    const derivedOutputs = match
-      ? (await this.store.listDerivedEvents?.({ matchId: match.matchId }) ?? [])
-      : [];
+    let derivedOutputs=[];
+    if(match && this.inspectionWindowLimit !== null) {
+      if(typeof this.store.getBoundedInspectionDerivedEvents!=='function') {
+        const error=new Error('Store does not support bounded inspection derived events');
+        error.code='EVENT_INTELLIGENCE_INSPECTION_STORE_UNSUPPORTED';
+        throw error;
+      }
+      const page=await this.store.getBoundedInspectionDerivedEvents(match.matchId,{
+        limit:this.inspectionWindowLimit,
+      });
+      if(!page || !Array.isArray(page.records) ||
+          page.records.length>this.inspectionWindowLimit ||
+          typeof page.hasMore!=='boolean' || page.hasMore) {
+        const error=new Error('Inspection derived records exceeded bounded proof window');
+        error.code='EVENT_INTELLIGENCE_INSPECTION_BUDGET_EXCEEDED';
+        throw error;
+      }
+      derivedOutputs=page.records;
+    } else {
+      derivedOutputs=match
+        ? (await this.store.listDerivedEvents?.({matchId:match.matchId}) ?? []) : [];
+    }
     const selectedDerivedOutputs = this.evidenceRefLimit === null
       ? derivedOutputs : derivedOutputs.slice(0, this.evidenceRefLimit);
 
@@ -430,6 +475,7 @@ export class TriggerInspector {
         pendingDeadlineCount: pendingDeadlines.length,
         nextEvaluationAt,
         evidenceRefLimit: this.evidenceRefLimit,
+        inspectionWindowLimit: this.inspectionWindowLimit,
         sourceRefCount: totalSourceRefs,
         sourceRefsTruncated: totalSourceRefs > evidenceProjection.selected.length,
         derivedRefCount: derivedOutputs.length,
