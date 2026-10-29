@@ -27,7 +27,7 @@ if (inspect.status !== 0 || inspect.stdout.trim() !== 'yes') FAIL('docker-primar
 const primary = new Pool({connectionString:primaryUrl,max:2,connectionTimeoutMillis:5000});
 const standby = new Pool({connectionString:standbyUrl,max:2,connectionTimeoutMillis:5000});
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
-const sourceCommitSha=process.env.GITHUB_SHA||null;
+const sourceCommitSha=process.env.EI_FAILOVER_SOURCE_SHA||process.env.GITHUB_SHA||null;
 let killed=false;
 try {
   const [p,s]=await Promise.all([
