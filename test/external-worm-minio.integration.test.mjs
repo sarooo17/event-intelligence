@@ -12,7 +12,7 @@ integration('isolated S3-compatible server: five signed immutable objects, readb
   // CI starts a disposable independent MinIO process; these credentials are
   // static throwaway fixture credentials, never a user production account.
   const sdk=await import('@aws-sdk/client-s3');
-  const {S3Client,CreateBucketCommand,DeleteObjectCommand}=sdk;
+  const {S3Client,CreateBucketCommand,PutObjectCommand,DeleteObjectCommand,HeadObjectCommand,GetObjectCommand}=sdk;
   const client=new S3Client({
     endpoint:'http://127.0.0.1:29000',region:'us-east-1',forcePathStyle:true,
     credentials:{accessKeyId:'ei_disposable_minio',secretAccessKey:'ei_disposable_minio_password'},
@@ -77,8 +77,33 @@ integration('isolated S3-compatible server: five signed immutable objects, readb
         error?.$metadata?.httpStatusCode===403;
     }
     console.log(JSON.stringify({event:'s3-retention-delete-verdict',...outcome}));
+    // MinIO's S3 implementation returns InvalidRequest/400 for a protected
+    // version; AWS S3 returns AccessDenied/403. Neither is sufficient alone.
+    // Prove the same caller CAN delete a non-retained disposable object,
+    // then prove the original protected version is still intact.
+    deleteWasDenied=deleteWasDenied ||
+      (outcome.kind==='denied' && outcome.name==='InvalidRequest' &&
+       outcome.statusCode===400);
+    const controlKey=receipt.namespace+'/delete-control';
+    const control=await client.send(new PutObjectCommand({
+      Bucket:bucket,Key:controlKey,Body:Buffer.from('disposable'),
+    }));
+    assert.ok(control.VersionId);
+    const controlDelete=await client.send(new DeleteObjectCommand({
+      Bucket:bucket,Key:controlKey,VersionId:control.VersionId,
+    }));
+    assert.ok([200,204].includes(controlDelete.$metadata.httpStatusCode));
+    const locked=await client.send(new HeadObjectCommand({
+      Bucket:bucket,Key:protectedObject.key,VersionId:protectedObject.versionId,
+    }));
+    assert.equal(locked.ObjectLockMode,'COMPLIANCE');
+    assert.equal(locked.VersionId,protectedObject.versionId);
+    const restored=await client.send(new GetObjectCommand({
+      Bucket:bucket,Key:protectedObject.key,VersionId:protectedObject.versionId,
+    }));
+    assert.deepEqual(Buffer.from(await restored.Body.transformToByteArray()),sourceArchiveBytes);
     assert.equal(deleteWasDenied,true,
-      'retained COMPLIANCE Object Lock object version deletion must fail with AccessDenied');
+      'protected COMPLIANCE version must deny deletion while ordinary version deletion works');
     console.log(JSON.stringify({
       schema:'event-intelligence.disposable-s3-object-lock-e2e.v1',
       status:'completed',objectCount:5,versioned:true,
