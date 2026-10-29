@@ -143,3 +143,32 @@ test('hostile rows, arrays and foreign accessors fail closed without executing J
   }
   assert.equal(calls,0);
 });
+
+test('tenantless configured owner rejects foreign tenant accessor before match evidence',async()=>{
+  const local={type:'user',principal_id:'actor-1'};
+  let getterCalls=0,evidenceReads=0;
+  const foreign={type:'user',principal_id:'actor-1'};
+  Object.defineProperty(foreign,'tenant_id',{
+    enumerable:true,get(){getterCalls++;throw Error('PRIVATE-TENANT-SECRET')},
+  });
+  const guard=createOwnerReadGuard({
+    owner:local,
+    triggerControl:{async listTriggers(){return [
+      {definition:{triggerId:'shared',version:'1'},state:{owner:foreign}},
+    ]}},
+    store:{
+      async latestWake(){return {subscriptionId:'trigger:shared',sourceEventId:'m'}},
+      async getWakeDelivery(){return {
+        triggerId:'shared',triggerVersion:'1',matchId:'m',
+      }},
+      async listTriggerMatches(){evidenceReads++;return [{
+        matchId:'m',triggerId:'shared',triggerVersion:'1',
+        sourceEvents:[{data:{secret:'PRIVATE-TENANT-SECRET'}}],
+      }]},
+    },
+  });
+  await assert.rejects(()=>guard.assertTrigger('shared','1'),notFound);
+  await assert.rejects(()=>guard.assertWake('foreign-wake'),notFound);
+  assert.equal(getterCalls,0);
+  assert.equal(evidenceReads,0);
+});
