@@ -943,6 +943,7 @@ async function withTimeout<T>(
   operation: Promise<T>,
   timeoutMs: number,
   label: string,
+  timeoutCode: string | null = null,
 ): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | null = null;
   try {
@@ -950,7 +951,10 @@ async function withTimeout<T>(
       operation,
       new Promise<T>((_, reject) => {
         timer = setTimeout(() => {
-          reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+          const error=Object.assign(
+            new Error(`${label} timed out after ${timeoutMs}ms`),
+            timeoutCode ? {code:timeoutCode} : {});
+          reject(error);
         }, timeoutMs);
       }),
     ]);
@@ -1700,7 +1704,8 @@ async function evaluateNode(
       }
       context.semanticCacheMisses += 1;
       context.semanticEvaluations += 1;
-      decision = await withTimeout(
+      try {
+        decision = await withTimeout(
         new SemanticConditionEngine(
           context.evaluator,
         ).evaluate(
@@ -1716,7 +1721,18 @@ async function evaluateNode(
         ),
         remaining,
         `Semantic node ${node.id}`,
+        context.evaluationDeadlineAt !== null &&
+          remaining <= node.execution.timeoutMs
+          ? 'EI_SEMANTIC_BATCH_TIMEOUT' : null,
       );
+      }catch(error){
+        if(error && typeof error === 'object' &&
+           'code' in error && error.code === 'EI_SEMANTIC_BATCH_TIMEOUT') {
+          context.truncated=true;
+          continue;
+        }
+        throw error;
+      }
       if (node.execution.cache) {
         context.semanticCache.set(localCacheKey, decision);
         if (
@@ -1793,7 +1809,10 @@ export async function evaluatePatternV2({
   semanticCacheTtlMs?: number | null;
   maxBatchElapsedMs?: number | null;
   incompleteSourceRefs?: ReadonlySet<string>;
-}): Promise<PatternV2Evaluation> {
+ }): Promise<PatternV2Evaluation> {
+  // Include sorting/indexing/AST preprocessing in the batch elapsed budget;
+  // a large valid input may consume its entire allowance before evaluation.
+  const evaluationStartedAt=performance.now();
   if(typeof semanticContextRevision !== 'string' ||
      semanticContextRevision.length > 128 ||
      (semanticCacheTtlMs !== null &&
@@ -1851,7 +1870,7 @@ export async function evaluatePatternV2({
     semanticContextRevision,
     semanticCacheTtlMs,
     evaluationDeadlineAt:maxBatchElapsedMs === null
-      ? null : performance.now()+maxBatchElapsedMs,
+      ? null : evaluationStartedAt+maxBatchElapsedMs,
     semanticTrace: [],
     allowedLatenessMs,
   };
