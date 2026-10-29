@@ -269,7 +269,11 @@ export class TriggerInspector {
     matchId,
   }) {
     if(this.inspectionWindowLimit!==null && (!version ||
-       typeof this.store.getBoundedInspectionMatch!=='function')) {
+       typeof this.store.getTrigger!=='function' ||
+       typeof this.store.getRecentTriggerMatchHistory!=='function' ||
+       typeof this.store.getBoundedInspectionMatch!=='function' ||
+       typeof this.store.getBoundedInspectionDeadlines!=='function' ||
+       typeof this.store.getBoundedInspectionDerivedEvents!=='function')) {
       const error=new Error('Strict inspection requires version and bounded match store');
       error.code='EVENT_INTELLIGENCE_INSPECTION_STORE_UNSUPPORTED';
       throw error;
@@ -330,6 +334,15 @@ export class TriggerInspector {
       match = matchId
         ? matches.find((candidate) => candidate.matchId === matchId) ?? null
         : latest(matches);
+    }
+
+    if(this.inspectionWindowLimit!==null && match &&
+       (match.triggerId!==definition.triggerId ||
+        match.triggerVersion!==definition.version ||
+        (matchId && match.matchId!==matchId))) {
+      const error=new Error('Bounded inspection selector returned foreign match identity');
+      error.code='EVENT_INTELLIGENCE_INSPECTION_MATCH_IDENTITY_INVALID';
+      throw error;
     }
 
     if (matchId && !match) {
