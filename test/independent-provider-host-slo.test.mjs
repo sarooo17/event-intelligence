@@ -29,6 +29,7 @@ function fixture(){
   const h={schema:'event-intelligence.host-observations.v1',
     hostId:'external-host',workloadId,startedAt:start,finishedAt:finish,receipts};
   const ei={workloadId,sourceCommitSha:'a'.repeat(64),
+    durableReceipts:receipts.map(x=>({eventId:x.eventId,wakeId:x.wakeId,runtimeReceiptId:x.runtimeReceiptId,status:'delivered'})),
     productionSloCertified:false,expectedWakes:1200,
     persistedDeliveredWakes:1200,verifiedWakes:1200,duplicateHostEffects:0,
     wakeSettlement:{settled:true,verifiedHostReceipts:1200,dueWakeBacklog:0,
@@ -88,6 +89,12 @@ test('lost/missing/duplicate host wake, partial provider events and retrospectiv
   const late=evidence();
   late.preRegisteredSloBudgets.registeredAt=start;
   assert.throws(()=>check(late),/INVALID_PREREGISTERED_STUDY_WINDOW/);
+  const forged=evidence();
+  forged.ei.durableReceipts[100].runtimeReceiptId='receipt:wrong';
+  assert.throws(()=>check(forged),/SIGNED_HOST_RECEIPT_DISAGREES_WITH_EI/);
+  const absent=evidence();
+  absent.ei.durableReceipts.pop();
+  assert.throws(()=>check(absent),/EI_DURABLE_ROW_COUNT_MISMATCH/);
   const wrong=evidence();
   wrong.ei.persistedDeliveredWakes=1199;
   assert.throws(()=>check(wrong),/EI_DURABLE_RECONCILIATION_FAILED/);
