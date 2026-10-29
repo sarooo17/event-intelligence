@@ -1575,7 +1575,7 @@ export class McpEventsClientManager {
         scopeId: connection.scopeId,
         connectionId: connection.connectionId,
         serverId: connection.serverId,
-        eventName: subscription.eventName,
+        // Untrusted descriptor names cannot enter operational telemetry.
         error: new Error(PROVIDER_ERROR_MESSAGE),
       });
     };
@@ -1595,7 +1595,7 @@ export class McpEventsClientManager {
         scopeId: connection.scopeId,
         connectionId: connection.connectionId,
         serverId: connection.serverId,
-        eventName: subscription.eventName,
+        // Avoid arbitrary unlabelled provider names in diagnostics.
         status: 'terminated',
       });
     };

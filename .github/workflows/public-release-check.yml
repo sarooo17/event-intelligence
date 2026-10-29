@@ -59,6 +59,7 @@ jobs:
             test/mcp-revoked-session-fencing.test.mjs \
             test/mcp-accepted-append-revoke-replay.test.mjs \
             test/mcp-provider-occurrence-name-error-boundary.test.mjs \
+            test/mcp-provider-error-boundary.test.mjs \
             test/host-registry-shutdown-contract.test.mjs \
             test/neutral-facade-conformance.test.mjs \
             test/mcp-owner-read-guard.test.mjs \
