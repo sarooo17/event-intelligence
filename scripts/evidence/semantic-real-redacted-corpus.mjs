@@ -60,7 +60,7 @@ export async function runPublicPriorityTriageCorpus() {
         async evaluate(source){
           calls++;
           estimatedTokens+=upperInputTokens;
-          const input=source.issue?.title??'';
+          const input=source.input?.['issue.title']??'';
           if(input!==item.redactedTitle)throw Error('redaction/input separation failed');
           if(JSON.stringify(source).includes('priority/critical-urgent') ||
              JSON.stringify(source).includes('priority/backlog')) {
