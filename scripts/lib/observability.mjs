@@ -5,6 +5,23 @@ const SENSITIVE_KEY = /(authorization|cookie|credential|password|secret|token|pa
 
 export const EI_OBSERVABILITY_SCHEMA_VERSION = '1';
 
+// The runtime's built-in event classes are trusted literals, NOT provider
+// descriptors. Unknown dynamically assembled names are grouped, never logged.
+const SAFE_OPERATIONAL_EVENTS = new Set([
+  'ei.match.matched', 'ei.match.definition_missing',
+  'ei.wake.runtime_unconfigured','ei.wake.delivered','ei.wake.queued',
+  'ei.wake.retry_scheduled','ei.wake.dead_letter',
+  'ei.scheduler.temporal_deadline_failed','ei.scheduler.wake_retry_failed',
+  'ei.lifecycle.started','ei.lifecycle.closing','ei.lifecycle.closed',
+  'ei.source.registry_update','ei.source.refresh_failed',
+  'ei.source.delivery_failed','ei.source.delivery_terminated','ei.source.poll_failed',
+]);
+const SAFE_OPERATIONAL_STATUSES = new Set([
+  'ok','failed','error','delivered','queued','retrying','active',
+  'paused','terminated','pending','dead_letter','matched','complete',
+  'skipped','disabled','enabled','detached',
+]);
+
 // Call only scalar conversion: executing custom toString during telemetry
 // redaction can have side effects and leak secrets before reaching the sink.
 function safeScalar(value) {
@@ -136,9 +153,13 @@ export function serializeObservabilityError(error) {
  */
 export function createObservabilityEmitter(
   sinkInput,
-  { now = () => new Date(), component = 'event-intelligence' } = {},
+  { now = () => new Date(), component = 'event-intelligence',
+    privacyLevel = 'minimal' } = {},
 ) {
   const sink = normalizeSink(sinkInput);
+  if (!['minimal','diagnostic'].includes(privacyLevel)) {
+    throw new TypeError('privacyLevel must be minimal or diagnostic');
+  }
 
   return Object.freeze({
     enabled: Boolean(sink),
@@ -175,6 +196,34 @@ export function createObservabilityEmitter(
         attempt.length <= MAX_OBSERVABILITY_INPUT_CHARS ? attempt : null;
       const numericAttempt = typeof attempt === 'number' ? attempt
         : boundedAttempt?.trim() ? Number(boundedAttempt) : null;
+      // Default production mode intentionally omits every opaque string
+      // from untrusted event/host fields: arbitrary unlabelled secrets cannot
+      // be reliably detected by regex. Diagnostic mode is an explicit
+      // operator opt-in and must only use access-controlled private sinks.
+      if (privacyLevel === 'minimal') {
+        const rawStatus = field('status');
+        const status = typeof rawStatus==='string' &&
+          SAFE_OPERATIONAL_STATUSES.has(rawStatus) ? rawStatus : null;
+        const record = Object.freeze({
+          schema:'event-intelligence.observability.v'+EI_OBSERVABILITY_SCHEMA_VERSION,
+          timestamp:now().toISOString(),
+          level,
+          event:SAFE_OPERATIONAL_EVENTS.has(event) ? event : 'ei.unknown',
+          component:'event-intelligence',
+          ...(status ? {status} : {}),
+          ...(numericAttempt !== null && Number.isFinite(numericAttempt)
+            ? {attempt:numericAttempt} : {}),
+          ...(field('error') !== undefined
+            ? {error:Object.freeze({message:'[diagnostic omitted]'})} : {}),
+        });
+        try {
+          const pending=sink.emit(record);
+          if(pending && typeof pending.then==='function') {
+            void Promise.resolve(pending).catch(()=>{});
+          }
+          return true;
+        } catch { return false; }
+      }
       const metadata = field('metadata');
       const timestamp = field('timestamp');
       const record = {
