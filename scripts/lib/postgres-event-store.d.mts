@@ -93,6 +93,8 @@ export interface PostgresEventStoreOptions {
   /** REQUIRED for EVERY fenced PG dispatch store, native pg.Pool or wrapper.
    * Pass the SAME underlying physical pool object for all shared aliases. */
   dispatchPoolIdentity?: object;
+  /** Fail closed unless each MCP occurrence carries a registered host epoch. */
+  requireMcpSessionFence?: boolean;
 }
 
 export declare const MAX_POSTGRES_TABLE_PREFIX_BYTES: number;
@@ -311,7 +313,14 @@ export declare class PostgresEventStore {
     skipped?: 'not_fired';
   }>;
 
-  appendMcpOccurrence(serverId: string, event: any, subscriptionId?: string | null): Promise<{
+  readonly requireMcpSessionFence: boolean;
+  beginMcpConnectionAuthority(input: { connectionId: string; epoch: string }): Promise<{
+    connectionId: string; generation: number; active: true;
+  }>;
+  revokeMcpConnectionAuthority(input: { connectionId: string; epoch: string }): Promise<boolean>;
+  appendMcpOccurrence(serverId: string, event: any, subscriptionId?: string | null, authority?: {
+    connectionId: string; epoch: string;
+  } | null): Promise<{
     accepted: boolean;
     sequence: number | null;
     event: any;
