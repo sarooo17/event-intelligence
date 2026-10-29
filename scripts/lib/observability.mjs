@@ -15,6 +15,9 @@ const SAFE_OPERATIONAL_EVENTS = new Set([
   'ei.lifecycle.started','ei.lifecycle.closing','ei.lifecycle.closed',
   'ei.source.registry_update','ei.source.refresh_failed',
   'ei.source.delivery_failed','ei.source.delivery_terminated','ei.source.poll_failed',
+  'ei.trigger.created','ei.trigger.updated','ei.trigger.deleted',
+  'ei.trigger.paused','ei.trigger.resumed','ei.source.registered',
+  'ei.source.discovery_failed','ei.source.discovered',
 ]);
 const SAFE_OPERATIONAL_STATUSES = new Set([
   'ok','failed','error','delivered','queued','retrying','active',
