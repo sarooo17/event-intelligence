@@ -4,6 +4,7 @@ import {
   evaluatePatternV2,
   patternV2CandidateSignature,
   type PatternV2Candidate,
+  type PatternV2SemanticAdmission,
 } from '../patternV2/evaluator.js';
 import type { SemanticEvaluator } from '../semantic/types.js';
 import { sha256Hex } from '../intelligenceProtocol/canonical.js';
@@ -86,12 +87,14 @@ function patternPhysicalIdentity(
 export interface CompositeTriggerEngineOptions {
   workerId?: string;
   partitionLeaseMs?: number;
+  semanticAdmission?: PatternV2SemanticAdmission | null;
 }
 
 export class CompositeTriggerEngine {
   private readonly support: CompositeTriggerRuntimeSupport;
   private readonly workerId: string;
   private readonly partitionLeaseMs: number;
+  private readonly semanticAdmission: PatternV2SemanticAdmission | null;
 
   constructor(
     private readonly store: CompositeTriggerStore & CompositeTriggerAudit,
@@ -99,6 +102,11 @@ export class CompositeTriggerEngine {
     private readonly now: () => Date = () => new Date(),
     options: CompositeTriggerEngineOptions = {},
   ) {
+    if(options.semanticAdmission != null &&
+       typeof options.semanticAdmission.reserve !== 'function') {
+      throw new TypeError('Invalid semantic admission gate');
+    }
+    this.semanticAdmission = options.semanticAdmission ?? null;
     this.support = new CompositeTriggerRuntimeSupport(store, now);
     this.workerId =
       String(options.workerId || 'event-intelligence-engine');
@@ -830,6 +838,7 @@ export class CompositeTriggerEngine {
       allowedLatenessMs:
         definition.eventTime?.allowedLatenessMs ?? 0,
       semanticCache,
+      semanticAdmission:this.semanticAdmission,
       semanticCacheNamespace:
         `${definition.triggerId}@${definition.version}`,
     });
