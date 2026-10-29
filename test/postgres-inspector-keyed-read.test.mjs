@@ -54,6 +54,12 @@ integration('real PostgreSQL keyed inspector reads exact tenant match without wi
       insA.inspect({triggerId:'same-trigger',version:'1',matchId:'same-match'}),
       insB.inspect({triggerId:'same-trigger',version:'1',matchId:'same-match'}),
     ]);
+    const latestA=await insA.inspect({triggerId:'same-trigger',version:'1'});
+    const latestB=await insB.inspect({triggerId:'same-trigger',version:'1'});
+    assert.equal(latestA.match.matchId,'newer-match',
+      'PG selector must order by actual persisted match timestamp');
+    assert.equal(latestB.match.matchId,'same-match',
+      'same trigger IDs in other tenant must remain isolated');
     assert.equal(resultA.match.matchId,'same-match');
     assert.equal(resultB.match.matchId,'same-match');
     assert.equal(resultA.lineage.evidence[0].sourceEventId,'source-tenant-a');
