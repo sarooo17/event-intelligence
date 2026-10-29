@@ -39,6 +39,22 @@ integration('real PostgreSQL keyed inspector reads exact tenant match without wi
     await a.putTrigger(definition);await b.putTrigger(definition);
     await a.appendTriggerMatch(match('tenant-a','same-match'));
     await b.appendTriggerMatch(match('tenant-b','same-match'));
+    await a.appendTriggerMatch({
+      ...match('tenant-a','newer-match'),
+      updatedAt:'2026-10-29T10:01:00.000Z',
+    });
+    // Timestamp precision parity: JS Date.parse truncates to milliseconds,
+    // so the earlier microsecond timestamp with higher status rank wins.
+    await a.appendTriggerMatch({
+      ...match('tenant-a','ranked-winner'),
+      updatedAt:'2026-10-29T10:02:00.000100Z',
+      patternState:{...match('tenant-a','x').patternState,role:'match'},
+    });
+    await a.appendTriggerMatch({
+      ...match('tenant-a','microsecond-later'),
+      updatedAt:'2026-10-29T10:02:00.000900Z',
+      patternState:{...match('tenant-a','x').patternState,role:'buffer'},
+    });
     // Enforce SQL index-key read path, not an accidentally small wide scan.
     a.listTriggers=()=>{throw Error('unbounded listTriggers prohibited')};
     a.listTriggerMatches=()=>{throw Error('unbounded listTriggerMatches prohibited')};
@@ -50,6 +66,12 @@ integration('real PostgreSQL keyed inspector reads exact tenant match without wi
       insA.inspect({triggerId:'same-trigger',version:'1',matchId:'same-match'}),
       insB.inspect({triggerId:'same-trigger',version:'1',matchId:'same-match'}),
     ]);
+    const latestA=await insA.inspect({triggerId:'same-trigger',version:'1'});
+    const latestB=await insB.inspect({triggerId:'same-trigger',version:'1'});
+    assert.equal(latestA.match.matchId,'ranked-winner',
+      'PG selector must order by actual persisted match timestamp');
+    assert.equal(latestB.match.matchId,'same-match',
+      'same trigger IDs in other tenant must remain isolated');
     assert.equal(resultA.match.matchId,'same-match');
     assert.equal(resultB.match.matchId,'same-match');
     assert.equal(resultA.lineage.evidence[0].sourceEventId,'source-tenant-a');

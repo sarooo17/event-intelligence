@@ -909,6 +909,27 @@ export class PersistentEventStore {
     return this.#triggerMatches.get(String(matchId)) ?? null;
   }
 
+  /** In-memory reference-store selector; no full result array is materialized. */
+  getLatestTriggerMatch(triggerId, version) {
+    let best = null;
+    const rank = (record) => {
+      if (record.status === 'fired') return 5;
+      if (record.status === 'emitted') return 4;
+      if (record.status === 'matched') return 3;
+      if (record.status === 'partial' && record.patternState?.role === 'match') return 2;
+      if (record.status === 'partial') return 1;
+      return 0;
+    };
+    for (const record of this.#triggerMatches.values()) {
+      if (record.triggerId !== triggerId || record.triggerVersion !== version) continue;
+      if (!best ||
+          Date.parse(record.updatedAt) > Date.parse(best.updatedAt) ||
+          (Date.parse(record.updatedAt) === Date.parse(best.updatedAt) &&
+           rank(record) > rank(best))) best = record;
+    }
+    return best;
+  }
+
   listTriggerMatches(triggerId) {
     return [...this.#triggerMatches.values()]
       .filter((record) => !triggerId || record.triggerId === triggerId);

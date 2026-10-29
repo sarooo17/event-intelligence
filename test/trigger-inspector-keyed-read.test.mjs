@@ -52,6 +52,23 @@ test('cross-trigger or cross-version match ID fails closed without reading evide
     assert.deepEqual(store.calls,['getTrigger','getTriggerMatch']);
   }
 });
+test('latest-match store selector avoids materializing every match',async()=>{
+  const store=directStore();
+  store.getLatestTriggerMatch=async()=>{store.calls.push('getLatestTriggerMatch');return record;};
+  const result=await new TriggerInspector({store,matchHistoryLimit:2,evidenceRefLimit:2})
+    .inspect({triggerId:'owned-trigger',version:'1'});
+  assert.equal(result.match.matchId,'wanted');
+  assert.deepEqual(store.calls,['getTrigger','getLatestTriggerMatch']);
+});
+test('poisoned latest selector cannot cross another trigger/version',async()=>{
+  const store=directStore();
+  store.getLatestTriggerMatch=async()=>({...record,triggerId:'foreign'});
+  const result=await new TriggerInspector({store,matchHistoryLimit:2})
+    .inspect({triggerId:'owned-trigger',version:'1'});
+  assert.equal(result.match,null);
+  assert.equal(result.diagnosis.kind,'no_local_match');
+});
+
 test('unknown version never launches a full-definition scan',async()=>{
   const store=directStore();
   await assert.rejects(()=>new TriggerInspector({store})
