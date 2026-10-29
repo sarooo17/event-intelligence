@@ -149,3 +149,18 @@ test('batch timeout yields explicit incomplete result, not thrown semantic node 
   assert.equal(result.semanticEvaluations,1);
   assert.deepEqual(result.matches,[]);
 });
+
+test('short per-node timeout still throws when batch deadline has ample time',async()=>{
+  const ast=pattern();
+  const node={...ast.root,execution:{...ast.root.execution,timeoutMs:20}};
+  let calls=0;
+  await assert.rejects(()=>evaluatePatternV2({
+    definition:{...ast,root:node},
+    events:[ev('1')],maxBatchElapsedMs:1000,
+    evaluator:{cacheIdentity:'node-short-timeout',async evaluate(){
+      calls++;await new Promise(resolve=>setTimeout(resolve,90));
+      return {evaluator:'node-short-timeout',probability:.99};
+    }},
+  }),/Semantic node importance timed out after 20ms/);
+  assert.equal(calls,1);
+});
