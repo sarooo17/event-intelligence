@@ -255,3 +255,43 @@ test('host.close remains retryable and retains store after repeated PostgreSQL r
     await rm(dir,{recursive:true,force:true});
   }
 });
+
+
+test('shared-runtime mode rejects unfenced MCP before store initialization',async()=>{
+  let initialized=0;
+  const store={async init(){initialized++},requireMcpSessionFence:false};
+  const connection={
+    connectionId:'unprotected',serverId:'provider',request:async()=>({}),
+    getCapabilities:async()=>({}),
+  };
+  await assert.rejects(()=>createLocalEventIntelligenceRuntime({
+    env:{EVENT_INTELLIGENCE_REQUIRE_SHARED_STORE:'true',EVENT_INTELLIGENCE_WORKER_ID:'w1'},
+    store,mcpEventConnections:[connection],
+  }),e=>e.code==='MCP_SESSION_AUTHORITY_REQUIRED');
+  assert.equal(initialized,0);
+  await assert.rejects(()=>createLocalEventIntelligenceRuntime({
+    env:{EVENT_INTELLIGENCE_REQUIRE_SHARED_STORE:'true',EVENT_INTELLIGENCE_WORKER_ID:'w1'},
+    store,mcpEventConnections:[{...connection,authorityEpoch:epoch}],
+  }),e=>e.code==='MCP_SESSION_FENCE_REQUIRED');
+  assert.equal(initialized,0);
+});
+
+test('shared manager refuses dynamically attached MCP without host-generated epoch',async()=>{
+  const {store,opts}=fixture();
+  const manager=new McpEventsClientManager({
+    store,registerEventSource:async()=>{},
+    compositeEventConsumer:{async ingestMcpOccurrence(){}},
+    requireHostAuthorityEpoch:true,
+  });
+  try {
+    await assert.rejects(()=>manager.attachConnection({
+      ...opts,authorityEpoch:null,
+    },{discover:false}),e=>e.code==='MCP_SESSION_AUTHORITY_REQUIRED');
+    assert.equal(manager.connections.size,0);
+    const disabled=await manager.attachConnection({
+      ...opts,enabled:false,authorityEpoch:null,
+    },{discover:false});
+    assert.equal(disabled.enabled,false);
+    assert.equal(manager.connections.size,0);
+  }finally{await manager.close();}
+});
