@@ -174,3 +174,29 @@ Errors retain constant messages and host-selected correlation IDs.
 This does not prove that arbitrary host metadata/scope IDs or third-party
 log sinks cannot contain unlabelled sensitive values; #45 telemetry-wide
 acceptance and independent security review remain open.
+
+## Privacy-safe operational telemetry by default (#45)
+
+`createObservabilityEmitter` now defaults to `privacyLevel:'minimal'`.
+It emits only a fixed allowlist of built-in EI event categories, event
+severity, optional small numeric attempt count, a fixed error-presence
+marker, and recognized fixed status values. It generates its own timestamp.
+**No** provider/event names, opaque IDs, scope/tenant IDs, arbitrary status,
+metadata, user-supplied timestamps or raw error messages are exported.
+Unknown event names collapse to `ei.unknown` rather than reflecting an
+arbitrary string. This is necessary because regular-expression redaction
+cannot recognize an unlabelled private event field.
+
+Operator-only `privacyLevel:'diagnostic'` restores the old sanitized
+field-level telemetry shape, **but arbitrary unlabelled text remains
+possible**: use only after explicit opt-in in access-controlled private
+sinks. Treat diagnostic text as sensitive and apply host retention policy.
+The privacy-focused regression uses 256 distinct unlabelled canaries across
+all dimensions and nested metadata in the Public Release Check.
+
+Compatibility: the operational observability schema is still v1, but its
+default projection is intentionally narrower. Hosts that rely on correlation
+IDs, metadata or error text must explicitly choose diagnostic mode and
+review their own secret-handling and storage controls. The OTel bridge
+already omitted correlations/metadata by default and remains compatible.
+No runtime policy/OAuth authorization behavior changes.
