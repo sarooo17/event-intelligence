@@ -150,4 +150,5 @@ jobs:
           node --test \
             test/postgres-inspector-restart.test.mjs \
             test/postgres-logical-dump-restore.test.mjs \
-            test/postgres-owner-revocation-snapshot.test.mjs
+            test/postgres-owner-revocation-snapshot.test.mjs \
+            test/postgres-audit-proof-windows.test.mjs
