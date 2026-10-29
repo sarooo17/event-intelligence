@@ -35,3 +35,30 @@ limit. These guards bound projected evidence, **not** the PostgreSQL
 underlying event_source table read. The broader #48 high-cardinality
 read/cost acceptance remains separate and requires DB pushdown,
 resource budgets, and representative measured stress evidence.
+
+
+## Actual evaluator budget exhaustion (persisted audit)
+
+The canonical Pattern AST v2 runtime already records
+`trigger.partial` audit transitions with `details.truncated`
+set from its actual evaluator result. JSONL and PostgreSQL now expose
+a read-only **latest transition for the selected match ID**. When its
+authenticated trigger/version identity matches the inspected
+definition and the most recent transition is a partial evaluation
+with `truncated:true`, v2 reports `budget_truncated`, not a
+conclusive `not_yet_satisfied`. A subsequent complete evaluation
+with `truncated:false` supersedes the older evidence; selected-match
+identity and tenant scope are enforced at the persistence layer.
+
+Unit/integration tests feed the real canonical evaluator an adversarial
+bounded candidate sequence, persist the resulting actual exhaustion,
+close/reopen JSONL and verify the diagnosis, then supersede with a
+complete transition. PG16 tests verify that identical match IDs in
+different tenants do not share that audit fact and the pinned scoped
+hash chain still verifies.
+
+The PostgreSQL audit lookup is protected by a 2,000 ms statement
+timeout and selects the latest scope-local matching audit row. This
+does not prove source watermarks, connection outages or semantic
+impossibility; those remain unknown unless separate authoritative
+evidence is available.
