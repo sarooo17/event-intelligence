@@ -179,7 +179,7 @@ acceptance and independent security review remain open.
 
 The standalone read guard must not trust that a host-supplied trigger-list
 adapter actually filtered the persisted rows for the configured owner.
-After requesting `listTriggers({owner})`, the guard independently compares
+After requesting `listTriggers({owner})`, the guard independently projects inert own data descriptors from the returned definition/state, discards Proxy/getter-backed attacker records without executing their JavaScript, and compares
 the owner identity in **every returned record**, including exact tenant,
 principal and type. A foreign record is denied with the same nondisclosing
 resource-not-found response as a missing trigger/version; it must not
