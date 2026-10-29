@@ -2868,6 +2868,11 @@ export class PostgresEventStore {
     });
   }
 
+  async getInspectionFact({triggerId,triggerVersion,matchId=null}={}) {
+    const {persistedGapInspectionFact} = await import('./inspection-persisted-mcp-gap.mjs');
+    return persistedGapInspectionFact(this,{triggerId,triggerVersion,matchId});
+  }
+
   getMcpClientState(connectionId, eventName, args = {}) {
     return this.get(
       'mcp_client_state',
