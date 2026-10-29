@@ -10,7 +10,8 @@ const definition={triggerId:'t',version:'1',
 function store({deadlines=[],derived=[]}={}){
   return {
     listTriggers:()=>[definition],getTriggerState:()=>({status:'active',fireCount:0}),
-    listTriggerMatches:()=>[match],
+    listTriggerMatches:()=>{throw Error('unbounded match selection forbidden')},
+    getBoundedInspectionMatch:async()=>match,
     getBoundedInspectionDeadlines:async(matchId,{limit})=>{
       assert.equal(matchId,'m');
       return {records:deadlines.slice(0,limit),hasMore:deadlines.length>limit};
@@ -47,6 +48,7 @@ test('window truncation is a failure, not a false pending/missing claim',async()
       field==='deadlines'?deadline(3):derived(3)];
     await assert.rejects(()=>new TriggerInspector({
       store:store({[field]:two}),inspectionWindowLimit:2,
+      evidenceRefLimit:2,matchHistoryLimit:2,
     }).inspect({triggerId:'t',version:'1'}),error=>
       error?.code==='EVENT_INTELLIGENCE_INSPECTION_BUDGET_EXCEEDED');
   }
@@ -56,10 +58,23 @@ test('bounded mode refuses custom stores without bounded semantics',async()=>{
   delete bad.getBoundedInspectionDeadlines;
   await assert.rejects(()=>new TriggerInspector({
     store:bad,inspectionWindowLimit:2,
+    evidenceRefLimit:2,matchHistoryLimit:2,
   }).inspect({triggerId:'t',version:'1'}),error=>
     error?.code==='EVENT_INTELLIGENCE_INSPECTION_STORE_UNSUPPORTED');
   for(const invalid of [0,-1,101,1.1,NaN,'10']){
-    assert.throws(()=>new TriggerInspector({store:bad,inspectionWindowLimit:invalid}),
+    assert.throws(()=>new TriggerInspector({store:bad,inspectionWindowLimit:invalid,
+      evidenceRefLimit:2,matchHistoryLimit:2}),
       /inspectionWindowLimit/);
   }
+});
+
+test('strict inspection always requires evidence/history limits and bounded match API',async()=>{
+  const current=store();
+  assert.throws(()=>new TriggerInspector({store:current,inspectionWindowLimit:2}),
+    /requires evidenceRefLimit and matchHistoryLimit/);
+  delete current.getBoundedInspectionMatch;
+  await assert.rejects(()=>new TriggerInspector({store:current,
+    inspectionWindowLimit:2,evidenceRefLimit:2,matchHistoryLimit:2,
+  }).inspect({triggerId:'t',version:'1'}),e=>
+    e?.code==='EVENT_INTELLIGENCE_INSPECTION_STORE_UNSUPPORTED');
 });
