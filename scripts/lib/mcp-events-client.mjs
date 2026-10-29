@@ -393,6 +393,14 @@ function normalizeConnection(connection) {
       connection.maxPollPageBytes, DEFAULT_MCP_POLL_PAGE_BYTES,
       1024, 4194304, 'maxPollPageBytes',
     ),
+    // Host-generated epoch, never derived from provider payload. PostgreSQL
+    // must be configured requireMcpSessionFence=true in shared-worker mode.
+    authorityEpoch: connection.authorityEpoch == null ? null
+      : (typeof connection.authorityEpoch === 'string' &&
+         connection.authorityEpoch.length >= 32 &&
+         connection.authorityEpoch.length <= 256
+          ? connection.authorityEpoch
+          : (()=>{throw new TypeError('Invalid host MCP session authority epoch')})()),
     maxDiscoveryBytes: normalizePositiveInteger(
       connection.maxDiscoveryBytes, DEFAULT_MCP_DISCOVERY_BYTES,
       1024, 4194304, 'maxDiscoveryBytes',
@@ -436,6 +444,7 @@ export function createHostMcpEventsConnection({
   maxOccurrenceBytes = DEFAULT_MCP_OCCURRENCE_BYTES,
   maxPollPageBytes = DEFAULT_MCP_POLL_PAGE_BYTES,
   maxDiscoveryBytes = DEFAULT_MCP_DISCOVERY_BYTES,
+  authorityEpoch = null,
   scopeId = DEFAULT_EVENT_SCOPE_ID,
   preferredDelivery,
   compatibilityProfile = 'auto',
@@ -478,6 +487,7 @@ export function createHostMcpEventsConnection({
     maxOccurrenceBytes,
     maxPollPageBytes,
     maxDiscoveryBytes,
+    authorityEpoch,
     scopeId,
     preferredDelivery,
     compatibilityProfile,
@@ -703,10 +713,33 @@ export class McpEventsClientManager {
     return result;
   }
 
+  async prepareConnectionAuthority(connection) {
+    if (!connection.authorityEpoch) return;
+    await this.withConnectionMutation(connection.connectionId, async()=>{
+      this.assertConnectionAttached(connection);
+      const context=await this.scopeContext(connection);
+      if (context.store.requireMcpSessionFence!==true ||
+          typeof context.store.beginMcpConnectionAuthority!=='function') {
+        throw new Error('Host MCP connection requires an enabled PostgreSQL authority fence');
+      }
+      await context.store.beginMcpConnectionAuthority({
+        connectionId:connection.connectionId,epoch:connection.authorityEpoch,
+      });
+      this.assertConnectionAttached(connection);
+    });
+  }
+
+  async prepareConnectionAuthorities() {
+    for(const connection of this.connections.values()) {
+      await this.prepareConnectionAuthority(connection);
+    }
+  }
+
   async attachConnection(input, { discover = true } = {}) {
     const connection = this.addConnection(input);
     const pending = (async () => {
       let events = [];
+      if (connection.enabled !== false)await this.prepareConnectionAuthority(connection);
       if (connection.enabled !== false && discover) {
         events = await this.discoverConnection(connection.connectionId);
       }
@@ -776,6 +809,14 @@ export class McpEventsClientManager {
     const cleanup = removed
       ? this.withConnectionMutation(connectionId, async () => {
           const context = await this.scopeContext(connection);
+          if(connection.authorityEpoch) {
+            if(typeof context.store.revokeMcpConnectionAuthority!=='function') {
+              throw new Error('Host MCP connection authority fence unavailable');
+            }
+            await context.store.revokeMcpConnectionAuthority({
+              connectionId,epoch:connection.authorityEpoch,
+            });
+          }
           const sources = await context.store.listEventSources({
             connectionIds: [connectionId],
           });
@@ -1165,6 +1206,9 @@ export class McpEventsClientManager {
         connection.serverId,
         occurrence,
         subscription.subscriptionId,
+        connection.authorityEpoch
+          ? {connectionId:connection.connectionId,epoch:connection.authorityEpoch}
+          : null,
       );
       if (!receipt.accepted) return { accepted: false, occurrence };
       // Pre-revoke durably accepted work must complete CEP, otherwise a
@@ -2032,6 +2076,16 @@ export class McpEventsClientManager {
       // records; release the authoritative store only after it settles.
       while (this.detachInFlight.size > 0) {
         await Promise.allSettled([...this.detachInFlight]);
+      }
+      // Attach registration must finish BEFORE last shared-authority revoke.
+      // Otherwise a pending scope resolver could activate an epoch after
+      // shutdown's premature revoke and leave other workers authorized.
+      for(const connection of [...this.connections.values()]) {
+        if(!connection.authorityEpoch)continue;
+        const context=await this.scopeContext(connection);
+        await context.store.revokeMcpConnectionAuthority({
+          connectionId:connection.connectionId,epoch:connection.authorityEpoch,
+        });
       }
       // Gaps acknowledged before the close fence can still have a
       // pending authoritative store write; finish them before runtime.close.
