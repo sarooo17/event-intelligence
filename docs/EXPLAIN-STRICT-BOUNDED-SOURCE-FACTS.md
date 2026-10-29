@@ -37,3 +37,5 @@ inspector's existing 1k/10k/100k match/deadline benchmark remains
 separate; this does **not** certify every database query planner path,
 all huge JSONB values or production P99 latency without representative
 independent host traces.
+
+Review hardening: an optional host `listBoundedEventSources()` returning null, undefined, a malformed page, a missing hasMore flag or a flagged incomplete window **must return no source fact**. The unbounded `listEventSources()` fallback is now exclusive to non-strict mode; adversarial custom-store tests throw if it is invoked by the strict path.
