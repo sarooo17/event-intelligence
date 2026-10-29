@@ -117,6 +117,26 @@ export async function createLocalEventIntelligenceRuntime({
     error.code = 'EVENT_INTELLIGENCE_SHARED_STORE_MODE_INVALID';
     throw error;
   }
+  // Shared-worker strict mode must fail closed before store init or timers.
+  // A host-generated epoch is mandatory for every enabled MCP connection.
+  if(rawSharedMode==='true') {
+    for(const input of mcpEventConnections) {
+      if(input?.enabled===false)continue;
+      if(typeof input?.authorityEpoch!=='string' ||
+          input.authorityEpoch.length<32 ||
+          input.authorityEpoch.length>256) {
+        const error=new Error('Shared worker MCP connection requires host authority epoch');
+        error.code='MCP_SESSION_AUTHORITY_REQUIRED';
+        throw error;
+      }
+    }
+    if(mcpEventConnections.some(x=>x?.enabled!==false) &&
+        providedStore?.requireMcpSessionFence!==true) {
+      const error=new Error('Shared worker store requires PostgreSQL session fencing');
+      error.code='MCP_SESSION_FENCE_REQUIRED';
+      throw error;
+    }
+  }
   const observer = createObservabilityEmitter(observability,observabilityOptions);
   const dataDir = env.DATA_DIR ?? './data';
   const rootStore = providedStore ?? new PersistentEventStore(dataDir);
@@ -359,6 +379,7 @@ export async function createLocalEventIntelligenceRuntime({
     compositeEventConsumer: defaultContext.compositeEventConsumer,
     resolveScope: createScopeContext,
     connections: mcpEventConnections,
+    requireHostAuthorityEpoch: requireSharedStore,
     registerEventSource: (source) =>
       defaultContext.triggerControl.registerEventSource(
         source,

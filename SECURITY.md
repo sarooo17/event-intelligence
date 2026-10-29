@@ -49,6 +49,7 @@ Important defaults and constraints:
 - audit records are hash-linked and tamper-evident, not tamper-proof;
 - the bundled JSONL store is single-process reference infrastructure and is not safe as a shared multi-replica backend;
 - horizontally scaled custom stores must preserve scope isolation and implement wake claim/lease operations atomically;
+- explicit shared-worker mode (`EVENT_INTELLIGENCE_REQUIRE_SHARED_STORE=true`) rejects enabled MCP connections without host-generated authority epochs and rejects stores without strict PostgreSQL session fencing; host-managed dynamic registry attachments follow the same rule. This is a pre-v1 compatibility hardening: legacy unfenced MCP connections must use single-process/reference mode, not be silently accepted in shared deployment;
 - secrets belong in environment variables / secret managers, never committed files.
 
 See `docs/SECURITY-MODEL.md` for the architectural model.

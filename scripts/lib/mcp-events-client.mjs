@@ -586,6 +586,7 @@ export class McpEventsClientManager {
     connections = [],
     now = () => new Date(),
     observability = null,
+    requireHostAuthorityEpoch = false,
   }) {
     this.store = store;
     this.compositeEventConsumer = compositeEventConsumer;
@@ -594,6 +595,7 @@ export class McpEventsClientManager {
     this.connections = new Map();
     this.now = now;
     this.observability = observability;
+    this.requireHostAuthorityEpoch = requireHostAuthorityEpoch === true;
     this.descriptors = new Map();
     this.profiles = new Map();
     this.timers = new Map();
@@ -677,6 +679,11 @@ export class McpEventsClientManager {
     this.assertOpen();
     const connection = normalizeConnection(input);
     if (connection.enabled === false) return connection;
+    if (this.requireHostAuthorityEpoch && !connection.authorityEpoch) {
+      const error=new Error('Shared worker MCP connection requires host authority epoch');
+      error.code='MCP_SESSION_AUTHORITY_REQUIRED';
+      throw error;
+    }
     if (this.connections.has(connection.connectionId)) {
       throw new Error(
         `Host-managed MCP Events connection already attached: ${connection.connectionId}`,
