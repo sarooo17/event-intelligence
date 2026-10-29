@@ -235,28 +235,6 @@ integration('an external-host PostgreSQL ledger atomically deduplicates parallel
       ]);
     });
 
-    await t.test('post-commit/pre-ack failure reconciles through host DB; new pool sees persisted receipt', async () => {
-      const first = makeHost(poolA, targets, work, { failAfterCommit: true });
-      const activation = signal('job-b', 'wake-ack-lost');
-      const outcome = await first({ wake_id: activation.wake.wakeId }, activation);
-      assert.equal(outcome.duplicate, true);
-      await poolA.end();
-      poolA = null;
-      const restartPool = new Pool({ connectionString: url, max: 2 });
-      try {
-        const restarted = makeHost(restartPool, targets, work);
-        const again = await restarted({ wake_id: activation.wake.wakeId }, activation);
-        assert.equal(again.duplicate, true);
-        assert.equal(again.runtimeReceiptId, outcome.runtimeReceiptId);
-        const rows = await restartPool.query(
-          `SELECT * FROM ${work} WHERE wake_id = $1`, ['wake-ack-lost'],
-        );
-        assert.equal(rows.rowCount, 1);
-      } finally {
-        await restartPool.end();
-      }
-    });
-
     await t.test('revocation committed after preflight but before host effect denies queued work', async () => {
       let releaseDelivery;
       let reachedPrecommit;
@@ -282,6 +260,28 @@ integration('an external-host PostgreSQL ledger atomically deduplicates parallel
         `SELECT receipt_id FROM ${work} WHERE wake_id = 'wake-revoke-precommit'`,
       );
       assert.equal(rows.rowCount, 0, 'revoked queued work must not commit a host effect or receipt');
+    });
+
+    await t.test('post-commit/pre-ack failure reconciles through host DB; new pool sees persisted receipt', async () => {
+      const first = makeHost(poolA, targets, work, { failAfterCommit: true });
+      const activation = signal('job-b', 'wake-ack-lost');
+      const outcome = await first({ wake_id: activation.wake.wakeId }, activation);
+      assert.equal(outcome.duplicate, true);
+      await poolA.end();
+      poolA = null;
+      const restartPool = new Pool({ connectionString: url, max: 2 });
+      try {
+        const restarted = makeHost(restartPool, targets, work);
+        const again = await restarted({ wake_id: activation.wake.wakeId }, activation);
+        assert.equal(again.duplicate, true);
+        assert.equal(again.runtimeReceiptId, outcome.runtimeReceiptId);
+        const rows = await restartPool.query(
+          `SELECT * FROM ${work} WHERE wake_id = $1`, ['wake-ack-lost'],
+        );
+        assert.equal(rows.rowCount, 1);
+      } finally {
+        await restartPool.end();
+      }
     });
 
     await t.test('revocation prevents uncommitted target continuation', async () => {
