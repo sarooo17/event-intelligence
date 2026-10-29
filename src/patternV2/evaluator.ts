@@ -42,8 +42,7 @@ export interface PatternV2SemanticTrace {
   decision: SemanticDecision;
 }
 
-/** Host-owned, potentially durable admission gate, run only on a cache miss
- * and before any external evaluator call. Denial means incomplete evidence. */
+/** Host-owned durable admission gate, invoked only on a cache miss. */
 export interface PatternV2SemanticAdmission {
   reserve(request: {
     namespace: string;
@@ -95,6 +94,8 @@ interface EvaluationContext {
   durableSemanticCache: PatternV2SemanticCache | null;
   semanticAdmission: PatternV2SemanticAdmission | null;
   semanticCacheNamespace: string;
+  semanticContextRevision: string;
+  semanticCacheTtlMs: number | null;
   semanticTrace: PatternV2SemanticTrace[];
   allowedLatenessMs: number;
 }
@@ -198,8 +199,17 @@ function durableSemanticCacheKey(
   }
 
   const payload = stableValue({
-    schema: 'pattern-v2-semantic-cache.v1',
+    schema: context.semanticCacheTtlMs === null &&
+      context.semanticContextRevision === ''
+      ? 'pattern-v2-semantic-cache.v1'
+      : 'pattern-v2-semantic-cache.v2',
     namespace: context.semanticCacheNamespace,
+    ...(context.semanticContextRevision !== ''
+      ? { contextRevision: context.semanticContextRevision } : {}),
+    ...(context.semanticCacheTtlMs !== null
+      ? { expiryWindow: Math.floor(context.now.getTime() /
+          context.semanticCacheTtlMs),
+          ttlMs: context.semanticCacheTtlMs } : {}),
     evaluator: evaluatorIdentity,
     node: {
       id: node.id,
@@ -1653,8 +1663,7 @@ async function evaluateNode(
         continue;
       }
       if(context.semanticAdmission) {
-        // Admission takes only bounded counts, stable IDs and host scope.
-        // Never supply original provider event text or projected values.
+        // Send only safe reference IDs and projected byte counts; never event data.
         const projected=projectSemanticInput(
           semanticSource(candidate,node.refs),node.input);
         const approved=await context.semanticAdmission.reserve({
@@ -1751,6 +1760,8 @@ export async function evaluatePatternV2({
   semanticCache = null,
   semanticCacheNamespace = '',
   semanticAdmission = null,
+  semanticContextRevision = '',
+  semanticCacheTtlMs = null,
   incompleteSourceRefs = new Set<string>(),
 }: {
   definition: PatternAstV2Definition;
@@ -1761,8 +1772,17 @@ export async function evaluatePatternV2({
   semanticCache?: PatternV2SemanticCache | null;
   semanticCacheNamespace?: string;
   semanticAdmission?: PatternV2SemanticAdmission | null;
+  semanticContextRevision?: string;
+  semanticCacheTtlMs?: number | null;
   incompleteSourceRefs?: ReadonlySet<string>;
 }): Promise<PatternV2Evaluation> {
+  if(typeof semanticContextRevision !== 'string' ||
+     semanticContextRevision.length > 128 ||
+     (semanticCacheTtlMs !== null &&
+      (!Number.isSafeInteger(semanticCacheTtlMs) ||
+       semanticCacheTtlMs < 1000 || semanticCacheTtlMs > 86400000))) {
+    throw new RangeError('Invalid semantic context revision or cache TTL');
+  }
   if(semanticAdmission !== null &&
      (typeof semanticAdmission !== 'object' ||
       typeof semanticAdmission.reserve !== 'function')) {
@@ -1805,6 +1825,8 @@ export async function evaluatePatternV2({
     durableSemanticCache: semanticCache,
     semanticAdmission,
     semanticCacheNamespace,
+    semanticContextRevision,
+    semanticCacheTtlMs,
     semanticTrace: [],
     allowedLatenessMs,
   };

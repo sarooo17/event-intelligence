@@ -88,6 +88,10 @@ export interface CompositeTriggerEngineOptions {
   workerId?: string;
   partitionLeaseMs?: number;
   semanticAdmission?: PatternV2SemanticAdmission | null;
+  /** Host-controlled semantic context version; bump when decision policy changes. */
+  semanticContextRevision?: string;
+  /** Opt-in bounded lifetime of a cached decision (fixed-duration buckets). */
+  semanticCacheTtlMs?: number | null;
 }
 
 export class CompositeTriggerEngine {
@@ -95,6 +99,8 @@ export class CompositeTriggerEngine {
   private readonly workerId: string;
   private readonly partitionLeaseMs: number;
   private readonly semanticAdmission: PatternV2SemanticAdmission | null;
+  private readonly semanticContextRevision: string;
+  private readonly semanticCacheTtlMs: number | null;
 
   constructor(
     private readonly store: CompositeTriggerStore & CompositeTriggerAudit,
@@ -102,6 +108,20 @@ export class CompositeTriggerEngine {
     private readonly now: () => Date = () => new Date(),
     options: CompositeTriggerEngineOptions = {},
   ) {
+    if(options.semanticContextRevision !== undefined &&
+       (typeof options.semanticContextRevision !== 'string' ||
+        options.semanticContextRevision.length > 128)) {
+      throw new RangeError('Invalid semantic context revision');
+    }
+    if(options.semanticCacheTtlMs !== undefined &&
+       options.semanticCacheTtlMs !== null &&
+       (!Number.isSafeInteger(options.semanticCacheTtlMs) ||
+        options.semanticCacheTtlMs < 1000 ||
+        options.semanticCacheTtlMs > 86400000)) {
+      throw new RangeError('Invalid semantic cache TTL');
+    }
+    this.semanticContextRevision=options.semanticContextRevision ?? '';
+    this.semanticCacheTtlMs=options.semanticCacheTtlMs ?? null;
     if(options.semanticAdmission != null &&
        typeof options.semanticAdmission.reserve !== 'function') {
       throw new TypeError('Invalid semantic admission gate');
@@ -841,6 +861,8 @@ export class CompositeTriggerEngine {
       semanticAdmission:this.semanticAdmission,
       semanticCacheNamespace:
         `${definition.triggerId}@${definition.version}`,
+      semanticContextRevision:this.semanticContextRevision,
+      semanticCacheTtlMs:this.semanticCacheTtlMs,
     });
 
     for (const semantic of evaluation.semanticTrace) {
