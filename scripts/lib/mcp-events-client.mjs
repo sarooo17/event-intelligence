@@ -46,6 +46,23 @@ function safeMcpFailure(error) {
 export const MAX_MCP_EVENT_DISCOVERY_PAGES = 32;
 export const MAX_MCP_EVENT_DISCOVERY_SOURCES = 256;
 export const MAX_MCP_EVENT_CURSOR_BYTES = 4096;
+export const DEFAULT_MCP_OCCURRENCE_BYTES = 262144;
+export const DEFAULT_MCP_POLL_PAGE_BYTES = 1048576;
+export const DEFAULT_MCP_DISCOVERY_BYTES = 1048576;
+
+// These are post-decoding JSON limits. The host remains responsible for
+// transport/body byte and wall-time admission BEFORE parsing untrusted RPC.
+function assertDecodedMcpBytes(value, limit, kind) {
+  const size = Buffer.byteLength(JSON.stringify(value), 'utf8');
+  if (size > limit) {
+    const error = new Error('MCP Events decoded input exceeds configured byte budget');
+    error.code = 'MCP_EVENTS_DECODED_BYTE_LIMIT_EXCEEDED';
+    error.kind = kind; // Fixed dimension only; never include producer data.
+    throw error;
+  }
+  return size;
+}
+
 
 // MCP SDK capabilities are host-owned but may be backed by untrusted adapter
 // objects. Only the one advertised extension *identity* is used here.
@@ -368,6 +385,18 @@ function normalizeConnection(connection) {
       32,
       'maxPollBatches',
     ),
+    maxOccurrenceBytes: normalizePositiveInteger(
+      connection.maxOccurrenceBytes, DEFAULT_MCP_OCCURRENCE_BYTES,
+      1024, 1048576, 'maxOccurrenceBytes',
+    ),
+    maxPollPageBytes: normalizePositiveInteger(
+      connection.maxPollPageBytes, DEFAULT_MCP_POLL_PAGE_BYTES,
+      1024, 4194304, 'maxPollPageBytes',
+    ),
+    maxDiscoveryBytes: normalizePositiveInteger(
+      connection.maxDiscoveryBytes, DEFAULT_MCP_DISCOVERY_BYTES,
+      1024, 4194304, 'maxDiscoveryBytes',
+    ),
     preferredDelivery,
     compatibilityProfile:
       connection.compatibilityProfile === undefined
@@ -404,6 +433,9 @@ export function createHostMcpEventsConnection({
   pollFloorMs = 1000,
   maxEvents = 100,
   maxPollBatches = 4,
+  maxOccurrenceBytes = DEFAULT_MCP_OCCURRENCE_BYTES,
+  maxPollPageBytes = DEFAULT_MCP_POLL_PAGE_BYTES,
+  maxDiscoveryBytes = DEFAULT_MCP_DISCOVERY_BYTES,
   scopeId = DEFAULT_EVENT_SCOPE_ID,
   preferredDelivery,
   compatibilityProfile = 'auto',
@@ -443,6 +475,9 @@ export function createHostMcpEventsConnection({
     pollFloorMs,
     maxEvents,
     maxPollBatches,
+    maxOccurrenceBytes,
+    maxPollPageBytes,
+    maxDiscoveryBytes,
     scopeId,
     preferredDelivery,
     compatibilityProfile,
@@ -931,6 +966,7 @@ export class McpEventsClientManager {
       // Nested advertised schema and _meta bodies remain semantically
       // relevant and need host-owned transport response-byte limits.
       const safeDescriptors = snapshotUntrustedEventData(indexedDescriptors);
+      assertDecodedMcpBytes(safeDescriptors, connection.maxDiscoveryBytes, 'discovery');
       for (const raw of safeDescriptors) {
         const descriptor = sourceDescriptor(raw, profile);
         if (names.has(descriptor.name)) {
@@ -1105,6 +1141,9 @@ export class McpEventsClientManager {
       return { accepted: false, reason: 'detached' };
     }
     const descriptor = subscription.descriptor;
+    // For push/webhook and poll alike, reject oversized decoded event bytes
+    // BEFORE append, durable cursor advancement or consumer activation.
+    assertDecodedMcpBytes(raw, connection.maxOccurrenceBytes, 'occurrence');
     const occurrence = McpEventOccurrenceSchema.parse(raw);
     if (occurrence.name !== descriptor.name) {
       // Both descriptor and occurrence names originate from the MCP provider.
@@ -1305,6 +1344,7 @@ export class McpEventsClientManager {
         throw error;
       }
       const boundedEvents = [];
+      let decodedPageBytes = 2; // JSON array brackets
       for (let index = 0; index < remoteEvents.length; index += 1) {
         const slot = Object.getOwnPropertyDescriptor(remoteEvents, String(index));
         if (!slot || !Object.hasOwn(slot, 'value')) {
@@ -1316,7 +1356,18 @@ export class McpEventsClientManager {
         }
         // Existing own-data JSON snapshot rejects nested getters, proxies
         // and cycles without executing hostile JavaScript, before any write.
-        boundedEvents.push(snapshotUntrustedEventData(slot.value));
+        const event = snapshotUntrustedEventData(slot.value);
+        const eventBytes = assertDecodedMcpBytes(
+          event, connection.maxOccurrenceBytes, 'occurrence',
+        );
+        decodedPageBytes += eventBytes + (index === 0 ? 0 : 1);
+        if (decodedPageBytes > connection.maxPollPageBytes) {
+          const error = new Error('MCP Events decoded input exceeds configured byte budget');
+          error.code = 'MCP_EVENTS_DECODED_BYTE_LIMIT_EXCEEDED';
+          error.kind = 'poll-page';
+          throw error;
+        }
+        boundedEvents.push(event);
       }
       cursor = normalizeCursor(
         result.cursor,
@@ -1427,6 +1478,7 @@ export class McpEventsClientManager {
     const onEvent = async (raw) => {
       if (!this.isConnectionAttached(connection)) return;
       const safeEvent = snapshotUntrustedEventData(raw);
+      assertDecodedMcpBytes(safeEvent, connection.maxOccurrenceBytes, 'occurrence');
       // Reject an invalid cursor before any durable append. Otherwise the
       // event could be accepted but its continuation point be uncommittable.
       const hasCursor = Object.hasOwn(safeEvent ?? {}, 'cursor');
@@ -1463,6 +1515,7 @@ export class McpEventsClientManager {
 
     const safeCallbackUpdate = (raw = {}) => {
       const update = snapshotUntrustedEventData(raw ?? {});
+      assertDecodedMcpBytes(update, connection.maxOccurrenceBytes, 'callback-update');
       if (!update || Array.isArray(update) || typeof update !== 'object') {
         const error = new TypeError('MCP Events callback update must be a JSON object');
         error.code = 'EVENT_UNTRUSTED_DATA_INVALID';
