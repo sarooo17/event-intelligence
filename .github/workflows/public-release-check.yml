@@ -63,6 +63,7 @@ jobs:
             test/mcp-provider-error-boundary.test.mjs \
             test/host-registry-shutdown-contract.test.mjs \
             test/neutral-facade-conformance.test.mjs \
+            test/host-policy-untrusted-instruction-adversarial.test.mjs \
             test/mcp-owner-read-guard.test.mjs \
             test/mcp-owner-tenant-negative-mutation.test.mjs \
             test/untrusted-event-own-path-security.test.mjs \
