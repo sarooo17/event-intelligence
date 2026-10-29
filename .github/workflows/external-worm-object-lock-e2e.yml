@@ -1,0 +1,60 @@
+name: External S3 Object Lock compliance E2E (disposable)
+
+on:
+  pull_request:
+    paths:
+      - "scripts/evidence/postgres-external-worm-archive.mjs"
+      - "test/external-worm-minio.integration.test.mjs"
+      - ".github/workflows/external-worm-object-lock-e2e.yml"
+      - "docs/POSTGRES-EXTERNAL-WORM-ARCHIVE.md"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  s3-object-lock:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      EI_WORM_MINIO_E2E: YES_DISPOSABLE_OBJECT_LOCK
+      EI_WORM_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Pin exact source
+        run: test "$(git rev-parse HEAD)" = "$EI_WORM_SOURCE_SHA"
+      - name: Install EI and isolated S3 SDK without changing package lock
+        run: |
+          npm ci --ignore-scripts
+          npm install --no-save --no-package-lock --ignore-scripts @aws-sdk/client-s3@3.800.0
+          npm run build
+      - name: Start isolated S3-compatible Object Lock service
+        run: |
+          docker run --rm --detach --name ei-minio-worm-ci \
+            -p 127.0.0.1:29000:9000 \
+            -e MINIO_ROOT_USER=ei_disposable_minio \
+            -e MINIO_ROOT_PASSWORD=ei_disposable_minio_password \
+            minio/minio:RELEASE.2025-09-07T16-13-09Z \
+            server /data --address :9000
+          ready=0
+          for i in $(seq 1 90); do
+            if curl --silent --fail --max-time 2 \
+              http://127.0.0.1:29000/minio/health/ready >/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          test "$ready" = 1
+      - name: Verify real S3 versioning Object Lock and deletion denial
+        run: node --test test/external-worm-minio.integration.test.mjs
+      - name: Remove disposable test server (never touches shared infrastructure)
+        if: always()
+        run: docker rm -f ei-minio-worm-ci >/dev/null 2>&1 || true
