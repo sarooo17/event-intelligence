@@ -23,7 +23,7 @@ const currentMatch={
   protocolVersion:'0.2.0',schemaVersion:'trigger.v0.2',
   matchId:'selected',triggerId:'bench',triggerVersion:'1',status:'partial',
   openedAt:at,updatedAt:at,expiresAt:'2026-10-29T12:01:00.000Z',
-  partitionKey:null,sourceEvents:[],patternState:null,
+  partitionKey:null,sourceEvents:[],
   derivedEventIds:[],firedWakeId:null,semanticDecision:null,
 };
 function percentile(data,p){
