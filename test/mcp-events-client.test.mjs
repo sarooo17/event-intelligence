@@ -509,6 +509,15 @@ for (const delivery of ['push', 'webhook']) {
         owner: { type: 'user', principal_id: 'user_1' },
       });
 
+      // Simulate a host-owned replacement after an earlier validated
+      // terminal NotFound; a newly accepted push/webhook session proves
+      // this subscription is available again.
+      await runtime.store.putMcpClientState({
+        connectionId:`${delivery}-conn`,serverId:`${delivery}-mcp`,
+        eventName:'deploy.completed',
+        arguments:{environment:'staging'},
+        sourceAvailability:'not_found',
+      });
       const result = await runtime.manager.pollConnection(`${delivery}-conn`);
       assert.equal(result[0].delivery, delivery);
       assert.equal(result[0].status, 'active');
@@ -524,6 +533,8 @@ for (const delivery of ['push', 'webhook']) {
       );
       assert.equal(state.deliveryMode, delivery);
       assert.equal(state.cursor, 'delivery:1');
+      assert.equal(state.sourceAvailability,'available',
+        'push/webhook active event supersedes an earlier terminal NotFound');
       await runtime.manager.detachConnection(`${delivery}-conn`);
       assert.equal(closed, true);
     } finally {
