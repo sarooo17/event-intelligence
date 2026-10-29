@@ -142,3 +142,23 @@ Pending: cross-worker revocation/queued work semantics; externally enforced
 transport body/time quotas and tenant rate/backpressure; all-unlabelled
 telemetry canary protection; private independent reviewer signoff. Do not
 check #45's security certification acceptance on this ledger alone.
+
+## Revocation / accepted append admission and shutdown
+
+A host-managed MCP connection can be detached after EI has started
+a durable append but before that append resolves. Once the source append
+has durably accepted the occurrence, EI **must** finish the corresponding
+CEP activation even if detach occurred: otherwise provider replay can see
+an existing dedup ID and the accepted event is permanently stranded.
+No new work is admitted from the detached session; stale cursor writes
+remain forbidden and the host must reauthorize any queued external effects.
+
+All admitted append + CEP operations are tracked by promise identity before
+their first storage await, independently of reusable connection IDs. Host
+`close()` drains this set before the underlying store is released, even if
+the detached connection was removed from `pollInFlight`. Tests cover both
+the append/revoke/rebind and append/revoke/close race.
+
+This guarantee applies within one manager. It is **not** a global revocation
+fence across processes, a transactional shared-store append+match boundary,
+or cancellation of already queued host work; those remain #45 blockers.
