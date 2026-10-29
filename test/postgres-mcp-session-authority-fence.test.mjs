@@ -139,4 +139,4 @@ integration('PG16 revoke-before-begin permanently tombstones delayed registratio
   await assert.rejects(other.appendMcpOccurrence('provider',occurrence('foreign-replay'),'sub',{
     connectionId:'reused',epoch:fresh,
   }),denied);
-});
+}));
