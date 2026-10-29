@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { createEventIntelligenceHost } from '../scripts/host-integration.mjs';
+import { PersistentEventStore } from '../scripts/lib/persistent-event-store.mjs';
 
 function eventsClient(eventName) {
   return {
@@ -298,5 +299,37 @@ test('failed asynchronous registry cleanup cannot retain ownership of a new host
     unblock?.();
     await host?.close();
     await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+
+test('registry rotates host authority epoch on same MCP client identity',async()=>{
+  const dataDir=await mkdtemp(path.join(os.tmpdir(),'ei-registry-epoch-'));
+  const store=new PersistentEventStore(dataDir);
+  store.requireMcpSessionFence=true;
+  const begin=[],revoke=[];
+  store.beginMcpConnectionAuthority=async x=>{begin.push(x);return {active:true}};
+  store.revokeMcpConnectionAuthority=async x=>{revoke.push(x);return true};
+  const provider=eventsClient('epoch.changed');
+  const a='epoch-a'.padEnd(48,'a'),b='epoch-b'.padEnd(48,'b');
+  let registryEntries=[{
+    id:'rotate',serverId:'server',client:provider,
+    authorityEpoch:a,pollIntervalMs:300000,
+  }];
+  let host;
+  try{
+    host=await createEventIntelligenceHost({
+      store,env,mcpRegistry:{listConnections:()=>registryEntries},
+    });
+    assert.deepEqual(begin.map(x=>x.epoch),[a]);
+    registryEntries=[{...registryEntries[0],authorityEpoch:b}];
+    const result=await host.refreshMcpRegistry();
+    assert.ok(result.some(x=>x.status==='attached'));
+    assert.deepEqual(revoke.map(x=>x.epoch),[a]);
+    assert.deepEqual(begin.map(x=>x.epoch),[a,b]);
+    assert.equal(host.runtime.mcpEventsClient.connections.get('rotate').authorityEpoch,b);
+  }finally{
+    await host?.close();
+    await rm(dataDir,{recursive:true,force:true});
   }
 });
