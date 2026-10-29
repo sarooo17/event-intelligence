@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { writeFile } from 'node:fs/promises';
 import { performance } from 'node:perf_hooks';
 import pg from 'pg';
+import { seedPhysicalEiLedger, verifyEiLedgerAfterPhysicalPromotion } from './postgres-physical-ei-ledger.mjs';
 const { Pool } = pg;
 
 const FAIL = reason => { throw new Error('EI_PHYSICAL_FAILOVER_REFUSED:' + reason); };
@@ -30,6 +31,7 @@ const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const sourceCommitSha=process.env.EI_FAILOVER_SOURCE_SHA||process.env.GITHUB_SHA||null;
 let killed=false;
 let primaryPoolClosed=false;
+let recoveredPool=null;
 try {
   const [p,s]=await Promise.all([
     primary.query('SELECT version() AS version, pg_is_in_recovery() AS recovering'),
@@ -62,6 +64,8 @@ try {
       x.payload_sha256===createHash('sha256').update('durably-acked:'+(i+1)).digest('hex'));
   };
   if (!await check(standby)) FAIL('standby-did-not-replay-every-acknowledged-commit');
+  const seededEi=await seedPhysicalEiLedger(primary);
+  if (seededEi.length!==2) FAIL('ei-physical-failover-fixture-not-staged');
   // Close the old-primary client pool before the intentional SIGKILL. An
   // otherwise idle pg client emits an unhandled error on postmaster death,
   // which is not the failure we are trying to measure.
@@ -97,6 +101,9 @@ try {
   const modified=confirmed.filter(x=>x.payload_sha256!==
     createHash('sha256').update('durably-acked:'+x.id).digest('hex'));
   const last=records.rows.find(x=>x.id===201);
+  recoveredPool=new Pool({connectionString:standbyUrl,max:3,connectionTimeoutMillis:5000});
+  const eiRecovery=await verifyEiLedgerAfterPhysicalPromotion(recoveredPool,seededEi);
+  if (eiRecovery.status!=='passed') FAIL('ei-receipt-recovery-failed');
   const report={
     schema:'event-intelligence.disposable-physical-pg16-failover.v1',
     sourceCommitSha,
@@ -108,11 +115,12 @@ try {
     lostAcknowledgedTransactions:missing.length,measuredRpoTransactions:missing.length,
     measuredRtoMs:Math.round(measuredRtoMs*1000)/1000,rtoBudgetMs:maxRtoMs,
     postPromotionWriteSucceeded:last?.payload_sha256==='post-promotion-write',
+    eiRecovery,
     productionSloCertified:false,productionHaCertified:false,
     limitations:[
       'single GitHub Actions host, no cross-zone failover',
       'only acknowledged remote_apply commits covered by measured zero transaction loss',
-      'not an Event Intelligence worker/receipt reconciliation under failover',
+      'EI durable receipt recovery tested after physical promotion, not a live worker mid-request',
       'no remote provider/host or external end-to-end SLO',
       'no network partition / split-brain / standby promotion operator fencing verification',
     ],
@@ -122,7 +130,8 @@ try {
       measuredRtoMs>=maxRtoMs) FAIL('failed-data-recovery-or-rto-budget');
   console.log(JSON.stringify({schema:report.schema,status:'passed',
     acknowledged:rows,rpoTransactions:0,measuredRtoMs:report.measuredRtoMs,
+    eiReceiptRecovery:eiRecovery.status,duplicateHostCalls:eiRecovery.duplicateHostCallsAfterPromotion,
     sourceCommitSha,productionHaCertified:false}));
 } finally {
-  await Promise.allSettled([...(primaryPoolClosed?[]:[primary.end()]),standby.end()]);
+  await Promise.allSettled([...(primaryPoolClosed?[]:[primary.end()]),standby.end(),...(recoveredPool?[recoveredPool.end()]:[])]);
 }
