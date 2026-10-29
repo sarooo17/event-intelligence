@@ -1694,10 +1694,11 @@ async function evaluateNode(
       }
       // Admission itself can be slow or wait behind another worker.
       // Never start an external provider call after the batch deadline.
-      const remaining = context.evaluationDeadlineAt === null
-        ? node.execution.timeoutMs
-        : Math.min(node.execution.timeoutMs,
-          Math.floor(context.evaluationDeadlineAt-performance.now()));
+      const batchRemaining = context.evaluationDeadlineAt === null
+        ? null : Math.floor(context.evaluationDeadlineAt-performance.now());
+      const batchLimited = batchRemaining !== null &&
+        batchRemaining <= node.execution.timeoutMs;
+      const remaining = batchLimited ? batchRemaining : node.execution.timeoutMs;
       if(remaining<=0) {
         context.truncated=true;
         continue;
@@ -1721,9 +1722,7 @@ async function evaluateNode(
         ),
         remaining,
         `Semantic node ${node.id}`,
-        context.evaluationDeadlineAt !== null &&
-          remaining <= node.execution.timeoutMs
-          ? 'EI_SEMANTIC_BATCH_TIMEOUT' : null,
+        batchLimited ? 'EI_SEMANTIC_BATCH_TIMEOUT' : null,
       );
       }catch(error){
         if(error && typeof error === 'object' &&
