@@ -465,10 +465,18 @@ export async function createEventIntelligenceHost({
           unsubscribeError = error;
         }
         try { await registryRefreshPromise; } catch {}
-        await managerShutdown;
+        // Runtime.close retries pending revocations and stops schedulers
+        // even if the first manager close failed. Retain the store when
+        // revocation remains incomplete, so host.close may be retried.
+        try { await managerShutdown; } catch {}
         await runtime.close();
         if (unsubscribeError) throw unsubscribeError;
-      }).then(resolveClose, rejectClose);
+      }).then(resolveClose, error => {
+        // Do not permanently cache a rejected host close promise. All new
+        // operations remain fenced by closing=true during retry.
+        closePromise = null;
+        rejectClose(error);
+      });
       return closePromise;
     },
   };
