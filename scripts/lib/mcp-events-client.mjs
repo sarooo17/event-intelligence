@@ -632,6 +632,9 @@ export class McpEventsClientManager {
     // Retain failed revocations even when detach removed connection objects.
     // A host may retry close after an unavailable PostgreSQL scope recovers.
     this.pendingAuthorityRevocations = new Map();
+    // A repeated close() retries only failed epochs, never already revoked
+    // sessions (which could have been replaced by another worker).
+    this.revokedAuthoritySessions = new WeakSet();
 
     for (const connection of connections) {
       this.addConnection(connection);
@@ -804,7 +807,7 @@ export class McpEventsClientManager {
   }
 
   queueAuthorityRevocation(connection) {
-    if(!connection?.authorityEpoch)return null;
+    if(!connection?.authorityEpoch || this.revokedAuthoritySessions.has(connection))return null;
     const key=JSON.stringify([
       connection.scopeId,connection.connectionId,connection.authorityEpoch,
     ]);
@@ -829,6 +832,7 @@ export class McpEventsClientManager {
           connectionId:connection.connectionId,epoch:connection.authorityEpoch,
         });
         this.pendingAuthorityRevocations.delete(key);
+        this.revokedAuthoritySessions.add(connection);
       }catch {
         failures.push(key);
       }
@@ -858,6 +862,7 @@ export class McpEventsClientManager {
               connectionId,epoch:connection.authorityEpoch,
             });
             this.pendingAuthorityRevocations.delete(authorityKey);
+            this.revokedAuthoritySessions.add(connection);
           }
           const sources = await context.store.listEventSources({
             connectionIds: [connectionId],
