@@ -95,9 +95,10 @@
       "threat": "Duplicate external effect after retry, worker crash or stale receipt",
       "evidence": [
         "test/activation-provenance-security.test.mjs",
-        "test/postgres-logical-dump-restore.test.mjs"
+        "test/postgres-logical-dump-restore.test.mjs",
+        "test/postgres-host-receipt-boundary.test.mjs"
       ],
-      "residual": "Store dedup does not equal distributed exactly-once external effects; host must provide durable idempotent receipt behavior."
+      "residual": "Queued host effects must revalidate host-managed target/tenant authority in the very transaction committing an effect/receipt (reference real-PG16 fixture). EI cannot impose that transaction on a third-party host; production adapters and independent security signoff remain unverified. Store dedup alone is not globally exactly-once external execution."
     },
     {
       "id": "operational-telemetry",
