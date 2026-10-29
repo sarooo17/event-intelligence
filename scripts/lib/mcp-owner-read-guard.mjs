@@ -1,3 +1,5 @@
+import {isProxy} from 'node:util/types';
+
 /**
  * Owner-scoped read guard for the standalone stdio MCP surface.
  *
@@ -23,23 +25,40 @@ export function createOwnerReadGuard({ triggerControl, store, owner }) {
   // Defense in depth: never trust a malformed/buggy listTriggers adapter
   // merely because it accepted {owner}. Recheck persisted owner/tenant on
   // every returned row before an ID or version is considered authorized.
-  const sameOwner=(a,b)=>a?.type===b.type &&
-    a?.principal_id===b.principal_id &&
-    (a?.tenant_id??null)===(b?.tenant_id??null);
+  // A custom adapter may return Proxy/getter-backed records. Authorization
+  // MUST NOT execute their properties or turn their thrown secrets into
+  // operator-visible errors. Only own data slots can grant visibility.
+  const ownValue=(value,key)=>{
+    if(!value || typeof value!=='object' || isProxy(value))return undefined;
+    const slot=Object.getOwnPropertyDescriptor(value,key);
+    return slot && Object.hasOwn(slot,'value') ? slot.value : undefined;
+  };
+  const sameOwner=(a,b)=>a && typeof a==='object' && !isProxy(a) &&
+    ownValue(a,'type')===b.type &&
+    ownValue(a,'principal_id')===b.principal_id &&
+    (ownValue(a,'tenant_id')??null)===(b.tenant_id??null);
 
   async function assertTrigger(triggerId, version) {
     const rows = await triggerControl.listTriggers({ owner });
-    const owned = rows
-      .filter((row) =>
-        row?.definition?.triggerId === triggerId &&
-        sameOwner(row?.state?.owner,owner) &&
-        (version === undefined || row.definition.version === version)
-      )
-      .sort((left, right) =>
-        String(right.definition.version).localeCompare(
-          String(left.definition.version), undefined, { numeric: true },
-        )
-      )[0];
+    if(!Array.isArray(rows) || isProxy(rows))throw notFound();
+    const candidates=[];
+    for(let i=0;i<rows.length;i++){
+      const row=ownValue(rows,String(i));
+      const definition=ownValue(row,'definition');
+      const id=ownValue(definition,'triggerId');
+      const rowVersion=ownValue(definition,'version');
+      // Always check requested ID/version BEFORE examining any foreign
+      // owner fields. An unrelated malicious row cannot leak through
+      // an accessor when the request was for another owned version.
+      if(id!==triggerId || typeof rowVersion!=='string' ||
+          (version!==undefined && rowVersion!==version))continue;
+      const state=ownValue(row,'state');
+      if(!sameOwner(ownValue(state,'owner'),owner))continue;
+      candidates.push({row,version:rowVersion});
+    }
+    const owned=candidates.sort((left,right)=>
+      right.version.localeCompare(left.version,undefined,{numeric:true})
+    )[0]?.row;
     if (!owned) throw notFound();
     return owned;
   }
