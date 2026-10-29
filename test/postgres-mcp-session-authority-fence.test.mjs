@@ -6,7 +6,7 @@ import {PostgresEventStore} from '../scripts/lib/postgres-event-store.mjs';
 const url=process.env.POSTGRES_URL;
 const {Pool}=url?await import('pg'):{Pool:null};
 const integration=url?test:test.skip;
-const token=(id)=>('host-owned-opaque-'+id+'-'.repeat(8)).slice(0,128);
+const token=(id)=>('host-owned-opaque-'+id).padEnd(48,'r');
 const occurrence=id=>({
   eventId:id,name:'test.session.changed',
   timestamp:'2026-10-29T14:00:00.000Z',data:{safe:true},
