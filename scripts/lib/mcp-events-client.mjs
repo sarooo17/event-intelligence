@@ -1319,6 +1319,14 @@ export class McpEventsClientManager {
     const suspended = this.terminalPollSubscriptions
       .get(connection)?.get(subscription.subscriptionId);
     if (suspended || this.terminalConnections.has(connection)) {
+      // Local Forbidden quarantine is not proof of global revocation.
+      // Reattempt any outstanding PostgreSQL epoch revoke before reporting
+      // that this terminal session has been securely disabled.
+      if(this.terminalConnections.has(connection) && connection.authorityEpoch) {
+        if(this.queueAuthorityRevocation(connection)) {
+          await this.flushAuthorityRevocations();
+        }
+      }
       return {
         subscriptionId: subscription.subscriptionId,
         eventName: subscription.eventName,
@@ -1889,6 +1897,11 @@ export class McpEventsClientManager {
     // A validated Forbidden revokes the current connection's polling
     // authority. Only a fresh host-owned attachment may probe again.
     if (this.terminalConnections.has(connection)) {
+      if(connection.authorityEpoch && this.queueAuthorityRevocation(connection)) {
+        // Failure remains an error, never a fake successful terminal result;
+        // retry without making another external provider RPC.
+        await this.flushAuthorityRevocations();
+      }
       return [{ status: 'terminal', reason: 'forbidden',
         delivery: 'poll', accepted: 0 }];
     }
