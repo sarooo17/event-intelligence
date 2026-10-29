@@ -96,6 +96,7 @@ interface EvaluationContext {
   semanticCacheNamespace: string;
   semanticContextRevision: string;
   semanticCacheTtlMs: number | null;
+  evaluationDeadlineAt: number | null;
   semanticTrace: PatternV2SemanticTrace[];
   allowedLatenessMs: number;
 }
@@ -1662,6 +1663,11 @@ async function evaluateNode(
         context.truncated = true;
         continue;
       }
+      if(context.evaluationDeadlineAt !== null &&
+         performance.now()>=context.evaluationDeadlineAt) {
+        context.truncated=true;
+        continue;
+      }
       if(context.semanticAdmission) {
         // Send only safe reference IDs and projected byte counts; never event data.
         const projected=projectSemanticInput(
@@ -1682,6 +1688,16 @@ async function evaluateNode(
           continue;
         }
       }
+      // Admission itself can be slow or wait behind another worker.
+      // Never start an external provider call after the batch deadline.
+      const remaining = context.evaluationDeadlineAt === null
+        ? node.execution.timeoutMs
+        : Math.min(node.execution.timeoutMs,
+          Math.floor(context.evaluationDeadlineAt-performance.now()));
+      if(remaining<=0) {
+        context.truncated=true;
+        continue;
+      }
       context.semanticCacheMisses += 1;
       context.semanticEvaluations += 1;
       decision = await withTimeout(
@@ -1698,7 +1714,7 @@ async function evaluateNode(
             uncertain: node.uncertain,
           },
         ),
-        node.execution.timeoutMs,
+        remaining,
         `Semantic node ${node.id}`,
       );
       if (node.execution.cache) {
@@ -1762,6 +1778,7 @@ export async function evaluatePatternV2({
   semanticAdmission = null,
   semanticContextRevision = '',
   semanticCacheTtlMs = null,
+  maxBatchElapsedMs = null,
   incompleteSourceRefs = new Set<string>(),
 }: {
   definition: PatternAstV2Definition;
@@ -1774,6 +1791,7 @@ export async function evaluatePatternV2({
   semanticAdmission?: PatternV2SemanticAdmission | null;
   semanticContextRevision?: string;
   semanticCacheTtlMs?: number | null;
+  maxBatchElapsedMs?: number | null;
   incompleteSourceRefs?: ReadonlySet<string>;
 }): Promise<PatternV2Evaluation> {
   if(typeof semanticContextRevision !== 'string' ||
@@ -1782,6 +1800,11 @@ export async function evaluatePatternV2({
       (!Number.isSafeInteger(semanticCacheTtlMs) ||
        semanticCacheTtlMs < 1000 || semanticCacheTtlMs > 86400000))) {
     throw new RangeError('Invalid semantic context revision or cache TTL');
+  }
+  if(maxBatchElapsedMs !== null &&
+     (!Number.isSafeInteger(maxBatchElapsedMs) ||
+      maxBatchElapsedMs<10 || maxBatchElapsedMs>600000)) {
+    throw new RangeError('Invalid semantic batch elapsed-time budget');
   }
   if(semanticAdmission !== null &&
      (typeof semanticAdmission !== 'object' ||
@@ -1827,6 +1850,8 @@ export async function evaluatePatternV2({
     semanticCacheNamespace,
     semanticContextRevision,
     semanticCacheTtlMs,
+    evaluationDeadlineAt:maxBatchElapsedMs === null
+      ? null : performance.now()+maxBatchElapsedMs,
     semanticTrace: [],
     allowedLatenessMs,
   };
