@@ -111,3 +111,19 @@ test('strict mode refuses stores missing keyed definition or bounded history cap
     e=>e?.code==='EVENT_INTELLIGENCE_INSPECTION_STORE_UNSUPPORTED');
   }
 });
+
+test('strict inspection never executes an unbounded optional persisted source fact reader',async()=>{
+  const source=store({deadlines:[deadline(1)]});
+  let factCalls=0;
+  source.getInspectionFact=async()=>{
+    factCalls++;
+    throw Error('unbounded source inventory may not be read in strict mode');
+  };
+  source.listEventSources=()=>{throw Error('unbounded source list forbidden')};
+  const view=await new TriggerInspector({
+    store:source,inspectionWindowLimit:2,evidenceRefLimit:2,matchHistoryLimit:2,
+  }).inspect({triggerId:'t',version:'1',matchId:'m'});
+  assert.equal(factCalls,0);
+  assert.equal(view.diagnosisV2.kind,'deadline_pending');
+  assert.equal(view.diagnosisV2.upstreamCompleteness,'unknown');
+});
