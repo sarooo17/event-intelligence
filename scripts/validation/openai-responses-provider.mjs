@@ -28,6 +28,9 @@ function sameUsage(a,b){
 }
 const validResponseId=x=>typeof x==='string'&&
   /^resp_[A-Za-z0-9_-]{6,180}$/.test(x);
+const validModelResponse=(actual,requested)=>actual===requested||
+  (typeof actual==='string'&&actual.startsWith(requested+'-')&&
+    /^[A-Za-z0-9_.-]{1,120}$/.test(actual));
 
 // Validation only: provider GET is an independent *API retrieval* of usage,
 // NOT an independent billing ledger or proof of provider-side cancellation.
@@ -75,7 +78,7 @@ export function createOpenAIResponsesValidationTransport({
         background,
         tools:[], // never allow extra billable tools or external writes
       });
-      if(!validResponseId(result?.id)||result.model!==model||
+      if(!validResponseId(result?.id)||!validModelResponse(result.model,model)||
          result.max_output_tokens!==maxOutputTokens)
         throw error('EI_OPENAI_RESPONSE_ID_OR_POLICY_INVALID');
       return result;
@@ -157,7 +160,7 @@ export async function runOpenAIResponsesValidationCase({
     store,budgetEpoch,maxVerificationMs:15000,
     verifyProviderReceipt:async received=>{
       const fresh=await transport.retrieve(response.id);
-      return fresh.id===response.id && fresh.model===model &&
+      return fresh.id===response.id && fresh.model===response.model &&
         fresh.status==='completed' &&
         fresh.max_output_tokens===maxOutputTokens &&
         sameUsage(normalized(fresh),usage) &&
