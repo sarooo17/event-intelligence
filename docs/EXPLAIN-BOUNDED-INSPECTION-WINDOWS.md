@@ -157,3 +157,18 @@ GitHub runner, not a third-party production SLO. Both shapes, data,
 runner specs and failure artifacts are included in the 90-day raw job
 artifact. This cannot prove arbitrary CPU/IO/index behavior, production
 host traffic, or source-provider completeness.
+
+## PostgreSQL physical buffer / executor evidence (#48)
+
+The same isolated 1k/10k/100k matching-trigger benchmark now captures
+real `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)` output for the strict
+selector's **scope/trigger/version + LIMIT 513 candidate subquery**.
+Each tier publishes server executor elapsed time, actual returned rows,
+PostgreSQL shared hit/read/dirtied/written blocks and plan node types.
+It asserts the candidate window never exceeds 513 records and has no
+unbounded preselection sort. The host-side final-selector latency/heap
+samples are still measured separately. The plan is intentionally marked
+`scoped_candidate_limit_subquery_only`: this is **not** a holistic cost
+profile of every inspector query, all PostgreSQL locks, cross-host contention,
+or a production CPU/P95/P99 certificate. No unsupported production SLO is
+inferred from synthetic CI measurements.
