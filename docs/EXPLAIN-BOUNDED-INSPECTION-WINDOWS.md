@@ -66,3 +66,23 @@ successful, reviewed, and scoped clearly to the measured envelope.
 ## Review fixes — complete bounded capability and identity gates
 
 Strict mode now **requires** all bounded store capabilities, notably keyed definition lookup and bounded recent-history; an unsupported custom store cannot silently fall back to `listTriggers()` or materialize all history. A bounded selector result must match the requested trigger ID and version and any explicit match ID before any derived/deadline/history read. A poisoned foreign result is refused as `EVENT_INTELLIGENCE_INSPECTION_MATCH_IDENTITY_INVALID`. These are Codex P2 repairs for #326 and are covered by adversarial custom-store tests.
+
+## Strict historical revision byte protection (#48)
+
+A row-count LIMIT is not a byte limit: one persisted history revision can
+contain a large sourceEvents/Pattern-state object. Strict
+`TriggerInspector` now requests a 64 KiB per-history-row byte cap and a
+2,000 ms query timeout from the PostgreSQL store. The PG16 history query
+applies `CASE WHEN octet_length(payload::text) <= maxRowBytes THEN payload
+ELSE NULL END` before transmitting a selected JSONB payload to Node and
+raises `EVENT_INTELLIGENCE_INSPECTION_BUDGET_EXCEEDED` if oversized.
+The indexed scoped `history_id DESC LIMIT N+1` ordering and
+scope/record-key isolation are unchanged. Non-strict inspection retains
+the full legacy history behavior. Strict custom stores receive the byte/time
+parameters and also undergo a defensive post-return size validation, but
+EI cannot prove their external I/O cost without their own bounded storage
+implementation. Regressions cover oversized PG rows, normal history,
+wrong-scope reads and a misbehaving custom store.
+
+This is a per-row refusal, **not** yet a total inspection-output or
+all-path server-side CPU/IO SLO. #48 acceptance #5 remains pending.
