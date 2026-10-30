@@ -279,7 +279,7 @@ async function projectPortableResult(projectResult, input) {
   };
 }
 
-function normalizedReceipt(result, fallbackId, requireExplicitReceipt = false) {
+function normalizedReceipt(result) {
   if (typeof result === 'string' && result.trim()) {
     return { runtimeReceiptId: result };
   }
@@ -291,17 +291,14 @@ function normalizedReceipt(result, fallbackId, requireExplicitReceipt = false) {
   ) {
     return result;
   }
-  if (result === undefined && fallbackId) {
-    // A deterministic *candidate* ID is not evidence that host work was
-    // committed. Strict mode is opt-in through HostContract wake.receipts.
-    if (requireExplicitReceipt) {
-      const error = new Error(
-        'Host delivery must acknowledge a persisted runtimeReceiptId; an implicit wake-id fallback is not a receipt',
-      );
-      error.code = 'EVENT_ACTIVATION_RECEIPT_ACK_REQUIRED';
-      throw error;
-    }
-    return { runtimeReceiptId: fallbackId };
+  // An opaque candidate wake ID is NOT evidence that the host persisted
+  // the effect. Both canonical and low-level callers fail closed on void.
+  if (result === undefined) {
+    const error = new Error(
+      'Host delivery must acknowledge a persisted runtimeReceiptId; an implicit wake-id fallback is not a receipt',
+    );
+    error.code = 'EVENT_ACTIVATION_RECEIPT_ACK_REQUIRED';
+    throw error;
   }
   throw new Error('Activation delivery must return runtimeReceiptId');
 }
@@ -507,10 +504,12 @@ export function createActivationDispatcher({
   receiptId,
   receiptNamespace,
   deliver,
-  requireExplicitReceipt = false,
+  ...unknownOptions
 } = {}) {
-  if (typeof requireExplicitReceipt !== 'boolean') {
-    throw new TypeError('requireExplicitReceipt must be a boolean');
+  // pre-v1 breaking cleanup: old receipt flag is no longer meaningful.
+  // Reject deprecated arguments instead of silently preserving unsafe mode.
+  if (Object.hasOwn(unknownOptions,'requireExplicitReceipt')) {
+    throw new TypeError('requireExplicitReceipt is removed; all host delivery requires an explicit receipt');
   }
   if (resolveTarget !== undefined && typeof resolveTarget !== 'function') {
     throw new Error('resolveTarget must be a function');
@@ -589,8 +588,6 @@ export function createActivationDispatcher({
           target,
           receiptId: candidateReceiptId,
         }),
-        candidateReceiptId,
-        requireExplicitReceipt,
       );
     } catch (error) {
       if (hasReceipt && await hasReceipt(candidateReceiptId, activation)) {
@@ -1834,7 +1831,7 @@ export async function createEventIntelligence({
     // HostContract wake.receipts additionally checks configured host callbacks
     // at preflight, but omission of that optional declaration never relaxes
     // the execution-time acknowledgement requirement.
-    requireExplicitReceipt: true,
+    // Both the facade and the advanced dispatcher require host ACKs.
   };
 
   const tooling = wantsTools

@@ -21,7 +21,6 @@ const targetFor = input => {
 };
 
 const dispatch = createActivationDispatcher({
-  requireExplicitReceipt: true,
   receiptId: ({ activation }) => {
     // Authoritative scope comes from host state, never from the external
     // activation evidence, incoming packet or claimed actor context.

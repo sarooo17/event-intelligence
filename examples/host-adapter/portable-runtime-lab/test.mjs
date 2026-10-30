@@ -293,8 +293,7 @@ test('actual EI dispatcher rejects a reused receipt with a different authorized 
   };
   const dispatch = createActivationDispatcher({
     receiptNamespace: host.receiptNamespace,
-    requireExplicitReceipt: true,
-    hasReceipt: (id, envelope) => host.hasReceipt(id, envelope),
+      hasReceipt: (id, envelope) => host.hasReceipt(id, envelope),
     resolveTarget: (opaque) => host.resolveWakeTarget(opaque),
     deliver: (input) => host.deliverWake(input),
   });
