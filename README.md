@@ -31,6 +31,8 @@ npm install mcp-event-intelligence
 
 Published package: [npm](https://www.npmjs.com/package/mcp-event-intelligence) · [Official MCP Registry](https://registry.modelcontextprotocol.io/?q=io.github.sarooo17%2Fevent-intelligence)
 
+**Pre-v1 upgrades:** see the [0.12.0-next.0 versioned compatibility and breaking-change notes](docs/releases/0.12.0-next.0-compatibility.md) before moving an existing host or persistent store. Published prerelease `next` does not upgrade pinned consumers and is not stable 1.0.
+
 For most runtimes, start with the runtime-neutral integration surface:
 
 ```js

@@ -87,6 +87,7 @@
     "test": "npm run build && node scripts/run-tests.mjs",
     "check": "npm run test",
     "pack:check": "npm pack --dry-run",
+    "release:compatibility-check": "node scripts/check-release-compatibility-doc.mjs",
     "prepack": "npm run build",
     "start": "node scripts/service.mjs",
     "start:validation-worker": "node scripts/validation/worker-service.mjs",

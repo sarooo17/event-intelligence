@@ -1,6 +1,6 @@
-# EI pre-1.0 releases, state safety and consumer-owned upgrades (proposal)
+# EI pre-1.0 release policy, state safety and consumer-owned upgrades
 
-> Proposed for [#50](https://github.com/sarooo17/event-intelligence/issues/50) and umbrella [#41](https://github.com/sarooo17/event-intelligence/issues/41). **Not a current compatibility guarantee.** Existing v0.11 implementation and consumer integration remain authoritative until this policy and its tests are implemented.
+> Policy and operator guidance for [#50](https://github.com/sarooo17/event-intelligence/issues/50) and umbrella [#41](https://github.com/sarooo17/event-intelligence/issues/41). The **concrete implemented candidate compatibility/breaking-change matrix** for npm `0.12.0-next.0` is in [the versioned release note](releases/0.12.0-next.0-compatibility.md). This policy is NOT a guarantee that a stable `1.0.0` has been published or production-certified.
 
 ## Why three kinds of version matter
 
