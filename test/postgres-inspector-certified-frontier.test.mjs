@@ -37,6 +37,8 @@ const partial={
       proofRef:'UNTRUSTED_MCP_PRIVATE_PAYLOAD'},
   }],
   semanticDecision:null,firedWakeId:null,derivedEventIds:[],
+  patternState:{version:'2',role:'buffer',
+    maxObservedOccurredAt:'2026-10-29T10:00:00.000Z',semanticDecisions:[]},
 };
 function store(pool,scope){return new PostgresEventStore({
   pool,dispatchPoolIdentity:pool,tablePrefix:prefix,scopeId:scope,
@@ -77,6 +79,9 @@ integration('PG16 host-verified source frontier drives only scoped, revision-cur
         error.code==='EVENT_INTELLIGENCE_UNVERIFIED_SOURCE_FRONTIER');
     await certify(a,1,'2026-10-29T10:00:45.000Z',async proof=>{
       assert.equal(proof.eventName,'deploy.ok');
+      assert.equal(proof.scopeId,'tenant-A');
+      assert.equal(proof.argumentsCanonical,'{}');
+      assert.match(proof.sourceKeyDigest,/^[a-f0-9]{64}$/);
       assert.equal(proof.completenessRevision,1);
       assert.equal(proof.proofRef,'host-verified-opaque-proof-v1');
       return true;
@@ -89,6 +94,17 @@ integration('PG16 host-verified source frontier drives only scoped, revision-cur
     assert.equal((await inspector(b)).diagnosisV2.kind,'not_yet_satisfied',
       'foreign tenant with same IDs cannot access certified frontier');
 
+    // A live buffer may receive a second eligible anchor before expiry.
+    // The first anchor's expiresAt cannot prove the entire buffer impossible.
+    const secondAnchor={...partial.sourceEvents[0],
+      sourceEventId:'merged-2',occurredAt:'2026-10-29T10:00:50.000Z'};
+    await a.appendTriggerMatch({...partial,
+      updatedAt:'2026-10-29T10:00:52.000Z',
+      sourceEvents:[...partial.sourceEvents,secondAnchor],
+      patternState:{...partial.patternState,
+        maxObservedOccurredAt:'2026-10-29T10:00:50.000Z'}});
+    assert.equal((await inspector(a)).diagnosisV2.kind,'watermark_pending');
+
     // A healthy poll advances source revision. Its previous certificate
     // cannot be replayed to prove terminal impossibility or new progress.
     await a.putMcpClientState({...source,sourceAvailability:'available'});
@@ -96,6 +112,9 @@ integration('PG16 host-verified source frontier drives only scoped, revision-cur
     await assert.rejects(()=>certify(a,1,'2026-10-29T10:02:00.000Z'),
       error=>error.code==='EVENT_INTELLIGENCE_STALE_SOURCE_FRONTIER');
     const current=await a.getMcpClientState('conn','deploy.ok',{});
+    await certify(a,current.completenessRevision,'2026-10-29T10:01:10.000Z');
+    assert.equal((await inspector(a)).diagnosisV2.kind,'watermark_pending',
+      'first-anchor expiry 10:01:00 cannot terminate second anchor at 10:00:50');
     await certify(a,current.completenessRevision,'2026-10-29T10:02:00.000Z');
     const impossible=await inspector(a);
     assert.equal(impossible.diagnosisV2.kind,'candidate_impossible');
