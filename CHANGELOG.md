@@ -2,6 +2,11 @@
 
 ## Unreleased (v1.0 development)
 
+### Versioned pre-v1 breaking-change and storage compatibility notes
+
+- add [0.12.0-next.0 compatibility and operator-upgrade matrix](docs/releases/0.12.0-next.0-compatibility.md) documenting removed `authorize()`, conformance v3, current provider/trigger/Pattern versions, physical PG16 and independent candidate-signature markers, unsupported old inputs and recovery/rollback procedure;
+- require a version-specific documentation drift check in CI and manual npm publish, verified against actual package exports, Node/MCP SDK versions and runtime schema/profile source constants. This is a prerelease documentation gate, **not** a stable v1.0 signoff.
+
 ### DX source-payload typing and packed headless reference
 
 - add a **type-only**, optional `toTriggerPlan<Payload>()` overload for provider SDK/Zod-inferred top-level fields, scalar values and relevant operators; no runtime DSL or changes to the canonical parser/planner;
