@@ -110,3 +110,37 @@ request `reservationId` takes precedence over automatic derivation.
 Actual Pattern v2 plus PG16 integration verifies two calls (different
 candidates) and denies duplicate remote evaluation in the same batch.
 This is EI-side admission correctness, not external provider billing.
+
+## Host-verified provider usage reconciliation (optional, #49)
+
+`createPostgresSemanticUsageReconciler({store,budgetEpoch,
+verifyProviderReceipt})` connects one `ei.semantic-reservation.v1` record
+to a provider-issued request ID and **provider-reported token usage**. The
+host supplies an independent verification callback; a response payload,
+model text, fabricated ID or user-supplied receipt must not be accepted
+without checking the provider's authoritative receipt endpoint/signature.
+The verifier has a bounded monotonic deadline (default 2s) and runs before
+acquiring DB locks.
+
+Under one scoped PostgreSQL transaction, an external provider request ID
+may settle only one reserved call; repeat reports are idempotent across
+workers and restarts, while conflicting IDs/counters fail closed. Neither
+the host reservation ID nor provider request ID is persisted in plaintext:
+only SHA-256 digests are retained. Records include input/output token counts,
+subset cached/reasoning counts, an optional explicitly version-pinned host
+micro-cost estimate and whether that observed usage exceeded the already
+reserved worst-case limits. No refunds are ever issued: timed-out or unknown
+remote calls may still bill and remain debited.
+
+**Critical:** `billingConfirmed:false` is unconditional. Provider API
+usage counters, even when verified, do not establish the final invoice,
+exchange rate, cache pricing or actual cancellation. This is a durable
+reconciliation foundation only. The #49 final acceptance stays unchecked
+until real independent provider account usage/billing records and retry,
+abort and remote hard-limit evidence confirm the actual charged amount.
+An opt-in provider adapter owns API keys, request signing, price-version
+and invoice verification, not the EI package.
+
+Real PostgreSQL16 integration proves dual-pool concurrency, restart,
+foreign-scope isolation, duplicate provider ID refusal, discrepancy
+preservation, unverified receipt rejection and CPU-blocked verifier denial.
