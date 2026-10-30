@@ -70,7 +70,7 @@ const output={contract:'ei.inspection-high-cardinality.synthetic.v1',
   sourceCommit:process.env.BENCH_SOURCE_COMMIT??null,
   realPostgres16:true,independentHost:false,
   sourceProviderTransport:false,productionSloCertified:false,
-  tiers:[],sameTriggerTiers:[],constraints:{strictWindow:8,matchBytes:65536,sourceRefs:8,
+  tiers:[],sameTriggerTiers:[],pgCandidatePlans:[],constraints:{strictWindow:8,matchBytes:65536,sourceRefs:8,
     history:8,deadlineDerivedRowBytes:16384,statementTimeoutMs:2000}};
 try{
   await db.init();
@@ -146,6 +146,42 @@ try{
     assert.equal(actual.match.matchId,'selected',
       'bounded exact-ID route must remain available under matching load');
     assert(!JSON.stringify(actual).includes('NOISE_SECRET'));
+    // A SQL-side plan gives independent physical resource evidence that
+    // client-side P95 and heap deltas alone cannot supply. This is the
+    // exact scope/trigger/version predicate and N+1 candidate subquery
+    // from the strict selector, not a claim of whole-host SLO coverage.
+    const planResult=await pool.query(
+      'EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)'+
+      ' SELECT record_key,payload FROM '+db.records+
+      " WHERE scope_id=$1 AND kind=$2"+
+      " AND payload->>'triggerId'=$3 AND payload->>'triggerVersion'=$4"+
+      ' LIMIT $5',
+      ['benchmark','trigger_match','bench','1',513],
+    );
+    const root=planResult.rows[0]?.['QUERY PLAN']?.[0];
+    assert(root?.Plan,'PG16 planner must return a real JSON plan');
+    const seenNodes=[];
+    function visitPlan(node){
+      seenNodes.push(String(node['Node Type']));
+      for(const child of node.Plans??[])visitPlan(child);
+    }
+    visitPlan(root.Plan);
+    assert(Number.isFinite(root['Execution Time']));
+    assert(root.Plan['Actual Rows']<=513);
+    assert(!seenNodes.includes('Sort'),
+      'N+1 preselection must not sort the unbounded trigger population');
+    const metric=name=>Number(root.Plan[name]??0);
+    output.pgCandidatePlans.push({
+      persistedMatchingCandidates:count+1,
+      mode:'scoped_candidate_limit_subquery_only',
+      maxRows:513,actualRows:metric('Actual Rows'),
+      executionTimeMs:Number(root['Execution Time'].toFixed(3)),
+      sharedHitBlocks:metric('Shared Hit Blocks'),
+      sharedReadBlocks:metric('Shared Read Blocks'),
+      sharedDirtiedBlocks:metric('Shared Dirtied Blocks'),
+      sharedWrittenBlocks:metric('Shared Written Blocks'),
+      nodeTypes:seenNodes,
+    });
     const timed=envelope(failedTimes);
     output.sameTriggerTiers.push({
       persistedMatchingCandidates:count+1,
