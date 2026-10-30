@@ -172,3 +172,66 @@ samples are still measured separately. The plan is intentionally marked
 profile of every inspector query, all PostgreSQL locks, cross-host contention,
 or a production CPU/P95/P99 certificate. No unsupported production SLO is
 inferred from synthetic CI measurements.
+
+
+## #48 full-path high-cardinality evidence — new PR follow-up
+
+The `postgres-inspector-high-cardinality` CI workflow now measures the
+**entire public strict `TriggerInspector.inspect()` method** after
+loading **1,001 / 10,001 / 100,001 same-trigger matching candidates** in
+actual isolated PostgreSQL16. Both branches are executed on the same
+scope, trigger and persisted dataset:
+
+1. **Implicit latest match:** must reject by bounded cardinality
+   `EVENT_INTELLIGENCE_INSPECTION_BUDGET_EXCEEDED`; never return an
+   arbitrarily truncated or false latest match. Measurements include
+   the entire inspector's definition lookup, trigger state and scoped
+   match-selector round trips, **15 real post-warmup samples** per tier.
+2. **Explicit selected `matchId`:** must continue to inspect the
+   chosen partial match, its deadlines, derived lineage, source state
+   and bounded output without leaking unrelated event payloads.
+   **20 real post-warmup samples** per tier. JSON output must be
+   at most 3 MiB.
+
+The source-SHA-pinned `pg-inspector-raw.json` artifact reports wall-time
+p50/p95/p99/max for both *whole* inspector calls, per-sequential-call
+Node **process-wide** user+system CPU sample percentiles, positive
+heap/RSS deltas and actual selected-view JSON output byte count.
+Actual PG16 source count and query subplan `EXPLAIN (ANALYZE,BUFFERS)`
+remain separately labeled. **Those physical block readings belong
+only to the scoped selector subquery, not the entire inspector.**
+Client-side RSS/CPU include V8 GC/other same-process effects and are
+not an isolated server CPU bill. No real network MCP provider,
+third-party host, sustained concurrent user traffic or production I/O
+attribution is present. Passing a 2-second *reference diagnostic*
+ceiling does not certify the 2-second production SLO, nor any
+operational p99 under real contention. CI preserves failure artifacts.
+
+The authenticated Railway private benchmark endpoint has already
+produced two real PostgreSQL16 `TriggerInspector.inspect()` reports
+from a separate process, recovered via **existing actual operator
+logs** on 2026-10-30:
+
+| Actual Railway campaign | Status | Inspect samples | Refusals | p50 / p95 / p99 (ms) | CPU user+system (μs) |
+| --- | --- | ---: | ---: | --- | ---: |
+| `e9b2deaa-e51c-403a-9e81-3e35f9280089` (smoke) | completed | 25 | 0 | 12.795 / 20.332 / 40.14 | 114,975 + 30,961 |
+| `f4656c40-fd17-4b26-b913-6ff8e45d1ad9` (steady) | completed-with-errors | 25 | 0 | 22.482 / 37.382 / 45.5 | 171,289 + 29,189 |
+
+Existing Railway SHA-256 artifact digests:
+`cbca0c9093d254f252a66a9888c52ac97e254d08da19238c277edcb3b59df97c`
+and
+`b89d435fc9925bfe898eb41edfd32aa771daeb02403023150798c74538fe5ce2`.
+The second SLO campaign **failed its declared workload coverage**
+(even though the inspector diagnostics themselves had no refusals).
+Both inspector reports explicitly say
+`sourceProviderExternal:false`,
+`pgDatabaseGlobalDeltaAvailable:false` and
+`productionSloCertified:false`. Do not convert a real Railway
+*diagnostic* into an independent deployed host SLO.
+
+**Acceptance discipline:** this PR extends reference bounded cost
+evidence for #48 acceptance #5 but **does not fulfill
+independently operated real-host/representative external workload
+CPU/IO p95/p99**. The source frontier acceptance #1 is also still
+blocked: a replay cursor is not a trustworthy event-time complete-through
+frontier. Do not check either merely from this PR's green CI.
