@@ -458,16 +458,20 @@ export class TriggerInspector {
     // Only an explicitly implemented scoped store capability supplies
     // additional persisted explain facts. No provider event data is trusted
     // as a source availability, watermark or evaluator-completeness proof.
-    // Strict inspection cannot invoke unbounded generic source inventories.
-    // Until this optional fact provider has a dedicated bounded capability,
-    // omit extra facts and preserve the honest local/unknown diagnosis.
-    const explainFact = this.inspectionWindowLimit === null &&
-      typeof this.store.getInspectionFact === 'function'
-      ? await this.store.getInspectionFact({
-          triggerId: definition.triggerId,
-          triggerVersion: definition.version,
-          matchId: match?.matchId ?? null,
-        }) : null;
+    // Strict inspection may call only an explicitly implemented bounded
+    // scope source-fact capability; custom/unbounded stores remain unknown.
+    const explainArgs={
+      triggerId:definition.triggerId,
+      triggerVersion:definition.version,
+      matchId:match?.matchId??null,
+    };
+    const explainFact=this.inspectionWindowLimit!==null
+      ? (typeof this.store.getBoundedInspectionFact==='function'
+        ? await this.store.getBoundedInspectionFact({
+          ...explainArgs,limit:this.inspectionWindowLimit,
+        }) : null)
+      : (typeof this.store.getInspectionFact==='function'
+        ? await this.store.getInspectionFact(explainArgs) : null);
     const matchHistory = recentHistory.map((record) => ({
       status: record.status,
       updatedAt: record.updatedAt,

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {TriggerInspector} from '../scripts/lib/trigger-inspector.mjs';
+import {persistedGapInspectionFact} from '../scripts/lib/inspection-persisted-mcp-gap.mjs';
 const at='2026-10-29T10:00:00.000Z';
 const match={matchId:'m',triggerId:'t',triggerVersion:'1',status:'partial',
   openedAt:at,updatedAt:at,expiresAt:'2026-10-29T12:00:00.000Z',
@@ -126,4 +127,24 @@ test('strict inspection never executes an unbounded optional persisted source fa
   assert.equal(factCalls,0);
   assert.equal(view.diagnosisV2.kind,'deadline_pending');
   assert.equal(view.diagnosisV2.upstreamCompleteness,'unknown');
+});
+
+test('null or invalid bounded source page never executes unbounded inventory fallback',async()=>{
+  for(const returned of [null,undefined,{}, {records:[],hasMore:true},
+    {records:'bad',hasMore:false}, {records:[{}, {}, {}],hasMore:false}]){
+    let fullScans=0;
+    const mock={
+      getTrigger:async()=>({triggerId:'t',version:'1',
+        clauses:[{id:'a',serverId:'server',event:'event.changed',arguments:{}}]}),
+      getTriggerState:async()=>({connectionIds:['connection']}),
+      listBoundedEventSources:async()=>returned,
+      listEventSources:async()=>{fullScans++;throw Error('unbounded read');},
+      getMcpClientState:async()=>{throw Error('should not read source without proof');},
+    };
+    const fact=await persistedGapInspectionFact(mock,{
+      triggerId:'t',triggerVersion:'1',matchId:null,
+    },{boundedSourceLimit:2});
+    assert.equal(fact,null,'invalid or incomplete bounded page returns unknown');
+    assert.equal(fullScans,0,'strict adapter must never load all sources');
+  }
 });

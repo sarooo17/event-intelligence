@@ -2953,6 +2953,44 @@ export class PostgresEventStore {
     }
   }
 
+  /**
+   * Scope/kind prefix of the records primary key, sorted by record_key.
+   * Never full-loads source inventory; N+1 detects incomplete scopes.
+   * This query intentionally has no JSONB filter requiring an unindexed scan.
+   */
+  async listBoundedEventSources({limit}={}) {
+    if(!Number.isSafeInteger(limit)||limit<1||limit>100)
+      throw new RangeError('Invalid bounded source inspection limit');
+    try {
+      return await this.tx(async client=>{
+        await client.query("SELECT set_config('statement_timeout',$1,true)",['1000ms']);
+        const result=await client.query(
+          'SELECT payload FROM '+this.records+
+          ' WHERE scope_id=$1 AND kind=$2 ORDER BY record_key ASC LIMIT $3',
+          [this.scopeId,'event_source',limit+1],
+        );
+        return {records:result.rows.slice(0,limit).map(x=>x.payload),
+          hasMore:result.rows.length>limit};
+      });
+    }catch(error) {
+      if(error?.code==='57014') {
+        const refused=new Error('Bounded source inspection exceeded read budget');
+        refused.code='EVENT_INTELLIGENCE_INSPECTION_BUDGET_EXCEEDED';
+        throw refused;
+      }
+      throw error;
+    }
+  }
+
+  /** Only this explicit, PG-index-backed capability is called by strict inspection. */
+  async getBoundedInspectionFact({triggerId,triggerVersion,matchId=null,limit}={}) {
+    if(!Number.isSafeInteger(limit)||limit<1||limit>100)
+      throw new RangeError('Invalid bounded source inspection limit');
+    const {persistedGapInspectionFact}=await import('./inspection-persisted-mcp-gap.mjs');
+    return persistedGapInspectionFact(this,{triggerId,triggerVersion,matchId},
+      {boundedSourceLimit:limit});
+  }
+
   async getInspectionFact({triggerId,triggerVersion,matchId=null}={}) {
     const {persistedGapInspectionFact} = await import('./inspection-persisted-mcp-gap.mjs');
     return persistedGapInspectionFact(this,{triggerId,triggerVersion,matchId});
