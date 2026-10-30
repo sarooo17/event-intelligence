@@ -105,8 +105,22 @@ export function monotonicAttemptBucket(elapsedMs, durationSeconds) {
  */
 // Diagnostic strict-inspector sampling is safe on a settled campaign even
 // when its *load SLO* failed. Never call such a profile production-certified.
-export function isInspectorDiagnosticTerminal(status){
-  return status==='completed'||status==='completed-with-errors';
+export function isInspectorDiagnosticTerminal(campaign){
+  if(!campaign||typeof campaign!=='object')return false;
+  if(campaign.status==='completed')return true;
+  if(campaign.status!=='completed-with-errors')return false;
+  // A failed workload can be inspected only after *all wake effects have
+  // settled*. A timeout can also produce completed-with-errors, with the
+  // worker retry scheduler still mutating this campaign's scope.
+  const settlement=campaign.wakeSettlement??campaign.report?.observed?.wakeSettlement;
+  return settlement?.settled===true &&
+    settlement?.timedOut!==true &&
+    settlement?.dueWakeBacklog===0 &&
+    settlement?.pendingWakeDeliveries===0 &&
+    settlement?.deadLetterWakeDeliveries===0 &&
+    Number.isSafeInteger(settlement.expectedWakeCount) &&
+    settlement.verifiedHostReceipts===settlement.expectedWakeCount &&
+    settlement.persistedDeliveredWakeCount===settlement.expectedWakeCount;
 }
 
 export function campaignInventory(campaigns) {
@@ -570,7 +584,7 @@ export function createBenchmarkService({ env = process.env, pool: suppliedPool, 
       if(evidenceMatch && request.method==='POST'){
         const campaign=campaigns.get(evidenceMatch[1]);
         if(!campaign)return sendJson(response,404,{error:'campaign-not-found'});
-        if(!isInspectorDiagnosticTerminal(campaign.status)||
+        if(!isInspectorDiagnosticTerminal(campaign)||
            inspectorEvidenceActive||campaignCleanupActive||
            [...campaigns.values()].some(c=>ACTIVE_CAMPAIGN_STATES.has(c.status)))
           return sendJson(response,409,{error:'inspector-evidence-requires-idle-completed-campaign'});
@@ -581,7 +595,7 @@ export function createBenchmarkService({ env = process.env, pool: suppliedPool, 
         const samplesPerTrigger=body?.samplesPerTrigger??5;
         // Revalidate AFTER the asynchronous body read; this is the only
         // lock acquisition point and contains no await before flag=true.
-        if(!isInspectorDiagnosticTerminal(campaign.status)||inspectorEvidenceActive||campaignCleanupActive||
+        if(!isInspectorDiagnosticTerminal(campaign)||inspectorEvidenceActive||campaignCleanupActive||
            [...campaigns.values()].some(c=>ACTIVE_CAMPAIGN_STATES.has(c.status)))
           return sendJson(response,409,{error:'inspector-evidence-campaign-race'});
         if(!Number.isSafeInteger(triggerLimit)||triggerLimit<1||
