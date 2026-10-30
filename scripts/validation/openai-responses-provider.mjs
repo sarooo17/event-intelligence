@@ -150,18 +150,27 @@ export async function runOpenAIResponsesValidationCase({
       reservationRetained:true};
   }
   const usage=normalized(response);
-  if(response.status!=='completed'||!usage){
+  const providerResponseStatus=['completed','incomplete','failed','cancelled',
+    'queued','in_progress'].includes(response.status)
+    ?response.status:'unknown';
+  const completed=response.status==='completed';
+  const incomplete=response.status==='incomplete';
+  // Even a terminal incomplete response may be billable. If it has usage,
+  // verify it via GET and reconcile actual usage while REFUSING to claim
+  // semantic completion. Unknown/intermediate statuses cannot be credited.
+  if((!completed&&!incomplete)||!usage){
     return {status:'remote_usage_unknown',providerRequests:1,
-      reservationRetained:true,responseIdDigest:digest(response.id)};
+      reservationRetained:true,responseIdDigest:digest(response.id),
+      providerResponseStatus,providerUsagePresent:Boolean(usage)};
   }
-  // A second provider GET must reproduce the exact model, status, output cap
-  // and all reported usage counters. This is still NOT a final invoice.
+  // A second provider GET must reproduce the exact model, terminal status,
+  // output cap and reported usage. This is NOT a final invoice.
   const reconciler=createPostgresSemanticUsageReconciler({
     store,budgetEpoch,maxVerificationMs:15000,
     verifyProviderReceipt:async received=>{
       const fresh=await transport.retrieve(response.id);
       return fresh.id===response.id && fresh.model===response.model &&
-        fresh.status==='completed' &&
+        fresh.status===response.status &&
         fresh.max_output_tokens===maxOutputTokens &&
         sameUsage(normalized(fresh),usage) &&
         received.providerRequestId===response.id &&
@@ -176,17 +185,25 @@ export async function runOpenAIResponsesValidationCase({
       namespace,reservationId,providerRequestId:response.id,
       ...usage,reportedCostMicros:null,
     });
+    // Reconciliation is a usage receipt, not a semantic decision. A truncated
+    // response is never treated as successfully evaluated or completed.
     return {
-      status:record.status,providerRequests:1,
+      status:incomplete
+        ?(record.status==='usage_exceeds_reservation'
+          ?'incomplete_usage_exceeds_reservation'
+          :'incomplete_usage_observed_billing_unknown')
+        :record.status,
+      providerResponseStatus,providerRequests:1,
       responseIdDigest:digest(response.id),
       ...usage,
       withinReservedTokens:record.withinReservedTokens,
+      providerResponseCompleted:completed,
       billingConfirmed:false,reservationRetained:true,
     };
   }catch{
     // Provider may have billed despite failed verification or lost GET.
     return {status:'remote_reconciliation_unknown',providerRequests:1,
       responseIdDigest:digest(response.id),reservationRetained:true,
-      billingConfirmed:false};
+      providerResponseStatus,billingConfirmed:false};
   }
 }
