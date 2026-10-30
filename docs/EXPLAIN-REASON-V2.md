@@ -42,3 +42,52 @@ acceptance. Tests cover the state taxonomy, supported scoped facts,
 negative spoof/wrong-tenant/wrong-version cases, lost evidence and
 existing `diagnosis` v1 compatibility. Host security/authorization remains
 outside the low-level inspector.
+
+## Host-verified event-time frontiers (opt-in PostgreSQL, #48)
+
+A trusted **host adapter**, not an MCP event payload, may call
+`PostgresEventStore.recordVerifiedInspectionFrontier` after its independent
+`verifyProof` callback confirms that the provider guarantees *complete
+source delivery through an event-time frontier*. Proof contents and raw
+provider secrets are not persisted, only the SHA-256 digest of an opaque
+proof reference, source identity, source completeness revision and
+canonical event-time frontier. The transaction locks the same source gap
+fence as MCP client-state updates and refuses a stale, gap-affected or
+unavailable source or a regressing frontier. Stored evidence is invalidated
+when any subsequent poll advances the source revision, including after
+restart.
+
+The inspector may now produce `watermark_pending` or
+`candidate_impossible` ONLY for a selected **partial** match with a
+pure, complete `allOf(event ...)` AST and a verified, revision-current,
+gap-free frontier for **every missing clause**. If all frontiers are
+strictly beyond the candidate expiration and event-time allowed lateness,
+that **specific candidate** is impossible to complete; otherwise it is
+waiting for a certified watermark. Nested OR, sequence, negation, semantic
+nodes, insufficient/malformed/stale proof, incomplete bounded inventory,
+or missing match identity conservatively report unknown/local pending.
+`upstreamCompleteness` stays `unknown`; a terminal selected candidate
+is NOT proof that every future upstream event is impossible.
+
+A host's `verifyProof` is a trust boundary and must check actual provider
+semantics, source identity, authentication and complete delivery including
+replay/reconciliation. The reference PG16 tests exercise a trusted verifier
+stub with real durable store, multiple tenants, gap invalidation and pool
+restart; they are **not** third-party provider certification. #48 acceptance
+#1 is not checked until a real source/host independently verifies and
+exercises authoritative completeness guarantees.
+
+### Review boundary: rolling candidates and atomic multi-source proof
+
+A Pattern v2 `role:'buffer'` can accumulate **multiple** event anchors;
+its `expiresAt` describes the first anchor and is NOT a deadline for
+all eligible candidates. EI now uses the **latest observed buffered event
++ withinMs + allowedLatenessMs** as the conservative cutoff. A fixed
+`role:'match'` candidate may use its own expiry. Legacy/unknown roles
+stay unknown. All missing-source frontiers are checked in **one** bounded
+PostgreSQL transaction under the source completeness fence; no mix of
+proofs from different source revisions can create a terminal diagnosis.
+The host verifier receives the tenant scope and canonical subscription
+arguments, not just server/event names. This does not magically confer
+provider authority on an untrusted callback: real host validation remains
+mandatory.
