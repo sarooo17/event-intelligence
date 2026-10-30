@@ -66,6 +66,32 @@ jobs:
             > pg-inspector-raw.json \
             2> pg-inspector-errors.jsonl
           cat pg-inspector-raw.json
+      - name: Verify full-path measured outcomes and explicit limits
+        run: |
+          node --input-type=module <<'EOF'
+          import assert from 'node:assert/strict';
+          import {readFileSync} from 'node:fs';
+          const r=JSON.parse(readFileSync('pg-inspector-raw.json','utf8'));
+          assert.equal(r.completed,true);
+          assert.equal(r.realPostgres16,true);
+          assert.equal(r.productionSloCertified,false);
+          assert.equal(r.wholePathResourceAttribution.sqlPhysicalIo.startsWith('unavailable'),true);
+          assert.deepEqual(r.wholePathSameTriggerTiers.map(x=>x.persistedMatchingCandidates),[1001,10001,100001]);
+          assert.equal(r.pgCandidatePlans.length,3);
+          for(const tier of r.wholePathSameTriggerTiers){
+            assert.equal(tier.latestMatch.status,'refused_cardinality_fail_closed');
+            assert.equal(tier.latestMatch.samples,15);
+            assert.equal(tier.exactMatch.status,'inspected_selected');
+            assert.equal(tier.exactMatch.samples,20);
+            assert(tier.exactMatch.maxOutputBytes>0 && tier.exactMatch.maxOutputBytes<=3145728);
+            assert(tier.latestMatch.elapsed.p99Ms>=0 && tier.exactMatch.elapsed.p99Ms>=0);
+            assert(tier.exactMatch.nodeProcessCpuMicros.p99>=0);
+            assert.equal(tier.sqlPhysicalIoAttributableToEntireInspector,false);
+            assert.equal(tier.independentHost,false);
+            assert.equal(tier.productionSloCertified,false);
+          }
+          console.log('Full-path PG16 inspector reference diagnostic: 3/3 tiers measured; not production-certified');
+          EOF
       - name: Report bounded failure code from benchmark
         if: failure()
         run: |
