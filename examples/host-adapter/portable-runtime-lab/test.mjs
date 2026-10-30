@@ -82,9 +82,17 @@ test('host owns multi-agent graph targets and user/team/organization authority',
     assert.equal(host.control({
       runtimeContext: tickets.bob, action: 'trigger.create',
     }).result.error.code, 'LAB_OWNER_REQUIRED');
-    assert.equal(host.control({
+    const firstApproval = host.control({
       runtimeContext: tickets.alice, action: 'trigger.create',
-    }).action, 'execute');
+    });
+    const secondApproval = host.control({
+      runtimeContext: tickets.alice, action: 'trigger.create',
+    });
+    assert.equal(firstApproval.action, 'execute');
+    assert.equal(typeof firstApproval.execution.confirmationId, 'string');
+    assert.notEqual(firstApproval.execution.confirmationId,
+      secondApproval.execution.confirmationId,
+      'Every host-authorized mutation must receive a distinct confirmation');
     // A ticket is a host-minted capability, never JSON/LLM/user-provided fields.
     assert.throws(
       () => host.invoke(list.name, {}, { org: 'org-a', user: 'alice' }),
