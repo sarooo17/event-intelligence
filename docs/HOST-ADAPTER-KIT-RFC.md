@@ -6,6 +6,7 @@ implementation slices [#270](https://github.com/sarooo17/event-intelligence/issu
 [#271](https://github.com/sarooo17/event-intelligence/issues/271) and
 [#272](https://github.com/sarooo17/event-intelligence/issues/272).
 Related existing v1 HostContract/conformance work: [#42](https://github.com/sarooo17/event-intelligence/issues/42).
+Current multi-agent/multi-organization integration-cost baseline and source-verified topology: [HOST-INTEGRATION-TOPOLOGY-COST.md](HOST-INTEGRATION-TOPOLOGY-COST.md), tracking [#352](https://github.com/sarooo17/event-intelligence/issues/352). The 391-LOC Muffin artifact is not a universal minimum or measured developer time.
 Do not treat this RFC as acceptance for #42's independently authored external host.
 
 ## Goal and measured evidence
