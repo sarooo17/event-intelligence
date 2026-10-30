@@ -123,6 +123,94 @@ integration('real PG16 admission, GET-confirmed usage, duplicate refusal and no 
     await pa.end();await pb.end();
   }
 });
+integration('real PG16 incompletely generated OpenAI response: GET-verified usage kept, no semantic completion or refund',async()=>{
+  const pool=new Pool({connectionString:url,max:3});
+  const db=new PostgresEventStore({pool,dispatchPoolIdentity:pool,
+    scopeId:'openai-incomplete',tablePrefix:prefix});
+  try{
+    await db.init();
+    const incomplete=()=>({...modelResponse('resp_incomplete123456'),
+      status:'incomplete',incomplete_details:{reason:'max_output_tokens'}});
+    const {transport,calls}=mockProvider({output:incomplete,fetched:incomplete});
+    const opts={store:db,transport,batchId:'incomplete-batch',
+      budgetEpoch:'incomplete-epoch',reservationId:'incomplete-once'};
+    const first=await runOpenAIResponsesValidationCase(opts);
+    assert.equal(first.status,'incomplete_usage_observed_billing_unknown');
+    assert.equal(first.providerResponseStatus,'incomplete');
+    assert.equal(first.providerResponseCompleted,false);
+    assert.equal(first.providerRequests,1);
+    assert.equal(first.billingConfirmed,false);
+    assert.equal(first.withinReservedTokens,true);
+    assert.equal(first.inputTokens,9);
+    assert.equal(first.outputTokens,12);
+    assert.equal(calls.filter(x=>x.method==='GET').length,1,
+      'terminal incomplete usage must be checked on provider GET');
+    assert(!JSON.stringify(first).includes('resp_incomplete123456'));
+    const key='reservation:'+JSON.stringify([
+      'ei-provider-validation@1','incomplete-epoch',
+      createHash('sha256').update('incomplete-once').digest('hex')]);
+    const saved=await db.get('semantic_budget_receipt',key);
+    assert.equal(saved.status,'usage_observed_billing_unknown');
+    assert.equal(saved.billingConfirmed,false);
+    const budget=await db.get('semantic_budget','trigger:'+JSON.stringify([
+      'ei-provider-validation@1','incomplete-epoch']));
+    assert.equal(budget.calls,1);
+    assert.equal(budget.tokens,41);
+    assert.equal(budget.costMicros,100000);
+    const replay=await runOpenAIResponsesValidationCase(opts);
+    assert.equal(replay.status,'admission_denied');
+    assert.equal(replay.providerRequests,0);
+    assert.equal(calls.filter(x=>x.method==='POST'&&x.path==='/v1/responses').length,1);
+  }finally{
+    for(const suffix of ['metadata','leases','history','records','counters'])
+      await pool.query('DROP TABLE IF EXISTS "'+prefix+'_'+suffix+'" CASCADE');
+    await pool.end();
+  }
+});
+integration('incomplete provider GET disagreement remains unknown; queued status never acquires semantic completion',async()=>{
+  const pool=new Pool({connectionString:url,max:3});
+  const db=new PostgresEventStore({pool,dispatchPoolIdentity:pool,
+    scopeId:'openai-incomplete-invalid',tablePrefix:prefix});
+  try{
+    await db.init();
+    const incomplete=()=>({...modelResponse('resp_incomplete_other123'),
+      status:'incomplete'});
+    const mismatch=mockProvider({output:incomplete,fetched:()=>modelResponse(
+      'resp_incomplete_other123')});
+    const opts={store:db,transport:mismatch.transport,
+      batchId:'incomplete-mismatch',budgetEpoch:'incomplete-mismatch-1',
+      reservationId:'incomplete-mismatch-1'};
+    const result=await runOpenAIResponsesValidationCase(opts);
+    assert.equal(result.status,'remote_reconciliation_unknown');
+    assert.equal(result.providerResponseStatus,'incomplete');
+    assert.equal(result.reservationRetained,true);
+    assert.equal(result.billingConfirmed,false);
+    assert.equal((await runOpenAIResponsesValidationCase(opts)).status,
+      'admission_denied');
+    assert.equal(mismatch.calls.filter(x=>x.method==='POST'&&
+      x.path==='/v1/responses').length,1);
+    const queued=mockProvider({output:()=>({
+      ...modelResponse('resp_queued123456'),status:'queued',
+    })});
+    const pending=await runOpenAIResponsesValidationCase({
+      store:db,transport:queued.transport,batchId:'queued-batch',
+      budgetEpoch:'queued-epoch',reservationId:'queued-once'});
+    assert.equal(pending.status,'remote_usage_unknown');
+    assert.equal(pending.providerResponseStatus,'queued');
+    assert.equal(pending.providerUsagePresent,true);
+    assert.equal(pending.reservationRetained,true);
+    assert.equal(queued.calls.filter(x=>x.method==='GET').length,0);
+    assert.equal((await runOpenAIResponsesValidationCase({
+      store:db,transport:queued.transport,batchId:'queued-batch',
+      budgetEpoch:'queued-epoch',reservationId:'queued-once'})).status,
+    'admission_denied');
+  }finally{
+    for(const suffix of ['metadata','leases','history','records','counters'])
+      await pool.query('DROP TABLE IF EXISTS "'+prefix+'_'+suffix+'" CASCADE');
+    await pool.end();
+  }
+});
+
 integration('mismatched provider GET and network uncertainty preserve reserved quota',async()=>{
   const pool=new Pool({connectionString:url,max:3});
   const db=new PostgresEventStore({pool,dispatchPoolIdentity:pool,
