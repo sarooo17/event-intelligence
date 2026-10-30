@@ -10,7 +10,7 @@ const integration=url?test:test.skip;
 const prefix='ei_insp_railway_'+randomBytes(5).toString('hex');
 integration('PG16 strict full-path campaign inspector returns bounded raw real latency/CPU/IO metrics without source payload',async()=>{
  const pool=new Pool({connectionString:url,max:3});
- const scopeId='ei-validation:fixture-1';
+ const scopeId='ei.validation:fixture-1';
  const db=new PostgresEventStore({pool,dispatchPoolIdentity:pool,
    tablePrefix:prefix,scopeId});
  const now='2026-10-30T12:00:00.000Z';
