@@ -8,7 +8,7 @@ export async function attachEventIntelligence(host, { dataDir, capabilityIds, en
     mcp: { list: () => [] }, // Host-owned already-open MCP connection registry.
     runtime: {
       receiptNamespace: host.receiptNamespace,
-      hasReceipt: (id) => host.hasReceipt(id),
+      hasReceipt: (id, activation) => host.hasReceipt(id, activation),
       resolveTarget: (target) => host.resolveWakeTarget(target),
       deliver: (input) => host.deliverWake(input),
       resolveContext: (ticket) => host.resolveContext(ticket),
