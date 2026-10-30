@@ -295,9 +295,10 @@ path on the campaign's persisted scope** in a separate benchmark Node
 process from the two EI workers, reading the existing Railway PostgreSQL
 16 instance. It archives a JSON artifact to the benchmark volume with a
 SHA-256 digest, and returns redacted measurements: raw per-call latency,
-P50/P95/P99/max, process CPU microseconds, heap delta, and before/after
-PostgreSQL `pg_stat_database` counters for block hits/reads/tuples and
-transactions. The source scope is hashed. No match ID, event payload,
+P50/P95/P99/max, process CPU microseconds and heap delta. PostgreSQL
+physical-I/O deltas are explicitly marked **unavailable**, because the
+backend publishes cumulative statistics asynchronously; they are not
+silently reported as zero. The source scope is hashed. No match ID, event payload,
 provider token, SQL text or secrets are returned.
 
 **Measurement limits:** PostgreSQL counters are **database-wide** and can
