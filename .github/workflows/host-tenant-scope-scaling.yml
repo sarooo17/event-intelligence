@@ -28,6 +28,47 @@ jobs:
         run: |
           mkdir -p artifacts
           node scripts/validation/host-tenant-scope-scale.mjs --tiers=1,10,100 --samples=3 > artifacts/host-scope-scale.json
+      - name: Record actual fresh-process 1000-scope diagnostic
+        run: |
+          node scripts/validation/host-tenant-scope-scale.mjs --tiers=1000 --samples=1 > artifacts/host-scope-1000.json
+      - name: Require real 1/10/100/1000 measurements and zero timer leaks
+        run: |
+          node --input-type=module <<'EOF'
+          import assert from 'node:assert/strict';
+          import {readFileSync,writeFileSync} from 'node:fs';
+          const base=JSON.parse(readFileSync('artifacts/host-scope-scale.json'));
+          const large=JSON.parse(readFileSync('artifacts/host-scope-1000.json'));
+          assert.deepEqual(base.tiers.map(t=>t.scopeCount),[1,10,100]);
+          assert.deepEqual(large.tiers.map(t=>t.scopeCount),[1000]);
+          const combined=[...base.tiers,...large.tiers];
+          for(const tier of combined)for(const sample of tier.samples){
+            assert.equal(sample.loadedScopes,tier.scopeCount);
+            assert.equal(sample.activeTemporalTimers,tier.scopeCount);
+            assert.equal(sample.activeWakeRetryTimers,tier.scopeCount);
+            assert.equal(sample.timersAfterClose,0);
+            assert.equal(sample.createdIntervalHandles,sample.clearedIntervalHandles);
+            assert(sample.rssAfterBytes>0 && sample.startupMs>=0);
+          }
+          assert.equal(base.sourceCommit,large.sourceCommit);
+          writeFileSync('artifacts/host-scope-all-tiers-summary.json',JSON.stringify({
+            schema:'ei.host-scope-tiers-summary.v1',
+            sourceCommit:base.sourceCommit,
+            tiers:combined.map(t=>({
+              count:t.scopeCount,
+              startupMedianMs:t.coldStartMs.median,
+              rssDeltaMedianBytes:t.rssDeltaBytes.median,
+              schedulerIntervalCount:t.samples[0].activeTemporalTimers+t.samples[0].activeWakeRetryTimers,
+              sampleCount:t.samples.length,
+              timersAfterClose:t.samples.every(s=>s.timersAfterClose===0)?0:null,
+            })),
+            coverage:{
+              jsonlReferenceOnly:true,
+              actualPostgresWorkerScale:false,
+              recoveredPendingWakeSlo:false,
+              productionCertification:false,
+            },
+          },null,2)+'\n');
+          EOF
       - uses: actions/upload-artifact@v4
         if: always()
         with:
