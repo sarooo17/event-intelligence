@@ -1,6 +1,9 @@
 // This is an independent test host: no EI imports, policy or agent SDK.
  // In-memory host state exercises authority semantics, NOT durable HA receipts.
+import { createHash } from 'node:crypto';
 const key = (...ids) => JSON.stringify(ids);
+const scopeKey = (org, workspace) => 'lab-' + createHash('sha256')
+  .update(key(org, workspace)).digest('hex').slice(0, 24);
 const denied = () => Object.assign(new Error('Host authority revoked or invalid'), {
   code: 'LAB_HOST_DENIED',
 });
@@ -49,7 +52,7 @@ export function makeRuntimeHost() {
     resolveContext(ticket) {
       const { org, workspace, user, record } = authorize(ticket);
       return {
-        scopeId: key(org, workspace),
+        scopeId: scopeKey(org, workspace),
         target: { runtime: 'portable-lab', kind: record.kind, id: record.id },
         actor: { type: 'agent', principal_id: record.id, tenant_id: org },
         owner: { type: 'user', principal_id: user, tenant_id: org },
