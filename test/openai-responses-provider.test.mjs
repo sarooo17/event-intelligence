@@ -59,7 +59,7 @@ test('provider transport uses fixed HTTPS, bounded response and safe errors',asy
   assert(calls.every(c=>c.hasAuth));
   await transport.retrieve(r.id);
   await transport.cancelBackground(r.id);
-  assert.throws(()=>transport.retrieve('https://evil'),/Untrusted response ID/);
+  await assert.rejects(()=>transport.retrieve('https://evil'),/Untrusted response ID/);
   const failed=mockProvider({throwOnCreate:true});
   await assert.rejects(()=>failed.transport.create({
     model:'gpt-4o-mini',input:'short',maxOutputTokens:32,
