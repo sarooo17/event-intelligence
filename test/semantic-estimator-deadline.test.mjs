@@ -47,3 +47,17 @@ test('invalid pre-admission estimator deadlines are rejected',()=>{
     }),/maxEstimateMs/);
   }
 });
+
+test('synchronous event-loop blocking cannot bypass estimator deadline',async()=>{
+  const store=noStoreWork();
+  const gate=createPostgresSemanticAdmission({store,budget,batchId:'one',
+    maxEstimateMs:10,
+    estimate:()=>{
+      const until=process.hrtime.bigint()+40000000n;
+      while(process.hrtime.bigint()<until) {} // Adversarial synchronous host callback
+      return {tokens:1,costMicros:1};
+    },
+  });
+  assert.equal(await gate.reserve(req),false);
+  assert.equal(store.transactions,0,'late result must never authorize provider admission');
+});
