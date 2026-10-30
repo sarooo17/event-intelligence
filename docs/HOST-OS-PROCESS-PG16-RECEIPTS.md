@@ -1,0 +1,7 @@
+# Distinct host OS-process PostgreSQL receipt tests (#353)
+
+The separately registered test/postgres-host-adapter-osworkers.test.mjs uses two **independent Node.js OS processes**, each with its own PostgreSQL16 connection pool and separately initialized native Host Adapter runtime, against the same host-owned membership, targets and atomic SQL receipt/outbox. It extends #356's two-pool single-process test; these are still **EI-authored host fixtures**, not external consumers.
+
+CI asserts concurrent dedup of a same-org wake; same wake/target identifiers routed to different organizations from host-bound trusted org/workspace configuration, despite forged packet scope_id; distinct agent and graph target kinds with two company teams/users; OS SIGKILL after PostgreSQL COMMIT before host ack and durable retry with only one effect; and membership revocation before a fresh queued host effect. This verifies a narrow **host delivery boundary** but neither a real MCP producer/session revocation nor full shared-EI-store multiworker scheduling, company onboarding, operator SLO or independent security review.
+
+The test is included in the required npm test:postgres gate and skips without POSTGRES_URL. No new core APIs, migrations, tenant auth service, model/provider dependency or release. #353 acceptance 3/4 remains **unchecked** for missing independently maintained external host and EI scoped-store multiworker/backpressure evidence.
