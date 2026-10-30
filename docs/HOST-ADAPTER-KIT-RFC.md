@@ -7,6 +7,8 @@ implementation slices [#270](https://github.com/sarooo17/event-intelligence/issu
 [#272](https://github.com/sarooo17/event-intelligence/issues/272).
 Related existing v1 HostContract/conformance work: [#42](https://github.com/sarooo17/event-intelligence/issues/42).
 Current multi-agent/multi-organization integration-cost baseline and source-verified topology: [HOST-INTEGRATION-TOPOLOGY-COST.md](HOST-INTEGRATION-TOPOLOGY-COST.md), tracking [#352](https://github.com/sarooo17/event-intelligence/issues/352). The 391-LOC Muffin artifact is not a universal minimum or measured developer time.
+
+Current composition decision: [do not add a redundant host runtime API](HOST-ADAPTER-NO-NEW-API-DECISION.md). The generic pieces are already present in the canonical `/embedded` facade; host-owned authorization/outbox and graph routing cannot be safely generalized. This resolves #352's API-decision branch **without claiming** portable tool bridge ROI or independently adopted hosts.
 Do not treat this RFC as acceptance for #42's independently authored external host.
 
 ## Goal and measured evidence
