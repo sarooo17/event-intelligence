@@ -1,0 +1,76 @@
+name: Host Reference Integration Cost
+on:
+  pull_request:
+    paths:
+      - 'examples/host-adapter/**'
+      - 'scripts/validation/host-reference-integration-cost.mjs'
+      - 'scripts/validation/host-adapter-boundary-benchmark.mjs'
+      - 'test/host-reference-integration-cost.test.mjs'
+      - 'test/host-adapter-boundary-benchmark.test.mjs'
+      - 'test/postgres-host-adapter-multiorg.test.mjs'
+      - '.github/workflows/host-reference-integration-cost.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  bounded-footprint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Verify reference source and test bounded metrics
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm run build
+          node --test test/host-reference-integration-cost.test.mjs test/host-adapter-boundary-benchmark.test.mjs
+      - name: Measure actual candidate public npm package
+        run: |
+          mkdir -p artifacts
+          node scripts/validation/host-reference-integration-cost.mjs > artifacts/host-reference-cost.json
+          npm pack --dry-run --json > artifacts/npm-pack-metadata.json
+          node --input-type=module <<'EOF'
+          import assert from 'node:assert/strict';
+          import {readFileSync,writeFileSync} from 'node:fs';
+          const packageJson=JSON.parse(readFileSync('package.json','utf8'));
+          const r=JSON.parse(readFileSync('artifacts/host-reference-cost.json','utf8'));
+          const packages=JSON.parse(readFileSync('artifacts/npm-pack-metadata.json','utf8'));
+          assert.equal(packages.length,1);
+          const p=packages[0];
+          assert.equal(p.name,packageJson.name);
+          assert.equal(p.version,packageJson.version);
+          assert(Number.isSafeInteger(p.size)&&p.size>0);
+          assert(Number.isSafeInteger(p.unpackedSize)&&p.unpackedSize>=p.size);
+          assert(Array.isArray(p.files)&&p.files.length>0);
+          assert.equal(r.combinedHostAdapterPhysicalLines,263);
+          assert.equal(r.newGenericKitRuntimeModules,0);
+          const result={
+            schema:'ei.host-integration-package-footprint.v1',
+            candidateVersion:p.version,
+            candidatePackedBytes:p.size,
+            candidateUnpackedBytes:p.unpackedSize,
+            candidateFileCount:p.files.length,
+            packagePublicExportCount:Object.keys(packageJson.exports).length,
+            packageDirectDependencyCount:Object.keys(packageJson.dependencies??{}).length,
+            referenceExamplesIncludedInTarball:p.files.some(f=>
+              f.path.startsWith('examples/host-adapter/')),
+            additionalHostKitDependencies:0,
+            developerOnboardingMinutesMeasured:null,
+            externalCloudCostMeasured:null,
+            noBaselineTarballComparison:true,
+            productionSloCertified:false,
+            independentlyAuthoredHostVerified:false,
+          };
+          writeFileSync('artifacts/package-footprint-summary.json',
+            JSON.stringify(result,null,2)+'\n');
+          console.log(JSON.stringify(result));
+          EOF
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: host-reference-integration-cost
+          path: artifacts/
+          if-no-files-found: warn
