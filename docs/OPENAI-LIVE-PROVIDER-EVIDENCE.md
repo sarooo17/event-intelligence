@@ -143,3 +143,54 @@ Without a separately credentialed isolated OpenAI test project, admin key
 and settled project billing evidence, the last #49 acceptance cannot
 be checked truthfully. A real external charge has NOT been executed,
 and no invented request ID or provider invoice is used.
+
+
+## 2026-10-31: actual Railway provider result and terminal-incomplete usage
+
+The one-shot `ei-openai-semantic-once` service ran from exact EI
+source commit `322427761abc2ee9880fd76767f626d80f48552f`
+on private `ei-validation/staging` with real OpenAI Responses, real
+staging PostgreSQL16 and a per-host one-call budget reservation.
+
+- First deploy failed **before model invocation** because an environment
+  reference did not resolve; no inference request was made by that deploy.
+- Second deploy used the already-working private Muffin staging key through
+  a Railway service reference. It completed the **one actual provider
+  Responses request**, with an externally returned response ID,
+  but returned `remote_usage_unknown`: initial response did not meet
+  `status:'completed'` AND full usage shape. The provider response ID was
+  logged only as SHA-256. The report retains the entire one-call
+  budget reservation and **does not retry, refund or claim billing**.
+  No settled token usage, per-request invoice, remote cancellation or
+  independent security certification was proven in this run.
+
+An **actual** response may be terminal `incomplete`, e.g. after reaching
+`max_output_tokens`, and still contain chargeable token usage. A separate,
+reviewed source change now makes the validation adapter distinguish that
+case from semantic completion: only a terminal `completed` response can
+claim model completion; terminal `incomplete` with valid usage requires
+a **fresh provider GET** with the identical response ID, model, terminal
+status, output cap and usage counters before recording usage in PostgreSQL.
+The report says `incomplete_usage_observed_billing_unknown` (or
+`incomplete_usage_exceeds_reservation`) and carries
+`providerResponseCompleted:false`. A malformed, unrecognized or
+nonterminal provider status keeps its reservation and says
+`remote_usage_unknown`, with only an allowlisted status label and a
+boolean reporting usage presence. Provider identifiers and text are not
+exported. A malformed or disagreeing GET cannot credit a reservation.
+
+The CLI permits only **32 or 64** `EI_OPENAI_MAX_OUTPUT_TOKENS` and still
+limits a new reservation to one provider call, 128 counted input tokens,
+up to 64 output tokens, and a worst-case USD 0.10 host-side budget. To try
+64 tokens after a previous ambiguous provider response, operators MUST
+choose **a genuinely new intent ID, batch and budget epoch** and authorize
+that separate possible charge. Existing reservation never receives a
+free retry. Underlying token authorization is a **host-side ceiling**,
+not provider-enforced monetary billing. Tests using actual PG16 assert
+terminal incomplete handling, strict GET identity/status agreement,
+durable usage/semantic distinction, denied second spend across restart
+and conservative refusal for nonterminal responses.
+
+**Acceptance #49 stays unchecked** for real final billable
+cost/cancellation evidence. This work closes a dangerous observation
+gap, not the independent-provider invoice requirement.
