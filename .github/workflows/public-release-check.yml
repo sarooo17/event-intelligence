@@ -46,6 +46,9 @@ jobs:
       # existence check. Real PG proof runs in the dedicated service job.
       # Runtime/transport OAuth and host approvals still require operator
       # review: #45 is NOT completed by this test gate alone.
+      - name: Verify versioned API/compatibility and migration notes
+        run: node scripts/check-release-compatibility-doc.mjs
+
       - name: Build security conformance fixture
         run: npm run build
 
