@@ -65,9 +65,10 @@ export function makeRuntimeHost() {
           ok: false, error: { code: 'LAB_OWNER_REQUIRED', message: 'Owner approval required' },
         } };
       }
-      return { action: 'execute', execution: {
-        receiptId: `lab-policy:${org}:${record.id}:${user}:${action}`,
-      } };
+      // A stable confirmation token MUST be request-specific and issued by the host;
+      // this fixture has no such per-request durable token. Never fabricate a
+      // reusable receipt from actor/action (it would alias distinct creates).
+      return { action: 'execute' };
     },
     registerNative(native, capability) {
       if (tools.has(native.name)) throw Error('LAB_DUPLICATE_TOOL');
