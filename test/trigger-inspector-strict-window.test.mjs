@@ -154,6 +154,7 @@ test('strict mode rejects oversized history from a custom bounded store',async()
   source.getRecentTriggerMatchHistory=async(id,options)=>{
     assert.equal(id,'m');
     assert.equal(options.maxRowBytes,65536);
+    assert.equal(options.maxTotalBytes,1048576);
     assert.equal(options.maxScanMs,2000);
     return {records:[{...match,sourceEvents:[{
       clauseId:'a',sourceEventId:'large',data:{secret:'S'.repeat(70000)},
@@ -161,6 +162,21 @@ test('strict mode rejects oversized history from a custom bounded store',async()
   };
   await assert.rejects(()=>new TriggerInspector({
     store:source,inspectionWindowLimit:2,evidenceRefLimit:2,matchHistoryLimit:2,
+  }).inspect({triggerId:'t',version:'1'}),e=>
+    e?.code==='EVENT_INTELLIGENCE_INSPECTION_BUDGET_EXCEEDED');
+});
+
+test('strict inspection refuses cumulative history even when every row is individually bounded',async()=>{
+  const source=store();
+  const revision={...match,opaque:'X'.repeat(59500)};
+  assert(Buffer.byteLength(JSON.stringify(revision),'utf8')<65536);
+  source.getRecentTriggerMatchHistory=async(id,options)=>{
+    assert.equal(id,'m');
+    assert.equal(options.maxTotalBytes,1048576);
+    return {records:Array.from({length:19},()=>({...revision})),hasMore:false};
+  };
+  await assert.rejects(()=>new TriggerInspector({
+    store:source,inspectionWindowLimit:20,evidenceRefLimit:2,matchHistoryLimit:20,
   }).inspect({triggerId:'t',version:'1'}),e=>
     e?.code==='EVENT_INTELLIGENCE_INSPECTION_BUDGET_EXCEEDED');
 });
