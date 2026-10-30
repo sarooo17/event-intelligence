@@ -2295,26 +2295,46 @@ export class PostgresEventStore {
    * Returned records preserve oldest-to-newest order within the window.
    */
   async getRecentTriggerMatchHistory(matchId, {
-    limit = 100, maxRowBytes = null, maxScanMs = 2000,
+    limit = 100, maxRowBytes = null, maxTotalBytes = null, maxScanMs = 2000,
   } = {}) {
     const safeLimit = validateHistoryWindowLimit(limit);
-    // Legacy calls preserve their existing behavior. Strict inspection opts
-    // into server-side byte refusal BEFORE any selected history JSONB crosses
-    // into the Node process; LIMIT alone does not bound bytes per row.
+    // Legacy callers retain their original query. Strict inspection opts in
+    // to SQL-side byte refusals before JSONB payloads cross into Node.
     if (maxRowBytes !== null &&
         (!Number.isSafeInteger(maxRowBytes) || maxRowBytes < 1024 ||
          maxRowBytes > 131072 || !Number.isSafeInteger(maxScanMs) ||
          maxScanMs < 100 || maxScanMs > 5000)) {
       throw new RangeError('Invalid bounded inspection history byte/time budget');
     }
-    const query =
-      'SELECT ' + (maxRowBytes === null ? 'payload' :
-        'CASE WHEN octet_length(payload::text) <= $5 THEN payload ELSE NULL END AS payload') +
-      ' FROM ' + this.history +
-      ' WHERE scope_id = $1 AND kind = $2 AND record_key = $3' +
-      ' ORDER BY history_id DESC LIMIT $4';
+    if (maxTotalBytes !== null &&
+        (maxRowBytes === null || !Number.isSafeInteger(maxTotalBytes) ||
+         maxTotalBytes < 1024 || maxTotalBytes > 8388608)) {
+      throw new RangeError('Invalid bounded inspection history total-byte budget');
+    }
+    const filtered = ' FROM ' + this.history +
+      ' WHERE scope_id = $1 AND kind = $2 AND record_key = $3';
     const args = [this.scopeId, 'trigger_match_history', String(matchId), safeLimit + 1];
-    if (maxRowBytes !== null) args.push(maxRowBytes);
+    let query;
+    if (maxTotalBytes !== null) {
+      // Limit first, THEN sum only the selected N+1 rows. Summing before
+      // LIMIT would scan all history revisions for this match.
+      const window = 'SELECT payload, history_id' + filtered +
+        ' ORDER BY history_id DESC LIMIT $4';
+      query =
+        'SELECT CASE WHEN row_bytes <= $5 AND window_bytes <= $6' +
+        ' THEN payload ELSE NULL END AS payload FROM (' +
+        ' SELECT payload, history_id,' +
+        ' octet_length(payload::text) AS row_bytes,' +
+        ' SUM(octet_length(payload::text)) OVER () AS window_bytes' +
+        ' FROM (' + window + ') AS history_window' +
+        ') AS byte_budget ORDER BY history_id DESC';
+      args.push(maxRowBytes, maxTotalBytes);
+    } else {
+      query = 'SELECT ' + (maxRowBytes === null ? 'payload' :
+        'CASE WHEN octet_length(payload::text) <= $5 THEN payload ELSE NULL END AS payload') +
+        filtered + ' ORDER BY history_id DESC LIMIT $4';
+      if (maxRowBytes !== null) args.push(maxRowBytes);
+    }
     let result;
     try {
       result = maxRowBytes === null
@@ -2335,7 +2355,7 @@ export class PostgresEventStore {
     const rows = result.rows;
     const selected = rows.slice(0, safeLimit).map((row) => {
       if (row.payload === null) {
-        const bounded = new Error('Inspection history row exceeds byte budget');
+        const bounded = new Error('Inspection history exceeds byte budget');
         bounded.code = 'EVENT_INTELLIGENCE_INSPECTION_BUDGET_EXCEEDED';
         throw bounded;
       }
@@ -2343,7 +2363,6 @@ export class PostgresEventStore {
     }).reverse();
     return { records: selected, hasMore: rows.length > safeLimit, limit: safeLimit };
   }
-
   /**
    * Explicit, per-match and scope-local operator retention.
    * Never remove a distinct transition, first/last witness of a run,

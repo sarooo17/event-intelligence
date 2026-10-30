@@ -86,3 +86,24 @@ wrong-scope reads and a misbehaving custom store.
 
 This is a per-row refusal, **not** yet a total inspection-output or
 all-path server-side CPU/IO SLO. #48 acceptance #5 remains pending.
+
+## Strict cumulative history transfer ceiling (#48)
+
+The strict inspector now also caps the **total selected history** to
+1 MiB (in addition to the 64 KiB individual-revision ceiling).
+PostgreSQL applies a windowed byte sum **after** its indexed, scope-local
+`ORDER BY history_id DESC LIMIT N+1` selection and conditionally
+projects JSONB only when both limits pass. This includes the N+1
+truncation sentinel conservatively; an oversized sentinel can make the
+inspection fail closed rather than return partial history. The same
+2,000 ms statement timeout applies. No history row payload from an
+over-budget window is transferred to Node by this path.
+
+Strict custom stores receive `maxTotalBytes` and undergo a secondary
+cumulative byte check. Legacy non-strict calls retain unbounded behavior
+for backward compatibility. Tests cover PostgreSQL multi-revision
+windows, scope isolation and adversarial custom stores.
+
+This is an explicit **history-only** cap. Other inspector output sections,
+PostgreSQL server-side work and independent real-host production P95/P99
+remain outside this proof. #48 acceptance #5 stays unchecked.
