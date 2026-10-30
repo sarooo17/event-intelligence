@@ -82,5 +82,73 @@ export async function persistedGapInspectionFact(store, {triggerId, triggerVersi
       matchId,durable:true,kind:'source_gap_unresolved',
     };
   }
+  // A provider-independent host adapter may certify an authoritative,
+  // complete event-time frontier for one scoped subscription. EI's own
+  // maxObservedOccurredAt is NEVER used here: it cannot prove completeness.
+  // Restrict terminal impossibility to a selected partial candidate whose
+  // AST is a pure allOf of all trigger event clauses. No OR/sequence/negative/
+  // semantic subtree is eligible for this narrowly provable inference.
+  if(!matchId || typeof store.getVerifiedInspectionFrontier!=='function' ||
+     typeof store.getTriggerMatch!=='function' ||
+     definition.pattern?.root?.kind!=='allOf') return null;
+  const children=definition.pattern.root.children;
+  if(!Array.isArray(children) || !children.length ||
+     children.length!==definition.clauses.length ||
+     children.some(node=>node?.kind!=='event'||typeof node.ref!=='string') ||
+     new Set(children.map(node=>node.ref)).size!==children.length ||
+     !definition.clauses.every(clause=>
+       children.some(node=>node.ref===clause.id))) return null;
+  // Strict inspection MUST NOT read an unbounded selected match row.
+  const selected=boundedSourceLimit===null
+    ? await store.getTriggerMatch(matchId)
+    : await store.getBoundedInspectionMatch({
+        triggerId,version:triggerVersion,matchId,
+        maxRowBytes:65536,maxScanMs:2000,
+      });
+  if(!selected||selected.matchId!==matchId||
+     selected.triggerId!==triggerId||
+     selected.triggerVersion!==triggerVersion||
+     selected.status!=='partial'||
+     !Array.isArray(selected.sourceEvents))return null;
+  const expiry=Date.parse(selected.expiresAt);
+  const lateness=definition.eventTime?.allowedLatenessMs??0;
+  if(!Number.isFinite(expiry)||!Number.isSafeInteger(lateness)||
+     lateness<0||!Number.isFinite(expiry+lateness))return null;
+  const observed=new Set(selected.sourceEvents.map(e=>e.clauseId));
+  const missing=definition.clauses.filter(clause=>!observed.has(clause.id));
+  if(!missing.length)return null;
+  let belowDeadline=false;
+  for(const clause of missing){
+    if(typeof clause.serverId!=='string'||!clause.serverId||
+       typeof clause.event!=='string'||!clause.event)return null;
+    const relevant=sources.filter(s=>
+      s.enabled!==false && accepted.has(s.connectionId) &&
+      s.serverId===clause.serverId && s.eventName===clause.event);
+    if(relevant.length!==1)return null;
+    const source=relevant[0];
+    const current=await store.getMcpClientState(
+      source.connectionId,clause.event,clause.arguments??{});
+    if(!current||current.gapUnresolved===true||current.truncated===true||
+       current.sourceAvailability!=='available'||
+       !Number.isSafeInteger(current.completenessRevision))return null;
+    const frontier=await store.getVerifiedInspectionFrontier(
+      source.connectionId,clause.event,clause.arguments??{});
+    if(!frontier||
+       frontier.contract!=='ei.host-verified-source-frontier.v1'||
+       frontier.connectionId!==source.connectionId||
+       frontier.serverId!==clause.serverId||
+       frontier.eventName!==clause.event||
+       frontier.completenessRevision!==current.completenessRevision||
+       !Number.isFinite(Date.parse(frontier.completeThroughAt)))return null;
+    if(Date.parse(frontier.completeThroughAt)<=expiry+lateness)
+      belowDeadline=true;
+  }
+  return {
+    contract:'ei.inspection-fact.v1',triggerId,triggerVersion,
+    matchId,durable:true,
+    ...(belowDeadline
+      ? {kind:'watermark_pending'}
+      : {kind:'candidate_impossible',terminal:true}),
+  };
   return null;
 }
