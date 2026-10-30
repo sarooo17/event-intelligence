@@ -1,0 +1,16 @@
+{
+  "name": "@event-intelligence/portable-runtime-lab",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Isolated EI-maintained host consumer; public npm imports only",
+  "scripts": {
+    "test": "node --test test.mjs"
+  },
+  "dependencies": {
+    "mcp-event-intelligence": "0.12.0-next.0"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

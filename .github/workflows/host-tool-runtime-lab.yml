@@ -1,0 +1,41 @@
+name: Host Adapter tool-runtime portability lab
+on:
+  pull_request:
+    paths:
+      - 'examples/host-adapter/portable-runtime-lab/**'
+      - '.github/workflows/host-tool-runtime-lab.yml'
+permissions:
+  contents: read
+jobs:
+  published-npm-consumer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    defaults:
+      run:
+        working-directory: examples/host-adapter/portable-runtime-lab
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: examples/host-adapter/portable-runtime-lab/package-lock.json
+      - name: Install exact official npm candidate with lock integrity
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Verify installed public version and ESM API
+        run: |
+          node --input-type=module -e "import {createEventIntelligence} from 'mcp-event-intelligence/embedded'; if (typeof createEventIntelligence !== 'function') process.exit(1)"
+          node --input-type=module -e "import fs from 'node:fs';const p=JSON.parse(fs.readFileSync('package-lock.json'));const x=p.packages['node_modules/mcp-event-intelligence'];if(x.version!=='0.12.0-next.0'||!x.integrity?.startsWith('sha512-'))process.exit(1)"
+      - name: Run real public-package neutral runtime and security tests
+        run: npm test
+      - name: Measure bounded same-host native-tool cost (no production SLO)
+        run: node benchmark.mjs > adapter-measurements.json
+      - name: Summarize measured numbers without claiming independent adoption
+        run: |
+          node --input-type=module -e "import fs from 'node:fs';const x=JSON.parse(fs.readFileSync('adapter-measurements.json'));if(x.results.length!==4||x.results.some(r=>!Number.isFinite(r.callLatencyMs.p99)||r.samples!==250))process.exit(1);console.log(JSON.stringify(x.results.map(r=>({variant:r.variant,p95:r.callLatencyMs.p95,p99:r.callLatencyMs.p99,rssDelta:r.rssDeltaAfterCallsBytes}))))"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: portable-tool-runtime-ab-metrics
+          path: examples/host-adapter/portable-runtime-lab/adapter-measurements.json
+          if-no-files-found: warn
