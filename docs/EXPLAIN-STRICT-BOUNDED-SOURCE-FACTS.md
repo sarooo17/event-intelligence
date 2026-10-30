@@ -49,3 +49,10 @@ MCP state under the same gap-fence lock as source updates, rejects stale
 revisions, and uses the existing exact-key 64 KiB match read, never an
 unbounded latest-match or source-inventory scan. SQL/lock elapsed time and
 production SLO still require separate representative measurement.
+
+The complete-set frontier query sets a scoped PostgreSQL 2s statement
+budget and at most a 1s lock wait **before acquiring** the source
+completeness advisory lock. It maps lock/statement timeout to
+`EVENT_INTELLIGENCE_INSPECTION_BUDGET_EXCEEDED`; a test holds the
+actual PostgreSQL scope lock and verifies bounded refusal. The source set
+may include up to 64 required subscriptions, all checked in one transaction.
