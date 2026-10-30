@@ -435,7 +435,7 @@ export class TriggerInspector {
         typeof this.store.getRecentTriggerMatchHistory === 'function') {
       const window = await this.store.getRecentTriggerMatchHistory(
         match.matchId,
-        { limit: this.matchHistoryLimit },
+        { limit: this.matchHistoryLimit,          ...(this.inspectionWindowLimit !== null            ? { maxRowBytes: 65536, maxScanMs: 2000 } : {}),        },
       );
       if (!window || !Array.isArray(window.records) ||
           window.records.length > this.matchHistoryLimit ||
@@ -443,6 +443,15 @@ export class TriggerInspector {
           !window.records.every(validHistoryProjection)) {
         const error = new Error('Store returned invalid bounded history window');
         error.code = 'EVENT_INTELLIGENCE_HISTORY_WINDOW_INVALID';
+        throw error;
+      }
+      // Custom stores may accept but ignore maxRowBytes. Reject their
+      // oversized returned rows instead of emitting unbounded lineage.
+      if (this.inspectionWindowLimit !== null && window.records.some(
+        (record) => Buffer.byteLength(JSON.stringify(record), 'utf8') > 65536
+      )) {
+        const error = new Error('Inspection history exceeds byte budget');
+        error.code = 'EVENT_INTELLIGENCE_INSPECTION_BUDGET_EXCEEDED';
         throw error;
       }
       recentHistory = window.records;
