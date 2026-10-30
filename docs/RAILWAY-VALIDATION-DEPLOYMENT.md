@@ -278,3 +278,38 @@ already active**. Inspect the authenticated inventory before retrying;
 repeatedly redeploying a one-shot client cannot finish or validate the
 existing campaign. Avoid exposing the private control token or making this
 operator endpoint public.
+
+
+## Authenticated Railway strict-inspector evidence (issue #48)
+
+After a **completed** staging campaign, the private benchmark host exposes
+`POST /v1/campaigns/{campaignId}/inspector-evidence` with the **same
+operator-only `EI_CONTROL_TOKEN`** used for campaign control. It accepts
+`{ "triggerLimit": 5, "samplesPerTrigger": 5 }` and refuses invalid
+inputs, active campaigns, or a nonmatching campaign scope. Requests are
+strictly bounded to at most 20 triggers, 10 samples each, 100 total, with
+no parallel evidence jobs. It cannot clean, stop, or mutate campaign rows.
+
+The endpoint measures the **actual strict `TriggerInspector.inspect`
+path on the campaign's persisted scope** in a separate benchmark Node
+process from the two EI workers, reading the existing Railway PostgreSQL
+16 instance. It archives a JSON artifact to the benchmark volume with a
+SHA-256 digest, and returns redacted measurements: raw per-call latency,
+P50/P95/P99/max, process CPU microseconds, heap delta, and before/after
+PostgreSQL `pg_stat_database` counters for block hits/reads/tuples and
+transactions. The source scope is hashed. No match ID, event payload,
+provider token, SQL text or secrets are returned.
+
+**Measurement limits:** PostgreSQL counters are **database-wide** and can
+be affected by other clients; CPU is benchmark **process-wide** rather
+than isolated per-query. The endpoint refuses an active campaign, which
+limits but does not eliminate background noise. This is a genuine Railway
+separate-process/remote-PostgreSQL measurement, **not a third-party host,
+real provider watermark, full independent infrastructure, production
+failover or certified production SLO**. This fills a useful portion of
+#48 acceptance #5 without reinterpreting its remaining scope.
+
+The operator should run this only after the smoke campaign's clean
+terminal status and archive the returned SHA-256 alongside the original
+campaign/raw-artifact digests. The endpoint is private-network-only;
+never generate public domains for benchmark or workers.
