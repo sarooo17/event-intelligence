@@ -67,6 +67,26 @@ integration('PG16 provider-reported usage is scoped to one reserved call and ide
         'call-1','provider-req-new')),e=>
         e.code==='EVENT_INTELLIGENCE_PROVIDER_USAGE_CONFLICT');
     }finally{await restarted.end();}
+    // The same external request ID must be unique across all local
+    // trigger namespaces and budget epochs in this tenant scope.
+    assert.equal(await admission(a).reserve({...req,
+      namespace:'another-trigger@1',reservationId:'other-namespace'}),true);
+    await assert.rejects(()=>reconciler(a).record(usage(
+      'other-namespace','provider-req-1',{namespace:'another-trigger@1'})),e=>
+      e.code==='EVENT_INTELLIGENCE_PROVIDER_USAGE_CONFLICT');
+    const alternateEpoch=createPostgresSemanticAdmission({
+      store:a,budget,batchId:'epoch-2',budgetEpoch:'verified-2',
+      estimate:()=>({tokens:30,costMicros:90}),
+    });
+    assert.equal(await alternateEpoch.reserve({...req,
+      reservationId:'other-epoch'}),true);
+    const alternateReconciler=createPostgresSemanticUsageReconciler({
+      store:a,budgetEpoch:'verified-2',verifyProviderReceipt:async()=>true,
+    });
+    await assert.rejects(()=>alternateReconciler.record(usage(
+      'other-epoch','provider-req-1')),e=>
+      e.code==='EVENT_INTELLIGENCE_PROVIDER_USAGE_CONFLICT');
+
     assert.equal(await admission(a).reserve({...req,reservationId:'call-2'}),true);
     await assert.rejects(()=>reconciler(b).record(usage(
       'call-2','provider-req-1')),e=>
