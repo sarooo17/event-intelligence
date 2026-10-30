@@ -180,3 +180,30 @@ test('strict inspection refuses cumulative history even when every row is indivi
   }).inspect({triggerId:'t',version:'1'}),e=>
     e?.code==='EVENT_INTELLIGENCE_INSPECTION_BUDGET_EXCEEDED');
 });
+
+test('strict inspection refuses oversized returned custom-store deadline/derived pages',async()=>{
+  for(const key of ['getBoundedInspectionDeadlines','getBoundedInspectionDerivedEvents']){
+    const source=store();
+    let page;
+    if(key==='getBoundedInspectionDeadlines'){
+      page={records:[{...deadline(1),untrusted:'X'.repeat(20000)}],hasMore:false};
+    }else{
+      page={records:[{...derived(1),directParents:['X'.repeat(20000)]}],hasMore:false};
+    }
+    source[key]=async()=>page;
+    await assert.rejects(()=>new TriggerInspector({
+      store:source,inspectionWindowLimit:2,evidenceRefLimit:2,matchHistoryLimit:2,
+    }).inspect({triggerId:'t',version:'1'}),e=>
+      e?.code==='EVENT_INTELLIGENCE_INSPECTION_BUDGET_EXCEEDED');
+  }
+});
+
+test('strict inspection refuses an oversized assembled response from a custom store',async()=>{
+  const source=store();
+  source.getTriggerState=()=>({status:'active',fireCount:0,
+    unexpectedHostValue:'X'.repeat(3200000)});
+  await assert.rejects(()=>new TriggerInspector({
+    store:source,inspectionWindowLimit:2,evidenceRefLimit:2,matchHistoryLimit:2,
+  }).inspect({triggerId:'t',version:'1'}),e=>
+    e?.code==='EVENT_INTELLIGENCE_INSPECTION_BUDGET_EXCEEDED');
+});
