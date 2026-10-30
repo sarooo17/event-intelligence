@@ -166,3 +166,51 @@ onboarding documentation over an unnecessary `HostAdapterKit` wrapper.
 
 Independent security/provider/HA signoff remains under #317/#47;
 the tests above do not certify a stable v1 release or close #269.
+
+
+## Executable reference integration cost update — #352 B/C (2026-10-30)
+
+Two additive, EI-maintained reference hosts have now been independently
+reviewed and merged: headless [#355](https://github.com/sarooo17/event-intelligence/pull/355)
+and multi-organization graph/agent [#356](https://github.com/sarooo17/event-intelligence/pull/356).
+
+`node scripts/validation/host-reference-integration-cost.mjs` produces a
+**source-pinned complete example-adapter** JSON report, not a comparison
+between unrelated code fragments. It fails closed if either whole file
+no longer matches its recorded exact Git blob SHA.
+
+| Whole host application adapter file | Physical LOC | Nonblank LOC |
+| --- | ---: | ---: |
+| `examples/host-adapter/headless-job-host.mjs` | **79** | **75** |
+| `examples/host-adapter/multi-org-graph-host.mjs` | **184** | **179** |
+| **Sum — two different reference adapters** | **263** | **254** |
+| Newly implemented reusable Host Adapter Kit in EI core | **0** | **0** |
+
+These counts exclude test code, setup SQL *outside* the adapter modules,
+application-specific graph engines, user auth databases, and production
+operational deployment. The multi-organization module includes its own
+**example host SQL schema**; it is not a generic EI package helper.
+Neither example is a prior version of the other. Therefore subtracting
+79 from 184 would be a meaningless ROI comparison. The old Muffin
+398→391 comparison remains the only measured *same-consumer* before/after
+comparison and shows just a 1.8% reduction.
+
+Both examples import the public packed `mcp-event-intelligence/embedded`
+contract. Multi-org PG16 CI uses two separate `pg.Pool` clients and
+host-owned member/target/outbox tables, not simulated SQL mock objects.
+Headless reference exercises a real EI Pattern v2 trigger through the
+wake boundary. Their tests are not an independently authored external
+host, an observed human onboarding time, an actual agent graph runner,
+a complete system with multiple OAuth users, or independent EI SLO signoff.
+
+The source-pinned report explicitly records
+`appBeforeAfterComparable:false`, `netIntegrationROIProven:false`,
+`measuredDeveloperHours:null`,
+`measuredProductionCloudCostUSD:null` and
+`measuredProductionLatencyP99Ms:null`.
+
+**Decision:** retain #269's portable-bridge and net-ROI criteria open.
+Do not add a new generic helper until two separate concrete hosts show
+that one repeated *host-neutral* mapping would yield a positive net
+combined app+library integration cost. Issue #352's full before/after,
+setup and real integration time comparison remains open.
