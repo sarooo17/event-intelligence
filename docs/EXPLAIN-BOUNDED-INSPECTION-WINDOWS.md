@@ -107,3 +107,18 @@ windows, scope isolation and adversarial custom stores.
 This is an explicit **history-only** cap. Other inspector output sections,
 PostgreSQL server-side work and independent real-host production P95/P99
 remain outside this proof. #48 acceptance #5 stays unchecked.
+
+## Strict whole-response serialization ceiling (#48)
+
+Strict inspection now rejects an assembled response larger than 3 MiB
+serialized JSON, in addition to its storage-side byte windows.
+Custom store deadline and derived record windows are defensively checked
+at 16 KiB per returned record and 1 MiB per page, matching the built-in
+PostgreSQL per-row bound. Unserializable evidence also fails closed.
+No truncated partial report is silently presented as conclusive.
+
+The total serialized-output check is **host-side after** bounded store reads:
+it bounds the response sent to a host, not necessarily the SQL CPU, heap
+allocated by an untrusted custom adapter or network transfer into Node.
+The default non-strict inspector remains backward compatible. This is
+partial #48 acceptance #5 evidence, not independent production SLO.
