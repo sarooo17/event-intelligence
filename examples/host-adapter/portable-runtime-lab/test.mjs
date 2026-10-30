@@ -85,12 +85,12 @@ test('host owns multi-agent graph targets and user/team/organization authority',
       runtimeContext: tickets.alice, action: 'trigger.create',
     }).action, 'execute');
     // A ticket is a host-minted capability, never JSON/LLM/user-provided fields.
-    assert.rejects(
+    assert.throws(
       () => host.invoke(list.name, {}, { org: 'org-a', user: 'alice' }),
       e => e.code === 'LAB_HOST_DENIED',
     );
     host.revokeMember({ org: 'org-a', workspace: 'w1', team: 'red', user: 'alice' });
-    await assert.rejects(host.invoke(list.name, {}, tickets.alice),
+    assert.throws(() => host.invoke(list.name, {}, tickets.alice),
       e => e.code === 'LAB_HOST_DENIED');
     assert.equal((await host.invoke(list.name, {}, tickets.carol)).result.ok, true);
   });
@@ -102,7 +102,7 @@ test('static capability allowlist forbids unknown tools and exposes only selecte
     const list = ei.tools.find(t => t.capability.id === 'event-intelligence.trigger.list');
     const create = ei.tools.find(t => t.capability.id === 'event-intelligence.trigger.create');
     assert.equal((await host.invoke(list.name, {}, tickets.alice)).result.ok, true);
-    await assert.rejects(host.invoke(create.name, {}, tickets.alice),
+    assert.throws(() => host.invoke(create.name, {}, tickets.alice),
       e => e.code === 'LAB_TOOL_NOT_EXPOSED');
   }, ['event-intelligence.event-sources.list', 'event-intelligence.trigger.list']);
 
