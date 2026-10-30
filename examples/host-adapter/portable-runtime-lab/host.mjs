@@ -88,7 +88,20 @@ export function makeRuntimeHost() {
       tools.clear();
     },
     receiptNamespace: 'portable-lab:single-process',
-    hasReceipt(receiptId) { return outbox.has(receiptId); },
+    hasReceipt(receiptId, activation) {
+      const current = outbox.get(receiptId);
+      if (current === undefined) return false;
+      const target = activation?.target;
+      const record = agents.get(target?.id);
+      if (target?.runtime !== 'portable-lab' || !record ||
+          record.kind !== target.kind ||
+          current !== key(record.org, record.workspace, record.id, activation?.wake?.wakeId)) {
+        throw Object.assign(new Error('LAB_RECEIPT_COLLISION'), {
+          code: 'LAB_RECEIPT_COLLISION',
+        });
+      }
+      return true;
+    },
     receiptCount() { return outbox.size; },
     resolveWakeTarget(target) {
       if (target?.runtime !== 'portable-lab') return null;
