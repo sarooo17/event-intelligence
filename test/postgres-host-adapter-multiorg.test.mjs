@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {randomBytes} from 'node:crypto';
+import {measureHostBoundary} from '../scripts/validation/host-adapter-boundary-benchmark.mjs';
 import {
   createOrgGraphWakeRuntime,
   createOrgGraphWakeDispatcher,
@@ -165,6 +166,36 @@ integration('two real PG16 worker pools: org/team/user/graph scoping, races, rev
     assert.equal(q.rows[0].n,0);
     await aPool.query(`UPDATE ${table.members} SET active=TRUE
       WHERE org_id='org-A' AND team_id='team-red' AND user_id='alice'`);
+  });
+  await t.test('bounded real PG16 host target and receipt query latency diagnostics',async()=>{
+    // Actual two independent PG pools. Reuse tested authorized target and
+    // committed receipt. These are host roundtrip diagnostics, not EI SLOs.
+    const host=createOrgGraphWakeRuntime(config(bPool));
+    const s=signal('wake-concurrent');
+    const id=expectedGraphReceiptId('org-A','workspace-1',s.wake.wakeId);
+    const target=await host.resolveTarget(s.target,s);
+    assert.equal(target?.owner_id,'alice');
+    assert.equal(await host.hasReceipt(id,s),true);
+    const targetMs=await measureHostBoundary({
+      label:'real-pg16-resolve-target',samples:100,warmup:10,
+      operation:async()=>{
+        const resolved=await host.resolveTarget(s.target,s);
+        assert.equal(resolved?.owner_id,'alice');
+      },
+    });
+    const receiptMs=await measureHostBoundary({
+      label:'real-pg16-durable-host-receipt-read',samples:100,warmup:10,
+      operation:async()=>assert.equal(await host.hasReceipt(id,s),true),
+    });
+    for(const report of [targetMs,receiptMs]){
+      assert.equal(report.samples,100);
+      assert.equal(report.productionSloCertified,false);
+      assert.equal(report.eiCoreOverheadIsolated,false);
+      assert(Number.isFinite(report.p99));
+      assert(report.p99>=report.p95);
+      assert(report.p95>=report.p50);
+      console.log('EI_HOST_BOUNDARY_DIAGNOSTIC '+JSON.stringify(report));
+    }
   });
   await t.test('committed host outbox survives lost acknowledgment, replay on second worker',async()=>{
     let first=true;
