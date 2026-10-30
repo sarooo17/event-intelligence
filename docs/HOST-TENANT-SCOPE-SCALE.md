@@ -1,15 +1,15 @@
-# Host multi-tenant cold-start and scheduler diagnostics (#353)
+# Host multi-tenant cold-start and scheduler diagnostic (#353)
 
-This bounded diagnostic tests a known risk: the EI reference host eagerly restores **every** persisted scope and starts a temporal deadline and wake-retry interval for each scope, including inactive tenants. It is not production multiworker PostgreSQL evidence.
+This bounded test measures an existing risk: local EI host startup eagerly recreates a context, temporal deadline scheduler and wake-retry scheduler **for every persisted scope**, even if inactive.
 
-After building, run:
+Run after build:
 
     node scripts/validation/host-tenant-scope-scale.mjs --tiers=1,10,100 --samples=3
 
-Each replicate runs in its own Node OS process (GC enabled). The benchmark seeds exact 1/10/100 scope counts in an ephemeral JSONL store, measures cold-start wall time, RSS change and shutdown time, verifies that exactly two scheduler timers per scope are active and that their handles are cleared by host.close(), and deletes its data. The GitHub Actions workflow records a commit-pinned JSON artifact. Larger tiers up to 1000 are opt-in and are NOT certified affordable/safe.
+**Method:** each repeat seeds the disposable JSONL stores in a *different OS process* from the fresh measurement process. Startup wall time and RSS are measured only inside the fresh measured process, avoiding tier-dependent seeder cache in its baseline. During bootstrap and host shutdown, instrument actual global setInterval()/clearInterval() handle creation and destruction (including unref'ed intervals), and verify each scope's timer handle is observed and all created intervals are cleared after close. A separate GitHub Actions workflow uploads source-commit-pinned JSON artifacts. 1/10/1000 tiers are configurable but 1000 is not implicitly certified affordable.
 
-This is EI-authored test infrastructure, not a separately authored application, actual host-billed cost, real pending-wake/restart recovery proof, PostgreSQL multiworker deployment, or an operator SLO. A three-sample min/median/max must never be advertised as a production p99.
+This is an EI-maintained JSONL fixture, not a separately operated host, actual pending-wake restart recovery, PostgreSQL 16 shared-worker deployment, source-provider load, or production SLO. Three independently seeded measurements yield min/median/max, not a production p99. No claimed monthly cloud bill or developer-hour study.
 
-**Architecture consequence:** reference startup has O(number of stored scopes) scheduled contexts, not O(number of active scopes). One hundred inactive persisted scopes imply 200 active interval handles per process. Any lazy alternative must still recover pending deadlines, wake retries and orphaned matches for inactive tenants. Do not turn off these schedulers without authoritative persisted recovery and independent failure injection.
+**Finding under test:** existing local runtime uses O(persisted tenant scope count) scheduler contexts, not O(active scopes); 100 scopes means at least 200 scope interval handles per process. Do not implement lazy hydration until an alternative independently proves persisted pending deadlines, wake retries and orphan matches are still discovered and rebalanced after process failures.
 
-**Acceptance:** #353 criterion 4 remains **unchecked**, because it additionally requires actual PostgreSQL multi-worker, retries over restart and fuller tenant tiers; this only supplies bounded idle-tenant cold-start/timer evidence. No core/runtime/package/export/API changes.
+**Acceptance:** partial #353 item 4 evidence only. Item 4 stays unchecked until actual shared-PG multiworker and timed recovery/scale behavior are also proven. No core API, dependencies, persistent schema or host controls changed.
