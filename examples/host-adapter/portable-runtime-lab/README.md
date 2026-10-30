@@ -42,6 +42,9 @@ subtract a purpose-built lab from real production app code.
   rendered as trusted prompts. Existing host-specific tool UI is not in EI.
 - Host wake target ownership, basic duplicate receipt, forged collisions and
   revocation after resolution.
+- Real CEP event registration, native tool-based trigger creation with explicit
+  owner vs teammate denial, per-org trigger listing and a matched source event
+  delivering exactly one wake to the appropriate agent (single process only).
 
 **Critical limitations:** this fixture's authority and receipt maps are
 **in process**. They are not an HA database, do not establish cross-worker
