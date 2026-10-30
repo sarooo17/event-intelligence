@@ -267,7 +267,7 @@ function safeInspectionJson(value, maxBytes) {
       for (let i = 0; i < length; i++) {
         const entry = descriptors[String(i)];
         if (entry && !Object.hasOwn(entry, 'value')) refuse();
-        result.push(entry ? snapshot(entry.value, depth + 1, true) : null);
+        result[i] = entry ? snapshot(entry.value, depth + 1, true) : null;
       }
     } else {
       result = Object.create(null);
