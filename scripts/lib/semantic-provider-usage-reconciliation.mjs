@@ -67,8 +67,10 @@ export function createPostgresSemanticUsageReconciler({
       const providerDigest=digest(providerRequestId);
       const reservationKey='reservation:'+JSON.stringify([
         namespace,budgetEpoch,reservationDigest]);
-      const providerKey='provider:'+JSON.stringify([
-        namespace,budgetEpoch,providerDigest]);
+      // Provider-issued request IDs are unique across the WHOLE tenant
+      // scope. Namespacing this key by trigger/epoch would let one billed
+      // response falsely reconcile multiple distinct reservations.
+      const providerKey='provider:'+providerDigest;
       return store.tx(async client=>{
         // Globally deterministic lock order prevents two workers reconciling
         // different provider IDs/reservations in opposite order.
@@ -90,6 +92,8 @@ export function createPostgresSemanticUsageReconciler({
         const result={
           contract:'ei.semantic-provider-usage.v1',
           reservationDigest,providerRequestDigest:providerDigest,
+          namespaceDigest:digest(namespace),
+          budgetEpochDigest:digest(budgetEpoch),
           inputTokens,outputTokens,cachedInputTokens,reasoningOutputTokens,
           ...(reportedCostMicros===null?{}:{reportedCostMicros,priceVersion}),
           withinReservedTokens:!tokenExceeded,
