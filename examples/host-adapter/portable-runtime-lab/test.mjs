@@ -217,7 +217,8 @@ test('actual CEP trigger creation and wake use host-owned policy, scope and opaq
       assert.equal(ownList.result.data.triggers.length, 1);
       assert.equal(otherOrgList.result.data.triggers.length, 0);
 
-      await ei.host.runtime.compositeEventConsumer.ingestCorrelatable({
+      // The event must enter the SAME trusted org/workspace scope as the watch.
+      await owned.runtime.compositeEventConsumer.ingestCorrelatable({
         traceId: 'lab-order-trace-1',
         sourceEventId: 'lab-paid-1',
         name: 'lab.order.paid',
