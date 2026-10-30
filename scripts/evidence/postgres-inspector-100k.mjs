@@ -70,7 +70,16 @@ const output={contract:'ei.inspection-high-cardinality.synthetic.v1',
   sourceCommit:process.env.BENCH_SOURCE_COMMIT??null,
   realPostgres16:true,independentHost:false,
   sourceProviderTransport:false,productionSloCertified:false,
-  tiers:[],sameTriggerTiers:[],pgCandidatePlans:[],constraints:{strictWindow:8,matchBytes:65536,sourceRefs:8,
+  tiers:[],sameTriggerTiers:[],pgCandidatePlans:[],
+  wholePathSameTriggerTiers:[],
+  wholePathResourceAttribution:{
+    measured:'actual TriggerInspector.inspect call on real PostgreSQL16',
+    nodeCpu:'process-wide before/after each sequential call; GC noise included',
+    memory:'process heap/RSS before/after, not peak allocated memory',
+    sqlPhysicalIo:'unavailable at whole-path scope; EXPLAIN covers selector query only',
+    providerTransport:false,independentRuntime:false,productionSloCertified:false,
+  },
+  constraints:{strictWindow:8,matchBytes:65536,sourceRefs:8,
     history:8,deadlineDerivedRowBytes:16384,statementTimeoutMs:2000}};
 try{
   await db.init();
@@ -191,6 +200,88 @@ try{
       maxPositiveHeapDeltaBytes:Math.max(...heaps),
       exactMatchInspectAvailable:true,
     });
+    // #48 acceptance R5: the earlier getBoundedInspectionMatch() timings
+    // cover ONE store call, not the entire TriggerInspector. Record both
+    // full-path outcomes on the same 1k/10k/100k dataset and verify neither
+    // an implicit latest-result nor an expensive unbounded fallback occurs.
+    // All calls are real PG16 queries; no remote MCP provider or host load.
+    const latestLatency=[],exactLatency=[];
+    const latestCpu=[],exactCpu=[],latestRss=[],exactRss=[];
+    const latestHeap=[],exactHeap=[],exactBytes=[];
+    for(let attempt=0;attempt<18;attempt++){
+      const beforeCpu=process.cpuUsage();
+      const beforeMem=process.memoryUsage();
+      const start=performance.now();
+      let failure;
+      try{
+        await inspector.inspect({triggerId:'bench',version:'1'});
+      }catch(error){failure=error;}
+      const elapsed=performance.now()-start;
+      assert.equal(failure?.code,'EVENT_INTELLIGENCE_INSPECTION_BUDGET_EXCEEDED',
+        'full inspector must fail closed with ambiguous latest match');
+      assert.match(failure.message,/cardinality/,
+        'candidate scan must stop by N+1 and never claim a latest match');
+      if(attempt>=3){
+        latestLatency.push(elapsed);
+        const cpu=process.cpuUsage(beforeCpu);
+        latestCpu.push(cpu.user+cpu.system);
+        latestRss.push(Math.max(0,process.memoryUsage().rss-beforeMem.rss));
+        latestHeap.push(Math.max(0,process.memoryUsage().heapUsed-beforeMem.heapUsed));
+      }
+    }
+    for(let attempt=0;attempt<23;attempt++){
+      const beforeCpu=process.cpuUsage();
+      const beforeMem=process.memoryUsage();
+      const start=performance.now();
+      const view=await inspector.inspect({
+        triggerId:'bench',version:'1',matchId:'selected',
+      });
+      const elapsed=performance.now()-start;
+      assert.equal(view.match.matchId,'selected');
+      assert.equal(view.evidenceSummary.pendingDeadlineCount,4);
+      assert.equal(view.lineage.derivedOutputs.length,4);
+      // Check the actual returned JSON projection, not just the source
+      // inspector's internal byte-budget calculations.
+      const rendered=JSON.stringify(view);
+      const renderedBytes=Buffer.byteLength(rendered,'utf8');
+      assert(renderedBytes<=3145728,
+        'full strict inspector response exceeded its 3 MiB output ceiling');
+      assert(!rendered.includes('NOISE_SECRET'),
+        'full inspector may not leak background event payloads');
+      if(attempt>=3){
+        exactLatency.push(elapsed);
+        exactBytes.push(renderedBytes);
+        const cpu=process.cpuUsage(beforeCpu);
+        exactCpu.push(cpu.user+cpu.system);
+        exactRss.push(Math.max(0,process.memoryUsage().rss-beforeMem.rss));
+        exactHeap.push(Math.max(0,process.memoryUsage().heapUsed-beforeMem.heapUsed));
+      }
+    }
+    const fullRow={
+      persistedMatchingCandidates:count+1,
+      latestMatch:{status:'refused_cardinality_fail_closed',
+        samples:latestLatency.length,elapsed:envelope(latestLatency),
+        nodeProcessCpuMicros:{p50:percentile(latestCpu,.5),
+          p95:percentile(latestCpu,.95),p99:percentile(latestCpu,.99)},
+        maxPositiveRssDeltaBytes:Math.max(...latestRss),
+        maxPositiveHeapDeltaBytes:Math.max(...latestHeap)},
+      exactMatch:{status:'inspected_selected',
+        samples:exactLatency.length,elapsed:envelope(exactLatency),
+        nodeProcessCpuMicros:{p50:percentile(exactCpu,.5),
+          p95:percentile(exactCpu,.95),p99:percentile(exactCpu,.99)},
+        maxPositiveRssDeltaBytes:Math.max(...exactRss),
+        maxPositiveHeapDeltaBytes:Math.max(...exactHeap),
+        maxOutputBytes:Math.max(...exactBytes)},
+      sqlPhysicalIoAttributableToEntireInspector:false,
+      independentHost:false,
+      sourceProviderExternal:false,
+      productionSloCertified:false,
+    };
+    output.wholePathSameTriggerTiers.push(fullRow);
+    assert(fullRow.latestMatch.elapsed.maxMs<2000,
+      'full-path cardinality refusal exceeded 2s diagnostic ceiling');
+    assert(fullRow.exactMatch.elapsed.maxMs<2000,
+      'full-path exact-match inspection exceeded 2s diagnostic ceiling');
     if(timed.maxMs>=2000){
       throw Error('Bounded same-trigger cardinality refusal exceeded measured 2s');
     }
