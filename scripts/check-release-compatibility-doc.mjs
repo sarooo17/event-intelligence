@@ -66,8 +66,20 @@ export function checkReleaseCompatibilityDoc({
   contains(doc,PATTERN_V2_SIGNATURE_COMPONENT,'candidate signature component',missing);
   contains(doc,'version '+PATTERN_V2_SIGNATURE_CONTRACT_VERSION,
     'candidate signature version',missing);
-  for(const name of Object.keys(pkg.exports??{}))
-    contains(doc,'`'+name+'`','npm export',missing);
+  // The release note has a dedicated *authoritative* list; requiring
+  // each manifest export somewhere in prose is not enough when APIs are
+  // REMOVED in a future pre-v1 release.
+  const exportHeader='The explicit public npm export map, verified by packed package checks:';
+  const exportParagraph=doc.split(exportHeader)[1]?.split('Neither `scripts/validation/`')[0];
+  const documentedExports=exportParagraph
+    ? [...exportParagraph.matchAll(/`(\.|\.\/[^\`\n]+)`/g)].map(x=>x[1])
+    : [];
+  const manifestExports=Object.keys(pkg.exports??{});
+  if(documentedExports.length!==new Set(documentedExports).size||
+     JSON.stringify([...new Set(documentedExports)].sort())!==
+       JSON.stringify([...manifestExports].sort())){
+    missing.push('documented public npm export list must equal package.json#exports exactly');
+  }
   for(const term of [
     'authorize()','AuthorizationDecision',
     'control(request)','event-intelligence.host-conformance.v2',
