@@ -1,0 +1,37 @@
+name: Host Tenant Scope Cold Start
+on:
+  pull_request:
+    paths:
+      - 'scripts/validation/host-tenant-scope-scale.mjs'
+      - 'test/host-tenant-scope-scale.test.mjs'
+      - 'docs/HOST-TENANT-SCOPE-SCALE.md'
+      - '.github/workflows/host-tenant-scope-scaling.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  reference-scope-scale:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Validate reference process and scheduler lifecycle
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm run build
+          node --test test/host-tenant-scope-scale.test.mjs
+      - name: Record separate-process 1/10/100-scope diagnostic
+        run: |
+          mkdir -p artifacts
+          node scripts/validation/host-tenant-scope-scale.mjs --tiers=1,10,100 --samples=3 > artifacts/host-scope-scale.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: host-scope-coldstart
+          path: artifacts/
+          if-no-files-found: warn
+          retention-days: 90
