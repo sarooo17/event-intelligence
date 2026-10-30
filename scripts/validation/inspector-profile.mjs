@@ -1,4 +1,5 @@
 import {performance} from 'node:perf_hooks';
+import {createHash} from 'node:crypto';
 import {PostgresEventStore} from '../lib/postgres-event-store.mjs';
 import {TriggerInspector} from '../lib/trigger-inspector.mjs';
 
@@ -79,7 +80,7 @@ export async function measureRailwayInspector({
     environment:'railway-private-service',
     sourceProviderExternal:false,independentThirdPartyHost:false,
     productionSloCertified:false,
-    scopeDigest:null,
+    scopeDigest:createHash('sha256').update(scopeId).digest('hex'),
     inspectedTriggers, samplesPerTrigger,samples:timings.length,
     successes:timings.length-errors.length,refusals:errors.length,
     elapsedMs:{p50:percentile(timings,.5),
@@ -92,8 +93,10 @@ export async function measureRailwayInspector({
     pgDatabaseGlobalDelta:Object.fromEntries(Object.keys(statsBefore).map(
       key=>[key,Number(statsAfter[key]-statsBefore[key])])),
     pgCountersAreScopeIsolated:false,
+    nodeCpuIsProcessWide:true,
+    latencySamplesMs:timings.map(x=>Math.round(x*1000)/1000),
     matchStatuses:statusCounts,
     errors:errors.slice(0,10),
-    readOnlyBenchmark:true,
+    campaignRecordsUnchanged:true,
   };
 }
