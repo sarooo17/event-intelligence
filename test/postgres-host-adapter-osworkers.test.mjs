@@ -24,15 +24,53 @@ function runWorker(input){
     });
   });
 }
+function startGatedWorker(input){
+  let processRef,resolveReady,rejectReady,readyObserved=false,output='';
+  const ready=new Promise((resolve,reject)=>{resolveReady=resolve;rejectReady=reject;});
+  const result=new Promise(resolve=>{
+    processRef=execFile(process.execPath,[worker,JSON.stringify({
+      ...input,waitForRelease:true,
+    })],{env:process.env,cwd:process.cwd(),timeout:25000,maxBuffer:1024*64},
+    (error,stdout,stderr)=>{
+      if(!readyObserved)rejectReady(error??Error('missing worker barrier'));
+      let value=null;
+      try{value=JSON.parse(stdout.trim().split('\n').at(-1));}
+      catch(err){if(!error)error=err;}
+      resolve({error,stderr,result:value});
+    });
+    processRef.stdout.on('data',part=>{
+      output+=String(part);
+      const line=output.split('\n')[0];
+      if(!readyObserved&&line.endsWith('}')&&line.includes('"ready":true')){
+        try{
+          const marker=JSON.parse(line);
+          if(marker.ready===true){readyObserved=true;resolveReady(marker);}
+        }catch{}
+      }
+    });
+  });
+  return {
+    ready,result,
+    release(){processRef.stdin.write('GO\n');processRef.stdin.end();},
+    stop(){processRef.kill('SIGKILL');},
+  };
+}
 integration('two independent Node host processes commit safe tenant/agent outbox receipts and survive crash/replay', {timeout:90000},async t=>{
   const db=new pg.Pool({connectionString:process.env.POSTGRES_URL,max:4});
   const prefix='ei_oshost_'+randomBytes(6).toString('hex');
-  const tables=await initializeOrgGraphExampleSchema(db,prefix);
+  const fixtureTables=['"'+prefix+'_outbox"','"'+prefix+'_targets"','"'+prefix+'_members"'];
+  // Register recovery even if the third CREATE TABLE fails during setup.
   t.after(async()=>{
-    for(const k of [tables.outbox,tables.targets,tables.members])
-      await db.query('DROP TABLE IF EXISTS '+k+' CASCADE');
-    await db.end();
+    const errors=[];
+    try{
+      for(const name of fixtureTables){
+        try{await db.query('DROP TABLE IF EXISTS '+name+' CASCADE');}
+        catch(error){errors.push(error);}
+      }
+    }finally{await db.end();}
+    if(errors.length)throw new AggregateError(errors,'fixture cleanup failure');
   });
+  const tables=await initializeOrgGraphExampleSchema(db,prefix);
   for(const m of [
     ['org-A','team-red','alice',true],
     ['org-A','team-blue','bob',true],
@@ -49,10 +87,20 @@ integration('two independent Node host processes commit safe tenant/agent outbox
     tablePrefix:prefix,orgId,workspaceId:'work-1',wakeId,target,...extra,
   });
   await t.test('concurrent independent workers dedup same-org wake',async()=>{
-    const [a,b]=await Promise.all([
-      runWorker(cfg('org-A','wake-concurrent')),
-      runWorker(cfg('org-A','wake-concurrent')),
-    ]);
+    const aWorker=startGatedWorker(cfg('org-A','wake-concurrent'));
+    const bWorker=startGatedWorker(cfg('org-A','wake-concurrent'));
+    let a,b;
+    try{
+      // Both workers are paused AFTER hasReceipt returned false.
+      const [ar,br]=await Promise.all([aWorker.ready,bWorker.ready]);
+      assert.notEqual(ar.pid,br.pid);
+      aWorker.release();
+      bWorker.release();
+      [a,b]=await Promise.all([aWorker.result,bWorker.result]);
+    }finally{
+      aWorker.stop();
+      bWorker.stop();
+    }
     assert.equal(a.error,null,a.stderr);
     assert.equal(b.error,null,b.stderr);
     assert.notEqual(a.result.pid,b.result.pid);
