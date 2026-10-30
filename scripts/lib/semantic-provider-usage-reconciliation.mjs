@@ -1,4 +1,5 @@
 import {createHash} from 'node:crypto';
+import {isDeepStrictEqual} from 'node:util';
 
 // Optional host-owned adapter boundary. This module never calls a provider,
 // reads API keys, refunds budget or claims that response usage equals billing.
@@ -99,7 +100,7 @@ export function createPostgresSemanticUsageReconciler({
             ?'usage_exceeds_reservation':'usage_observed_billing_unknown',
         };
         if(prior) {
-          if(JSON.stringify(prior)!==JSON.stringify(result))
+          if(!isDeepStrictEqual(prior,result))
             throw budgetError('Provider request ID reused for conflicting usage',
               'EVENT_INTELLIGENCE_PROVIDER_USAGE_CONFLICT');
           return result; // exact duplicate is idempotent, not another charge
