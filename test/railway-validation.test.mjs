@@ -544,11 +544,35 @@ test('PostgreSQL 16 HTTP smoke uses two OS workers, real CEP, remote wake receip
 });
 
 
-test('strict inspector diagnostic can inspect settled SLO failure, never active or cleaned',()=>{
-  assert.equal(isInspectorDiagnosticTerminal('completed'),true);
-  assert.equal(isInspectorDiagnosticTerminal('completed-with-errors'),true);
+test('inspector diagnostic refuses pending wake settlement even on a completed-with-errors campaign',()=>{
+  const settled={settled:true,expectedWakeCount:1184,
+    verifiedHostReceipts:1184,persistedDeliveredWakeCount:1184,
+    dueWakeBacklog:0,pendingWakeDeliveries:0,deadLetterWakeDeliveries:0};
+  assert.equal(isInspectorDiagnosticTerminal({status:'completed'}),true);
+  assert.equal(isInspectorDiagnosticTerminal({status:'completed-with-errors',
+    wakeSettlement:settled}),true);
+  // After a Railway restart, only the verified archived report contains
+  // the settlement snapshot. Both request admission guards use this helper.
+  assert.equal(isInspectorDiagnosticTerminal({status:'completed-with-errors',
+    report:{observed:{wakeSettlement:settled}}}),true);
+  for(const unsafe of [
+    null,
+    {...settled,settled:false},
+    {...settled,timedOut:true},
+    {...settled,pendingWakeDeliveries:1},
+    {...settled,dueWakeBacklog:1},
+    {...settled,deadLetterWakeDeliveries:1},
+    {...settled,verifiedHostReceipts:1183},
+    {...settled,persistedDeliveredWakeCount:1183},
+  ]){
+    assert.equal(isInspectorDiagnosticTerminal({status:'completed-with-errors',
+      wakeSettlement:unsafe}),false,'failed wake settlement cannot be sampled');
+  }
+  assert.equal(isInspectorDiagnosticTerminal({status:'completed-with-errors'}),false);
   for(const state of ['preparing','queued','running','finalizing','failed',
     'stopped','interrupted','cleaned',null,undefined]){
-    assert.equal(isInspectorDiagnosticTerminal(state),false);
+    assert.equal(isInspectorDiagnosticTerminal({status:state,
+      wakeSettlement:settled}),false);
   }
+  assert.equal(isInspectorDiagnosticTerminal(null),false);
 });
