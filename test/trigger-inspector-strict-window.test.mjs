@@ -180,3 +180,74 @@ test('strict inspection refuses cumulative history even when every row is indivi
   }).inspect({triggerId:'t',version:'1'}),e=>
     e?.code==='EVENT_INTELLIGENCE_INSPECTION_BUDGET_EXCEEDED');
 });
+
+test('strict inspection refuses oversized returned custom-store deadline/derived pages',async()=>{
+  for(const key of ['getBoundedInspectionDeadlines','getBoundedInspectionDerivedEvents']){
+    const source=store();
+    let page;
+    if(key==='getBoundedInspectionDeadlines'){
+      page={records:[{...deadline(1),untrusted:'X'.repeat(20000)}],hasMore:false};
+    }else{
+      page={records:[{...derived(1),directParents:['X'.repeat(20000)]}],hasMore:false};
+    }
+    source[key]=async()=>page;
+    await assert.rejects(()=>new TriggerInspector({
+      store:source,inspectionWindowLimit:2,evidenceRefLimit:2,matchHistoryLimit:2,
+    }).inspect({triggerId:'t',version:'1'}),e=>
+      e?.code==='EVENT_INTELLIGENCE_INSPECTION_BUDGET_EXCEEDED');
+  }
+});
+
+test('strict inspection refuses an oversized assembled response from a custom store',async()=>{
+  const source=store();
+  source.getTriggerState=()=>({status:'active',fireCount:0,
+    unexpectedHostValue:'X'.repeat(3200000)});
+  await assert.rejects(()=>new TriggerInspector({
+    store:source,inspectionWindowLimit:2,evidenceRefLimit:2,matchHistoryLimit:2,
+  }).inspect({triggerId:'t',version:'1'}),e=>
+    e?.code==='EVENT_INTELLIGENCE_INSPECTION_BUDGET_EXCEEDED');
+});
+
+test('strict output rejects active JSON hooks without invoking them',async()=>{
+  for(const flavor of ['toJSON','getter','proxy']){
+    let invoked=0;
+    const source=store();
+    if(flavor==='toJSON'){
+      source.getTriggerState=()=>({status:'active',fireCount:0,
+        toJSON(){invoked++;return invoked===1?{status:'active'}:
+          {status:'active',huge:'X'.repeat(3200000)};}});
+    }else if(flavor==='getter'){
+      source.getBoundedInspectionDerivedEvents=async()=>({records:[{
+        ...derived(1),event:{sourceEventId:'e',name:'derived',
+          occurredAt:at,data:Object.defineProperty({},'secret',{
+            enumerable:true,get(){invoked++;return 'hidden';},
+          })},
+      }],hasMore:false});
+    }else{
+      source.getBoundedInspectionDerivedEvents=async()=>({records:[{
+        ...derived(1),directParents:new Proxy([],{get(target,key){
+          invoked++;return Reflect.get(target,key);
+        }}),
+      }],hasMore:false});
+    }
+    await assert.rejects(()=>new TriggerInspector({
+      store:source,inspectionWindowLimit:2,evidenceRefLimit:2,
+      matchHistoryLimit:2,
+    }).inspect({triggerId:'t',version:'1'}),e=>
+      e?.code==='EVENT_INTELLIGENCE_INSPECTION_BUDGET_EXCEEDED');
+    assert.equal(invoked,0,'strict byte measurement cannot execute '+flavor);
+  }
+});
+
+test('strict response is a detached inert JSON snapshot',async()=>{
+  const source=store();
+  const state={status:'active',fireCount:0};
+  source.getTriggerState=()=>state;
+  const result=await new TriggerInspector({
+    store:source,inspectionWindowLimit:2,evidenceRefLimit:2,matchHistoryLimit:2,
+  }).inspect({triggerId:'t',version:'1'});
+  state.extra='mutated after inspection';
+  assert.equal(result.lifecycle.extra,undefined);
+  assert.equal(typeof result.toJSON,'undefined');
+  assert.doesNotThrow(()=>JSON.stringify(result));
+});

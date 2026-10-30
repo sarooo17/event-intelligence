@@ -229,6 +229,87 @@ function diagnosticState({ state, match, wake, clauses, pendingDeadlines, defini
   return emit('pattern_pending');
 }
 
+// Strict mode snapshots only inert JSON data. Never stringify a custom-store
+// object directly: getters, proxies and toJSON hooks can execute code or
+// return a different result on a second serialization by the host.
+function safeInspectionJson(value, maxBytes) {
+  const stack = new WeakSet();
+  let visited = 0;
+  const refuse = () => {
+    const error = new Error('Strict inspection contains unsafe or oversized JSON evidence');
+    error.code = 'EVENT_INTELLIGENCE_INSPECTION_BUDGET_EXCEEDED';
+    throw error;
+  };
+  function snapshot(node, depth, inArray = false) {
+    if (node === undefined) return inArray ? null : undefined;
+    if (node === null || typeof node === 'boolean' ||
+        typeof node === 'string') return node;
+    if (typeof node === 'number') return Number.isFinite(node) ? node : null;
+    if (typeof node !== 'object' || isProxy(node) || depth > 64 ||
+        ++visited > 100000 || stack.has(node)) refuse();
+    const isArray = Array.isArray(node);
+    const proto = Object.getPrototypeOf(node);
+    if (isArray ? proto !== Array.prototype :
+        proto !== Object.prototype && proto !== null) refuse();
+    if (Object.getOwnPropertySymbols(node).length) refuse();
+    stack.add(node);
+    const descriptors = Object.getOwnPropertyDescriptors(node);
+    let result;
+    if (isArray) {
+      // A null-prototype intermediate array cannot inherit toJSON.
+      result = [];
+      Object.setPrototypeOf(result, null);
+      const length = descriptors.length?.value;
+      if (!Number.isSafeInteger(length) || length > 100000 ||
+          Object.keys(descriptors).some(k =>
+            k !== 'length' && (!/^(0|[1-9][0-9]*)$/.test(k) ||
+              Number(k) >= length))) refuse();
+      for (let i = 0; i < length; i++) {
+        const entry = descriptors[String(i)];
+        if (entry && !Object.hasOwn(entry, 'value')) refuse();
+        result[i] = entry ? snapshot(entry.value, depth + 1, true) : null;
+      }
+    } else {
+      result = Object.create(null);
+      for (const [key, entry] of Object.entries(descriptors)) {
+        if (key === 'toJSON' || !Object.hasOwn(entry, 'value')) refuse();
+        if (!entry.enumerable) continue;
+        const child = snapshot(entry.value, depth + 1);
+        if (child !== undefined) result[key] = child;
+      }
+    }
+    stack.delete(node);
+    return result;
+  }
+  const inert = snapshot(value, 0);
+  // All objects have null prototypes and data-only descriptors here.
+  const serialized = JSON.stringify(inert);
+  if (typeof serialized !== 'string' ||
+      Buffer.byteLength(serialized, 'utf8') > maxBytes) refuse();
+  // Return *exactly* the JSON content that was budget-checked, with ordinary
+  // consumer-friendly arrays/objects but no original provider hooks.
+  return {bytes: Buffer.byteLength(serialized, 'utf8'),
+    snapshot: JSON.parse(serialized)};
+}
+function strictByteBudget(value, maxBytes) {
+  return safeInspectionJson(value, maxBytes).bytes;
+}
+function strictPageBudget(records, maxRowBytes, maxTotalBytes) {
+  const safeRecords = [];
+  let total = 0;
+  for (const record of records) {
+    const safe = safeInspectionJson(record, maxRowBytes);
+    total += safe.bytes;
+    if (total > maxTotalBytes) {
+      const error = new Error('Strict inspection evidence page exceeds total byte budget');
+      error.code = 'EVENT_INTELLIGENCE_INSPECTION_BUDGET_EXCEEDED';
+      throw error;
+    }
+    safeRecords.push(safe.snapshot);
+  }
+  return safeRecords;
+}
+
 export class TriggerInspector {
   constructor({
     store,
@@ -280,8 +361,10 @@ export class TriggerInspector {
     }
     // A precise, versioned inspection should not read all definitions from
     // a high-cardinality scope. Legacy host stores retain the list fallback.
-    const directDefinition = version && typeof this.store.getTrigger === 'function'
+    const directRaw = version && typeof this.store.getTrigger === 'function'
       ? await this.store.getTrigger(triggerId, version) : null;
+    const directDefinition = this.inspectionWindowLimit !== null && directRaw
+      ? safeInspectionJson(directRaw, 65536).snapshot : directRaw;
     // Legacy key concatenation (triggerId + '@' + version) can alias
     // different input pairs containing '@'. Never trust a keyed hit's
     // identity without comparing its canonical stored fields.
@@ -307,10 +390,12 @@ export class TriggerInspector {
           })
         )[0];
 
-    const state = await this.store.getTriggerState(
+    const rawState = await this.store.getTriggerState(
       definition.triggerId,
       definition.version,
     );
+    const state = this.inspectionWindowLimit !== null
+      ? safeInspectionJson(rawState, 3145728).snapshot : rawState;
 
     let match;
     if(this.inspectionWindowLimit!==null){
@@ -336,6 +421,9 @@ export class TriggerInspector {
         : latest(matches);
     }
 
+    if (this.inspectionWindowLimit !== null && match) {
+      match = safeInspectionJson(match, 65536).snapshot;
+    }
     if(this.inspectionWindowLimit!==null && match &&
        (match.triggerId!==definition.triggerId ||
         match.triggerVersion!==definition.version ||
@@ -353,11 +441,8 @@ export class TriggerInspector {
 
     // Strict mode refuses unexpectedly large definition/output state rather
     // than fabricating an incomplete reason from a truncated Pattern AST.
-    if(this.inspectionWindowLimit!==null &&
-       Buffer.byteLength(JSON.stringify(definition),'utf8')>65536) {
-      const error=new Error('Definition exceeds inspection byte budget');
-      error.code='EVENT_INTELLIGENCE_INSPECTION_BUDGET_EXCEEDED';
-      throw error;
+    if (this.inspectionWindowLimit !== null) {
+      strictByteBudget(definition, 65536);
     }
     const evidenceProjection = clauseState(definition, match, this.evidenceRefLimit);
     const clauses = evidenceProjection.clauses;
@@ -369,9 +454,10 @@ export class TriggerInspector {
         error.code='EVENT_INTELLIGENCE_INSPECTION_STORE_UNSUPPORTED';
         throw error;
       }
-      const page=await this.store.getBoundedInspectionDeadlines(match.matchId,{
+      const rawPage=await this.store.getBoundedInspectionDeadlines(match.matchId,{
         limit:this.inspectionWindowLimit,
       });
+      const page=safeInspectionJson(rawPage, 2097152).snapshot;
       if(!page || !Array.isArray(page.records) ||
           page.records.length>this.inspectionWindowLimit ||
           typeof page.hasMore!=='boolean' || page.hasMore) {
@@ -379,7 +465,7 @@ export class TriggerInspector {
         error.code='EVENT_INTELLIGENCE_INSPECTION_BUDGET_EXCEEDED';
         throw error;
       }
-      deadlines=page.records;
+      deadlines=strictPageBudget(page.records, 16384, 1048576);
     } else {
       deadlines=match && this.store.listTemporalDeadlines
         ? await this.store.listTemporalDeadlines({matchId:match.matchId}) : [];
@@ -399,7 +485,9 @@ export class TriggerInspector {
           `composite:${match.matchId}:${definition.target.runtime}:${definition.target.id}`,
         )).slice(0, 24)
       : null);
-    const wake = wakeId ? await this.store.latestWake(wakeId) : null;
+    const rawWake = wakeId ? await this.store.latestWake(wakeId) : null;
+    const wake = this.inspectionWindowLimit !== null && rawWake
+      ? safeInspectionJson(rawWake, 65536).snapshot : rawWake;
 
     let derivedOutputs=[];
     if(match && this.inspectionWindowLimit !== null) {
@@ -408,9 +496,10 @@ export class TriggerInspector {
         error.code='EVENT_INTELLIGENCE_INSPECTION_STORE_UNSUPPORTED';
         throw error;
       }
-      const page=await this.store.getBoundedInspectionDerivedEvents(match.matchId,{
+      const rawPage=await this.store.getBoundedInspectionDerivedEvents(match.matchId,{
         limit:this.inspectionWindowLimit,
       });
+      const page=safeInspectionJson(rawPage, 2097152).snapshot;
       if(!page || !Array.isArray(page.records) ||
           page.records.length>this.inspectionWindowLimit ||
           typeof page.hasMore!=='boolean' || page.hasMore) {
@@ -418,7 +507,7 @@ export class TriggerInspector {
         error.code='EVENT_INTELLIGENCE_INSPECTION_BUDGET_EXCEEDED';
         throw error;
       }
-      derivedOutputs=page.records;
+      derivedOutputs=strictPageBudget(page.records, 16384, 1048576);
     } else {
       derivedOutputs=match
         ? (await this.store.listDerivedEvents?.({matchId:match.matchId}) ?? []) : [];
@@ -433,7 +522,7 @@ export class TriggerInspector {
     let historyTruncated = false;
     if (match && this.matchHistoryLimit !== null &&
         typeof this.store.getRecentTriggerMatchHistory === 'function') {
-      const window = await this.store.getRecentTriggerMatchHistory(
+      const rawWindow = await this.store.getRecentTriggerMatchHistory(
         match.matchId,
         {
           limit: this.matchHistoryLimit,
@@ -442,6 +531,8 @@ export class TriggerInspector {
             : {}),
         },
       );
+      const window = this.inspectionWindowLimit !== null
+        ? safeInspectionJson(rawWindow, 2097152).snapshot : rawWindow;
       if (!window || !Array.isArray(window.records) ||
           window.records.length > this.matchHistoryLimit ||
           typeof window.hasMore !== 'boolean' ||
@@ -455,12 +546,7 @@ export class TriggerInspector {
       if (this.inspectionWindowLimit !== null) {
         let historyBytes = 0;
         for (const record of window.records) {
-          let rowBytes;
-          try {
-            rowBytes = Buffer.byteLength(JSON.stringify(record), 'utf8');
-          } catch {
-            rowBytes = Infinity;
-          }
+          const rowBytes = strictByteBudget(record, 65536);
           historyBytes += rowBytes;
           if (rowBytes > 65536 || historyBytes > 1048576) {
             const error = new Error('Inspection history exceeds byte budget');
@@ -506,7 +592,7 @@ export class TriggerInspector {
       ),
     }));
 
-    return {
+    const inspection = {
       trigger: {
         triggerId: definition.triggerId,
         version: definition.version,
@@ -591,6 +677,12 @@ export class TriggerInspector {
         fact: explainFact,
       }),
     };
+    // A bounded history is not a bounded whole response: lifecycle,
+    // definition, derived lineage and causal timeline also contribute bytes.
+    if (this.inspectionWindowLimit !== null) {
+      return safeInspectionJson(inspection, 3145728).snapshot;
+    }
+    return inspection;
   }
 }
 
