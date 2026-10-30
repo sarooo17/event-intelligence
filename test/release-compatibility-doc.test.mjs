@@ -25,12 +25,16 @@ async function fixture(){
 const bad=e=>e?.code==='EI_RELEASE_COMPATIBILITY_DOC_DRIFT';
 test('release documentation matches all current versioned ABI boundaries',async()=>{
  const current=await checkCurrentReleaseCompatibility();
- assert.equal(current.version,'0.12.0-next.0');
- assert.equal(current.postgresSchema,'1');
- assert.equal(current.patternWire,'2');
- assert.equal(current.triggerProtocol,'0.2.0');
- assert.equal(current.triggerSchema,'trigger.v0.2');
  const args=await fixture();
+ assert.equal(current.version,args.packageJson.version);
+ assert.equal(current.postgresSchema,
+   /POSTGRES_PERSISTED_SCHEMA_VERSION = (\\d+)/.exec(args.postgresSource)?.[1]);
+ assert.equal(current.patternWire,
+   /PATTERN_AST_VERSION = '([^']+)'/.exec(args.patternSource)?.[1]);
+ assert.equal(current.triggerProtocol,
+   /COMPOSITE_TRIGGER_PROTOCOL_VERSION = '([^']+)'/.exec(args.triggerSource)?.[1]);
+ assert.equal(current.triggerSchema,
+   /COMPOSITE_TRIGGER_SCHEMA_VERSION = '([^']+)'/.exec(args.triggerSource)?.[1]);
  assert.equal(current.publicExports,Object.keys(args.packageJson.exports).length);
 });
 test('release documentation fails closed if package version, export map, profile or stored-state marker drifts',async()=>{
@@ -39,6 +43,9 @@ test('release documentation fails closed if package version, export map, profile
    {...args,packageJson:{...args.packageJson,version:'0.12.0-next.999'}},
    {...args,packageJson:{...args.packageJson,
      exports:{...args.packageJson.exports,'./a-new-export':{import:'./dist/index.js'}}}},
+   {...args,packageJson:{...args.packageJson,
+     exports:Object.fromEntries(Object.entries(args.packageJson.exports)
+       .filter(([key])=>key!=='./embedded'))}},
    {...args,doc:args.doc.replace('experimental-extension-2026-09-25','UNKNOWN-MCP-PROFILE')},
    {...args,doc:args.doc.replace('pattern_v2_candidate_signature','missing-signature-component')},
    {...args,doc:args.doc.replace('EVENT_INTELLIGENCE_POSTGRES_SCHEMA_INCOMPATIBLE','redacted')},
@@ -47,4 +54,14 @@ test('release documentation fails closed if package version, export map, profile
  ]){
    assert.throws(()=>checkReleaseCompatibilityDoc(changed),bad);
  }
+});
+test('future correctly updated prerelease is not blocked by a stale test constant',async()=>{
+  const args=await fixture();
+  const next='0.12.0-next.99';
+  const upgraded={...args,
+    packageJson:{...args.packageJson,version:next},
+    serverJson:{...args.serverJson,version:next,
+      packages:args.serverJson.packages.map((p,i)=>i? p:{...p,version:next})},
+    doc:args.doc.replaceAll(args.packageJson.version,next)};
+  assert.equal(checkReleaseCompatibilityDoc(upgraded).version,next);
 });
