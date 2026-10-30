@@ -12,16 +12,6 @@ function percentile(values,p) {
   const sorted=[...values].sort((a,b)=>a-b);
   return Math.round(sorted[Math.min(sorted.length-1,Math.ceil(sorted.length*p)-1)]*1000)/1000;
 }
-async function pgCounters(pool) {
-  const result=await pool.query(
-    "SELECT blks_hit,blks_read,tup_returned,tup_fetched, xact_commit "+
-    "FROM pg_stat_database WHERE datname=current_database()");
-  const row=result.rows[0];
-  if(!row)throw Error('PostgreSQL database statistics unavailable');
-  return Object.fromEntries(
-    ['blks_hit','blks_read','tup_returned','tup_fetched','xact_commit']
-      .map(key=>[key,BigInt(row[key]??0)]));
-}
 export async function measureRailwayInspector({
   pool,tablePrefix,scopeId,triggerCount,triggerLimit=5,
   samplesPerTrigger=5,
@@ -52,7 +42,6 @@ export async function measureRailwayInspector({
   const timings=[],errors=[],statusCounts={};
   const cpuBefore=process.cpuUsage();
   const heapBefore=process.memoryUsage().heapUsed;
-  const statsBefore=await pgCounters(pool);
   for(let slot=0;slot<inspectedTriggers;slot++){
     for(let i=0;i<samplesPerTrigger;i++){
       const start=performance.now();
@@ -78,7 +67,6 @@ export async function measureRailwayInspector({
       }
     }
   }
-  const statsAfter=await pgCounters(pool);
   const cpu=process.cpuUsage(cpuBefore);
   const total=timings.reduce((sum,value)=>sum+value,0);
   return {
@@ -97,8 +85,12 @@ export async function measureRailwayInspector({
     nodeCpuMicros:{user:cpu.user,system:cpu.system},
     heapDeltaBytes:process.memoryUsage().heapUsed-heapBefore,
     // PostgreSQL counters are database-wide; concurrent work can change them.
-    pgDatabaseGlobalDelta:Object.fromEntries(Object.keys(statsBefore).map(
-      key=>[key,Number(statsAfter[key]-statsBefore[key])])),
+    // PostgreSQL 16 publishes cumulative database stats asynchronously;
+    // an immediate before/after delta is NOT a reliable measurement of
+    // this short inspection profile. We refuse to fabricate physical IO.
+    pgDatabaseGlobalDelta:null,
+    pgDatabaseGlobalDeltaAvailable:false,
+    pgDatabaseGlobalDeltaUnavailableReason:'pg16-asynchronous-stat-publication',
     pgCountersAreScopeIsolated:false,
     nodeCpuIsProcessWide:true,
     latencySamplesMs:timings.map(x=>Math.round(x*1000)/1000),
