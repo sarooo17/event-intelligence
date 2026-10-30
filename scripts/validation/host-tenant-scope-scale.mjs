@@ -123,11 +123,14 @@ async function main(){
       const dir=mkdtempSync(join(tmpdir(),'ei-scope-benchmark-'));
       try{
         // Both seed and measurement are SEPARATE fresh Node OS processes.
+        // 1000 persisted tenant scopes can involve many independent filesystem
+        // records. Only widen the diagnostic timeout; no runtime SLO assumed.
+        const childTimeoutMs=scopeCount>=1000?300000:120000;
         execFileSync(process.execPath,[scriptPath,'--seed='+scopeCount,
-          '--dir='+dir],{cwd:process.cwd(),timeout:120000});
+          '--dir='+dir],{cwd:process.cwd(),timeout:childTimeoutMs});
         const raw=execFileSync(process.execPath,[
           '--expose-gc',scriptPath,'--child='+scopeCount,'--dir='+dir,
-        ],{cwd:process.cwd(),encoding:'utf8',timeout:120000,maxBuffer:1024*1024});
+        ],{cwd:process.cwd(),encoding:'utf8',timeout:childTimeoutMs,maxBuffer:1024*1024});
         const item=JSON.parse(raw);
         assert.equal(item.schema,schema);
         assert.equal(item.scopeCount,scopeCount);
