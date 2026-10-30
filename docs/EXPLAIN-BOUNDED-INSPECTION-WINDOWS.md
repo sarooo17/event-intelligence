@@ -141,3 +141,19 @@ versions, tenant collisions, empty sets and keyed lookup. This caps the
 sort cardinality, **not** arbitrary upstream index traversal or full
 database CPU/IO in the absence of an appropriate verified index.
 No production p95/p99 or provider completeness SLO is claimed.
+
+## Actual 100k same-trigger candidate stress gate (#48)
+
+The opt-in PG16 1k/10k/100k inspector artifact now includes a **second
+shape**: 1k, 10k and 100k persisted matches sharing the very same
+trigger ID and version (plus the real selected match). It exercises
+strict latest-match selection with a 512-candidate cap under repeated
+runs, captures raw p50/p95/p99/max and positive heap delta, and checks
+that an over-cap candidate set **always refuses due to cardinality**
+(not a misleading latest result or an SQL timeout). It also confirms
+that direct inspection of an exact match ID remains available under load.
+The CI threshold is a measured synthetic 2s rejection envelope on a
+GitHub runner, not a third-party production SLO. Both shapes, data,
+runner specs and failure artifacts are included in the 90-day raw job
+artifact. This cannot prove arbitrary CPU/IO/index behavior, production
+host traffic, or source-provider completeness.
