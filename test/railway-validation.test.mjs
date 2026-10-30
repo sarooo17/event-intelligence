@@ -14,7 +14,7 @@ import { assessPostgresProductionSloEvidence } from '../scripts/evidence/postgre
 import { percentileStats, parsePrivateServiceUrl, listenValidationPrivateServer } from '../scripts/validation/common.mjs';
 import { verifyCampaignArtifact, verifyRawSampleArtifact } from '../scripts/validation/artifact.mjs';
 import { readWorkerConfig } from '../scripts/validation/worker-service.mjs';
-import { assessCampaignWindowCoverage, campaignInventory, campaignLaunchAt, monotonicAttemptBucket, readBenchmarkConfig, validateCampaign, waitForLaunch } from '../scripts/validation/benchmark-service.mjs';
+import { assessCampaignWindowCoverage, campaignInventory, isInspectorDiagnosticTerminal, campaignLaunchAt, monotonicAttemptBucket, readBenchmarkConfig, validateCampaign, waitForLaunch } from '../scripts/validation/benchmark-service.mjs';
 import { buildStartPayload } from '../scripts/validation/campaign-cli.mjs';
 import { PostgresEventStore } from '../scripts/lib/postgres-event-store.mjs';
 import { CompositeEventConsumer } from '../scripts/lib/composite-event-consumer.mjs';
@@ -541,4 +541,14 @@ test('PostgreSQL 16 HTTP smoke uses two OS workers, real CEP, remote wake receip
   assert.equal(cleanupSummary.artifactsRetained, true);
   const restoredCleaned = await fetch(`${benchmarkUrl}/v1/campaigns/${campaignId}`, { headers: { authorization: `Bearer ${controlToken}` } });
   assert.equal((await restoredCleaned.json()).status, 'cleaned');
+});
+
+
+test('strict inspector diagnostic can inspect settled SLO failure, never active or cleaned',()=>{
+  assert.equal(isInspectorDiagnosticTerminal('completed'),true);
+  assert.equal(isInspectorDiagnosticTerminal('completed-with-errors'),true);
+  for(const state of ['preparing','queued','running','finalizing','failed',
+    'stopped','interrupted','cleaned',null,undefined]){
+    assert.equal(isInspectorDiagnosticTerminal(state),false);
+  }
 });
