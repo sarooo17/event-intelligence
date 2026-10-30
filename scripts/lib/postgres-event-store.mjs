@@ -3065,7 +3065,7 @@ export class PostgresEventStore {
        !Number.isSafeInteger(expectedCompletenessRevision)||
        expectedCompletenessRevision<1||
        typeof completeThroughAt!=='string'||
-       !/^\\d{4}-\\d\\d-\\d\\dT\\d\\d:\\d\\d:\\d\\d(?:\\.\\d{1,3})?Z$/.test(completeThroughAt)||
+       !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,3})?Z$/.test(completeThroughAt)||
        !Number.isFinite(Date.parse(completeThroughAt))||
        typeof proofRef!=='string'||!proofRef||proofRef.length>240||
        typeof verifyProof!=='function') {
