@@ -161,3 +161,80 @@ test('host wake routing rejects revoked graph owner, duplicate receipts and coll
     activation, target: resolved, receiptId: 'receipt-1',
   }), e => e.code === 'LAB_HOST_DENIED');
 });
+
+
+test('actual CEP trigger creation and wake use host-owned policy, scope and opaque target', {
+  timeout: 30000,
+}, async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'ei-portable-cep-'));
+  const host = makeRuntimeHost();
+  const tickets = populate(host);
+  try {
+    const ei = await attachEventIntelligence(host, {
+      dataDir: dir,
+      env: {
+        TEMPORAL_TICK_MS: '100000',
+        WAKE_RETRY_TICK_MS: '100',
+        TYPESAFE_API_KEY: '',
+      },
+    });
+    try {
+      const aliceScope = host.resolveContext(tickets.alice).scopeId;
+      const owned = await ei.host.scope(aliceScope);
+      await owned.triggerControl.registerEventSource({
+        sourceId: 'lab:paid',
+        connectionId: 'lab-events',
+        serverId: 'lab-provider',
+        eventName: 'lab.order.paid',
+        delivery: ['poll'],
+        payloadSchema: { type: 'object', properties: {
+          amount: { type: 'number' },
+        } },
+        enabled: true,
+      }, { type: 'system', principal_id: 'lab-setup-owner' });
+
+      const create = ei.tools.find(t =>
+        t.capability.id === 'event-intelligence.trigger.create');
+      const list = ei.tools.find(t =>
+        t.capability.id === 'event-intelligence.trigger.list');
+      const args = {
+        trigger_id: 'lab-order-paid',
+        events: [{ event: 'lab.order.paid', serverId: 'lab-provider' }],
+        instruction: 'Resume the already authorized host agent.',
+        one_shot: true,
+      };
+
+      const teammate = await host.invoke(create.name, args, tickets.bob);
+      assert.equal(teammate.result.ok, false);
+      assert.equal(teammate.result.error.code, 'LAB_OWNER_REQUIRED');
+
+      const owner = await host.invoke(create.name, args, tickets.alice);
+      assert.equal(owner.result.ok, true, JSON.stringify(owner.result.error));
+      assert.equal(owner.result.data.triggerId, 'lab-order-paid');
+
+      const ownList = await host.invoke(list.name, {}, tickets.alice);
+      const otherOrgList = await host.invoke(list.name, {}, tickets.carol);
+      assert.equal(ownList.result.data.triggers.length, 1);
+      assert.equal(otherOrgList.result.data.triggers.length, 0);
+
+      await ei.host.runtime.compositeEventConsumer.ingestCorrelatable({
+        traceId: 'lab-order-trace-1',
+        sourceEventId: 'lab-paid-1',
+        name: 'lab.order.paid',
+        serverId: 'lab-provider',
+        provider: 'lab-provider',
+        occurredAt: new Date().toISOString(),
+        data: { amount: 125 },
+      });
+      for (let i = 0; i < 80 && host.receiptCount() === 0; i++) {
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+      assert.equal(host.receiptCount(), 1,
+        'CEP event must wake the host-owned authorized agent exactly once in this process');
+    } finally {
+      await host.close();
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
