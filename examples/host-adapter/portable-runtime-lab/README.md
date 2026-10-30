@@ -69,3 +69,30 @@ regression in tenant policy, native approval/interrupt/taint, or receipts.
 The design hypothesis is that **one host-native mapping is unavoidable**
 but a second generic composer would be redundant. All code remains on an
 unmerged research PR; never auto-update Artemis/Muffin or publish npm.
+
+
+## Controlled same-host A/B on this exact branch
+
+**Manual:** `manual-bridge.mjs` 50 physical / 49 nonblank LOC.
+**Existing public EI binder:** `ei-bridge.mjs` 40 physical / 39 nonblank LOC.
+Both use the **same** `host.mjs` (127 physical / 124 nonblank),
+same pinned public `mcp-event-intelligence@0.12.0-next.0`, and the same
+direct `createEventIntelligence({mcp,runtime})` callback ownership.
+The manual path hand-implements allowlist validation, full descriptor
+preparation and registration; the binder uses the **already shipped**
+`ei.bind` with host-owned native mapping. An A/B test compares
+native exposure and outputs for both paths.
+
+**Incremental full host+adapter:** manual **177 physical / 173 nonblank**;
+binder **167 physical / 163 nonblank**. Difference: **−10 physical / −10
+nonblank (−5.6% physical)**. Public EI implementation/type/export/API
+LOC **added: 0**, and the npm dependency graph/config steps are unchanged.
+Both adapters are placed in this research PR only to compare them: production
+would use **one** of the two, not include both. Source pin to the final
+reviewed PR HEAD and verify CI before citing this as accepted evidence.
+
+This is a controlled **LOC/behavior experiment** only, not human integration
+time, native-tool full-runtime performance measurement, production security
+signoff or an external adopter. To meet #269's remaining parent cost gate,
+we still need isolated adapter CPU/memory/p95/p99 + representative externally
+maintained application footprints and their operating setup.
