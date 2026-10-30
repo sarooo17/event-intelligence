@@ -95,10 +95,11 @@ to a successful delivery receipt; it raises stable code
 If the host's authoritative `hasReceipt()` becomes true after a
 post-commit/pre-ack failure, dispatcher reconciliation may still return a
 duplicate receipt. The separately useful low-level `createActivationDispatcher()` primitive
-retains its explicit `requireExplicitReceipt: true` option; its historical
-default is **not** the canonical facade's safety guarantee. Production
-low-level host implementations must enable strict receipt confirmation and
-durably recheck duplicate effects.
+now enforces the **same strict acknowledgement requirement by default**:
+the obsolete `requireExplicitReceipt` flag is removed. Any prior caller
+that relied on void delivery being treated as success must return a real
+host-issued `runtimeReceiptId`; an authoritative `hasReceipt()` can
+still reconcile a post-commit/pre-ack host crash.
 
 **Limit:** an acknowledged receipt is still an assertion by the host. EI
 cannot prove an atomic durable enqueue by checking a callback or by probing
