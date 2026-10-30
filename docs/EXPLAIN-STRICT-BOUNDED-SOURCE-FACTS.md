@@ -39,3 +39,13 @@ all huge JSONB values or production P99 latency without representative
 independent host traces.
 
 Review hardening: an optional host `listBoundedEventSources()` returning null, undefined, a malformed page, a missing hasMore flag or a flagged incomplete window **must return no source fact**. The unbounded `listEventSources()` fallback is now exclusive to non-strict mode; adversarial custom-store tests throw if it is invoked by the strict path.
+
+## Bounded certification lookup
+
+Strict inspect can call the PG16 `getVerifiedInspectionFrontier` for the
+single source of a missing clause only after the existing bounded source
+inventory has proven complete. It reads the certified frontier and current
+MCP state under the same gap-fence lock as source updates, rejects stale
+revisions, and uses the existing exact-key 64 KiB match read, never an
+unbounded latest-match or source-inventory scan. SQL/lock elapsed time and
+production SLO still require separate representative measurement.
