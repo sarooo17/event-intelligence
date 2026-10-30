@@ -1,8 +1,11 @@
+import { createHash } from 'node:crypto';
+
 // Optional PG16-backed, host-owned cost reservation for semantic evaluator calls.
 // No model SDK, credentials, agent process or downstream action belongs here.
 // The host must provide conservative per-call UPPER BOUNDS for tokens and cost.
 const integer=(v,max=1000000000)=>Number.isSafeInteger(v)&&v>=0&&v<=max;
 const validId=x=>typeof x==='string'&&x.length>0&&x.length<=240;
+const digest=x=>createHash('sha256').update(x).digest('hex');
 function limits(input){
   const fields=['maxTriggerCalls','maxTriggerTokens','maxTriggerCostMicros',
     'maxBatchCalls','maxBatchTokens','maxBatchCostMicros'];
@@ -50,7 +53,9 @@ export function createPostgresSemanticAdmission({
          typeof request.evaluatorIdentity!=='string' ||
          request.evaluatorIdentity.length>240 ||
          !integer(request.inputBytes,131072) ||
-         !integer(request.instructionBytes,16384)) return false;
+         !integer(request.instructionBytes,16384) ||
+         (request.reservationId!==undefined &&
+           !validId(request.reservationId))) return false;
       // The host owns the estimator and must supply worst-case billable
       // upper bounds, NOT just a best-effort estimated average.
       // The host estimator runs before reservation. A stuck estimator must
@@ -84,12 +89,25 @@ export function createPostgresSemanticAdmission({
       const prefix=JSON.stringify([request.namespace,budgetEpoch]);
       const triggerKey='trigger:'+prefix;
       const batchKey='batch:'+JSON.stringify([request.namespace,budgetEpoch,batchId]);
+      // Opt-in per-call identity prevents retries from spending one reservation
+      // on multiple provider calls. Persist only a digest of host IDs, not
+      // an application payload or external provider credential.
+      const receiptKey=request.reservationId===undefined ? null :
+        'reservation:'+JSON.stringify([request.namespace,budgetEpoch,
+          digest(request.reservationId)]);
       // Locking triggerKey serializes every worker's reservations in the
       // SAME scoped PG store across distinct pg Pools and processes.
       return store.tx(async client=>{
         await store.lock(client,'semantic-budget',triggerKey);
         const trigger=await store.get('semantic_budget',triggerKey,client);
         const batch=await store.get('semantic_budget',batchKey,client);
+        // The trigger lock also serializes receipt lookups across separate
+        // pg Pools/workers and host restarts. A duplicate ALWAYS denies,
+        // even if it changes batchId or repeats after a remote timeout.
+        if(receiptKey!==null){
+          const existing=await store.get('semantic_budget_receipt',receiptKey,client);
+          if(existing!==null && existing!==undefined) return false;
+        }
         if(!check(trigger)||!check(batch)){
           throw new Error('Corrupt semantic budget ledger: fail closed');
         }
@@ -142,6 +160,22 @@ export function createPostgresSemanticAdmission({
         });
         await store.upsert('semantic_budget',triggerKey,next(a),client);
         await store.upsert('semantic_budget',batchKey,next(z),client);
+        if(receiptKey!==null){
+          await store.upsert('semantic_budget_receipt',receiptKey,{
+            contract:'ei.semantic-reservation.v1',
+            reservationDigest:digest(request.reservationId),
+            namespaceDigest:digest(request.namespace),
+            batchDigest:digest(batchId),
+            evaluatorDigest:digest(request.evaluatorIdentity),
+            candidateDigest:digest(request.candidateSignature),
+            budgetEpochDigest:digest(budgetEpoch),
+            reservedTokens:tokens,
+            reservedCostMicros:costMicros,
+            status:'reserved_billing_unknown',
+            admittedAtMs:nowMs,
+            policyFingerprint,
+          },client);
+        }
         return true;
       });
     },
