@@ -222,8 +222,10 @@ integration('PG16 scoped per-call receipts survive pool restart and reject dupli
     assert.equal(await gate(a,'first').reserve({...one,reservationId:''}),false);
     assert.equal(await gate(a,'first').reserve({...one,
       reservationId:'X'.repeat(241)}),false);
-    assert.equal(await gate(a,'first').reserve({...req}),false,
-      'legacy reservation is still held to the trigger call limit');
+    assert.equal(await gate(a,'first').reserve({...req}),true,
+      'legacy reservation remains compatible without explicit receipt ID');
+    assert.equal(await gate(a,'fresh').reserve({...req}),false,
+      'receipt-enabled and legacy calls share the same durable trigger cap');
   }finally{
     for(const suffix of ['metadata','leases','history','records','counters']){
       await pa.query('DROP TABLE IF EXISTS "'+prefix+'_'+suffix+'" CASCADE');
