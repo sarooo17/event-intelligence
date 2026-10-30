@@ -229,6 +229,35 @@ function diagnosticState({ state, match, wake, clauses, pendingDeadlines, defini
   return emit('pattern_pending');
 }
 
+// Strict inspection must bound the assembled output, not only storage rows.
+// Optional custom store capabilities may ignore requested limits; reject
+// oversized or unserializable returned evidence before exposing a view.
+function strictByteBudget(value, maxBytes) {
+  let size;
+  try {
+    size = Buffer.byteLength(JSON.stringify(value), 'utf8');
+  } catch {
+    size = Infinity;
+  }
+  if (size > maxBytes) {
+    const error = new Error('Strict inspection exceeds output byte budget');
+    error.code = 'EVENT_INTELLIGENCE_INSPECTION_BUDGET_EXCEEDED';
+    throw error;
+  }
+  return size;
+}
+function strictPageBudget(records, maxRowBytes, maxTotalBytes) {
+  let total = 0;
+  for (const record of records) {
+    total += strictByteBudget(record, maxRowBytes);
+    if (total > maxTotalBytes) {
+      const error = new Error('Strict inspection evidence page exceeds total byte budget');
+      error.code = 'EVENT_INTELLIGENCE_INSPECTION_BUDGET_EXCEEDED';
+      throw error;
+    }
+  }
+}
+
 export class TriggerInspector {
   constructor({
     store,
@@ -379,6 +408,7 @@ export class TriggerInspector {
         error.code='EVENT_INTELLIGENCE_INSPECTION_BUDGET_EXCEEDED';
         throw error;
       }
+      strictPageBudget(page.records, 16384, 1048576);
       deadlines=page.records;
     } else {
       deadlines=match && this.store.listTemporalDeadlines
@@ -418,6 +448,7 @@ export class TriggerInspector {
         error.code='EVENT_INTELLIGENCE_INSPECTION_BUDGET_EXCEEDED';
         throw error;
       }
+      strictPageBudget(page.records, 16384, 1048576);
       derivedOutputs=page.records;
     } else {
       derivedOutputs=match
@@ -506,7 +537,7 @@ export class TriggerInspector {
       ),
     }));
 
-    return {
+    const inspection = {
       trigger: {
         triggerId: definition.triggerId,
         version: definition.version,
@@ -591,6 +622,12 @@ export class TriggerInspector {
         fact: explainFact,
       }),
     };
+    // A bounded history is not a bounded whole response: lifecycle,
+    // definition, derived lineage and causal timeline also contribute bytes.
+    if (this.inspectionWindowLimit !== null) {
+      strictByteBudget(inspection, 3145728); // 3 MiB total serialized view
+    }
+    return inspection;
   }
 }
 
