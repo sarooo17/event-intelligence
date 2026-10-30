@@ -278,3 +278,61 @@ already active**. Inspect the authenticated inventory before retrying;
 repeatedly redeploying a one-shot client cannot finish or validate the
 existing campaign. Avoid exposing the private control token or making this
 operator endpoint public.
+
+
+## Authenticated Railway strict-inspector evidence (issue #48)
+
+After a **completed** staging campaign, the private benchmark host exposes
+`POST /v1/campaigns/{campaignId}/inspector-evidence` with the **same
+operator-only `EI_CONTROL_TOKEN`** used for campaign control. It accepts
+`{ "triggerLimit": 5, "samplesPerTrigger": 5 }` and refuses invalid
+inputs, active campaigns, or a nonmatching campaign scope. Requests are
+strictly bounded to at most 20 triggers, 10 samples each, 100 total, with
+no parallel evidence jobs. It cannot clean, stop, or mutate campaign rows.
+
+The endpoint measures the **actual strict `TriggerInspector.inspect`
+path on the campaign's persisted scope** in a separate benchmark Node
+process from the two EI workers, reading the existing Railway PostgreSQL
+16 instance. It archives a JSON artifact to the benchmark volume with a
+SHA-256 digest, and returns redacted measurements: raw per-call latency,
+P50/P95/P99/max, process CPU microseconds and heap delta. PostgreSQL
+physical-I/O deltas are explicitly marked **unavailable**, because the
+backend publishes cumulative statistics asynchronously; they are not
+silently reported as zero. The source scope is hashed. No match ID, event payload,
+provider token, SQL text or secrets are returned.
+
+**Measurement limits:** PostgreSQL counters are **database-wide** and can
+be affected by other clients; CPU is benchmark **process-wide** rather
+than isolated per-query. The endpoint refuses an active campaign, which
+limits but does not eliminate background noise. This is a genuine Railway
+separate-process/remote-PostgreSQL measurement, **not a third-party host,
+real provider watermark, full independent infrastructure, production
+failover or certified production SLO**. This fills a useful portion of
+#48 acceptance #5 without reinterpreting its remaining scope.
+
+The operator should run this only after the smoke campaign's clean
+terminal status and archive the returned SHA-256 alongside the original
+campaign/raw-artifact digests. The endpoint is private-network-only;
+never generate public domains for benchmark or workers.
+
+**Concurrency and preflight hardening:** The inspector endpoint checks
+mutual exclusion again *after* the asynchronous HTTP body read, before
+setting its single in-process evidence flag. Campaign creation and cleanup
+check the same flag both before and after reading their bodies, so they
+cannot start or delete the scoped dataset during measurement. The measurement
+reader verifies the deployed PostgreSQL schema shape using only catalog
+queries: it **never** calls `PostgresEventStore.init()`, which can perform
+unbounded scope restoration scans before the timing/IO baseline. Scope IDs
+use the same 240-character normalization as the production PG store,
+including valid dots; PG16 integration tests cover dotted scope IDs.
+
+**PostgreSQL statistics publication caveat:** PostgreSQL 16's cumulative
+`pg_stat_database` counters are published asynchronously, no more often
+than once per second. A short inspection run cannot truthfully compute
+its immediate physical I/O usage by subtracting two snapshots. The live
+report therefore sets `pgDatabaseGlobalDelta:null` and
+`pgDatabaseGlobalDeltaAvailable:false`, explicitly recording the reason,
+rather than emitting a spurious zero or contaminated I/O delta. The
+separately reviewed PG16 `EXPLAIN (ANALYZE,BUFFERS)` evidence in #346
+covers physical I/O for the bounded SQL candidate subquery, **not** this
+entire inspector path. Full-path attributable server I/O remains unverified.

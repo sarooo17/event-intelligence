@@ -8,6 +8,7 @@ import { pathToFileURL } from 'node:url';
 import pg from 'pg';
 import { assessPostgresProductionSloEvidence } from '../evidence/postgres-production-slo-gate.mjs';
 import { verifyCampaignArtifact, verifyRawSampleArtifact } from './artifact.mjs';
+import { measureRailwayInspector } from './inspector-profile.mjs';
 import { MAX_POSTGRES_TABLE_PREFIX_BYTES } from '../lib/postgres-event-store.mjs';
 import { bearerMatches, httpPort, listenValidationPrivateServer, parsePrivateServiceUrl, percentileStats, readJson, requiredEnv, safeError, safeIdentifier, sendJson } from './common.mjs';
 
@@ -173,6 +174,8 @@ export function createBenchmarkService({ env = process.env, pool: suppliedPool, 
   const campaignTable = `\"${config.tablePrefix}_campaigns\"`;
   const activeAborters = new Map();
   const campaignTasks = new Map();
+  let inspectorEvidenceActive = false;
+  let campaignCleanupActive = false;
   let server;
   let ready = false;
   let postgresVersion = null;
@@ -536,9 +539,11 @@ export function createBenchmarkService({ env = process.env, pool: suppliedPool, 
         return sendJson(response, 200, campaignInventory(campaigns));
       }
       if (request.method === 'POST' && url.pathname === '/v1/campaigns') {
+        if (inspectorEvidenceActive||campaignCleanupActive) return sendJson(response,409,{error:'inspector-evidence-or-cleanup-active'});
         if ([...campaigns.values()].some(campaign => ACTIVE_CAMPAIGN_STATES.has(campaign.status))) return sendJson(response, 409, { error: 'campaign-already-running' });
         if (campaigns.size >= 1000) return sendJson(response, 409, { error: 'campaign-history-capacity-reached' });
         const body = await readJson(request, 32 * 1024);
+        if (inspectorEvidenceActive||campaignCleanupActive) return sendJson(response,409,{error:'inspector-evidence-or-cleanup-active'});
         if ([...campaigns.values()].some(campaign => ACTIVE_CAMPAIGN_STATES.has(campaign.status))) return sendJson(response, 409, { error: 'campaign-already-running' });
         if (campaigns.size >= 1000) return sendJson(response, 409, { error: 'campaign-history-capacity-reached' });
         const options = validateCampaign(body, config);
@@ -554,6 +559,54 @@ export function createBenchmarkService({ env = process.env, pool: suppliedPool, 
         const task = runCampaign(campaign).catch(async error => { campaign.finalStatus = 'failed'; campaign.status = 'finalizing'; campaign.error = safeError(error); campaign.completedAt = new Date().toISOString(); await writeArtifacts(campaign).catch(writeError => logger.error?.(JSON.stringify({ event: 'campaign_artifact_failed', ...safeError(writeError) }))); campaign.status = 'failed'; activeAborters.delete(id); await persistCampaign(campaign).catch(writeError => logger.error?.(JSON.stringify({ event: 'campaign_metadata_failed', ...safeError(writeError) }))); }).finally(() => campaignTasks.delete(id));
         campaignTasks.set(id, task);
         return sendJson(response, 202, { campaignId: id, status: campaign.status, scopeId: campaign.scopeId });
+      }
+      const evidenceMatch=/^\/v1\/campaigns\/([a-f0-9-]+)\/inspector-evidence$/.exec(url.pathname);
+      if(evidenceMatch && request.method==='POST'){
+        const campaign=campaigns.get(evidenceMatch[1]);
+        if(!campaign)return sendJson(response,404,{error:'campaign-not-found'});
+        if(campaign.status!=='completed'||
+           inspectorEvidenceActive||campaignCleanupActive||
+           [...campaigns.values()].some(c=>ACTIVE_CAMPAIGN_STATES.has(c.status)))
+          return sendJson(response,409,{error:'inspector-evidence-requires-idle-completed-campaign'});
+        if(campaign.scopeId!==config.scopeBase+':'+campaign.id)
+          return sendJson(response,409,{error:'campaign-scope-invalid'});
+        const body=await readJson(request,4096);
+        const triggerLimit=body?.triggerLimit??5;
+        const samplesPerTrigger=body?.samplesPerTrigger??5;
+        // Revalidate AFTER the asynchronous body read; this is the only
+        // lock acquisition point and contains no await before flag=true.
+        if(campaign.status!=='completed'||inspectorEvidenceActive||campaignCleanupActive||
+           [...campaigns.values()].some(c=>ACTIVE_CAMPAIGN_STATES.has(c.status)))
+          return sendJson(response,409,{error:'inspector-evidence-campaign-race'});
+        if(!Number.isSafeInteger(triggerLimit)||triggerLimit<1||
+           triggerLimit>20||
+           !Number.isSafeInteger(samplesPerTrigger)||samplesPerTrigger<1||
+           samplesPerTrigger>10||triggerLimit*samplesPerTrigger>100)
+          return sendJson(response,400,{error:'invalid-bounded-inspection-profile'});
+        inspectorEvidenceActive=true;
+        try{
+          const report=await measureRailwayInspector({
+            pool,tablePrefix:config.tablePrefix,scopeId:campaign.scopeId,
+            triggerCount:campaign.options.triggerCount,
+            triggerLimit,samplesPerTrigger,
+          });
+          report.campaignId=campaign.id;
+          report.campaignArtifactSha256=campaign.artifactSha256;
+          const json=JSON.stringify(report,null,2)+'\n';
+          const checksum=createHash('sha256').update(json).digest('hex');
+          await mkdir(config.artifactDir,{recursive:true});
+          const filename='inspector-'+campaign.id+'-'+randomUUID()+'.json';
+          await writeFile(join(config.artifactDir,filename),json,
+            {encoding:'utf8',flag:'wx'});
+          logger.info?.(JSON.stringify({
+            event:'ei_railway_inspector_evidence',campaignId:campaign.id,
+            contract:report.contract,samples:report.samples,
+            successes:report.successes,p95Ms:report.elapsedMs.p95,
+            p99Ms:report.elapsedMs.p99,artifactSha256:checksum,
+          }));
+          return sendJson(response,200,{...report,artifactSha256:checksum,
+            artifactFile:filename});
+        }finally{inspectorEvidenceActive=false;}
       }
       const match = /^\/v1\/campaigns\/([a-f0-9-]+)(?:\/(stop))?$/.exec(url.pathname);
       if (match && request.method === 'GET' && !match[2]) {
@@ -572,12 +625,16 @@ export function createBenchmarkService({ env = process.env, pool: suppliedPool, 
       }
       const cleanupMatch = /^\/v1\/campaigns\/([a-f0-9-]+)\/cleanup$/.exec(url.pathname);
       if (cleanupMatch && request.method === 'POST') {
+        if(inspectorEvidenceActive||campaignCleanupActive) return sendJson(response,409,{error:'inspector-evidence-or-cleanup-active'});
         const campaign = campaigns.get(cleanupMatch[1]);
         if (!campaign) return sendJson(response, 404, { error: 'campaign-not-found' });
         if (ACTIVE_CAMPAIGN_STATES.has(campaign.status)) return sendJson(response, 409, { error: 'campaign-is-active' });
         if (campaign.status === 'cleaned') return sendJson(response, 409, { error: 'campaign-already-cleaned' });
         const body = await readJson(request, 4096);
+        if(inspectorEvidenceActive||campaignCleanupActive) return sendJson(response,409,{error:'inspector-evidence-or-cleanup-active'});
         if (body.confirmation !== `DELETE_ONLY_CAMPAIGN:${campaign.id}`) return sendJson(response, 400, { error: 'explicit campaign cleanup confirmation required' });
+        campaignCleanupActive=true;
+        try {
         const interruptedWithoutArtifacts = campaign.status === 'interrupted' && !campaign.artifactPath && !campaign.rawArtifactPath;
         if (campaign.scopeId !== `${config.scopeBase}:${campaign.id}`) return sendJson(response, 409, { error: 'campaign scope does not match its generated identifier; data retained' });
         if (!interruptedWithoutArtifacts) {
@@ -608,6 +665,7 @@ export function createBenchmarkService({ env = process.env, pool: suppliedPool, 
         campaign.cleanupDeletedRows = deleted;
         await persistCampaign(campaign);
         return sendJson(response, 200, { campaignId: campaign.id, status: campaign.status, deletedRows: deleted, artifactsRetained: !interruptedWithoutArtifacts, cleanupBasis: interruptedWithoutArtifacts ? 'interrupted-campaign-explicit-confirmation' : 'verified-artifacts' });
+        } finally { campaignCleanupActive=false; }
       }
       return sendJson(response, 404, { error: 'not-found' });
     } catch (error) {
