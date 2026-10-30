@@ -121,14 +121,10 @@ test('post-commit missing ack can reconcile through authoritative host hasReceip
   await host.close();
 });
 
-test('canonical facade rejects void delivery WITHOUT optional HostContract; direct primitive still requires explicit strict opt-in', async () => {
-  // Lower-level createActivationDispatcher is an independently useful
-  // primitive; strict=true has been available to advanced hosts.
-  const direct = createActivationDispatcher({
-    deliver: () => undefined,
-  });
-  assert.equal((await direct(packet, activation)).runtimeReceiptId,
-    activation.wake.wakeId);
+test('canonical and low-level dispatcher always reject void delivery even without HostContract', async () => {
+  const direct = createActivationDispatcher({deliver: () => undefined});
+  await assert.rejects(direct(packet, activation), e =>
+    e?.code === 'EVENT_ACTIVATION_RECEIPT_ACK_REQUIRED');
   let sends = 0;
   const host = await facade({ deliver: () => { sends++; } }, null);
   assert.equal(host.negotiation, undefined);
@@ -140,13 +136,13 @@ test('canonical facade rejects void delivery WITHOUT optional HostContract; dire
   await host.close();
 });
 
-test('direct strict dispatcher rejects missing ack and invalid option', async () => {
+test('removed compatibility option is rejected, and direct dispatcher requires an acknowledgment', async () => {
   assert.throws(() => createActivationDispatcher({
     deliver: () => ({ runtimeReceiptId: 'id' }),
     requireExplicitReceipt: 'yes',
-  }), /requireExplicitReceipt must be a boolean/);
+  }), /requireExplicitReceipt is removed/);
   const dispatcher = createActivationDispatcher({
-    deliver: () => undefined, requireExplicitReceipt: true,
+    deliver: () => undefined,
   });
   await assert.rejects(dispatcher(packet, activation), e =>
     e?.code === 'EVENT_ACTIVATION_RECEIPT_ACK_REQUIRED');
@@ -155,7 +151,6 @@ test('direct strict dispatcher rejects missing ack and invalid option', async ()
 test('strict receipt precheck does not claim concurrent exactly-once host effects', async () => {
   let effects = 0;
   const dispatcher = createActivationDispatcher({
-    requireExplicitReceipt: true,
     receiptNamespace: 'arbitrary-host',
     hasReceipt: () => false, // intentionally non-atomic
     deliver: async ({ receiptId }) => {
