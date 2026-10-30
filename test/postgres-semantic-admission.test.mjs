@@ -178,3 +178,58 @@ integration('PG16 refuses budget-amplifying rolling deploy on same epoch after r
     await firstPool.end();await secondPool.end();
   }
 });
+
+// A durable per-call receipt is a host audit identity, not a provider bill.
+// Retrying one ID must never authorize a second model request, even if
+// another worker/batch tries to spend the same first reservation twice.
+integration('PG16 scoped per-call receipts survive pool restart and reject duplicate model request IDs',async()=>{
+  const pa=new Pool({connectionString:url,max:3});
+  const pb=new Pool({connectionString:url,max:3});
+  const a=storage(pa,'receipt-tenant-a'),b=storage(pb,'receipt-tenant-a');
+  const other=storage(pb,'receipt-tenant-b');
+  try{
+    await a.init();await b.init();await other.init();
+    const one={...req,reservationId:'provider-request-intent-001'};
+    const race=await Promise.all(Array.from({length:12},(_,i)=>
+      gate(i%2?a:b,i%3?'first':'second').reserve(one)));
+    assert.equal(race.filter(Boolean).length,1,
+      'only one provider call may use a shared reservation ID');
+    const triggerKey='trigger:'+JSON.stringify(['issue@1','policy-1']);
+    const trigger=await a.get('semantic_budget',triggerKey);
+    assert.deepEqual([trigger.calls,trigger.tokens,trigger.costMicros],[1,3,7]);
+    const {createHash}=await import('node:crypto');
+    const hash=createHash('sha256').update(one.reservationId).digest('hex');
+    const receiptKey='reservation:'+JSON.stringify(['issue@1','policy-1',hash]);
+    const receipt=await b.get('semantic_budget_receipt',receiptKey);
+    assert.equal(receipt.contract,'ei.semantic-reservation.v1');
+    assert.equal(receipt.status,'reserved_billing_unknown');
+    assert.equal(receipt.reservedTokens,3);
+    assert.equal(receipt.reservedCostMicros,7);
+    assert.equal(JSON.stringify(receipt).includes(one.reservationId),false,
+      'stored evidence must not contain raw host/provider request IDs');
+    const reopened=new Pool({connectionString:url,max:2});
+    try{
+      const restart=storage(reopened,'receipt-tenant-a');
+      await restart.init();
+      assert.equal(await gate(restart,'new-batch').reserve(one),false,
+        'same ID cannot be spent again after restart or batch change');
+      assert.equal(await gate(restart,'new-batch').reserve({
+        ...one,reservationId:'provider-request-intent-002'}),true,
+        'a distinct ID can use remaining trigger budget');
+    }finally{await reopened.end();}
+    assert.equal(await gate(other).reserve(one),true,
+      'a foreign tenant cannot poison or consume the local receipt');
+    assert.equal(await gate(a,'first').reserve({...one,reservationId:''}),false);
+    assert.equal(await gate(a,'first').reserve({...one,
+      reservationId:'X'.repeat(241)}),false);
+    assert.equal(await gate(a,'first').reserve({...req}),true,
+      'legacy reservation remains compatible without explicit receipt ID');
+    assert.equal(await gate(a,'fresh').reserve({...req}),false,
+      'receipt-enabled and legacy calls share the same durable trigger cap');
+  }finally{
+    for(const suffix of ['metadata','leases','history','records','counters']){
+      await pa.query('DROP TABLE IF EXISTS "'+prefix+'_'+suffix+'" CASCADE');
+    }
+    await pa.end();await pb.end();
+  }
+});

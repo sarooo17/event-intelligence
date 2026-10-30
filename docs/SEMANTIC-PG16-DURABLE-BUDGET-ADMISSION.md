@@ -70,3 +70,26 @@ A host should never put billable side effects inside its cost estimator.
 
 The external provider billing/reconciliation proof required for #49's final
 acceptance remains outstanding.
+
+## Durable opt-in per-call reservation receipts (#49)
+
+A host may pass a stable `reservationId` with each evaluator admission.
+The PG16 transaction atomically stores a payload-free
+`ei.semantic-reservation.v1` row alongside trigger and batch counters.
+The receipt is keyed by a **SHA-256 digest** of the host request intent
+within the scoped trigger namespace and policy epoch, including only
+hashes of other identities, the reserved worst-case tokens/cost, pinned
+policy fingerprint, and authoritative database admission timestamp.
+Repeated IDs are **denied** across workers, batches, and pool/process
+restarts; duplicate admission never creates another billable call.
+A new ID is needed for a genuinely new provider request, including a
+retry that may be billed separately. This is conservative once-only
+admission, NOT automatic replay/reissue of a crashed or lost call.
+
+The receipt deliberately says `reserved_billing_unknown`. It is NOT a
+provider billing receipt or evidence that cancellation succeeded. A host
+must reconcile provider-generated request IDs, actual token usage,
+price-version and any in-flight/unknown charges separately before claiming
+hard billable cost. Legacy callers without `reservationId` are unchanged.
+Real PG16 two-pool/foreign-tenant/restart adversarial tests cover uniqueness,
+resource reservation, opaque identity and old API compatibility.
