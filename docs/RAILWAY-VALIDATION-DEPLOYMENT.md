@@ -336,3 +336,18 @@ rather than emitting a spurious zero or contaminated I/O delta. The
 separately reviewed PG16 `EXPLAIN (ANALYZE,BUFFERS)` evidence in #346
 covers physical I/O for the bounded SQL candidate subquery, **not** this
 entire inspector path. Full-path attributable server I/O remains unverified.
+
+## Read-only inspector diagnosis after a failed Railway SLO campaign
+
+A completed campaign with `status:completed-with-errors` (for example,
+insufficient attempted workload during its 600s observation window) still
+has useful persisted trigger matches. It can now be selected by the
+**private, operator-authenticated** strict inspector evidence endpoint,
+under the same scope/idle/exclusion/100-sample caps as a successful
+campaign. The report explicitly includes
+`campaignStatus:'completed-with-errors'`, `campaignSloFailed:true` and
+`productionSloCertified:false` regardless of observed latency. This
+is *diagnostic only* and never upgrades a failed SLO into a pass. Campaigns
+that are still active, crashed, stopped, cleaned or interrupted remain
+ineligible. Errors, missing matches, source corruption and high-cardinality
+budget exhaustion remain visible as refusals, not omitted.
