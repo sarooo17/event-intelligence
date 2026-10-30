@@ -233,3 +233,58 @@ integration('PG16 scoped per-call receipts survive pool restart and reject dupli
     await pa.end();await pb.end();
   }
 });
+
+// The actual evaluator doesn't send a reservation ID by default. Explicit
+// autoReservationId opt-in must use its existing safe candidate signature.
+integration('real Pattern v2 semantic evaluator uses stable per-batch PG receipts when opted in',async()=>{
+  const pool=new Pool({connectionString:url,max:3});
+  const st=storage(pool,'pattern-live-reservations');
+  const {evaluatePatternV2,PatternAstV2DefinitionSchema}=await import(
+    '../dist/src/intelligenceProtocol/index.js');
+  try{
+    await st.init();
+    const pattern=PatternAstV2DefinitionSchema.parse({
+      version:'2',root:{kind:'semantic',id:'importance',refs:['issue'],
+        instruction:'Classify issue',input:['issue.title'],
+        matchThreshold:0.8,rejectThreshold:0.2,uncertain:'reject',
+        execution:{cache:false,timeoutMs:1000,onUnavailable:'error'},
+        child:{kind:'event',ref:'issue'}},
+      partitionBy:[],selection:{overlap:'allow',afterMatch:'keepAll',maxMatchesPerEvent:10},
+      execution:{maxCandidates:8,maxSemanticEvaluations:4,maxBufferedEvents:8},
+    });
+    const event={clauseId:'issue',sourceEventId:'issue-1',traceId:'trace-1',
+      serverId:'github',eventName:'github.issue.updated',
+      occurredAt:'2026-10-29T10:00:00.000Z',data:{title:'Important change'}};
+    let providerCalls=0;
+    const admission=createPostgresSemanticAdmission({
+      store:st,batchId:'episode-1',budgetEpoch:'v1',budget,estimate:estimator,
+      autoReservationId:true,
+    });
+    const opts={definition:pattern,events:[event],
+      semanticAdmission:admission,semanticCacheNamespace:'issue@1',
+      evaluator:{cacheIdentity:'host/synthetic-v1',async evaluate(){
+        providerCalls++;return {evaluator:'host/synthetic-v1',probability:0.95};
+      }},
+    };
+    const first=await evaluatePatternV2(opts);
+    assert.equal(first.semanticEvaluations,1);
+    const duplicate=await evaluatePatternV2(opts);
+    assert.equal(duplicate.truncated,true,'same episode/candidate cannot call provider twice');
+    assert.equal(providerCalls,1);
+    const distinct=await evaluatePatternV2({...opts,
+      events:[{...event,sourceEventId:'issue-2'}]});
+    assert.equal(distinct.semanticEvaluations,1);
+    assert.equal(providerCalls,2);
+    assert.equal((await st.get('semantic_budget',
+      'trigger:'+JSON.stringify(['issue@1','v1']))).calls,2);
+    assert.throws(()=>createPostgresSemanticAdmission({
+      store:st,batchId:'episode-2',budget,estimate:estimator,
+      autoReservationId:'yes',
+    }),/autoReservationId/);
+  }finally{
+    for(const suffix of ['metadata','leases','history','records','counters']){
+      await pool.query('DROP TABLE IF EXISTS "'+prefix+'_'+suffix+'" CASCADE');
+    }
+    await pool.end();
+  }
+});
