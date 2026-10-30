@@ -214,3 +214,58 @@ Do not add a new generic helper until two separate concrete hosts show
 that one repeated *host-neutral* mapping would yield a positive net
 combined app+library integration cost. Issue #352's full before/after,
 setup and real integration time comparison remains open.
+
+## Evidence D — runtime-boundary timings and npm package footprint
+
+The additive bounded measurement workflow
+`.github/workflows/host-reference-integration-cost.yml` captures
+the **actual candidate npm pack dry-run metadata**, with version, compressed
+and unpacked estimated package bytes, file count, number of public exports
+and direct dependencies, and a flag documenting whether the example files
+are included in the npm tarball. It uploads the raw npm pack JSON and
+`host-reference-cost.json`; it does not infer a user's installed
+dependency tree, CDN cost, or a before/after package-weight win.
+
+On the same real PostgreSQL 16 test database used by the reference
+multi-org conformance, `test/postgres-host-adapter-multiorg.test.mjs`
+also samples **100 sequential target lookups and 100 durable host receipt
+reads**, with 10 warmups each and p50/p95/p99 emitted as
+`EI_HOST_BOUNDARY_DIAGNOSTIC`. Those are **host-owned adapter + database
+roundtrips**; they do not isolate EI event-matching overhead, emulate a
+production multi-host deployment, or provide an SLO against a contractual
+budget. The observations may differ on different CI runners. No p99
+threshold is asserted without a validated operational workload.
+
+### Concrete integration setup, counted as manual actions not human time
+
+1. Check the chosen MCP source exposes the expected Events capability,
+   polling/stream contract, replay/gap behavior and connection policy.
+2. Install the published prerelease and verify the Node engine and public
+   `/embedded` and (if needed) `/storage/postgres` exports.
+3. Bind the **existing** host-owned MCP connections through
+   `listConnections` (and optional `subscribeConnections`).
+4. Bind an authorized continuation target resolver and explicit
+   scope/owner/tenant mapping from authenticated host context.
+5. Bind the host's persisted receipt reader and **atomic** authorized
+   outbox/enqueue transaction; test replay after an acknowledgment loss.
+6. For multiple processes, provision independent PostgreSQL 16 pools and
+   EI shared-state fencing; do not reuse single-process JSONL.
+7. Run all relevant public host conformance and real PG16
+   cross-org/revocation/timeout tests before exposing agent-facing tools.
+8. Only if needed, connect host-native tool adaptation/registration,
+   per-actor `control`, and model-result/taint projection. Headless
+   hosts **omit** this step.
+
+These eight steps describe setup actions rather than observed
+onboarding duration. No independent developer completed a timed setup,
+and tests authored inside this repository do **not** become independent
+third-party adoption evidence.
+
+**Boundary for #352 D:** the measurements cover whole *reference
+adapter modules*, one real *historical same-consumer adapter* comparison
+(398 to 391 LOC), a bounded reference-host callback latency trace, and
+the exact npm candidate package size. They do **not** compare the entire
+Muffin application before and after EI integration, nor a second
+same-application integration, so full-app net ergonomic ROI is **not
+established**. Leave #352 D and #269 net-ROI acceptance unchecked unless
+more evidence satisfies the remaining requirements.
