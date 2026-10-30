@@ -144,3 +144,11 @@ and invoice verification, not the EI package.
 Real PostgreSQL16 integration proves dual-pool concurrency, restart,
 foreign-scope isolation, duplicate provider ID refusal, discrepancy
 preservation, unverified receipt rejection and CPU-blocked verifier denial.
+
+Provider request ID uniqueness is **tenant-scope-wide** across all
+trigger namespaces and budget epochs. Its digest is the scope-local
+association key; storing namespace/epoch in that key would permit the
+same externally billable request to be counted several times under
+different local budget windows. The durable association also retains
+hashed namespace and epoch for idempotent verification. A different
+tenant's scoped store is isolated by the underlying PostgreSQL scope key.
