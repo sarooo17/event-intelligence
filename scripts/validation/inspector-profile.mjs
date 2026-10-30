@@ -2,6 +2,8 @@ import {performance} from 'node:perf_hooks';
 import {createHash} from 'node:crypto';
 import {PostgresEventStore} from '../lib/postgres-event-store.mjs';
 import {TriggerInspector} from '../lib/trigger-inspector.mjs';
+import {normalizeEventScopeId} from '../lib/persistent-event-store.mjs';
+import {assertPostgresSchemaShape} from '../lib/postgres-schema-shape.mjs';
 
 function validCount(value,max){
   return Number.isSafeInteger(value)&&value>=1&&value<=max;
@@ -27,7 +29,8 @@ export async function measureRailwayInspector({
   if(!pool||typeof pool.query!=='function'||
      typeof tablePrefix!=='string'||
      !/^[a-zA-Z_][a-zA-Z0-9_]{0,40}$/.test(tablePrefix)||
-     typeof scopeId!=='string'||!/^[-a-zA-Z0-9_:]{1,160}$/.test(scopeId)||
+     typeof scopeId!=='string'||!scopeId||scopeId.length>240||
+     normalizeEventScopeId(scopeId)!==scopeId||
      !validCount(triggerCount,100000)||
      !validCount(triggerLimit,20)||
      !validCount(samplesPerTrigger,10)||
@@ -38,7 +41,11 @@ export async function measureRailwayInspector({
   const store=new PostgresEventStore({
     pool,dispatchPoolIdentity:pool,tablePrefix,scopeId,
   });
-  await store.init();
+  // A completed Railway campaign already has a schema migrated by its
+  // workers. Store.init() scans entire scope for restoration counts and
+  // can mutate schema; NEVER do that before a bounded read measurement.
+  // Validate catalog shape only, with no campaign-row or history scan.
+  await assertPostgresSchemaShape(pool,tablePrefix);
   const inspector=new TriggerInspector({store,
     inspectionWindowLimit:8,matchHistoryLimit:8,evidenceRefLimit:8,
   });
