@@ -125,6 +125,29 @@ integration('PG16 host-verified source frontier drives only scoped, revision-cur
       '2026-10-29T09:58:00.000Z'),error=>
         error.code==='EVENT_INTELLIGENCE_SOURCE_FRONTIER_REGRESSION');
 
+    // No mixture of independently valid frontiers is accepted: the
+    // entire requested source set must validate under a single scope fence.
+    assert.equal(await a.getVerifiedInspectionFrontiers([
+      source,{connectionId:'missing',serverId:'git',eventName:'deploy.ok',arguments:{}},
+    ]),null);
+
+    // Strict inspection must not wait without bound on a stalled host poll
+    // holding the scope completeness advisory lock.
+    const holder=await pool.connect();
+    try{
+      await holder.query('BEGIN');
+      await holder.query(
+        'SELECT pg_advisory_xact_lock(hashtextextended($1,0))',
+        [prefix+':tenant-A:mcp-gap-fence:scope']);
+      await assert.rejects(()=>a.getVerifiedInspectionFrontiers([
+        source,
+      ],{maxScanMs:150}),error=>
+        error.code==='EVENT_INTELLIGENCE_INSPECTION_BUDGET_EXCEEDED');
+    }finally{
+      await holder.query('ROLLBACK');
+      holder.release();
+    }
+
     await pool.end();
     reopened=new Pool({connectionString:url,max:4});
     const restored=store(reopened,'tenant-A');
