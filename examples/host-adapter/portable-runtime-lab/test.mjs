@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createEventIntelligence } from 'mcp-event-intelligence/embedded';
+import { createEventIntelligence, createActivationDispatcher } from 'mcp-event-intelligence/embedded';
 import { makeRuntimeHost } from './host.mjs';
 import { attachEventIntelligence } from './ei-bridge.mjs';
 
@@ -237,4 +237,70 @@ test('actual CEP trigger creation and wake use host-owned policy, scope and opaq
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+
+test('actual EI dispatcher rejects a reused receipt with a different authorized target', async () => {
+  const host = makeRuntimeHost();
+  const { alice, carol } = populate(host);
+  const target = host.resolveContext(alice).target;
+  const activation = {
+    activationVersion: '2',
+    wake: {
+      wakeId: 'wake-same', status: 'queued',
+      runtimeReceiptId: null, matchedAt: '2026-10-30T12:00:00.000Z',
+    },
+    target,
+    trigger: {
+      triggerId: 'test-trigger', version: '1', description: null,
+      pattern: {
+        version: '2', root: { kind: 'event', ref: 'event_1' },
+        partitionBy: [], selection: {
+          overlap: 'disallow', afterMatch: 'skipPastLast', maxMatchesPerEvent: 10,
+        }, execution: {
+          maxCandidates: 512, maxSemanticEvaluations: 16, maxBufferedEvents: 10000,
+        },
+      },
+      lifecycle: { oneShot: true, cooldownMs: 0, completeOnGoal: false },
+    },
+    continuation: {
+      instruction: 'Resume authorized host job',
+      contextPolicy: { evidence: 'matched_events', maxEvents: 20, includeData: true },
+    },
+    match: {
+      matchId: 'match-1', status: 'matched', partitionKey: null,
+      openedAt: '2026-10-30T12:00:00.000Z',
+      updatedAt: '2026-10-30T12:00:00.000Z',
+    },
+    evidence: [],
+    trust: {
+      continuation: 'configured_trigger_instruction',
+      evidence: 'untrusted_external_signal',
+    },
+  };
+  const dispatch = createActivationDispatcher({
+    receiptNamespace: host.receiptNamespace,
+    requireExplicitReceipt: true,
+    hasReceipt: (id, envelope) => host.hasReceipt(id, envelope),
+    resolveTarget: (opaque) => host.resolveWakeTarget(opaque),
+    deliver: (input) => host.deliverWake(input),
+  });
+  const first = await dispatch({ wake_id: 'wake-same' }, activation);
+  assert.equal(first.duplicate, false);
+  assert.equal(host.receiptCount(), 1);
+  const replay = await dispatch({ wake_id: 'wake-same' }, activation);
+  assert.equal(replay.duplicate, true);
+  assert.equal(host.receiptCount(), 1);
+  const otherAuthorizedTarget = host.resolveContext(carol).target;
+  await assert.rejects(dispatch({ wake_id: 'wake-same' }, {
+    ...activation, target: otherAuthorizedTarget,
+  }), e => e.code === 'LAB_RECEIPT_COLLISION');
+  assert.equal(host.receiptCount(), 1);
+  host.revokeMember({
+    org: 'org-a', workspace: 'w1', team: 'red', user: 'alice',
+  });
+  await assert.rejects(dispatch({ wake_id: 'wake-new' }, {
+    ...activation, wake: { ...activation.wake, wakeId: 'wake-new' },
+  }), e => e.code === 'EVENT_ACTIVATION_TARGET_UNAVAILABLE');
+  assert.equal(host.receiptCount(), 1);
 });
