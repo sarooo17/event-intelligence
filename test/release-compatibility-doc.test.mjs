@@ -28,7 +28,7 @@ test('release documentation matches all current versioned ABI boundaries',async(
  const args=await fixture();
  assert.equal(current.version,args.packageJson.version);
  assert.equal(current.postgresSchema,
-   /POSTGRES_PERSISTED_SCHEMA_VERSION = (\\d+)/.exec(args.postgresSource)?.[1]);
+   /POSTGRES_PERSISTED_SCHEMA_VERSION = (\d+)/.exec(args.postgresSource)?.[1]);
  assert.equal(current.patternWire,
    /PATTERN_AST_VERSION = '([^']+)'/.exec(args.patternSource)?.[1]);
  assert.equal(current.triggerProtocol,
