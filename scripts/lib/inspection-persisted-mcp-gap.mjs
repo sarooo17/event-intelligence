@@ -88,7 +88,7 @@ export async function persistedGapInspectionFact(store, {triggerId, triggerVersi
   // Restrict terminal impossibility to a selected partial candidate whose
   // AST is a pure allOf of all trigger event clauses. No OR/sequence/negative/
   // semantic subtree is eligible for this narrowly provable inference.
-  if(!matchId || typeof store.getVerifiedInspectionFrontier!=='function' ||
+  if(!matchId || typeof store.getVerifiedInspectionFrontiers!=='function' ||
      typeof store.getTriggerMatch!=='function' ||
      definition.pattern?.root?.kind!=='allOf') return null;
   const children=definition.pattern.root.children;
@@ -110,14 +110,28 @@ export async function persistedGapInspectionFact(store, {triggerId, triggerVersi
      selected.triggerVersion!==triggerVersion||
      selected.status!=='partial'||
      !Array.isArray(selected.sourceEvents))return null;
-  const expiry=Date.parse(selected.expiresAt);
   const lateness=definition.eventTime?.allowedLatenessMs??0;
-  if(!Number.isFinite(expiry)||!Number.isSafeInteger(lateness)||
-     lateness<0||!Number.isFinite(expiry+lateness))return null;
+  if(!Number.isSafeInteger(lateness)||lateness<0)return null;
+  // A live Pattern V2 buffer is a ROLLING collection of anchors. Its
+  // expiresAt is calculated from the FIRST anchor and does not bound all
+  // other still-eligible anchors. Prove finality only after the LATEST
+  // observed anchor plus the entire trigger window and allowed lateness.
+  const role=selected.patternState?.role;
+  let cutoff;
+  if(role==='buffer'){
+    if(!Number.isSafeInteger(definition.withinMs)||
+       definition.withinMs<=0||!selected.sourceEvents.length)return null;
+    const times=selected.sourceEvents.map(event=>Date.parse(event.occurredAt));
+    if(times.some(t=>!Number.isFinite(t)))return null;
+    cutoff=Math.max(...times)+definition.withinMs+lateness;
+  }else if(role==='match'){
+    cutoff=Date.parse(selected.expiresAt)+lateness;
+  }else return null; // Do not invent a fixed candidate from legacy state.
+  if(!Number.isFinite(cutoff))return null;
   const observed=new Set(selected.sourceEvents.map(e=>e.clauseId));
   const missing=definition.clauses.filter(clause=>!observed.has(clause.id));
   if(!missing.length)return null;
-  let belowDeadline=false;
+  const requests=[];
   for(const clause of missing){
     if(typeof clause.serverId!=='string'||!clause.serverId||
        typeof clause.event!=='string'||!clause.event)return null;
@@ -125,23 +139,27 @@ export async function persistedGapInspectionFact(store, {triggerId, triggerVersi
       s.enabled!==false && accepted.has(s.connectionId) &&
       s.serverId===clause.serverId && s.eventName===clause.event);
     if(relevant.length!==1)return null;
-    const source=relevant[0];
-    const current=await store.getMcpClientState(
-      source.connectionId,clause.event,clause.arguments??{});
-    if(!current||current.gapUnresolved===true||current.truncated===true||
-       current.sourceAvailability!=='available'||
-       !Number.isSafeInteger(current.completenessRevision))return null;
-    const frontier=await store.getVerifiedInspectionFrontier(
-      source.connectionId,clause.event,clause.arguments??{});
-    if(!frontier||
-       frontier.contract!=='ei.host-verified-source-frontier.v1'||
+    requests.push({
+      connectionId:relevant[0].connectionId,
+      serverId:clause.serverId,eventName:clause.event,
+      arguments:clause.arguments??{},
+    });
+  }
+  // All required frontiers are proven within ONE scoped source-revision
+  // transaction and bounded advisory-lock window; separate reads could
+  // race a newly inserted gap and fabricate terminal evidence.
+  const frontiers=await store.getVerifiedInspectionFrontiers(
+    requests,{maxScanMs:2000});
+  if(!Array.isArray(frontiers)||frontiers.length!==requests.length)return null;
+  let belowDeadline=false;
+  for(let i=0;i<requests.length;i++){
+    const frontier=frontiers[i],source=requests[i];
+    if(!frontier||frontier.contract!=='ei.host-verified-source-frontier.v1'||
        frontier.connectionId!==source.connectionId||
-       frontier.serverId!==clause.serverId||
-       frontier.eventName!==clause.event||
-       frontier.completenessRevision!==current.completenessRevision||
+       frontier.serverId!==source.serverId||
+       frontier.eventName!==source.eventName||
        !Number.isFinite(Date.parse(frontier.completeThroughAt)))return null;
-    if(Date.parse(frontier.completeThroughAt)<=expiry+lateness)
-      belowDeadline=true;
+    if(Date.parse(frontier.completeThroughAt)<=cutoff)belowDeadline=true;
   }
   return {
     contract:'ei.inspection-fact.v1',triggerId,triggerVersion,
