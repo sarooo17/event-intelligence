@@ -3049,6 +3049,95 @@ export class PostgresEventStore {
     }
   }
 
+  /**
+   * Host-owned proof of a complete event-time frontier for ONE MCP source.
+   * This API must never be exposed to untrusted MCP event/tool arguments.
+   * A caller-provided boolean is NOT enough: the trusted adapter must
+   * independently verify an authoritative provider proof reference.
+   */
+  async recordVerifiedInspectionFrontier({
+    connectionId,serverId,eventName,arguments:args={},
+    expectedCompletenessRevision,completeThroughAt,proofRef,verifyProof,
+  }={}) {
+    if(typeof connectionId!=='string'||!connectionId||
+       typeof serverId!=='string'||!serverId||
+       typeof eventName!=='string'||!eventName||
+       !Number.isSafeInteger(expectedCompletenessRevision)||
+       expectedCompletenessRevision<1||
+       typeof completeThroughAt!=='string'||
+       !/^\\d{4}-\\d\\d-\\d\\dT\\d\\d:\\d\\d:\\d\\d(?:\\.\\d{1,3})?Z$/.test(completeThroughAt)||
+       !Number.isFinite(Date.parse(completeThroughAt))||
+       typeof proofRef!=='string'||!proofRef||proofRef.length>240||
+       typeof verifyProof!=='function') {
+      throw new TypeError('Verified source frontier requires bounded host proof and source revision');
+    }
+    const sourceArgs=safeMcpSourceArguments(args);
+    const key=mcpStateKey(connectionId,eventName,sourceArgs);
+    if(Buffer.byteLength(key,'utf8')>MCP_STATE_KEY_MAX_BYTES) {
+      throw new RangeError('Verified source frontier key exceeds storage budget');
+    }
+    // Provider proof contents and credentials are not persisted. The host
+    // verifier is an explicit authority hook, never an event.data field.
+    const verified=await verifyProof(Object.freeze({
+      connectionId,serverId,eventName,completenessRevision:expectedCompletenessRevision,
+      completeThroughAt,proofRef,
+    }));
+    if(verified!==true) {
+      const error=new Error('Source frontier proof was not verified by host');
+      error.code='EVENT_INTELLIGENCE_UNVERIFIED_SOURCE_FRONTIER';
+      throw error;
+    }
+    const canonicalAt=new Date(Date.parse(completeThroughAt)).toISOString();
+    return this.tx(async client=>{
+      // Serializes source client-state revision checks with poll writes.
+      await this.lock(client,'mcp-gap-fence','scope');
+      const state=await this.get('mcp_client_state',key,client);
+      if(!state||state.connectionId!==connectionId||
+         state.serverId!==serverId||state.eventName!==eventName||
+         state.completenessRevision!==expectedCompletenessRevision||
+         state.gapUnresolved===true||state.truncated===true||
+         state.sourceAvailability!=='available') {
+        const error=new Error('Verified frontier no longer matches healthy source revision');
+        error.code='EVENT_INTELLIGENCE_STALE_SOURCE_FRONTIER';
+        throw error;
+      }
+      const previous=await this.get('inspection_source_frontier',key,client);
+      if(previous && Date.parse(previous.completeThroughAt)>Date.parse(canonicalAt)) {
+        const error=new Error('Verified source frontier must be monotonic');
+        error.code='EVENT_INTELLIGENCE_SOURCE_FRONTIER_REGRESSION';
+        throw error;
+      }
+      const proof={
+        contract:'ei.host-verified-source-frontier.v1',
+        connectionId,serverId,eventName,
+        completenessRevision:expectedCompletenessRevision,
+        completeThroughAt:canonicalAt,
+        proofDigest:createHash('sha256').update(proofRef).digest('hex'),
+      };
+      await this.upsert('inspection_source_frontier',key,proof,client);
+      return proof;
+    });
+  }
+
+  /** A scope-keyed, revision-fenced read; stale source proofs are invisible. */
+  async getVerifiedInspectionFrontier(connectionId,eventName,args={}) {
+    const key=mcpStateKey(connectionId,eventName,args);
+    if(Buffer.byteLength(key,'utf8')>MCP_STATE_KEY_MAX_BYTES) return null;
+    return this.tx(async client=>{
+      await this.lock(client,'mcp-gap-fence','scope');
+      const proof=await this.get('inspection_source_frontier',key,client);
+      if(proof?.contract!=='ei.host-verified-source-frontier.v1')return null;
+      const state=await this.get('mcp_client_state',key,client);
+      if(!state||state.completenessRevision!==proof.completenessRevision||
+         state.gapUnresolved===true||state.truncated===true||
+         state.sourceAvailability!=='available'||
+         state.connectionId!==proof.connectionId||
+         state.serverId!==proof.serverId||
+         state.eventName!==proof.eventName) return null;
+      return proof;
+    });
+  }
+
   /** Only this explicit, PG-index-backed capability is called by strict inspection. */
   async getBoundedInspectionFact({triggerId,triggerVersion,matchId=null,limit}={}) {
     if(!Number.isSafeInteger(limit)||limit<1||limit>100)
