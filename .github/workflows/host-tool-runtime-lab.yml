@@ -33,9 +33,37 @@ jobs:
       - name: Summarize measured numbers without claiming independent adoption
         run: |
           node --input-type=module -e "import fs from 'node:fs';const x=JSON.parse(fs.readFileSync('adapter-measurements.json'));if(x.results.length!==4||x.results.some(r=>!Number.isFinite(r.callLatencyMs.p99)||r.samples!==250))process.exit(1);console.log(JSON.stringify(x.results.map(r=>({variant:r.variant,p95:r.callLatencyMs.p95,p99:r.callLatencyMs.p99,rssDelta:r.rssDeltaAfterCallsBytes}))))"
+      - name: Measure one-time binder registration without EI tool execution
+        run: node benchmark-bind.mjs > registration-measurements.json
+      - name: Generate source-pinned complete host/install footprint
+        run: node cost-report.mjs > integration-cost-report.json
+      - name: Check noninvented report invariants
+        run: |
+          node --input-type=module <<'EOF'
+          import assert from 'node:assert/strict';
+          import {readFileSync} from 'node:fs';
+          const b=JSON.parse(readFileSync('registration-measurements.json'));
+          const c=JSON.parse(readFileSync('integration-cost-report.json'));
+          assert.equal(b.capabilityCount,8);
+          assert.equal(b.results.length,4);
+          assert(b.results.every(r=>r.samples===2500&&Number.isFinite(r.registrationMs.p99)));
+          assert.equal(b.measurementScope.isolatesOneTimeToolRegistration,true);
+          assert.equal(c.sameHostOneBridgeAtATime.changeBinderMinusManual.physical,-10);
+          assert.equal(c.install.extraDependenciesOfBinderVsManual,0);
+          assert.equal(c.coverage.externalToolEnabledAdopterVerified,false);
+          console.log(JSON.stringify({
+            hostAndBinderLines:c.sameHostOneBridgeAtATime.existingBinder.physical,
+            delta:c.sameHostOneBridgeAtATime.changeBinderMinusManual.physical,
+            packageEntries:c.install.lockfilePackageEntriesIncludingRoot,
+            registrationP99:b.results.map(x=>x.registrationMs.p99)
+          }));
+          EOF
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: portable-tool-runtime-ab-metrics
-          path: examples/host-adapter/portable-runtime-lab/adapter-measurements.json
+          path: |
+            examples/host-adapter/portable-runtime-lab/adapter-measurements.json
+            examples/host-adapter/portable-runtime-lab/registration-measurements.json
+            examples/host-adapter/portable-runtime-lab/integration-cost-report.json
           if-no-files-found: warn
