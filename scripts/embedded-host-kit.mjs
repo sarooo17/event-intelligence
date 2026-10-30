@@ -1835,11 +1835,12 @@ export async function createEventIntelligence({
       ? { receiptId: (...args) => optionalCallbacks.receiptId.apply(runtime, args) }
       : {}),
     ...(receiptNamespace ? { receiptNamespace } : {}),
-    // A negotiated wake.receipts capability explicitly requires that a host
-    // reports its delivery receipt (or proves it via hasReceipt after failure).
-    // Legacy/uncontracted callers preserve their existing fallback behavior.
-    ...(negotiatedContract?.required.includes('wake.receipts')
-      ? { requireExplicitReceipt: true } : {}),
+    // Canonical host API MUST NOT acknowledge void delivery as success:
+    // a candidate wake ID is not an externally committed host receipt.
+    // HostContract wake.receipts additionally checks configured host callbacks
+    // at preflight, but omission of that optional declaration never relaxes
+    // the execution-time acknowledgement requirement.
+    requireExplicitReceipt: true,
   };
 
   const tooling = wantsTools
