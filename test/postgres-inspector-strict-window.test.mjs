@@ -88,6 +88,27 @@ integration('PG16 bounded scoped inspection uses rows not full lists and fails o
       triggerId:'t',version:'1',maxRowBytes:4096,
     }),e=>e?.code==='EVENT_INTELLIGENCE_INSPECTION_BUDGET_EXCEEDED');
 
+    // A LIMIT-ed history query must also protect against one huge JSONB row.
+    const historyBase=currentMatch('m1','a','2026-10-29T10:04:00.000Z');
+    await a.appendHistory('trigger_match_history','m1',historyBase);
+    const boundedHistory=await a.getRecentTriggerMatchHistory('m1',
+      {limit:2,maxRowBytes:4096,maxScanMs:1000});
+    assert.equal(boundedHistory.records.length,1);
+    assert.equal(boundedHistory.records[0].matchId,'m1');
+    await a.appendHistory('trigger_match_history','m1',{...historyBase,
+      sourceEvents:[{clauseId:'a',traceId:'trace',sourceEventId:'big-history',
+        eventName:'changed',serverId:'provider',
+        occurredAt:'2026-10-29T10:04:00.000Z',
+        data:{privatePayload:'S'.repeat(70000)}}],
+    });
+    await assert.rejects(()=>a.getRecentTriggerMatchHistory('m1',
+      {limit:2,maxRowBytes:4096,maxScanMs:1000}),e=>
+        e?.code==='EVENT_INTELLIGENCE_INSPECTION_BUDGET_EXCEEDED');
+    assert.equal((await b.getRecentTriggerMatchHistory('m1',
+      {limit:2,maxRowBytes:4096,maxScanMs:1000})).records.length,0);
+    await assert.rejects(()=>a.getRecentTriggerMatchHistory('m1',
+      {limit:2,maxRowBytes:0}),/Invalid bounded inspection history/);
+
     await a.upsert('derived_event','large-row',{
       triggerId:'t',matchId:'huge-match',
       event:{name:'private-derivative',data:{secret:'S'.repeat(33000)}},

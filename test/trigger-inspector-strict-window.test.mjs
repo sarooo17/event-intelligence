@@ -148,3 +148,19 @@ test('null or invalid bounded source page never executes unbounded inventory fal
     assert.equal(fullScans,0,'strict adapter must never load all sources');
   }
 });
+
+test('strict mode rejects oversized history from a custom bounded store',async()=>{
+  const source=store();
+  source.getRecentTriggerMatchHistory=async(id,options)=>{
+    assert.equal(id,'m');
+    assert.equal(options.maxRowBytes,65536);
+    assert.equal(options.maxScanMs,2000);
+    return {records:[{...match,sourceEvents:[{
+      clauseId:'a',sourceEventId:'large',data:{secret:'S'.repeat(70000)},
+    }]}],hasMore:false};
+  };
+  await assert.rejects(()=>new TriggerInspector({
+    store:source,inspectionWindowLimit:2,evidenceRefLimit:2,matchHistoryLimit:2,
+  }).inspect({triggerId:'t',version:'1'}),e=>
+    e?.code==='EVENT_INTELLIGENCE_INSPECTION_BUDGET_EXCEEDED');
+});

@@ -2294,22 +2294,54 @@ export class PostgresEventStore {
    * callers can distinguish truncated history without loading all revisions.
    * Returned records preserve oldest-to-newest order within the window.
    */
-  async getRecentTriggerMatchHistory(matchId, { limit = 100 } = {}) {
+  async getRecentTriggerMatchHistory(matchId, {
+    limit = 100, maxRowBytes = null, maxScanMs = 2000,
+  } = {}) {
     const safeLimit = validateHistoryWindowLimit(limit);
-    const result = await this.pool.query(
-      'SELECT payload FROM ' + this.history +
-        ' WHERE scope_id = $1 AND kind = $2 AND record_key = $3' +
-        ' ORDER BY history_id DESC LIMIT $4',
-      [this.scopeId, 'trigger_match_history', String(matchId), safeLimit + 1],
-    );
+    // Legacy calls preserve their existing behavior. Strict inspection opts
+    // into server-side byte refusal BEFORE any selected history JSONB crosses
+    // into the Node process; LIMIT alone does not bound bytes per row.
+    if (maxRowBytes !== null &&
+        (!Number.isSafeInteger(maxRowBytes) || maxRowBytes < 1024 ||
+         maxRowBytes > 131072 || !Number.isSafeInteger(maxScanMs) ||
+         maxScanMs < 100 || maxScanMs > 5000)) {
+      throw new RangeError('Invalid bounded inspection history byte/time budget');
+    }
+    const query =
+      'SELECT ' + (maxRowBytes === null ? 'payload' :
+        'CASE WHEN octet_length(payload::text) <= $5 THEN payload ELSE NULL END AS payload') +
+      ' FROM ' + this.history +
+      ' WHERE scope_id = $1 AND kind = $2 AND record_key = $3' +
+      ' ORDER BY history_id DESC LIMIT $4';
+    const args = [this.scopeId, 'trigger_match_history', String(matchId), safeLimit + 1];
+    if (maxRowBytes !== null) args.push(maxRowBytes);
+    let result;
+    try {
+      result = maxRowBytes === null
+        ? await this.pool.query(query, args)
+        : await this.tx(async client => {
+            await client.query("SELECT set_config('statement_timeout', $1, true)",
+              [String(maxScanMs) + 'ms']);
+            return client.query(query, args);
+          });
+    } catch (error) {
+      if (error?.code === '57014' && maxRowBytes !== null) {
+        const bounded = new Error('Inspection history exceeded SQL time budget');
+        bounded.code = 'EVENT_INTELLIGENCE_INSPECTION_BUDGET_EXCEEDED';
+        throw bounded;
+      }
+      throw error;
+    }
     const rows = result.rows;
-    return {
-      records: rows.slice(0, safeLimit).map((row) =>
-        parseTriggerMatchRecord(row.payload)
-      ).reverse(),
-      hasMore: rows.length > safeLimit,
-      limit: safeLimit,
-    };
+    const selected = rows.slice(0, safeLimit).map((row) => {
+      if (row.payload === null) {
+        const bounded = new Error('Inspection history row exceeds byte budget');
+        bounded.code = 'EVENT_INTELLIGENCE_INSPECTION_BUDGET_EXCEEDED';
+        throw bounded;
+      }
+      return parseTriggerMatchRecord(row.payload);
+    }).reverse();
+    return { records: selected, hasMore: rows.length > safeLimit, limit: safeLimit };
   }
 
   /**
