@@ -109,6 +109,31 @@ integration('PG16 bounded scoped inspection uses rows not full lists and fails o
     await assert.rejects(()=>a.getRecentTriggerMatchHistory('m1',
       {limit:2,maxRowBytes:0}),/Invalid bounded inspection history/);
 
+    // Strict history also needs a TOTAL transfer ceiling across N+1 rows.
+    // Selecting five 60 KiB revisions is valid; selecting twenty is not.
+    const aggregateId='aggregate-history';
+    for(let i=0;i<20;i++){
+      await a.appendHistory('trigger_match_history',aggregateId,{
+        ...historyBase,matchId:aggregateId,
+        sourceEvents:[{clauseId:'a',traceId:'trace',sourceEventId:'agg-'+i,
+          eventName:'changed',serverId:'provider',
+          occurredAt:'2026-10-29T10:04:00.000Z',
+          data:{privatePayload:'X'.repeat(59000)}}],
+      });
+    }
+    const aggregatePage=await a.getRecentTriggerMatchHistory(aggregateId,
+      {limit:5,maxRowBytes:65536,maxTotalBytes:1048576,maxScanMs:2000});
+    assert.equal(aggregatePage.records.length,5);
+    assert.equal(aggregatePage.hasMore,true);
+    await assert.rejects(()=>a.getRecentTriggerMatchHistory(aggregateId,
+      {limit:20,maxRowBytes:65536,maxTotalBytes:1048576,maxScanMs:2000}),
+      e=>e?.code==='EVENT_INTELLIGENCE_INSPECTION_BUDGET_EXCEEDED');
+    assert.equal((await b.getRecentTriggerMatchHistory(aggregateId,
+      {limit:20,maxRowBytes:65536,maxTotalBytes:1048576,maxScanMs:2000}))
+      .records.length,0);
+    await assert.rejects(()=>a.getRecentTriggerMatchHistory(aggregateId,
+      {limit:3,maxTotalBytes:1048576}),/Invalid bounded inspection history total-byte budget/);
+
     await a.upsert('derived_event','large-row',{
       triggerId:'t',matchId:'huge-match',
       event:{name:'private-derivative',data:{secret:'S'.repeat(33000)}},
