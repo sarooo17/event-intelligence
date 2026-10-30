@@ -76,3 +76,18 @@ stub with real durable store, multiple tenants, gap invalidation and pool
 restart; they are **not** third-party provider certification. #48 acceptance
 #1 is not checked until a real source/host independently verifies and
 exercises authoritative completeness guarantees.
+
+### Review boundary: rolling candidates and atomic multi-source proof
+
+A Pattern v2 `role:'buffer'` can accumulate **multiple** event anchors;
+its `expiresAt` describes the first anchor and is NOT a deadline for
+all eligible candidates. EI now uses the **latest observed buffered event
++ withinMs + allowedLatenessMs** as the conservative cutoff. A fixed
+`role:'match'` candidate may use its own expiry. Legacy/unknown roles
+stay unknown. All missing-source frontiers are checked in **one** bounded
+PostgreSQL transaction under the source completeness fence; no mix of
+proofs from different source revisions can create a terminal diagnosis.
+The host verifier receives the tenant scope and canonical subscription
+arguments, not just server/event names. This does not magically confer
+provider authority on an untrusted callback: real host validation remains
+mandatory.
