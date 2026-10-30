@@ -204,8 +204,10 @@ test('all twelve public npm import subpaths are real, classified and free of obs
   assert.doesNotMatch(embedded,/execution\.confirmationId|resolved\?\.confirmationId/,
     'compatibility approval fallback leaked back into canonical mutation path');
   assert.doesNotMatch(types,/Legacy alias accepted for compatibility/);
-  assert.match(embedded,/requireExplicitReceipt:\s*true,/,
-    'canonical facade must reject unacknowledged host delivery by default');
+  assert.doesNotMatch(embedded,/requireExplicitReceipt:\s*true,/,
+    'the removed compatibility flag must not be used by the canonical facade');
+  assert.match(embedded,/EVENT_ACTIVATION_RECEIPT_ACK_REQUIRED/,
+    'both dispatcher paths must reject missing acknowledgments');
   assert.match(read('docs/releases/0.12.0-next.0-compatibility.md'),
     /new versioned/i,
     'a source-only pre-v1 break must not be misrepresented as published npm');
