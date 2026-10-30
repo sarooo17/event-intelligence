@@ -37,7 +37,13 @@ jobs:
 
       - name: Install official MCP Registry publisher
         run: |
-          curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" | tar xz mcp-publisher
+          set -euo pipefail
+          # Latest Registry releases may appear before publisher artifacts are attached.
+          # Pin a published asset AND its upstream sha256 rather than tracking latest.
+          PUBLISHER_URL="https://github.com/modelcontextprotocol/registry/releases/download/v1.8.6/mcp-publisher_linux_amd64.tar.gz"
+          curl --fail --silent --show-error --location --retry 3 --output mcp-publisher.tar.gz "$PUBLISHER_URL"
+          echo "1fbe93fc0783c2394d8012c8d6e50a59e98cb2cc2d216264cc69f405d0e21340  mcp-publisher.tar.gz" | sha256sum --check -
+          tar -xzf mcp-publisher.tar.gz mcp-publisher
           ./mcp-publisher --help >/dev/null
 
       - name: Validate server.json on its supported release channel
