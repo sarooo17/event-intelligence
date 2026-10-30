@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { createEventIntelligence, createActivationDispatcher } from 'mcp-event-intelligence/embedded';
 import { makeRuntimeHost } from './host.mjs';
 import { attachEventIntelligence } from './ei-bridge.mjs';
+import { attachManually } from './manual-bridge.mjs';
 
 function populate(host) {
   host.addMember({ org: 'org-a', workspace: 'w1', team: 'red', user: 'alice' });
@@ -304,4 +305,49 @@ test('actual EI dispatcher rejects a reused receipt with a different authorized 
     ...activation, wake: { ...activation.wake, wakeId: 'wake-new' },
   }), e => e.code === 'EVENT_ACTIVATION_TARGET_UNAVAILABLE');
   assert.equal(host.receiptCount(), 1);
+});
+
+
+test('same native runtime: manual and existing EI binder preserve capability, policy and result semantics', {
+  timeout: 30000,
+}, async () => {
+  const outputs = [];
+  for (const attach of [attachManually, attachEventIntelligence]) {
+    const dir = await mkdtemp(join(tmpdir(), 'ei-portable-ab-'));
+    const host = makeRuntimeHost();
+    const tickets = populate(host);
+    try {
+      const ei = await attach(host, {
+        dataDir: dir,
+        capabilityIds: ['event-intelligence.event-sources.list',
+          'event-intelligence.trigger.list', 'event-intelligence.trigger.create'],
+      });
+      try {
+        const byCapability = new Map(ei.tools.map(tool =>
+          [tool.capability.id, tool.name]));
+        const read = await host.invoke(
+          byCapability.get('event-intelligence.trigger.list'), {}, tickets.alice);
+        const teammate = await host.invoke(
+          byCapability.get('event-intelligence.trigger.create'), {
+            events: [{ event: 'not-registered' }], instruction: 'Follow up.',
+          }, tickets.bob);
+        assert.equal(read.result.ok, true);
+        // In either A/B variant, an unregistered event may fail planning
+        // before mutation policy. Both variants must behave equivalently.
+        assert.equal(teammate.result.ok, false);
+        outputs.push({
+          exposed: host.names().sort(),
+          capabilities: host.capabilities().sort(),
+          read: read.result,
+          teammate: teammate.result,
+          trust: read.trust,
+        });
+      } finally {
+        await host.close();
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }
+  assert.deepEqual(outputs[0], outputs[1]);
 });
