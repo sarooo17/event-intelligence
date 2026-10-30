@@ -37,7 +37,10 @@ integration('PG16 strict full-path campaign inspector returns bounded raw real l
    assert.equal(report.latencySamplesMs.length,3);
    assert(report.elapsedMs.p99>=0);
    assert(Number.isFinite(report.nodeCpuMicros.user));
-   assert(Number.isFinite(report.pgDatabaseGlobalDelta.blks_hit));
+   assert.equal(report.pgDatabaseGlobalDelta,null);
+   assert.equal(report.pgDatabaseGlobalDeltaAvailable,false);
+   assert.equal(report.pgDatabaseGlobalDeltaUnavailableReason,
+     'pg16-asynchronous-stat-publication');
    assert.equal(report.pgCountersAreScopeIsolated,false);
    assert.equal(report.productionSloCertified,false);
    assert(!JSON.stringify(report).includes('inspect-fixture-1'),
