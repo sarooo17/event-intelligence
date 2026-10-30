@@ -70,7 +70,7 @@ export function makeRuntimeHost() {
       // model arguments, external event data, or reuse an actor/action token.
       // Production hosts must persist/link approval to the request and policy.
       return { action: 'execute', execution: {
-        confirmationId: randomUUID(),
+        receiptId: randomUUID(),
       } };
     },
     registerNative(native, capability) {
