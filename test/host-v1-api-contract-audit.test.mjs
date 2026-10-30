@@ -161,3 +161,53 @@ test('core contract has no vendor runtime dispatch or authorization shim', () =>
   ];
   for (const file of paths) rejectVendorDispatch(read(file));
 });
+
+
+test('all twelve public npm import subpaths are real, classified and free of obsolete host-compatibility symbols', async () => {
+  const pkg = JSON.parse(read('package.json'));
+  const categories = Object.freeze({
+    '.':'protocol-contracts',
+    './host':'advanced-low-level-host-runtime',
+    './provider':'optional-mcp-events-source-provider',
+    './provider/erpnext':'optional-erpnext-event-provider',
+    './embedded':'canonical-neutral-host-facade-and-advanced-primitives',
+    './observability':'optional-neutral-telemetry',
+    './conformance':'host-v3-conformance',
+    './storage/postgres':'opt-in-shared-storage',
+    './storage/postgres/archive':'operator-source-archive',
+    './storage/postgres/restore':'operator-source-restore',
+    './storage/postgres/audit-archive':'operator-audit-archive',
+    './diagnostics':'read-only-integration-diagnostics',
+  });
+  assert.deepEqual(Object.keys(pkg.exports).sort(),Object.keys(categories).sort(),
+    'review all added/removed public import paths; no silent legacy or vendor path');
+  const obsolete=[
+    'AuthorizationDecision','authorizeHost','createLegacyEventIntelligence',
+    'createMuffinEventIntelligence','createArtemisEventIntelligence',
+    'toMuffin','toArtemis','toOpenAI',
+  ];
+  const entries=[];
+  for(const [subpath,definition] of Object.entries(pkg.exports)){
+    const source=definition.import;
+    assert.equal(typeof source,'string');
+    assert.equal(typeof definition.types,'string');
+    const module=await import(new URL('../'+source.slice(2),import.meta.url));
+    const symbols=Object.keys(module).sort();
+    assert(symbols.length>0,subpath+' must expose actual ESM symbols');
+    for(const name of obsolete)
+      assert(!symbols.includes(name),subpath+' still exports obsolete host shim '+name);
+    entries.push({subpath,classification:categories[subpath],
+      count:symbols.length});
+  }
+  const embedded=read('scripts/embedded-host-kit.mjs');
+  const types=read('scripts/embedded-host-kit.d.mts');
+  assert.doesNotMatch(embedded,/execution\.confirmationId|resolved\?\.confirmationId/,
+    'compatibility approval fallback leaked back into canonical mutation path');
+  assert.doesNotMatch(types,/Legacy alias accepted for compatibility/);
+  assert.match(embedded,/requireExplicitReceipt:\s*true,/,
+    'canonical facade must reject unacknowledged host delivery by default');
+  assert.match(read('docs/releases/0.12.0-next.0-compatibility.md'),
+    /new versioned\s+candidate/i,
+    'a source-only pre-v1 break must not be misrepresented as published npm');
+  assert.equal(entries.length,12);
+});
