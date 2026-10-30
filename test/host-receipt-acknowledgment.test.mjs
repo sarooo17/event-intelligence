@@ -121,15 +121,22 @@ test('post-commit missing ack can reconcile through authoritative host hasReceip
   await host.close();
 });
 
-test('uncontracted low-level and facade delivery retain historical void fallback', async () => {
+test('canonical facade rejects void delivery WITHOUT optional HostContract; direct primitive still requires explicit strict opt-in', async () => {
+  // Lower-level createActivationDispatcher is an independently useful
+  // primitive; strict=true has been available to advanced hosts.
   const direct = createActivationDispatcher({
     deliver: () => undefined,
   });
   assert.equal((await direct(packet, activation)).runtimeReceiptId,
     activation.wake.wakeId);
-  const host = await facade({ deliver: () => undefined }, null);
-  assert.equal((await host.wake(packet, activation)).runtimeReceiptId,
-    activation.wake.wakeId);
+  let sends = 0;
+  const host = await facade({ deliver: () => { sends++; } }, null);
+  assert.equal(host.negotiation, undefined);
+  await assert.rejects(host.wake(packet, activation), e =>
+    e?.code === 'EVENT_ACTIVATION_RECEIPT_ACK_REQUIRED');
+  await assert.rejects(host.wake(packet, activation), e =>
+    e?.code === 'EVENT_ACTIVATION_RECEIPT_ACK_REQUIRED');
+  assert.equal(sends, 2, 'void host acknowledgement never finalizes an EI wake');
   await host.close();
 });
 
