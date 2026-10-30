@@ -89,9 +89,9 @@ test('host owns multi-agent graph targets and user/team/organization authority',
       runtimeContext: tickets.alice, action: 'trigger.create',
     });
     assert.equal(firstApproval.action, 'execute');
-    assert.equal(typeof firstApproval.execution.confirmationId, 'string');
-    assert.notEqual(firstApproval.execution.confirmationId,
-      secondApproval.execution.confirmationId,
+    assert.equal(typeof firstApproval.execution.receiptId, 'string');
+    assert.notEqual(firstApproval.execution.receiptId,
+      secondApproval.execution.receiptId,
       'Every host-authorized mutation must receive a distinct confirmation');
     // A ticket is a host-minted capability, never JSON/LLM/user-provided fields.
     assert.throws(

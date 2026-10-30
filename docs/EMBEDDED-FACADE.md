@@ -83,19 +83,22 @@ an SDK wrapper, second API, or proof of independent host adoption.
 
 ### Explicit host receipt acknowledgment (issue #271)
 
-The candidate embedded facade opts into **strict acknowledgment** when the
-consumer explicitly declares HostContract v1 `required: ['wake.receipts']`
-(and therefore supplies `hasReceipt` with `receiptNamespace` or `receiptId`).
+The canonical `createEventIntelligence()` facade **always requires
+strict acknowledgment**, even without an optional HostContract declaration.
+HostContract v1 `required: ['wake.receipts']` additionally validates
+`hasReceipt` with `receiptNamespace` or `receiptId` before startup.
 
-In that mode, `runtime.deliver()` must return a nonempty receipt string or an
+In the canonical facade, `runtime.deliver()` must return a nonempty receipt string or an
 object with nonempty `runtimeReceiptId`. A void result is **not** converted
 to a successful delivery receipt; it raises stable code
 `EVENT_ACTIVATION_RECEIPT_ACK_REQUIRED`, allowing the normal EI wake retry.
 If the host's authoritative `hasReceipt()` becomes true after a
 post-commit/pre-ack failure, dispatcher reconciliation may still return a
-duplicate receipt. Without `wake.receipts` opt-in, historical low-level
-`createActivationDispatcher()` behavior remains unchanged; advanced callers
-can also pass `requireExplicitReceipt: true` directly.
+duplicate receipt. The separately useful low-level `createActivationDispatcher()` primitive
+retains its explicit `requireExplicitReceipt: true` option; its historical
+default is **not** the canonical facade's safety guarantee. Production
+low-level host implementations must enable strict receipt confirmation and
+durably recheck duplicate effects.
 
 **Limit:** an acknowledged receipt is still an assertion by the host. EI
 cannot prove an atomic durable enqueue by checking a callback or by probing

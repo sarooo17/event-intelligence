@@ -982,12 +982,10 @@ export function createEventIntelligenceAgentTools({
             execution.owner ?? resolved?.owner,
             'owner',
           );
-          const confirmationId = String(
-            execution.receiptId ??
-              execution.confirmationId ??
-              resolved?.confirmationId ??
-              '',
-          ).trim();
+          // Only the current, host-approved control() execution can
+          // supply mutation confirmation provenance. Do not reuse legacy
+          // resolvedContext confirmation values across requests.
+          const confirmationId = String(execution.receiptId ?? '').trim();
 
           const created = await scoped.triggerControl.createTrigger({
             definition: plan.definition,
@@ -1278,12 +1276,10 @@ export function createEventIntelligenceAgentTools({
             execution.owner ?? owner,
             'owner',
           );
-          const confirmationId = String(
-            execution.receiptId ??
-              execution.confirmationId ??
-              resolved?.confirmationId ??
-              '',
-          ).trim();
+          // Only the current, host-approved control() execution can
+          // supply mutation confirmation provenance. Do not reuse legacy
+          // resolvedContext confirmation values across requests.
+          const confirmationId = String(execution.receiptId ?? '').trim();
           const result = await scoped.triggerControl[spec.method]({
             triggerId: entry.definition.triggerId,
             version: entry.definition.version,
@@ -1424,12 +1420,10 @@ export function createEventIntelligenceAgentTools({
             execution.owner ?? owner,
             'owner',
           );
-          const confirmationId = String(
-            execution.receiptId ??
-              execution.confirmationId ??
-              resolved?.confirmationId ??
-              '',
-          ).trim();
+          // Only the current, host-approved control() execution can
+          // supply mutation confirmation provenance. Do not reuse legacy
+          // resolvedContext confirmation values across requests.
+          const confirmationId = String(execution.receiptId ?? '').trim();
           const updated = await scoped.triggerControl.updateTrigger({
             triggerId: current.definition.triggerId,
             expectedVersion: current.definition.version,
@@ -1835,11 +1829,12 @@ export async function createEventIntelligence({
       ? { receiptId: (...args) => optionalCallbacks.receiptId.apply(runtime, args) }
       : {}),
     ...(receiptNamespace ? { receiptNamespace } : {}),
-    // A negotiated wake.receipts capability explicitly requires that a host
-    // reports its delivery receipt (or proves it via hasReceipt after failure).
-    // Legacy/uncontracted callers preserve their existing fallback behavior.
-    ...(negotiatedContract?.required.includes('wake.receipts')
-      ? { requireExplicitReceipt: true } : {}),
+    // Canonical host API MUST NOT acknowledge void delivery as success:
+    // a candidate wake ID is not an externally committed host receipt.
+    // HostContract wake.receipts additionally checks configured host callbacks
+    // at preflight, but omission of that optional declaration never relaxes
+    // the execution-time acknowledgement requirement.
+    requireExplicitReceipt: true,
   };
 
   const tooling = wantsTools

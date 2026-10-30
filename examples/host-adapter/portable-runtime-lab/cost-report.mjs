@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = dirname(fileURLToPath(import.meta.url));
 const fixed = Object.freeze({
-  'host.mjs': '8584b9f4de74e25e3ff5acea1150603114e935ad',
+  'host.mjs': 'c6433c577a5805597c03fdfd41998c0638ee34e7',
   'manual-bridge.mjs': '6f9d262bc887f157f30663e1c25e780d685c7196',
   'ei-bridge.mjs': '000a453e9d52f79570b970cde942a6759cf59922',
 });
@@ -27,7 +27,7 @@ const rows = {};
 for (const [filename, pinnedBlob] of Object.entries(fixed)) {
   const text = readFileSync(resolve(root, filename), 'utf8');
   const actual = gitBlobSha(text);
-  assert.equal(actual, pinnedBlob, 'Source changed since exact reviewed #364 ' + filename);
+  assert.equal(actual, pinnedBlob, 'Source changed since current source-pinned audit ' + filename);
   rows[filename] = { filename, gitBlobSha: actual, ...count(text) };
 }
 assert.equal(rows['host.mjs'].physical, 130);
@@ -54,7 +54,8 @@ assert.ok(lock.packages['node_modules/mcp-event-intelligence']);
 
 console.log(JSON.stringify({
   schema: 'ei.host-kit-actual-consumer-source-cost.v1',
-  sourcePinnedToMergedPR: 364,
+  baselineReviewedInPR: 364,
+  currentSourceChangedBy: 'pre-v1-approval-receipt-normalization',
   sourceFiles: rows,
   sameHostOneBridgeAtATime: { manual, existingBinder: existing, changeBinderMinusManual: delta },
   pctWholeHostPhysicalReduction: Number(

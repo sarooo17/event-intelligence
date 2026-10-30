@@ -1596,3 +1596,60 @@ test('unknown or malformed capability allowlists fail before any registration', 
   }
   assert.equal(registrations, 0);
 });
+
+
+test('legacy context or control confirmation alias cannot authorize an agent mutation', async () => {
+  let committed = 0;
+  const host = {
+    eventSources: Promise.resolve([{
+      connectionId: 'github', serverId: 'github',
+      eventName: 'github.branch.changed', delivery: ['poll'],
+      inputSchema: {type:'object'}, payloadSchema: {type:'object'},
+    }]),
+    async planTrigger(input) {
+      return {definition:{triggerId:'checked',version:'1',target:input.target},
+        connectionIds:['github'],warnings:[]};
+    },
+    triggerControl: {
+      async createTrigger(input) {
+        // Real trigger-control rejects agent writes without a fresh host
+        // confirmation; this mock isolates approval token provenance.
+        if (!input.confirmationId) {
+          const err = new Error('Fresh host confirmation required');
+          err.code = 'TRIGGER_CONFIRMATION_REQUIRED';
+          throw err;
+        }
+        committed++;
+        return {receiptId:'r1',definition:input.definition,state:{status:'active'}};
+      },
+    },
+  };
+  const identity = {type:'agent',principal_id:'agent',tenant_id:'tenant'};
+  const owner = {type:'user',principal_id:'owner',tenant_id:'tenant'};
+  const inputs = {events:[{event:'github.branch.changed'}],
+    instruction:'Resume after this GitHub event'};
+  const toolsFor = (control) => createEventIntelligenceAgentTools({
+    host,
+    resolveContext: () => ({
+      target:{runtime:'test-runtime',kind:'task',id:'task-1'},
+      actor:identity,owner,
+      confirmationId:'stale-context-approval-must-not-pass',
+    }),
+    control,
+  });
+  const onlyLegacy = toolsFor(() => ({
+    action:'execute',execution:{confirmationId:'old-alias-must-not-pass'},
+  }));
+  const create = onlyLegacy.find(t=>t.capability.id==='event-intelligence.trigger.create');
+  assert.ok(create);
+  const rejected = await create.execute(inputs,{});
+  assert.equal(rejected.ok,false);
+  assert.equal(committed,0);
+  const canonical = toolsFor(() => ({
+    action:'execute',execution:{receiptId:'fresh-approved-receipt'},
+  }));
+  const current = canonical.find(t=>t.capability.id==='event-intelligence.trigger.create');
+  const approved = await current.execute(inputs,{});
+  assert.equal(approved.ok,true);
+  assert.equal(committed,1);
+});

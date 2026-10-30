@@ -86,8 +86,6 @@ export interface HostControlExecuteDecision {
     owner?: EmbeddedHostIdentity;
     /** Host policy/approval receipt persisted by EI as confirmation provenance. */
     receiptId?: string;
-    /** Legacy alias accepted for compatibility. */
-    confirmationId?: string;
     [key: string]: unknown;
   };
 }
