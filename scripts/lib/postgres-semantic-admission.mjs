@@ -21,7 +21,7 @@ function limits(input){
   };
 }
 export function createPostgresSemanticAdmission({
-  store,batchId,budgetEpoch='1',budget,estimate,
+  store,batchId,budgetEpoch='1',budget,estimate,maxEstimateMs=2000,
 }={}){
   if(!store || typeof store.tx!=='function' ||
      typeof store.lock!=='function' ||
@@ -30,6 +30,9 @@ export function createPostgresSemanticAdmission({
      !validId(store.scopeId) || !validId(batchId) ||
      !validId(budgetEpoch) || typeof estimate!=='function') {
     throw new TypeError('Requires a scoped PG16 store, stable host-owned batch and trusted cost estimator');
+  }
+  if(!Number.isSafeInteger(maxEstimateMs) || maxEstimateMs<10 || maxEstimateMs>30000) {
+    throw new RangeError('maxEstimateMs must be an integer from 10 to 30000');
   }
   const policy=limits(budget);
   // Every worker sharing one policy epoch MUST enforce the same quotas.
@@ -50,11 +53,31 @@ export function createPostgresSemanticAdmission({
          !integer(request.instructionBytes,16384)) return false;
       // The host owns the estimator and must supply worst-case billable
       // upper bounds, NOT just a best-effort estimated average.
-      const estimateResult=await estimate(Object.freeze({
-        evaluatorIdentity:request.evaluatorIdentity,
-        inputBytes:request.inputBytes,
-        instructionBytes:request.instructionBytes,
-      }));
+      // The host estimator runs before reservation. A stuck estimator must
+      // deny, not leave the evaluation waiting indefinitely or admit at zero cost.
+      const estimatorStartedNs=process.hrtime.bigint();
+      let timer;
+      let estimateResult;
+      try {
+        estimateResult=await Promise.race([
+          Promise.resolve().then(()=>estimate(Object.freeze({
+            evaluatorIdentity:request.evaluatorIdentity,
+            inputBytes:request.inputBytes,
+            instructionBytes:request.instructionBytes,
+          }))),
+          new Promise(resolve=>{
+            timer=setTimeout(()=>resolve(null),maxEstimateMs);
+          }),
+        ]);
+      } finally {
+        clearTimeout(timer);
+      }
+      // Promise.race alone is insufficient: a synchronous callback may
+      // block the event loop beyond the deadline and resolve before its
+      // overdue timeout callback can execute. Reject by monotonic elapsed time.
+      if(process.hrtime.bigint()-estimatorStartedNs >= BigInt(maxEstimateMs)*1000000n) {
+        return false;
+      }
       if(!estimateResult || !integer(estimateResult.tokens) ||
          !integer(estimateResult.costMicros)) return false;
       const {tokens,costMicros}=estimateResult;

@@ -57,3 +57,16 @@ This work advances #49 acceptance #3 but does not certify true
 provider billing under adversarial pricing or all-host cross-region
 budgets. A redacted real-source corpus is still required for #1, and
 sampled notification-quality/SLO evidence remains separate.
+
+## Host estimator timeout (EI-side only)
+
+The opt-in PostgreSQL semantic admission gate now has `maxEstimateMs`
+(default 2000, allowed 10..30000). A host-estimator timeout denies the
+reservation (returns `false`) and therefore never starts a provider call;
+an estimator error also fails closed. The timer is cleared on settlement.
+This deadline does not cancel a host callback that ignores cancellation or
+certify actual remote provider billing, server-side model limits or aborts.
+A host should never put billable side effects inside its cost estimator.
+
+The external provider billing/reconciliation proof required for #49's final
+acceptance remains outstanding.
