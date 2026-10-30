@@ -1,9 +1,10 @@
 // The ENTIRE EI-specific adapter. The host itself remains EI-agnostic.
 import { createEventIntelligence } from 'mcp-event-intelligence/embedded';
 
-export async function attachEventIntelligence(host, { dataDir, capabilityIds } = {}) {
+export async function attachEventIntelligence(host, { dataDir, capabilityIds, env } = {}) {
   const ei = await createEventIntelligence({
     dataDir,
+    ...(env ? { env } : {}),
     mcp: { list: () => [] }, // Host-owned already-open MCP connection registry.
     runtime: {
       receiptNamespace: host.receiptNamespace,
