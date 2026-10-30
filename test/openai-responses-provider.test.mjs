@@ -157,3 +157,65 @@ integration('mismatched provider GET and network uncertainty preserve reserved q
     await pool.end();
   }
 });
+
+
+integration('separate PG16 workers racing one bounded semantic intent emit at most one provider request',async()=>{
+  const pa=new Pool({connectionString:url,max:3});
+  const pb=new Pool({connectionString:url,max:3});
+  const a=new PostgresEventStore({pool:pa,dispatchPoolIdentity:pa,
+    scopeId:'openai-race',tablePrefix:prefix});
+  const b=new PostgresEventStore({pool:pb,dispatchPoolIdentity:pb,
+    scopeId:'openai-race',tablePrefix:prefix});
+  try{
+    await a.init();await b.init();
+    const {transport,calls}=mockProvider();
+    const run=(store)=>runOpenAIResponsesValidationCase({
+      store,transport,batchId:'race-batch',
+      budgetEpoch:'race-epoch',reservationId:'same-host-intent',
+    });
+    const [left,right]=await Promise.all([run(a),run(b)]);
+    assert.deepEqual([left.status,right.status].sort(),
+      ['admission_denied','usage_observed_billing_unknown'].sort());
+    assert.equal(calls.filter(c=>c.method==='POST'&&c.path==='/v1/responses').length,1);
+    assert.equal((await a.get('semantic_budget',
+      'trigger:'+JSON.stringify(['ei-provider-validation@1','race-epoch']))).calls,1);
+    // A different intent is rejected by the hard call/cost cap too.
+    assert.equal((await runOpenAIResponsesValidationCase({
+      store:b,transport,batchId:'race-batch',budgetEpoch:'race-epoch',
+      reservationId:'other-intent',
+    })).status,'admission_denied');
+  }finally{
+    for(const suffix of ['metadata','leases','history','records','counters'])
+      await pa.query('DROP TABLE IF EXISTS "'+prefix+'_'+suffix+'" CASCADE');
+    await pa.end();await pb.end();
+  }
+});
+
+integration('adversarial provider reports more output tokens than reserved without crediting or declaring invoice confirmed',async()=>{
+  const pool=new Pool({connectionString:url,max:3});
+  const db=new PostgresEventStore({pool,dispatchPoolIdentity:pool,
+    scopeId:'openai-excess',tablePrefix:prefix});
+  try{
+    await db.init();
+    const excess=()=>({...modelResponse('resp_excess123456'),
+      usage:{input_tokens:9,output_tokens:50,
+        input_tokens_details:{cached_tokens:0},
+        output_tokens_details:{reasoning_tokens:0}}});
+    const {transport,calls}=mockProvider({output:excess,fetched:excess});
+    const opts={store:db,transport,batchId:'excess-batch',
+      budgetEpoch:'excess-epoch',reservationId:'excess-intent'};
+    const r=await runOpenAIResponsesValidationCase(opts);
+    assert.equal(r.status,'usage_exceeds_reservation');
+    assert.equal(r.withinReservedTokens,false);
+    assert.equal(r.billingConfirmed,false);
+    assert.equal(r.reservationRetained,true);
+    assert.equal((await db.get('semantic_budget',
+      'trigger:'+JSON.stringify(['ei-provider-validation@1','excess-epoch']))).tokens,41);
+    assert.equal((await runOpenAIResponsesValidationCase(opts)).status,'admission_denied');
+    assert.equal(calls.filter(c=>c.path==='/v1/responses').length,1);
+  }finally{
+    for(const suffix of ['metadata','leases','history','records','counters'])
+      await pool.query('DROP TABLE IF EXISTS "'+prefix+'_'+suffix+'" CASCADE');
+    await pool.end();
+  }
+});
