@@ -91,10 +91,14 @@ test('actual headless facade integrates real CEP trigger and host job enqueue wi
   timeout:20000,
 },async t=>{
   const dir=await mkdtemp(join(tmpdir(),'ei-headless-reference-'));
-  t.after(async()=>rm(dir,{recursive:true,force:true}));
+  let app;
+  t.after(async()=>{
+    try{await app?.close();}
+    finally{await rm(dir,{recursive:true,force:true});}
+  });
   const jobs=new Map();
   const events=[];
-  const app=await createHeadlessJobExample({
+  app=await createHeadlessJobExample({
     dataDir:dir,
     env:{TYPESAFE_API_KEY:'',RUNTIME_WAKE_TARGETS_JSON:'{}',
       TEMPORAL_TICK_MS:'100000',WAKE_RETRY_TICK_MS:'100'},
@@ -112,7 +116,6 @@ test('actual headless facade integrates real CEP trigger and host job enqueue wi
       return {receiptId,durable:true,duplicate};
     },
   });
-  t.after(()=>app.close());
   assert.deepEqual(app.integration.tools,[]);
   const owner={type:'system',principal_id:'headless-reference-owner'};
   await app.host.triggerControl.registerEventSource({
