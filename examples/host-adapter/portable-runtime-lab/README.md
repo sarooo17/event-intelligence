@@ -75,7 +75,7 @@ unmerged research PR; never auto-update Artemis/Muffin or publish npm.
 
 **Manual:** `manual-bridge.mjs` 50 physical / 49 nonblank LOC.
 **Existing public EI binder:** `ei-bridge.mjs` 40 physical / 39 nonblank LOC.
-Both use the **same** `host.mjs` (127 physical / 124 nonblank),
+Both use the **same** `host.mjs` (130 physical / 127 nonblank),
 same pinned public `mcp-event-intelligence@0.12.0-next.0`, and the same
 direct `createEventIntelligence({mcp,runtime})` callback ownership.
 The manual path hand-implements allowlist validation, full descriptor
@@ -83,8 +83,8 @@ preparation and registration; the binder uses the **already shipped**
 `ei.bind` with host-owned native mapping. An A/B test compares
 native exposure and outputs for both paths.
 
-**Incremental full host+adapter:** manual **177 physical / 173 nonblank**;
-binder **167 physical / 163 nonblank**. Difference: **−10 physical / −10
+**Incremental full host+adapter:** manual **180 physical / 176 nonblank**;
+binder **170 physical / 166 nonblank**. Difference: **−10 physical / −10
 nonblank (−5.6% physical)**. Public EI implementation/type/export/API
 LOC **added: 0**, and the npm dependency graph/config steps are unchanged.
 Both adapters are placed in this research PR only to compare them: production
@@ -96,3 +96,24 @@ time, native-tool full-runtime performance measurement, production security
 signoff or an external adopter. To meet #269's remaining parent cost gate,
 we still need isolated adapter CPU/memory/p95/p99 + representative externally
 maintained application footprints and their operating setup.
+
+
+## Bounded measurable overhead (not production performance)
+
+`node benchmark.mjs` runs a same-host manual→binder→binder→manual
+sequence of 250 measured `trigger.list` calls per variant after 60 warmups,
+reporting actual p50/p95/p99 wall latency, observed RSS delta, and initialization
+time in the CI artifact `adapter-measurements.json`. CI deliberately
+asserts only the validity of measurements, **never invented latency SLOs**.
+
+These are **end-to-end native tool + host ACL + embedded EI JSONL store**
+measurements; they **do not isolate pure binder adapter CPU overhead**, which
+is primarily a tool *registration* concern. They omit real databases, MCP
+providers, deployed worker process isolation, LLM/tool-model tokens and
+human onboarding time. The reporting schema explicitly marks all these
+limitations to prevent treating a noisy CI p99 as a production benchmark.
+
+Authorized agent writes require an explicitly fresh **host-issued per-request
+confirmation ID**. This lab's owner-policy gate issues a random UUID per
+approved mutation (never accepts confirmation from a prompt/event), while a
+production host must persist and link the approval to its durable request.
