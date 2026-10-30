@@ -15,6 +15,12 @@ if(process.env.EI_CONFIRM_LIVE_OPENAI_TEST!=='YES'||
 const prefix=process.env.EI_OPENAI_TEST_TABLE_PREFIX??'ei_openai_validation';
 if(!/^[a-z][a-z0-9_]{1,35}$/.test(prefix))
   throw Error('EI_OPENAI_TEST_TABLE_PREFIX_INVALID');
+// Allow only one of two small, explicitly bounded output caps. A higher cap
+// for a NEW run requires a NEW host-owned budget epoch and reservation ID,
+// not a retry of an earlier possibly billed provider request.
+const outputCap=Number(process.env.EI_OPENAI_MAX_OUTPUT_TOKENS??32);
+if(![32,64].includes(outputCap))
+  throw Error('EI_OPENAI_MAX_OUTPUT_TOKENS_INVALID');
 const pool=new pg.Pool({connectionString:process.env.DATABASE_URL,
   max:3,connectionTimeoutMillis:5000,statement_timeout:15000});
 try{
@@ -31,6 +37,7 @@ try{
     store,transport,batchId:process.env.EI_OPENAI_TEST_BATCH,
     reservationId:process.env.EI_OPENAI_TEST_RESERVATION,
     budgetEpoch:process.env.EI_OPENAI_TEST_EPOCH??'provider-validation-1',
+    maxOutputTokens:outputCap,
   });
   // Safe metadata only. A result never contains prompt or raw response ID.
   console.log(JSON.stringify({
