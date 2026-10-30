@@ -79,7 +79,7 @@ export function checkReleaseCompatibilityDoc({
     'mixed fenced/unfenced',
     'production-certified',
     'not supported',
-    'No legacy',
+    'No runtime-specific compatibility adapter',
   ]){
     // Some support-boundary phrases may appear with different word case;
     // require a discrete clear disclaimer rather than implied compatibility.
