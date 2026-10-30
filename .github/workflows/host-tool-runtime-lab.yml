@@ -28,3 +28,14 @@ jobs:
           node --input-type=module -e "import fs from 'node:fs';const p=JSON.parse(fs.readFileSync('package-lock.json'));const x=p.packages['node_modules/mcp-event-intelligence'];if(x.version!=='0.12.0-next.0'||!x.integrity?.startsWith('sha512-'))process.exit(1)"
       - name: Run real public-package neutral runtime and security tests
         run: npm test
+      - name: Measure bounded same-host native-tool cost (no production SLO)
+        run: node benchmark.mjs > adapter-measurements.json
+      - name: Summarize measured numbers without claiming independent adoption
+        run: |
+          node --input-type=module -e "import fs from 'node:fs';const x=JSON.parse(fs.readFileSync('adapter-measurements.json'));if(x.results.length!==4||x.results.some(r=>!Number.isFinite(r.callLatencyMs.p99)||r.samples!==250))process.exit(1);console.log(JSON.stringify(x.results.map(r=>({variant:r.variant,p95:r.callLatencyMs.p95,p99:r.callLatencyMs.p99,rssDelta:r.rssDeltaAfterCallsBytes}))))"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: portable-tool-runtime-ab-metrics
+          path: examples/host-adapter/portable-runtime-lab/adapter-measurements.json
+          if-no-files-found: warn
