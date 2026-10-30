@@ -122,3 +122,22 @@ it bounds the response sent to a host, not necessarily the SQL CPU, heap
 allocated by an untrusted custom adapter or network transfer into Node.
 The default non-strict inspector remains backward compatible. This is
 partial #48 acceptance #5 evidence, not independent production SLO.
+
+## Strict latest-match cardinality fence (#48)
+
+The strict mode PostgreSQL `getBoundedInspectionMatch` selector now
+materializes at most `maxCandidates + 1` rows for one tenant/trigger/version
+(default 512; configurable 1..4096) **before sorting candidates by the
+existing timestamp/status tie-break**. If the window overflows it refuses
+the entire inspection with `EVENT_INTELLIGENCE_INSPECTION_BUDGET_EXCEEDED`
+rather than claiming that an arbitrarily chosen subset is the latest.
+Only complete bounded candidate sets may be ranked, and the selected
+JSONB is conditionally projected under the preexisting row-byte cap and
+2s SQL statement timeout. Exact match-ID lookup still uses the scoped
+primary key and bypasses latest selection cardinality.
+
+PG16 tests cover same-trigger overflow, exact-at-cap ordering, other
+versions, tenant collisions, empty sets and keyed lookup. This caps the
+sort cardinality, **not** arbitrary upstream index traversal or full
+database CPU/IO in the absence of an appropriate verified index.
+No production p95/p99 or provider completeness SLO is claimed.

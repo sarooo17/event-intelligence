@@ -2194,44 +2194,60 @@ export class PostgresEventStore {
    * share one PG transaction; no exact-key or latest-match fallback scan.
    */
   async getBoundedInspectionMatch({triggerId,version,matchId=null,
-    maxRowBytes=65536,maxScanMs=2000}={}) {
+    maxRowBytes=65536,maxScanMs=2000,maxCandidates=512}={}) {
     if(typeof triggerId!=='string'||!triggerId||
        typeof version!=='string'||!version||
        (matchId!==null&&(typeof matchId!=='string'||!matchId))||
        !Number.isSafeInteger(maxRowBytes)||maxRowBytes<1024||maxRowBytes>131072||
-       !Number.isSafeInteger(maxScanMs)||maxScanMs<100||maxScanMs>5000) {
+       !Number.isSafeInteger(maxScanMs)||maxScanMs<100||maxScanMs>5000||
+       !Number.isSafeInteger(maxCandidates)||maxCandidates<1||maxCandidates>4096) {
       throw new RangeError('Invalid bounded match inspection');
     }
     const exact=matchId!==null;
-    const constraint=exact?' AND record_key=$4':'';
-    const ordering=exact?'':(
+    // Selection must be globally complete within a capped candidate set.
+    // LIMIT N+1 is applied before sorting or projecting potentially large JSONB.
+    const ordering=(
       " ORDER BY date_trunc('millisecond', (payload->>'updatedAt')::timestamptz) DESC,"+
       " CASE WHEN payload->>'status'='fired' THEN 5"+
       " WHEN payload->>'status'='emitted' THEN 4"+
       " WHEN payload->>'status'='matched' THEN 3"+
       " WHEN payload->>'status'='partial' AND payload->'patternState'->>'role'='match' THEN 2"+
       " WHEN payload->>'status'='partial' THEN 1 ELSE 0 END DESC, record_key ASC");
-    const sizeParam=exact?'$5':'$4';
-    const args=exact?[this.scopeId,triggerId,version,matchId,maxRowBytes]:
-      [this.scopeId,triggerId,version,maxRowBytes];
+    const where=" WHERE scope_id=$1 AND kind='trigger_match'"+
+      " AND payload->>'triggerId'=$2 AND payload->>'triggerVersion'=$3";
+    const args=exact
+      ? [this.scopeId,triggerId,version,matchId,maxRowBytes]
+      : [this.scopeId,triggerId,version,maxRowBytes,maxCandidates+1,maxCandidates];
+    const query=exact
+      ? ('SELECT CASE WHEN octet_length(payload::text)<=$5'+
+        ' THEN payload ELSE NULL END AS payload FROM '+this.records+
+        where+' AND record_key=$4 LIMIT 1')
+      : ('WITH candidate_window AS MATERIALIZED ('+
+        ' SELECT record_key,payload FROM '+this.records+where+' LIMIT $5),'+
+        ' cardinality AS (SELECT count(*)::int AS n FROM candidate_window)'+
+        ' SELECT n AS candidate_count, CASE WHEN n>$6 THEN NULL ELSE ('+
+        ' SELECT CASE WHEN octet_length(payload::text)<=$4 THEN payload ELSE NULL END'+
+        ' FROM candidate_window'+ordering+' LIMIT 1) END AS payload'+
+        ' FROM cardinality');
     try {
       return await this.tx(async client=>{
         await client.query("SELECT set_config('statement_timeout',$1,true)",
           [String(maxScanMs)+'ms']);
-        const found=await client.query(
-          'SELECT CASE WHEN octet_length(payload::text)<='+sizeParam+
-          ' THEN payload ELSE NULL END AS payload,'+
-          ' octet_length(payload::text) AS byte_count FROM '+this.records+
-          " WHERE scope_id=$1 AND kind='trigger_match'"+
-          " AND payload->>'triggerId'=$2 AND payload->>'triggerVersion'=$3"+
-          constraint+ordering+' LIMIT 1',args);
+        const found=await client.query(query,args);
         if(!found.rows.length)return null;
-        if(found.rows[0].payload===null) {
+        const row=found.rows[0];
+        if(!exact && row.candidate_count>maxCandidates) {
+          const error=new Error('Latest inspection exceeds candidate cardinality budget');
+          error.code='EVENT_INTELLIGENCE_INSPECTION_BUDGET_EXCEEDED';
+          throw error;
+        }
+        if(!exact && row.candidate_count===0)return null;
+        if(row.payload===null) {
           const error=new Error('Selected match exceeds inspection byte budget');
           error.code='EVENT_INTELLIGENCE_INSPECTION_BUDGET_EXCEEDED';
           throw error;
         }
-        const parsed=parseTriggerMatchRecord(found.rows[0].payload);
+        const parsed=parseTriggerMatchRecord(row.payload);
         return parsed.triggerId===triggerId &&
           parsed.triggerVersion===version &&
           (!exact||parsed.matchId===matchId)?parsed:null;

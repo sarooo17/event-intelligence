@@ -87,6 +87,35 @@ integration('PG16 bounded scoped inspection uses rows not full lists and fails o
     await assert.rejects(()=>a.getBoundedInspectionMatch({
       triggerId:'t',version:'1',maxRowBytes:4096,
     }),e=>e?.code==='EVENT_INTELLIGENCE_INSPECTION_BUDGET_EXCEEDED');
+    // No partial latest-match selection when more than cap candidates exist.
+    await assert.rejects(()=>a.getBoundedInspectionMatch({
+      triggerId:'t',version:'1',maxCandidates:2,
+    }),e=>e?.code==='EVENT_INTELLIGENCE_INSPECTION_BUDGET_EXCEEDED');
+    assert.equal((await a.getBoundedInspectionMatch({
+      triggerId:'t',version:'1',maxCandidates:3,maxRowBytes:131072,
+    })).matchId,'huge');
+    assert.equal((await b.getBoundedInspectionMatch({
+      triggerId:'t',version:'1',maxCandidates:1,
+    })).matchId,'m1');
+    await a.upsert('trigger_match','other-version',{
+      ...currentMatch('other-version','a','2026-10-29T10:09:00.000Z'),
+      triggerVersion:'2',
+    });
+    assert.equal((await a.getBoundedInspectionMatch({
+      triggerId:'t',version:'1',maxCandidates:3,maxRowBytes:131072,
+    })).matchId,'huge');
+    assert.equal((await a.getBoundedInspectionMatch({
+      triggerId:'t',version:'1',matchId:'m1',maxCandidates:1,
+    })).matchId,'m1','keyed lookup does not require latest candidate scan');
+    for(const invalid of [0,4097,1.5]){
+      await assert.rejects(()=>a.getBoundedInspectionMatch({
+        triggerId:'t',version:'1',maxCandidates:invalid,
+      }),/Invalid bounded match inspection/);
+    }
+    assert.equal(await a.getBoundedInspectionMatch({
+      triggerId:'t',version:'unknown',maxCandidates:1,
+    }),null);
+
 
     // A LIMIT-ed history query must also protect against one huge JSONB row.
     const historyBase=currentMatch('m1','a','2026-10-29T10:04:00.000Z');
