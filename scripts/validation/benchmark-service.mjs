@@ -103,6 +103,12 @@ export function monotonicAttemptBucket(elapsedMs, durationSeconds) {
  * tokens, event IDs, raw errors or evidence into the campaign list.
  * Keep active campaigns visible even when many past runs exist.
  */
+// Diagnostic strict-inspector sampling is safe on a settled campaign even
+// when its *load SLO* failed. Never call such a profile production-certified.
+export function isInspectorDiagnosticTerminal(status){
+  return status==='completed'||status==='completed-with-errors';
+}
+
 export function campaignInventory(campaigns) {
   const items = [...campaigns.values()];
   items.sort((left, right) => {
@@ -564,7 +570,7 @@ export function createBenchmarkService({ env = process.env, pool: suppliedPool, 
       if(evidenceMatch && request.method==='POST'){
         const campaign=campaigns.get(evidenceMatch[1]);
         if(!campaign)return sendJson(response,404,{error:'campaign-not-found'});
-        if(campaign.status!=='completed'||
+        if(!isInspectorDiagnosticTerminal(campaign.status)||
            inspectorEvidenceActive||campaignCleanupActive||
            [...campaigns.values()].some(c=>ACTIVE_CAMPAIGN_STATES.has(c.status)))
           return sendJson(response,409,{error:'inspector-evidence-requires-idle-completed-campaign'});
@@ -575,7 +581,7 @@ export function createBenchmarkService({ env = process.env, pool: suppliedPool, 
         const samplesPerTrigger=body?.samplesPerTrigger??5;
         // Revalidate AFTER the asynchronous body read; this is the only
         // lock acquisition point and contains no await before flag=true.
-        if(campaign.status!=='completed'||inspectorEvidenceActive||campaignCleanupActive||
+        if(!isInspectorDiagnosticTerminal(campaign.status)||inspectorEvidenceActive||campaignCleanupActive||
            [...campaigns.values()].some(c=>ACTIVE_CAMPAIGN_STATES.has(c.status)))
           return sendJson(response,409,{error:'inspector-evidence-campaign-race'});
         if(!Number.isSafeInteger(triggerLimit)||triggerLimit<1||
@@ -591,6 +597,9 @@ export function createBenchmarkService({ env = process.env, pool: suppliedPool, 
             triggerLimit,samplesPerTrigger,
           });
           report.campaignId=campaign.id;
+          report.campaignStatus=campaign.status;
+          report.campaignSloFailed=campaign.status!=='completed';
+          report.productionSloCertified=false;
           report.campaignArtifactSha256=campaign.artifactSha256;
           const json=JSON.stringify(report,null,2)+'\n';
           const checksum=createHash('sha256').update(json).digest('hex');
