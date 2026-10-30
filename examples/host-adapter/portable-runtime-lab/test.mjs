@@ -219,7 +219,7 @@ test('actual CEP trigger creation and wake use host-owned policy, scope and opaq
       assert.equal(otherOrgList.result.data.triggers.length, 0);
 
       // The event must enter the SAME trusted org/workspace scope as the watch.
-      await owned.runtime.compositeEventConsumer.ingestCorrelatable({
+      const ingested = await owned.runtime.compositeEventConsumer.ingestCorrelatable({
         traceId: 'lab-order-trace-1',
         sourceEventId: 'lab-paid-1',
         name: 'lab.order.paid',
@@ -232,7 +232,10 @@ test('actual CEP trigger creation and wake use host-owned policy, scope and opaq
         await new Promise(resolve => setTimeout(resolve, 50));
       }
       assert.equal(host.receiptCount(), 1,
-        'CEP event must wake the host-owned authorized agent exactly once in this process');
+        'CEP event must wake the host-owned authorized agent exactly once in this process; ' +
+          JSON.stringify({ deliveries: ingested.deliveries, results: ingested.results?.map(r => ({
+            triggerId: r.triggerId, matched: r.matched,
+          })) }));
     } finally {
       await host.close();
     }
