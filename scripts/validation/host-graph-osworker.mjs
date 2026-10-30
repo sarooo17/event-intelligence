@@ -1,7 +1,8 @@
 // #353: separate OS-process host reference worker. Host authority and PG
 // schema are supplied by trusted test operator, NOT event/packet scope.
 import pg from 'pg';
-import {createOrgGraphWakeDispatcher} from '../../examples/host-adapter/multi-org-graph-host.mjs';
+import {createOrgGraphWakeRuntime} from '../../examples/host-adapter/multi-org-graph-host.mjs';
+import {createActivationDispatcher} from '../../scripts/embedded-host-kit.mjs';
 const payload=JSON.parse(process.argv[2]??'null');
 const {Pool}=pg;
 async function main(){
@@ -28,12 +29,26 @@ async function main(){
       evidence:[],trust:{continuation:'configured_trigger_instruction',
         evidence:'untrusted_external_signal'},
     };
-    const handler=createOrgGraphWakeDispatcher({
+    const runtime=createOrgGraphWakeRuntime({
       pool,tablePrefix,orgId,workspaceId,
       ...(crashAfterCommit?{
         onCommitted:()=>{process.kill(process.pid,'SIGKILL');},
       }:{}),
     });
+    // Forced contention: each OS worker must observe the same receipt as
+    // absent before the parent releases both processes into delivery.
+    const gated=payload.waitForRelease===true?{
+      ...runtime,
+      async hasReceipt(...args){
+        const found=await runtime.hasReceipt(...args);
+        if(!found){
+          process.stdout.write(JSON.stringify({ready:true,pid:process.pid})+'\n');
+          await new Promise(resolve=>process.stdin.once('data',resolve));
+        }
+        return found;
+      },
+    }:runtime;
+    const handler=createActivationDispatcher(gated);
     const out=await handler({wake_id:wakeId,
       scope_id:forgedScope||orgId},activation);
     process.stdout.write(JSON.stringify({
