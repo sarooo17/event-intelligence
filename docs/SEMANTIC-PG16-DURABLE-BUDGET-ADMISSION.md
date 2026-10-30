@@ -93,3 +93,20 @@ price-version and any in-flight/unknown charges separately before claiming
 hard billable cost. Legacy callers without `reservationId` are unchanged.
 Real PG16 two-pool/foreign-tenant/restart adversarial tests cover uniqueness,
 resource reservation, opaque identity and old API compatibility.
+
+## Automatic per-batch call IDs for existing Pattern v2 hosts
+
+With `autoReservationId:true`, `createPostgresSemanticAdmission` now
+uses the existing safe evaluator namespace/node/candidate signature and
+host batch identifier to derive one stable SHA-256 request intent per
+candidate per batch. It requires no new Pattern AST field or provider SDK.
+Repeated evaluations of the same candidate in the same host episode are
+denied rather than spending one reservation on multiple remote calls;
+separate candidates consume separate allowances. A legitimate new provider
+call/retry MUST use a new host batch/ID and spend budget again. The default
+is `false`, preserving existing host behavior. An explicit validated
+request `reservationId` takes precedence over automatic derivation.
+
+Actual Pattern v2 plus PG16 integration verifies two calls (different
+candidates) and denies duplicate remote evaluation in the same batch.
+This is EI-side admission correctness, not external provider billing.

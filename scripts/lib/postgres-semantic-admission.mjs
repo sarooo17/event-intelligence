@@ -25,6 +25,7 @@ function limits(input){
 }
 export function createPostgresSemanticAdmission({
   store,batchId,budgetEpoch='1',budget,estimate,maxEstimateMs=2000,
+  autoReservationId=false,
 }={}){
   if(!store || typeof store.tx!=='function' ||
      typeof store.lock!=='function' ||
@@ -36,6 +37,9 @@ export function createPostgresSemanticAdmission({
   }
   if(!Number.isSafeInteger(maxEstimateMs) || maxEstimateMs<10 || maxEstimateMs>30000) {
     throw new RangeError('maxEstimateMs must be an integer from 10 to 30000');
+  }
+  if(typeof autoReservationId!=='boolean') {
+    throw new TypeError('autoReservationId must be boolean');
   }
   const policy=limits(budget);
   // Every worker sharing one policy epoch MUST enforce the same quotas.
@@ -92,9 +96,18 @@ export function createPostgresSemanticAdmission({
       // Opt-in per-call identity prevents retries from spending one reservation
       // on multiple provider calls. Persist only a digest of host IDs, not
       // an application payload or external provider credential.
-      const receiptKey=request.reservationId===undefined ? null :
+      // The existing Pattern v2 evaluator sends safe reference identities,
+      // not a host-supplied request ID. In explicitly opted-in mode, derive
+      // a stable per-batch candidate intent, so duplicate evaluation after
+      // a crash cannot reuse one reserved provider call.
+      const effectiveReservationId=request.reservationId ??
+        (autoReservationId ? digest(JSON.stringify([
+          batchId,request.namespace,request.nodeId,
+          request.candidateSignature,request.evaluatorIdentity,
+        ])) : null);
+      const receiptKey=effectiveReservationId===null ? null :
         'reservation:'+JSON.stringify([request.namespace,budgetEpoch,
-          digest(request.reservationId)]);
+          digest(effectiveReservationId)]);
       // Locking triggerKey serializes every worker's reservations in the
       // SAME scoped PG store across distinct pg Pools and processes.
       return store.tx(async client=>{
@@ -163,7 +176,7 @@ export function createPostgresSemanticAdmission({
         if(receiptKey!==null){
           await store.upsert('semantic_budget_receipt',receiptKey,{
             contract:'ei.semantic-reservation.v1',
-            reservationDigest:digest(request.reservationId),
+            reservationDigest:digest(effectiveReservationId),
             namespaceDigest:digest(request.namespace),
             batchDigest:digest(batchId),
             evaluatorDigest:digest(request.evaluatorIdentity),
