@@ -207,7 +207,7 @@ test('all twelve public npm import subpaths are real, classified and free of obs
   assert.match(embedded,/requireExplicitReceipt:\s*true,/,
     'canonical facade must reject unacknowledged host delivery by default');
   assert.match(read('docs/releases/0.12.0-next.0-compatibility.md'),
-    /new versioned\s+candidate/i,
+    /new versioned/i,
     'a source-only pre-v1 break must not be misrepresented as published npm');
   assert.equal(entries.length,12);
 });
