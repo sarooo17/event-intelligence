@@ -1,6 +1,6 @@
 // This is an independent test host: no EI imports, policy or agent SDK.
  // In-memory host state exercises authority semantics, NOT durable HA receipts.
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 const key = (...ids) => JSON.stringify(ids);
 const scopeKey = (org, workspace) => 'lab-' + createHash('sha256')
   .update(key(org, workspace)).digest('hex').slice(0, 24);
@@ -65,10 +65,13 @@ export function makeRuntimeHost() {
           ok: false, error: { code: 'LAB_OWNER_REQUIRED', message: 'Owner approval required' },
         } };
       }
-      // A stable confirmation token MUST be request-specific and issued by the host;
-      // this fixture has no such per-request durable token. Never fabricate a
-      // reusable receipt from actor/action (it would alias distinct creates).
-      return { action: 'execute' };
+      // Test-host owner approval happens above. Issue a fresh host-only
+      // confirmation for THIS authorized mutation; never accept it from
+      // model arguments, external event data, or reuse an actor/action token.
+      // Production hosts must persist/link approval to the request and policy.
+      return { action: 'execute', execution: {
+        confirmationId: randomUUID(),
+      } };
     },
     registerNative(native, capability) {
       if (tools.has(native.name)) throw Error('LAB_DUPLICATE_TOOL');
