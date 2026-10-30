@@ -35,6 +35,7 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm run build
       - name: Local PostgreSQL16 with synthetic provider, zero external requests
         run: |
           node --test test/openai-responses-provider.test.mjs test/openai-project-costs.test.mjs test/openai-admin-cost-witness.test.mjs
