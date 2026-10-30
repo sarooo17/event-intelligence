@@ -313,3 +313,14 @@ The operator should run this only after the smoke campaign's clean
 terminal status and archive the returned SHA-256 alongside the original
 campaign/raw-artifact digests. The endpoint is private-network-only;
 never generate public domains for benchmark or workers.
+
+**Concurrency and preflight hardening:** The inspector endpoint checks
+mutual exclusion again *after* the asynchronous HTTP body read, before
+setting its single in-process evidence flag. Campaign creation and cleanup
+check the same flag both before and after reading their bodies, so they
+cannot start or delete the scoped dataset during measurement. The measurement
+reader verifies the deployed PostgreSQL schema shape using only catalog
+queries: it **never** calls `PostgresEventStore.init()`, which can perform
+unbounded scope restoration scans before the timing/IO baseline. Scope IDs
+use the same 240-character normalization as the production PG store,
+including valid dots; PG16 integration tests cover dotted scope IDs.
