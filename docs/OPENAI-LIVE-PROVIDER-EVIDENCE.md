@@ -99,3 +99,47 @@ charged usage, deadline/cancellation/restart and bill attribution are proven.
 - https://developers.openai.com/api/reference/python/resources/responses/methods/cancel
 - https://developers.openai.com/api/docs/guides/token-counting
 - https://developers.openai.com/api/reference/resources/admin/subresources/organization/subresources/usage/methods/costs
+
+
+## Admin cost witness runner (read-only, separate from the model runner)
+
+A separate operator context can now execute
+`node scripts/validation/run-openai-admin-cost-witness.mjs` with exactly:
+
+- `EI_CONFIRM_ADMIN_COST_WITNESS=YES`
+- `OPENAI_ADMIN_KEY` — **admin-only** cost-read credential, never shared
+  with the model-calling runner and never logged
+- `EI_OPENAI_PROJECT_ID` — the exact **isolated validation project**
+- `EI_OPENAI_COST_DAY_UTC` — one completed UTC calendar date, for example
+  `2026-10-27`
+
+The script validates an exact completed UTC day; fetches the **project-filtered
+single-day** official costs using `createOpenAIProjectCostReader`; outputs
+**only** a project ID digest, daily USD/micro-USD amount and explicit flags
+`independentInvoiceConfirmed:false`, `perRequestAttribution:false`,
+`finalBillingSettlementCertified:false`,
+`remoteCancellationCertified:false` and
+`isolatedProjectOperatorAttestationRequired:true`. A provider-reported
+day-total is NOT a response-level invoice, nor evidence that synchronous
+`fetch` abort stopped remote billing. Do not auto-join the model-call and
+admin-key credentials. Keep admin output as a separate redacted evidence
+record; compare to the model runner's hashed request metadata only after an
+operator independently verifies project isolation, lack of other billable
+activity, price-versioned input/cached/reasoning/output billing, and invoice
+settlement. If this is impossible, declare **INCONCLUSIVE**, not PASS.
+
+The new `Semantic Provider Billing Witness Conformance` pull-request CI
+uses an **isolated local PostgreSQL 16** and deterministic fake network
+responses only. It measures two independent pools racing one request intent,
+overreported token usage and retained conservative quota, before testing
+admin project-cost redaction and malformed provider outputs. Its tests and
+logs MUST NOT contain `OPENAI_API_KEY` or `OPENAI_ADMIN_KEY`. A green job
+is **not** the live provider/cost acceptance.
+
+**Current actual external-evidence state (2026-10-30):** EI's
+`ei-validation` Railway staging workers and validation runner do **not**
+have `OPENAI_API_KEY` or `EI_CONFIRM_LIVE_OPENAI_TEST` set.
+Without a separately credentialed isolated OpenAI test project, admin key
+and settled project billing evidence, the last #49 acceptance cannot
+be checked truthfully. A real external charge has NOT been executed,
+and no invented request ID or provider invoice is used.
