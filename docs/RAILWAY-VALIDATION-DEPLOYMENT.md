@@ -324,3 +324,14 @@ queries: it **never** calls `PostgresEventStore.init()`, which can perform
 unbounded scope restoration scans before the timing/IO baseline. Scope IDs
 use the same 240-character normalization as the production PG store,
 including valid dots; PG16 integration tests cover dotted scope IDs.
+
+**PostgreSQL statistics publication caveat:** PostgreSQL 16's cumulative
+`pg_stat_database` counters are published asynchronously, no more often
+than once per second. A short inspection run cannot truthfully compute
+its immediate physical I/O usage by subtracting two snapshots. The live
+report therefore sets `pgDatabaseGlobalDelta:null` and
+`pgDatabaseGlobalDeltaAvailable:false`, explicitly recording the reason,
+rather than emitting a spurious zero or contaminated I/O delta. The
+separately reviewed PG16 `EXPLAIN (ANALYZE,BUFFERS)` evidence in #346
+covers physical I/O for the bounded SQL candidate subquery, **not** this
+entire inspector path. Full-path attributable server I/O remains unverified.
