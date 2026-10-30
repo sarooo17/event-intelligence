@@ -89,6 +89,7 @@ export function makeRuntimeHost() {
     },
     receiptNamespace: 'portable-lab:single-process',
     hasReceipt(receiptId) { return outbox.has(receiptId); },
+    receiptCount() { return outbox.size; },
     resolveWakeTarget(target) {
       if (target?.runtime !== 'portable-lab') return null;
       const record = agents.get(target.id);
