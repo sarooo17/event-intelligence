@@ -55,6 +55,7 @@ export function createPostgresSemanticAdmission({
       // upper bounds, NOT just a best-effort estimated average.
       // The host estimator runs before reservation. A stuck estimator must
       // deny, not leave the evaluation waiting indefinitely or admit at zero cost.
+      const estimatorStartedNs=process.hrtime.bigint();
       let timer;
       let estimateResult;
       try {
@@ -70,6 +71,12 @@ export function createPostgresSemanticAdmission({
         ]);
       } finally {
         clearTimeout(timer);
+      }
+      // Promise.race alone is insufficient: a synchronous callback may
+      // block the event loop beyond the deadline and resolve before its
+      // overdue timeout callback can execute. Reject by monotonic elapsed time.
+      if(process.hrtime.bigint()-estimatorStartedNs >= BigInt(maxEstimateMs)*1000000n) {
+        return false;
       }
       if(!estimateResult || !integer(estimateResult.tokens) ||
          !integer(estimateResult.costMicros)) return false;
