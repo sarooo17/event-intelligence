@@ -143,6 +143,15 @@ test('ambiguous fsync failure poisons this source until cold log validation',asy
   }finally{await source?.close().catch(()=>{});await rm(dir,{recursive:true,force:true});}
 });
 
+test('durable source refuses to initialize inside an unprovisioned parent directory',async()=>{
+  const dir=await mkdtemp(join(tmpdir(),'ei-source-parent-')),k=keys();
+  const c=config(join(dir,'absent-child'),k,()=>Date.now());
+  try{
+    await assert.rejects(()=>createStandaloneSource(c),
+      e=>e.code==='SOURCE_LOG_PARENT_INVALID');
+  }finally{await rm(dir,{recursive:true,force:true});}
+});
+
 test('source log identity and prewrite size budget fail closed before accepting unsafe history',async()=>{
   const dir=await mkdtemp(join(tmpdir(),'ei-source-size-')),k=keys();
   const c=config(dir,k,()=>Date.UTC(2026,9,31,12,0,0));
