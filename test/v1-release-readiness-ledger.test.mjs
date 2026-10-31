@@ -15,8 +15,12 @@ test('current pre-v1 candidate remains explicitly blocked without fake approval'
   assert.deepEqual(report.errors,[]);
   assert.equal(report.status,'blocked');
   assert.equal(report.autoPublish,false);
-  assert.equal(report.requiredCount,9);
-  assert.equal(report.optionalCount,3);
+  assert.equal(report.requiredCount,11);
+  assert.equal(report.optionalCount,1);
+  assert.ok(report.blocked.includes('full-explainability'));
+  assert.ok(report.blocked.includes('semantic-triage'));
+  assert.equal(ledger.criteria.find(x=>x.id==='full-explainability').required,true);
+  assert.equal(ledger.criteria.find(x=>x.id==='semantic-triage').required,true);
   assert.equal(report.blocked.includes('embedded-host-independent'),false);
   assert.equal(ledger.criteria.find(x=>x.id==='embedded-host-independent').required,false);
   assert.equal(ledger.criteria.find(x=>x.id==='embedded-host-independent').status,'blocked');
@@ -116,6 +120,29 @@ test('owner-waived independent authoring is optional but cannot bypass v1 P0 rel
   assert.ok(evaluateV1Readiness(malicious,'1.0.0').errors.some(x=>x.includes('embedded-host-independent')));
   const bypass=clone(ledger);
   for(const r of bypass.criteria)if(r.required)r.status='verified';
-  assert.ok(evaluateV1Readiness(bypass,'1.0.0').errors.length>=9,
-    'independent/manual reviewer and specific evidence mandatory for all nine gates');
+  assert.ok(evaluateV1Readiness(bypass,'1.0.0').errors.length>=11,
+    'independent/manual reviewer and specific evidence mandatory for all eleven gates');
+});
+
+test('2026-10-30 owner release decision cannot be bypassed by optionalizing #48 or #49',()=>{
+  for(const id of ['full-explainability','semantic-triage']){
+    const downgraded=clone(ledger);
+    downgraded.criteria.find(x=>x.id===id).required=false;
+    const report=evaluateV1Readiness(downgraded,'1.0.0');
+    assert.equal(report.status,'blocked');
+    assert.ok(report.errors.some(x=>x.includes(id)));
+  }
+  // Even when all other release gates receive auditor metadata, both
+  // unresolved product-owner-required workstreams must independently block.
+  const priorGatesVerified=clone(ledger);
+  for(const row of priorGatesVerified.criteria){
+    if(!row.required||['full-explainability','semantic-triage'].includes(row.id))continue;
+    row.status='verified';
+    row.evidence=['https://github.com/sarooo17/event-intelligence/issues/'+row.issue];
+    row.verification={reviewer:'independent-auditor',procedure:'Independent manual acceptance review',date:'2026-10-30'};
+  }
+  const report=evaluateV1Readiness(priorGatesVerified,'1.0.0');
+  assert.deepEqual(report.errors,[]);
+  assert.deepEqual(report.blocked,['full-explainability','semantic-triage']);
+  assert.equal(report.autoPublish,false);
 });
