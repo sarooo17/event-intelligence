@@ -203,11 +203,28 @@ export async function serveStandaloneSource({source,token,port=0,host='127.0.0.1
       const body=JSON.parse(buffer||'{}');
       if(!body||typeof body!=='object'||Array.isArray(body))
         throw fail('SOURCE_PAYLOAD_INVALID','Invalid request');
-      if(req.url==='/rpc'&&body.method==='events/list')
-        return send(200,{result:{events:[{name:source.eventName,
-          delivery:['poll'],payloadSchema:{type:'object'}}]}});
-      if(req.url==='/rpc'&&body.method==='events/poll')
-        return send(200,{result:source.poll(body.params)});
+      if(req.url==='/rpc'){
+        if(body.jsonrpc!=='2.0'||!(typeof body.id==='string'||
+          Number.isSafeInteger(body.id))||typeof body.method!=='string')
+          throw fail('SOURCE_RPC_INVALID','Invalid JSON-RPC envelope');
+        if(body.method==='initialize')return send(200,{
+          jsonrpc:'2.0',id:body.id,result:{resultType:'complete',
+            protocolVersion:'2026-07-28',
+            capabilities:{extensions:{
+              'io.modelcontextprotocol/events':{listChanged:false}}},
+            serverInfo:{name:'ei-standalone-evidence-source',version:'0.1.0'}}});
+        if(body.method==='events/list')return send(200,{
+          jsonrpc:'2.0',id:body.id,result:{resultType:'complete',
+            events:[{name:source.eventName,description:'Durable test-source log',
+              delivery:['poll'],
+              inputSchema:{type:'object',additionalProperties:false},
+              payloadSchema:{type:'object'}}]}});
+        if(body.method==='events/poll')return send(200,{
+          jsonrpc:'2.0',id:body.id,result:{...source.poll(body.params),
+            resultType:'complete'}});
+        return send(200,{jsonrpc:'2.0',id:body.id,error:{
+          code:-32601,message:'Method not found'}});
+      }
       if(req.url==='/control/append'){
         if(Object.hasOwn(body,'timestamp')||Object.hasOwn(body,'occurredAt'))
           throw fail('SOURCE_BACKDATED_EVENT_REJECTED','Client cannot assign event time');
