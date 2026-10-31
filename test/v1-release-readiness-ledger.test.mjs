@@ -15,8 +15,8 @@ test('current pre-v1 candidate remains explicitly blocked without fake approval'
   assert.deepEqual(report.errors,[]);
   assert.equal(report.status,'blocked');
   assert.equal(report.autoPublish,false);
-  assert.equal(report.requiredCount,11);
-  assert.equal(report.optionalCount,1);
+  assert.equal(report.requiredCount,9);
+  assert.equal(report.optionalCount,6);
   assert.ok(report.blocked.includes('full-explainability'));
   assert.ok(report.blocked.includes('semantic-triage'));
   assert.equal(ledger.criteria.find(x=>x.id==='full-explainability').required,true);
@@ -24,9 +24,11 @@ test('current pre-v1 candidate remains explicitly blocked without fake approval'
   assert.equal(report.blocked.includes('embedded-host-independent'),false);
   assert.equal(ledger.criteria.find(x=>x.id==='embedded-host-independent').required,false);
   assert.equal(ledger.criteria.find(x=>x.id==='embedded-host-independent').status,'blocked');
-  assert.ok(report.blocked.includes('security-independent-review'));
+  assert.equal(report.blocked.includes('security-independent-review'),false);
+  assert.equal(report.blocked.includes('pg-scale-measured'),false);
+  assert.equal(ledger.criteria.find(x=>x.id==='security-independent-review').issue,317);
   assert.ok(report.blocked.includes('pg-retention-audit'));
-  assert.equal(report.blocked.includes('pg-scale-measured'),true);
+  assert.equal(report.blocked.includes('pg-chaos-recovery'),true);
   assert.equal(report.blocked.includes('package-version-not-1.0.0'),true);
 });
 
@@ -120,11 +122,11 @@ test('owner-waived independent authoring is optional but cannot bypass v1 P0 rel
   assert.ok(evaluateV1Readiness(malicious,'1.0.0').errors.some(x=>x.includes('embedded-host-independent')));
   const bypass=clone(ledger);
   for(const r of bypass.criteria)if(r.required)r.status='verified';
-  assert.ok(evaluateV1Readiness(bypass,'1.0.0').errors.length>=11,
-    'independent/manual reviewer and specific evidence mandatory for all eleven gates');
+  assert.ok(evaluateV1Readiness(bypass,'1.0.0').errors.length>=9,
+    'independent/manual reviewer and specific evidence mandatory for all nine SDK gates');
 });
 
-test('2026-10-30 owner release decision cannot be bypassed by optionalizing #48 or #49',()=>{
+test('2026-10-31 owner SDK scope decision cannot be bypassed by optionalizing #48 or #49',()=>{
   for(const id of ['full-explainability','semantic-triage']){
     const downgraded=clone(ledger);
     downgraded.criteria.find(x=>x.id===id).required=false;
@@ -145,4 +147,39 @@ test('2026-10-30 owner release decision cannot be bypassed by optionalizing #48 
   assert.deepEqual(report.errors,[]);
   assert.deepEqual(report.blocked,['full-explainability','semantic-triage']);
   assert.equal(report.autoPublish,false);
+});
+
+
+test('2026-10-31 owner scope splits SDK correctness from optional production attestation',()=>{
+  const external=['embedded-host-independent','security-independent-review',
+    'pg-scale-measured','external-source-finality','provider-billing-and-cancel',
+    'production-host-ha-slo'];
+  assert.deepEqual([...V1_OPTIONAL_CRITERIA],external);
+  assert.equal(V1_REQUIRED_CRITERIA.length,9);
+  for(const id of external){
+    const row=ledger.criteria.find(x=>x.id===id);
+    assert(row,'missing external evidence mapping: '+id);
+    assert.equal(row.required,false,id);
+    assert.equal(row.status,'blocked',id);
+    const wrong=clone(ledger);
+    wrong.criteria.find(x=>x.id===id).required=true;
+    assert.ok(evaluateV1Readiness(wrong,'1.0.0').errors.some(e=>e.includes(id)),id);
+  }
+  // External production signoff cannot bypass SDK retention and security.
+  const allExternalApproved=clone(ledger);
+  for(const row of allExternalApproved.criteria){
+    if(row.required)continue;
+    row.status='verified';
+    row.evidence=['https://github.com/sarooo17/event-intelligence/issues/'+row.issue];
+    row.verification={reviewer:'operator',
+      procedure:'Separate production/enterprise evidence review',
+      date:'2026-10-31'};
+  }
+  const r=evaluateV1Readiness(allExternalApproved,'1.0.0');
+  assert.deepEqual(r.errors,[]);
+  assert.equal(r.status,'blocked');
+  for(const id of ['pg-retention-audit','security-revocation-and-tenant',
+    'full-explainability','semantic-triage'])assert.ok(r.blocked.includes(id));
+  assert.equal(r.blocked.includes('production-host-ha-slo'),false);
+  assert.equal(r.autoPublish,false);
 });
