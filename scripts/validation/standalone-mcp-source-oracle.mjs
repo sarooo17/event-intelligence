@@ -28,6 +28,16 @@ export async function verifyStandaloneOracle({logPath,sourceLog,
       throw error('ORACLE_CHAIN_INVALID');
     hash=r.hash;
     const p=r.payload;
+    if(n===0){
+      const required={kind:'identity',scopeId:expected.scopeId,
+        sourceKeyDigest:expected.sourceKeyDigest,
+        connectionId:expected.connectionId,serverId:expected.serverId,
+        eventName:expected.eventName,
+        argumentsCanonical:expected.argumentsCanonical??'{}'};
+      if(JSON.stringify(p)!==JSON.stringify(required))
+        throw error('ORACLE_SOURCE_IDENTITY_MISMATCH');
+      continue;
+    }
     if(p?.kind==='event'){
       const ms=Date.parse(p.occurredAt);
       if(!p.eventId||ids.has(p.eventId)||!Number.isFinite(ms)||
@@ -46,6 +56,7 @@ export async function verifyStandaloneOracle({logPath,sourceLog,
       revoked=p.revoked;revision++;activeSeal=-1;
     }else throw error('ORACLE_RECORD_KIND_INVALID');
   }
+  if(!rows.length)throw error('ORACLE_SOURCE_IDENTITY_MISMATCH');
   if(!sourceLog||sourceLog.sequence!==rows.length||
      sourceLog.head!==hash||sourceLog.providerRevision!==revision)
     throw error('ORACLE_SOURCE_CHECKPOINT_MISMATCH');
