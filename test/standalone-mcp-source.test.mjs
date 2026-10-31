@@ -77,7 +77,7 @@ test('first-party standalone log oracle independently verifies durable monotonic
     e=>e.code==='ORACLE_SIGNATURE_INVALID');
     await source.setRevoked(true);
     assert.throws(()=>source.frontier({completenessRevision:2}),
-      e=>e.code==='SOURCE_UNSEALED');
+      e=>e.code==='SOURCE_REVOKED');
     assert.throws(()=>source.poll(),e=>e.code==='SOURCE_REVOKED');
     assert.equal((await source.setRevoked(false)).revision,3);
     assert.throws(()=>source.frontier({completenessRevision:3}),
