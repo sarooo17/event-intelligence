@@ -90,6 +90,37 @@ integration('PG16 v1 no-prune: scoped source+dedup+audit survive real terminal c
     assert.equal(JSON.stringify(base).includes('opaque-private-cursor'),false);
     assert.equal(JSON.stringify(base).includes('never-in-report'),false);
     const history='"'+prefix+'_history"';
+    // The operator maxScanMs must apply to the actual long-running source
+    // history SELECT and full audit checkpoint advisory lock, not only to
+    // the preliminary inventory. No source/audit/wake deletion occurs.
+    const sourceHolder=await bPool.connect();
+    try{
+      await sourceHolder.query('BEGIN');
+      await sourceHolder.query('LOCK TABLE '+history+
+        ' IN ACCESS EXCLUSIVE MODE');
+      await assert.rejects(()=>verifyPostgresV1NoPruneRetention({
+        store:a,maxScanMs:150}),
+        e=>e.code==='57014','blocked source SQL must fail within budget');
+    }finally{
+      await sourceHolder.query('ROLLBACK');
+      sourceHolder.release();
+    }
+    const auditHolder=await bPool.connect();
+    try{
+      await auditHolder.query('BEGIN');
+      await auditHolder.query(
+        'SELECT pg_advisory_xact_lock(hashtextextended($1,0))',
+        [prefix+':v1-A:audit:chain']);
+      await assert.rejects(()=>verifyPostgresV1NoPruneRetention({
+        store:a,maxScanMs:150}),
+        e=>e.code==='57014','blocked audit lock must fail within budget');
+    }finally{
+      await auditHolder.query('ROLLBACK');
+      auditHolder.release();
+    }
+    assert.equal((await verifyPostgresV1NoPruneRetention({store:a}))
+      .sourceTailSequence,3);
+
     await aPool.query('UPDATE '+history+
       ' SET created_at=$1::timestamptz WHERE scope_id=$2 AND kind=ANY($3)',
       ['2026-10-08T10:00:00.000Z','v1-A',
