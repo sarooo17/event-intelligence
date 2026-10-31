@@ -51,21 +51,24 @@ operator preflight reads. Under contention, the preflight must error,
 never treat a timed-out scan as success. PG16 tests hold a live
 `ACCESS EXCLUSIVE` source-history lock and a separate audit advisory
 lock to force these fail-closed timeout paths. A separate real PG16 test
-writes oversized source and audit JSONB and verifies that the lower
-aggregate byte caps reject those rows without loading them into Node.
+writes oversized source and audit JSONB and verifies that lower
+aggregate **and per-row** byte caps reject those rows without loading
+them into Node.
 
 The optional, non-published validation module
 `scripts/validation/postgres-no-prune-retention-v1.mjs` provides
 `verifyPostgresV1NoPruneRetention({store,maxOccurrences,maxAuditRecords,
-maxSources,maxScanMs,maxMatchRevisions,maxSourceBytes,maxAuditBytes,matchIds,wakeIds})`.
+maxSources,maxScanMs,maxMatchRevisions,maxSourceBytes,maxAuditBytes,maxSourceRowBytes,maxAuditRowBytes,matchIds,wakeIds})`.
 
 It checks source-state inventory and the **full local source/dedup
 continuity**, source archive checkpoint, genesis-linked audit checkpoint,
 with actual PostgreSQL-side aggregate byte checks **before** original source,
 dedup or audit JSONB payloads can cross into the Node process. Default
 source+dedup cap: **16 MiB**, audit cap: **8 MiB**, operator-configurable
-between 1 KiB and 64 MiB; the source archive checkpoint separately
-checks source payload byte length under the append fence. The preflight
+between 1 KiB and 64 MiB, plus an independent **128 KiB per source/dedup
+or audit record** default (configurable from 1 KiB to 1 MiB). The source
+archive checkpoint separately checks source payload aggregate and per-row
+bytes under the append fence; both guards run before the full JSONB read. The preflight
 also checks requested latest-match provenance and selected durable wake receipt IDs,
 including a separate retained wake-history witness. Match history scans
 are bounded to 1–500 revisions per requested ID, 64 KiB per row,
