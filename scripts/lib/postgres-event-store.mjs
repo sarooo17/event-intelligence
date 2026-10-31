@@ -2749,13 +2749,16 @@ export class PostgresEventStore {
    */
   async getMcpOccurrenceArchiveCheckpoint({
     maxOccurrences = 10000, maxScanMs = 5000, maxTotalBytes = null,
+    maxRowBytes = null,
   } = {}) {
     if (!Number.isSafeInteger(maxOccurrences) ||
         maxOccurrences < 1 || maxOccurrences > 10000 ||
         !Number.isSafeInteger(maxScanMs) ||
         maxScanMs < 100 || maxScanMs > 30000 ||
         (maxTotalBytes!==null && (!Number.isSafeInteger(maxTotalBytes) ||
-          maxTotalBytes<1024 || maxTotalBytes>64*1024*1024))) {
+          maxTotalBytes<1024 || maxTotalBytes>64*1024*1024)) ||
+        (maxRowBytes!==null && (!Number.isSafeInteger(maxRowBytes) ||
+          maxRowBytes<1024 || maxRowBytes>1024*1024))) {
       const error = new TypeError('MCP archive checkpoint requires maxOccurrences 1..10000 and maxScanMs 100..30000');
       error.code = 'EVENT_INTELLIGENCE_MCP_ARCHIVE_POLICY_INVALID';
       throw error;
@@ -2781,12 +2784,16 @@ export class PostgresEventStore {
         }
         // Read only an aggregate scalar BEFORE materializing JSONB payloads.
         // The source-sequence writer fence pins this exact source snapshot.
-        if(maxTotalBytes!==null){
+        if(maxTotalBytes!==null || maxRowBytes!==null){
           const bytes=await client.query(
-            'SELECT COALESCE(SUM(octet_length(payload::text)::bigint),0)::text AS n FROM '+
+            'SELECT COALESCE(SUM(octet_length(payload::text)::bigint),0)::text AS n, '+
+            'COALESCE(MAX(octet_length(payload::text)),0)::int AS row_bytes FROM '+
             this.history+' WHERE scope_id=$1 AND kind=$2',
             [this.scopeId,'mcp_occurrence']);
-          if(BigInt(bytes.rows[0]?.n??'0')>BigInt(maxTotalBytes)){
+          if(maxTotalBytes!==null &&
+              BigInt(bytes.rows[0]?.n??'0')>BigInt(maxTotalBytes) ||
+              maxRowBytes!==null &&
+              Number(bytes.rows[0]?.row_bytes)>maxRowBytes){
             const error=new Error('MCP archive source bytes exceed operator cap');
             error.code='EVENT_INTELLIGENCE_MCP_ARCHIVE_SCAN_BUDGET_EXCEEDED';
             throw error;
@@ -2917,12 +2924,14 @@ export class PostgresEventStore {
   }
 
   async listMcpOccurrencesAfter(sequence, {
-    maxScanMs = null,maxTotalBytes = null,
+    maxScanMs = null,maxTotalBytes = null,maxRowBytes = null,
   } = {}) {
     if((maxScanMs!==null && (!Number.isSafeInteger(maxScanMs) ||
         maxScanMs<100 || maxScanMs>30000)) ||
         (maxTotalBytes!==null && (!Number.isSafeInteger(maxTotalBytes) ||
-          maxTotalBytes<1024 || maxTotalBytes>64*1024*1024))) {
+          maxTotalBytes<1024 || maxTotalBytes>64*1024*1024)) ||
+        (maxRowBytes!==null && (!Number.isSafeInteger(maxRowBytes) ||
+          maxRowBytes<1024 || maxRowBytes>1024*1024))) {
       const error=new TypeError('MCP replay SQL budget must be 100..30000 ms');
       error.code='EVENT_INTELLIGENCE_MCP_REPLAY_POLICY_INVALID';
       throw error;
@@ -2970,6 +2979,23 @@ export class PostgresEventStore {
           [this.scopeId]);
         if(BigInt(size.rows[0]?.total_bytes??'0')>BigInt(maxTotalBytes)){
           const error=new Error('MCP replay history/dedup bytes exceed operator cap');
+          error.code='EVENT_INTELLIGENCE_MCP_REPLAY_BUDGET_EXCEEDED';
+          throw error;
+        }
+      }
+      if(maxRowBytes!==null){
+        const size=await client.query(
+          'SELECT GREATEST('+
+          '(SELECT COALESCE(MAX(octet_length(payload::text)),0) FROM '+
+          this.history+" WHERE scope_id=$1 AND kind='mcp_occurrence'),"+
+          '(SELECT COALESCE(MAX(octet_length(payload::text)),0) FROM '+
+          this.records+" WHERE scope_id=$1 AND kind='mcp_occurrence_key'),"+
+          '(SELECT COALESCE(MAX(octet_length(record_key)),0) FROM '+
+          this.records+" WHERE scope_id=$1 AND kind='mcp_occurrence_key')"+
+          ')::int AS n',
+          [this.scopeId]);
+        if(Number(size.rows[0]?.n)>maxRowBytes){
+          const error=new Error('MCP replay source/dedup row exceeds operator cap');
           error.code='EVENT_INTELLIGENCE_MCP_REPLAY_BUDGET_EXCEEDED';
           throw error;
         }
@@ -3746,12 +3772,14 @@ export class PostgresEventStore {
    * (off-host/WORM) before trusting later exported archive windows.
    */
   async getAuditCheckpoint({
-    maxScanMs = null,maxTotalBytes = null,
+    maxScanMs = null,maxTotalBytes = null,maxRowBytes = null,
   } = {}) {
     if((maxScanMs!==null && (!Number.isSafeInteger(maxScanMs) ||
         maxScanMs<100 || maxScanMs>30000)) ||
         (maxTotalBytes!==null && (!Number.isSafeInteger(maxTotalBytes) ||
-          maxTotalBytes<1024 || maxTotalBytes>64*1024*1024))) {
+          maxTotalBytes<1024 || maxTotalBytes>64*1024*1024)) ||
+        (maxRowBytes!==null && (!Number.isSafeInteger(maxRowBytes) ||
+          maxRowBytes<1024 || maxRowBytes>1024*1024))) {
       const error=new TypeError('Audit checkpoint SQL budget must be 100..30000 ms');
       error.code='EVENT_INTELLIGENCE_AUDIT_CHECKPOINT_POLICY_INVALID';
       throw error;
@@ -3766,12 +3794,16 @@ export class PostgresEventStore {
       await this.lock(client, 'audit', 'chain');
       // Lock fences audit appenders, so this PG-side aggregate byte cap
       // remains valid until the original full history SELECT completes.
-      if(maxTotalBytes!==null){
+      if(maxTotalBytes!==null || maxRowBytes!==null){
         const size=await client.query(
-          'SELECT COALESCE(SUM(octet_length(payload::text)::bigint),0)::text AS n '+
+          'SELECT COALESCE(SUM(octet_length(payload::text)::bigint),0)::text AS n, '+
+          'COALESCE(MAX(octet_length(payload::text)),0)::int AS row_bytes '+
           'FROM '+this.history+' WHERE scope_id=$1 AND kind=$2',
           [this.scopeId,'audit']);
-        if(BigInt(size.rows[0]?.n??'0')>BigInt(maxTotalBytes)){
+        if(maxTotalBytes!==null &&
+            BigInt(size.rows[0]?.n??'0')>BigInt(maxTotalBytes) ||
+            maxRowBytes!==null &&
+            Number(size.rows[0]?.row_bytes)>maxRowBytes){
           const error=new Error('Audit checkpoint bytes exceed operator cap');
           error.code='EVENT_INTELLIGENCE_AUDIT_CHECKPOINT_BUDGET_EXCEEDED';
           throw error;
