@@ -1,10 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash,generateKeyPairSync} from 'node:crypto';
-import {mkdtemp,readFile,writeFile,rm} from 'node:fs/promises';
+import {mkdtemp,readFile,writeFile,rm,open} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {spawn,spawnSync} from 'node:child_process';
+import {request as httpRequest} from 'node:http';
 import {once} from 'node:events';
 import {createInterface} from 'node:readline';
 import {createStandaloneSource} from
@@ -110,6 +111,59 @@ test('first-party standalone log oracle independently verifies durable monotonic
   }finally{await source?.close().catch(()=>{});await rm(dir,{recursive:true,force:true});}
 });
 
+test('ambiguous fsync failure poisons this source until cold log validation',async()=>{
+  const dir=await mkdtemp(join(tmpdir(),'ei-source-fsync-')),k=keys();
+  let failSync=false,source;
+  const writer=async(...args)=>{
+    const file=await open(...args);
+    return {
+      writeFile:(...x)=>file.writeFile(...x),
+      sync:async()=>{if(failSync){failSync=false;throw Error('injected fsync failure');}
+        return file.sync();},
+      close:()=>file.close(),
+    };
+  };
+  const c=config(dir,k,()=>Date.UTC(2026,9,31,12,0,0));
+  try{
+    source=await createStandaloneSource({...c,openWriter:writer});
+    failSync=true;
+    await assert.rejects(()=>source.append({eventId:'ambiguous',data:{value:1}}),
+      e=>e.code==='SOURCE_LOG_WRITE_UNCERTAIN');
+    await assert.rejects(()=>source.append({eventId:'next'}),
+      e=>e.code==='SOURCE_LOG_WRITE_UNCERTAIN');
+    assert.throws(()=>source.poll(),e=>e.code==='SOURCE_LOG_WRITE_UNCERTAIN');
+    assert.throws(()=>source.frontier({completenessRevision:1}),
+      e=>e.code==='SOURCE_LOG_WRITE_UNCERTAIN');
+    await source.close();source=null;
+    const cold=await createStandaloneSource(c);
+    try{
+      assert.equal(cold.poll({cursor:'source-v1:0'}).events.length,1);
+      assert.equal((await cold.append({eventId:'ambiguous',data:{value:1}})).accepted,false);
+    }finally{await cold.close();}
+  }finally{await source?.close().catch(()=>{});await rm(dir,{recursive:true,force:true});}
+});
+
+test('source log identity and prewrite size budget fail closed before accepting unsafe history',async()=>{
+  const dir=await mkdtemp(join(tmpdir(),'ei-source-size-')),k=keys();
+  const c=config(dir,k,()=>Date.UTC(2026,9,31,12,0,0));
+  let source;
+  try{
+    source=await createStandaloneSource({...c,maxLogBytes:1024});
+    await assert.rejects(()=>source.append({eventId:'oversized',
+      data:{text:'x'.repeat(1024)}}),
+      e=>e.code==='SOURCE_LOG_BUDGET_EXCEEDED');
+    assert.equal(source.status().sequence,1);
+    await source.close();source=null;
+    await assert.rejects(()=>createStandaloneSource({...c,scopeId:'other-tenant'}),
+      e=>e.code==='SOURCE_IDENTITY_MISMATCH');
+    const cold=await createStandaloneSource({...c,maxLogBytes:1024});
+    try{
+      assert.equal(cold.status().sequence,1);
+      assert.deepEqual(cold.poll({cursor:'source-v1:0'}).events,[]);
+    }finally{await cold.close();}
+  }finally{await source?.close().catch(()=>{});await rm(dir,{recursive:true,force:true});}
+});
+
 test('standalone HTTP provider and file oracle run in separate OS processes with private controls',async()=>{
   const dir=await mkdtemp(join(tmpdir(),'ei-source-process-'));
   const k=keys(),c=config(dir,k);
@@ -151,13 +205,32 @@ test('standalone HTTP provider and file oracle run in separate OS processes with
     const list=await request('/rpc',{jsonrpc:'2.0',id:2,method:'events/list',eventName:'evil'});
     assert.equal(list.data.result.events[0].name,'sample.changed');
     assert.equal(list.data.result.resultType,'complete');
+    // Real TCP chunk boundary splits the three-byte UTF-8 euro sign.
+    // The source must acknowledge the original literal without U+FFFD.
+    const splitBody=Buffer.from(JSON.stringify({eventId:'utf8',
+      data:{currency:'€'}}),'utf8');
+    const euroIndex=splitBody.indexOf(Buffer.from('€','utf8'));
+    assert.ok(euroIndex>=0);
+    const split=await new Promise((resolve,reject)=>{
+      const req=httpRequest(url+'/control/append',{
+        method:'POST',headers:{'content-type':'application/json',
+          authorization:'Bearer '+token}},res=>{
+          let raw='';res.setEncoding('utf8');res.on('data',part=>raw+=part);
+          res.on('end',()=>resolve({status:res.statusCode,data:JSON.parse(raw)}));
+        });
+      req.once('error',reject);
+      req.write(splitBody.subarray(0,euroIndex+1));
+      req.end(splitBody.subarray(euroIndex+1));
+    });
+    assert.equal(split.status,200);
+    assert.equal(split.data.event.data.currency,'€');
     const seal=await request('/control/seal',{});
     assert.equal(seal.status,200);
     const frontier=await request('/frontier',{completenessRevision:1});
     assert.equal(frontier.status,200);
     const polled=await request('/rpc',{jsonrpc:'2.0',id:3,method:'events/poll',
       params:{cursor:'source-v1:0',maxEvents:10}});
-    assert.deepEqual(polled.data.result.events.map(x=>x.eventId),['one']);
+    assert.deepEqual(polled.data.result.events.map(x=>x.eventId),['one','utf8']);
     const oracleParams={logPath:c.logPath,sourceLog:frontier.data.sourceLog,
       attestation:frontier.data.attestation,
       publicKeyPem:publicPem(k),expected:expected(c),now:Date.now()};
@@ -168,7 +241,7 @@ test('standalone HTTP provider and file oracle run in separate OS processes with
       {cwd:process.cwd(),encoding:'utf8',timeout:5000});
     assert.equal(oracle.status,0,oracle.stderr);
     const result=JSON.parse(oracle.stdout.trim());
-    assert.equal(result.eventCount,1);
+    assert.equal(result.eventCount,2);
     assert.equal(result.thirdPartyCompletenessCertified,false);
     assert.equal(oracle.stdout.includes(token),false);
     const denied=await request('/control/revocation',{revoked:true});
