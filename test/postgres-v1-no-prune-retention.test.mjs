@@ -259,3 +259,52 @@ integration('PG16 no-prune fails closed after missing source, lost dedup or trun
     }
   }
 });
+
+integration('PG16 no-prune preflight rejects huge source/dedup and audit JSONB before transferring bytes to Node',async()=>{
+  const prefix='ei_v1_retention_bytes_'+randomBytes(5).toString('hex');
+  const pool=new Pool({connectionString:url,max:3});
+  const src=mk(pool,prefix,'heavy-source');
+  const audit=mk(pool,prefix,'heavy-audit');
+  try{
+    await Promise.all([src.init(),audit.init()]);
+    await src.appendMcpOccurrence('provider',{
+      ...event('wide-source'),
+      data:{blob:'S'.repeat(4000)},
+    },'subscription');
+    await audit.appendAudit({
+      auditId:'large-audit',traceId:'wide-retention-audit',timestamp:at,
+      kind:'trigger.created',entityType:'trigger',entityId:'heavy',
+      details:{blob:'A'.repeat(4000)},
+    });
+    await assert.rejects(()=>src.listMcpOccurrencesAfter(0,{
+      maxScanMs:1500,maxTotalBytes:1024}),
+      e=>e.code==='EVENT_INTELLIGENCE_MCP_REPLAY_BUDGET_EXCEEDED');
+    await assert.rejects(()=>src.getMcpOccurrenceArchiveCheckpoint({
+      maxScanMs:1500,maxTotalBytes:1024}),
+      e=>e.code==='EVENT_INTELLIGENCE_MCP_ARCHIVE_SCAN_BUDGET_EXCEEDED');
+    await assert.rejects(()=>verifyPostgresV1NoPruneRetention({
+      store:src,maxSourceBytes:1024}),
+      e=>e.code==='EVENT_INTELLIGENCE_MCP_REPLAY_BUDGET_EXCEEDED');
+    await assert.rejects(()=>audit.getAuditCheckpoint({
+      maxScanMs:1500,maxTotalBytes:1024}),
+      e=>e.code==='EVENT_INTELLIGENCE_AUDIT_CHECKPOINT_BUDGET_EXCEEDED');
+    await assert.rejects(()=>verifyPostgresV1NoPruneRetention({
+      store:audit,maxAuditBytes:1024}),
+      e=>e.code==='EVENT_INTELLIGENCE_AUDIT_CHECKPOINT_BUDGET_EXCEEDED');
+    for(const request of [{store:src,maxSourceBytes:0},
+      {store:audit,maxAuditBytes:64*1024*1024+1}]){
+      await assert.rejects(()=>verifyPostgresV1NoPruneRetention(request),
+        e=>e.code==='EVENT_INTELLIGENCE_V1_RETENTION_POLICY_INVALID');
+    }
+    const sourceOk=await verifyPostgresV1NoPruneRetention({store:src});
+    const auditOk=await verifyPostgresV1NoPruneRetention({store:audit});
+    assert.equal(sourceOk.sourceTailSequence,1);
+    assert.equal(auditOk.auditEndSequence,0);
+    assert.equal(sourceOk.sourcePruneAuthorized,false);
+    assert.equal(auditOk.auditPruneAuthorized,false);
+    assert.equal(JSON.stringify(sourceOk).includes('SSSSSS'),false);
+    assert.equal(JSON.stringify(auditOk).includes('AAAAAA'),false);
+  }finally{
+    try{await cleanup(pool,prefix)}finally{await pool.end();}
+  }
+});
