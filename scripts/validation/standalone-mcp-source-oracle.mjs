@@ -18,7 +18,7 @@ export async function verifyStandaloneOracle({logPath,sourceLog,
   if(raw.length>16*1024*1024||raw&&!raw.endsWith('\n'))
     throw error('ORACLE_LOG_INVALID');
   const rows=raw?raw.trimEnd().split('\n'):[];
-  let hash='0'.repeat(64),lastTime=-1,seal=-1,revision=1,revoked=false;
+  let hash='0'.repeat(64),lastTime=-1,seal=-1,activeSeal=-1,revision=1,revoked=false;
   const events=[],ids=new Set();
   for(let n=0;n<rows.length;n++){
     let r;try{r=JSON.parse(rows[n]);}catch{throw error('ORACLE_LOG_INVALID');}
@@ -39,11 +39,11 @@ export async function verifyStandaloneOracle({logPath,sourceLog,
       const ms=Date.parse(p.completeThroughAt);
       if(!Number.isFinite(ms)||ms<lastTime||ms<seal||p.revision!==revision)
         throw error('ORACLE_SEAL_INVALID');
-      seal=ms;
+      seal=ms;activeSeal=ms;
     }else if(p?.kind==='availability'){
       if(typeof p.revoked!=='boolean'||p.revoked===revoked||
          p.revision!==revision+1)throw error('ORACLE_REVISION_INVALID');
-      revoked=p.revoked;revision++;
+      revoked=p.revoked;revision++;activeSeal=-1;
     }else throw error('ORACLE_RECORD_KIND_INVALID');
   }
   if(!sourceLog||sourceLog.sequence!==rows.length||
@@ -69,7 +69,7 @@ export async function verifyStandaloneOracle({logPath,sourceLog,
      claim.serverId!==expected.serverId||
      claim.eventName!==expected.eventName||
      claim.completenessRevision!==expected.completenessRevision||
-     Date.parse(claim.completeThroughAt)!==seal||revoked||
+     Date.parse(claim.completeThroughAt)!==activeSeal||revoked||
      !Number.isSafeInteger(claim.issuedAtMs)||
      !Number.isSafeInteger(claim.expiresAtMs)||
      claim.issuedAtMs>now||claim.expiresAtMs<=now||
