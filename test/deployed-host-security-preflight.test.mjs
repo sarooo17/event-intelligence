@@ -65,6 +65,22 @@ test('mixed fenced/unfenced writers and stale authority epochs fail closed',()=>
   assert.ok(codes(r).includes('LEGACY_WRITER_EXCLUSION_UNVERIFIED'));
   assert.ok(codes(r).includes('HOST_EPOCH_WITNESS_MISSING'));
 });
+test('old but syntactically valid independent review SHA cannot authorize current deployed source',()=>{
+  const v=fixture();v.independentReview.sourceCommit='c'.repeat(40);
+  const r=assessDeployedHostPreflight(v);
+  assert.ok(codes(r).includes('INDEPENDENT_HUMAN_REVIEW_PENDING'));
+  assert.equal(r.deploymentCertified,false);
+});
+test('multiple conflicting or duplicate authority epochs for one connection fail closed',()=>{
+  const v=fixture();
+  v.workers[0].runtimeEvidence.connectionEpochWitnesses.push({
+    sourceId:'producer-one',hostOwned:true,epochCommitmentSha256:'c'.repeat(64)
+  });
+  const r=assessDeployedHostPreflight(v);
+  assert.ok(codes(r).includes('HOST_EPOCH_WITNESS_MISSING'));
+  assert.equal(r.status,'blocked');
+});
+
 test('host receipt-only success never replaces revocation, quota or cancellation witness',()=>{
   const v=fixture();delete v.host.probes.revocationWhileQueued;
   delete v.host.probes.compressedBodyLimit;delete v.host.probes.policyCancellation;
