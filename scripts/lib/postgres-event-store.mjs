@@ -2747,11 +2747,18 @@ export class PostgresEventStore {
    * finish their sequence+history transaction before snapshot enumeration.
    * A 10k upper bound avoids accidental unbounded scans on live systems.
    */
-  async getMcpOccurrenceArchiveCheckpoint({ maxOccurrences = 10000, maxScanMs = 5000 } = {}) {
+  async getMcpOccurrenceArchiveCheckpoint({
+    maxOccurrences = 10000, maxScanMs = 5000, maxTotalBytes = null,
+    maxRowBytes = null,
+  } = {}) {
     if (!Number.isSafeInteger(maxOccurrences) ||
         maxOccurrences < 1 || maxOccurrences > 10000 ||
         !Number.isSafeInteger(maxScanMs) ||
-        maxScanMs < 100 || maxScanMs > 30000) {
+        maxScanMs < 100 || maxScanMs > 30000 ||
+        (maxTotalBytes!==null && (!Number.isSafeInteger(maxTotalBytes) ||
+          maxTotalBytes<1024 || maxTotalBytes>64*1024*1024)) ||
+        (maxRowBytes!==null && (!Number.isSafeInteger(maxRowBytes) ||
+          maxRowBytes<1024 || maxRowBytes>1024*1024))) {
       const error = new TypeError('MCP archive checkpoint requires maxOccurrences 1..10000 and maxScanMs 100..30000');
       error.code = 'EVENT_INTELLIGENCE_MCP_ARCHIVE_POLICY_INVALID';
       throw error;
@@ -2774,6 +2781,23 @@ export class PostgresEventStore {
           const error = new Error('MCP occurrence history exceeds bounded archive policy');
           error.code = 'EVENT_INTELLIGENCE_MCP_ARCHIVE_SCAN_BUDGET_EXCEEDED';
           throw error;
+        }
+        // Read only an aggregate scalar BEFORE materializing JSONB payloads.
+        // The source-sequence writer fence pins this exact source snapshot.
+        if(maxTotalBytes!==null || maxRowBytes!==null){
+          const bytes=await client.query(
+            'SELECT COALESCE(SUM(octet_length(payload::text)::bigint),0)::text AS n, '+
+            'COALESCE(MAX(octet_length(payload::text)),0)::int AS row_bytes FROM '+
+            this.history+' WHERE scope_id=$1 AND kind=$2',
+            [this.scopeId,'mcp_occurrence']);
+          if(maxTotalBytes!==null &&
+              BigInt(bytes.rows[0]?.n??'0')>BigInt(maxTotalBytes) ||
+              maxRowBytes!==null &&
+              Number(bytes.rows[0]?.row_bytes)>maxRowBytes){
+            const error=new Error('MCP archive source bytes exceed operator cap');
+            error.code='EVENT_INTELLIGENCE_MCP_ARCHIVE_SCAN_BUDGET_EXCEEDED';
+            throw error;
+          }
         }
         const rows = await client.query(
           // Preserve the original PostgreSQL JSONB numeric lexemes. Parsing
@@ -2890,16 +2914,42 @@ export class PostgresEventStore {
     }
   }
 
-  async latestMcpEventSequence() {
-    const result = await this.pool.query(
-      'SELECT value FROM ' + this.counters +
-      " WHERE scope_id = $1 AND name = 'mcp_occurrence'",
-      [this.scopeId],
-    );
-    return Number(result.rows[0]?.value ?? 0);
+  async latestMcpEventSequence({ maxScanMs = null } = {}) {
+    if(maxScanMs!==null && (!Number.isSafeInteger(maxScanMs) ||
+        maxScanMs<100 || maxScanMs>30000)){
+      const error=new TypeError('Source tail count SQL budget must be 100..30000 ms');
+      error.code='EVENT_INTELLIGENCE_MCP_REPLAY_POLICY_INVALID';
+      throw error;
+    }
+    const query=async db=>{
+      const result=await db.query(
+        'SELECT value FROM ' + this.counters +
+        " WHERE scope_id = $1 AND name = 'mcp_occurrence'",
+        [this.scopeId],
+      );
+      return Number(result.rows[0]?.value ?? 0);
+    };
+    if(maxScanMs===null)return query(this.pool);
+    return this.tx(async client=>{
+      await client.query("SELECT set_config('statement_timeout',$1,true)",
+        [String(maxScanMs)+'ms']);
+      return query(client);
+    });
   }
 
-  async listMcpOccurrencesAfter(sequence) {
+  async listMcpOccurrencesAfter(sequence, {
+    maxScanMs = null,maxTotalBytes = null,maxRowBytes = null,
+  } = {}) {
+    if((maxScanMs!==null && (!Number.isSafeInteger(maxScanMs) ||
+        maxScanMs<100 || maxScanMs>30000)) ||
+        (maxTotalBytes!==null && (!Number.isSafeInteger(maxTotalBytes) ||
+          maxTotalBytes<1024 || maxTotalBytes>64*1024*1024)) ||
+        (maxRowBytes!==null && (!Number.isSafeInteger(maxRowBytes) ||
+          maxRowBytes<1024 || maxRowBytes>1024*1024))) {
+      const error=new TypeError('MCP replay SQL budget must be 100..30000 ms');
+      error.code='EVENT_INTELLIGENCE_MCP_REPLAY_POLICY_INVALID';
+      throw error;
+    }
     // Retention safety fence: a missing historical occurrence or durable
     // dedup key must NEVER masquerade as a successful (partial) replay.
     // No source pruning is enabled today. Until a verified archive-backed
@@ -2918,11 +2968,52 @@ export class PostgresEventStore {
       await client.query(
         'SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY',
       );
+      // Optional bounded operator audit: enforce timeout in the same
+      // transaction that actually scans full source history and dedup.
+      // The normal legacy replay API remains unchanged without this opt-in.
+      if(maxScanMs!==null) await client.query(
+        "SELECT set_config('statement_timeout', $1, true)",
+        [String(maxScanMs)+'ms']);
       const c = await client.query(
         'SELECT value FROM ' + this.counters +
         ' WHERE scope_id=$1 AND name=$2',
         [this.scopeId, 'mcp_occurrence'],
       );
+      // Complete source + immutable dedup snapshot size is checked by PG
+      // before any potentially huge JSONB history crosses into Node.
+      // READ ONLY REPEATABLE READ prevents concurrent appends from changing
+      // the verified budget and the subsequently materialized payloads.
+      if(maxTotalBytes!==null){
+        const size=await client.query(
+          'SELECT (SELECT COALESCE(SUM(octet_length(payload::text)::bigint),0) FROM '+
+          this.history+" WHERE scope_id=$1 AND kind='mcp_occurrence') +"+
+          ' (SELECT COALESCE(SUM((octet_length(payload::text) + '+
+          'octet_length(record_key))::bigint),0) FROM '+this.records+
+          " WHERE scope_id=$1 AND kind='mcp_occurrence_key') AS total_bytes",
+          [this.scopeId]);
+        if(BigInt(size.rows[0]?.total_bytes??'0')>BigInt(maxTotalBytes)){
+          const error=new Error('MCP replay history/dedup bytes exceed operator cap');
+          error.code='EVENT_INTELLIGENCE_MCP_REPLAY_BUDGET_EXCEEDED';
+          throw error;
+        }
+      }
+      if(maxRowBytes!==null){
+        const size=await client.query(
+          'SELECT GREATEST('+
+          '(SELECT COALESCE(MAX(octet_length(payload::text)),0) FROM '+
+          this.history+" WHERE scope_id=$1 AND kind='mcp_occurrence'),"+
+          '(SELECT COALESCE(MAX(octet_length(payload::text)),0) FROM '+
+          this.records+" WHERE scope_id=$1 AND kind='mcp_occurrence_key'),"+
+          '(SELECT COALESCE(MAX(octet_length(record_key)),0) FROM '+
+          this.records+" WHERE scope_id=$1 AND kind='mcp_occurrence_key')"+
+          ')::int AS n',
+          [this.scopeId]);
+        if(Number(size.rows[0]?.n)>maxRowBytes){
+          const error=new Error('MCP replay source/dedup row exceeds operator cap');
+          error.code='EVENT_INTELLIGENCE_MCP_REPLAY_BUDGET_EXCEEDED';
+          throw error;
+        }
+      }
       const endSequence = Number(c.rows[0]?.value ?? 0);
       if (!Number.isSafeInteger(endSequence) || endSequence < 0 ||
           sequence > endSequence) {
@@ -3694,9 +3785,44 @@ export class PostgresEventStore {
    * tenant/genesis/terminal commitment. Pin this checkpoint independently
    * (off-host/WORM) before trusting later exported archive windows.
    */
-  async getAuditCheckpoint() {
+  async getAuditCheckpoint({
+    maxScanMs = null,maxTotalBytes = null,maxRowBytes = null,
+  } = {}) {
+    if((maxScanMs!==null && (!Number.isSafeInteger(maxScanMs) ||
+        maxScanMs<100 || maxScanMs>30000)) ||
+        (maxTotalBytes!==null && (!Number.isSafeInteger(maxTotalBytes) ||
+          maxTotalBytes<1024 || maxTotalBytes>64*1024*1024)) ||
+        (maxRowBytes!==null && (!Number.isSafeInteger(maxRowBytes) ||
+          maxRowBytes<1024 || maxRowBytes>1024*1024))) {
+      const error=new TypeError('Audit checkpoint SQL budget must be 100..30000 ms');
+      error.code='EVENT_INTELLIGENCE_AUDIT_CHECKPOINT_POLICY_INVALID';
+      throw error;
+    }
     return this.tx(async (client) => {
+      // Limit both the scope audit advisory-lock wait and the complete
+      // genesis-linked read/verification; never claim bounded inspection
+      // if the real PG SQL call has no timeout.
+      if(maxScanMs!==null) await client.query(
+        "SELECT set_config('statement_timeout', $1, true)",
+        [String(maxScanMs)+'ms']);
       await this.lock(client, 'audit', 'chain');
+      // Lock fences audit appenders, so this PG-side aggregate byte cap
+      // remains valid until the original full history SELECT completes.
+      if(maxTotalBytes!==null || maxRowBytes!==null){
+        const size=await client.query(
+          'SELECT COALESCE(SUM(octet_length(payload::text)::bigint),0)::text AS n, '+
+          'COALESCE(MAX(octet_length(payload::text)),0)::int AS row_bytes '+
+          'FROM '+this.history+' WHERE scope_id=$1 AND kind=$2',
+          [this.scopeId,'audit']);
+        if(maxTotalBytes!==null &&
+            BigInt(size.rows[0]?.n??'0')>BigInt(maxTotalBytes) ||
+            maxRowBytes!==null &&
+            Number(size.rows[0]?.row_bytes)>maxRowBytes){
+          const error=new Error('Audit checkpoint bytes exceed operator cap');
+          error.code='EVENT_INTELLIGENCE_AUDIT_CHECKPOINT_BUDGET_EXCEEDED';
+          throw error;
+        }
+      }
       // pg's JSONB parser would round numbers beyond IEEE-754 precision
       // before canonical AuditChain hashing, letting two different stored
       // byte sequences produce the same digest. Reject lossy lexemes first.
@@ -3876,13 +4002,27 @@ export class PostgresEventStore {
     };
   }
 
-  async auditLength() {
-    const result = await this.pool.query(
-      'SELECT count(*)::bigint AS count FROM ' + this.history +
-      " WHERE scope_id = $1 AND kind = 'audit'",
-      [this.scopeId],
-    );
-    return Number(result.rows[0]?.count ?? 0);
+  async auditLength({ maxScanMs = null } = {}) {
+    if(maxScanMs!==null && (!Number.isSafeInteger(maxScanMs) ||
+        maxScanMs<100 || maxScanMs>30000)){
+      const error=new TypeError('Audit count SQL budget must be 100..30000 ms');
+      error.code='EVENT_INTELLIGENCE_AUDIT_CHECKPOINT_POLICY_INVALID';
+      throw error;
+    }
+    const query=async db=>{
+      const result=await db.query(
+        'SELECT count(*)::bigint AS count FROM ' + this.history +
+        " WHERE scope_id = $1 AND kind = 'audit'",
+        [this.scopeId],
+      );
+      return Number(result.rows[0]?.count ?? 0);
+    };
+    if(maxScanMs===null)return query(this.pool);
+    return this.tx(async client=>{
+      await client.query("SELECT set_config('statement_timeout',$1,true)",
+        [String(maxScanMs)+'ms']);
+      return query(client);
+    });
   }
 
   async verifyAudit() {

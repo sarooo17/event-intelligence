@@ -329,6 +329,8 @@ export declare class PostgresEventStore {
   getMcpOccurrenceArchiveCheckpoint(options?: {
     maxOccurrences?: number;
     maxScanMs?: number;
+    maxTotalBytes?: number;
+    maxRowBytes?: number;
   }): Promise<McpOccurrenceArchiveCheckpoint>;
   /** Read-only page against a checkpoint pinned by the operator outside PostgreSQL. */
   getMcpOccurrenceArchiveWindow(options: {
@@ -339,8 +341,8 @@ export declare class PostgresEventStore {
     limit?: number;
     maxScanMs?: number;
   }): Promise<McpOccurrenceArchiveWindow>;
-  latestMcpEventSequence(): Promise<number>;
-  listMcpOccurrencesAfter(sequence: number): Promise<any[]>;
+  latestMcpEventSequence(options?: {maxScanMs?: number}): Promise<number>;
+  listMcpOccurrencesAfter(sequence: number, options?: {maxScanMs?: number; maxTotalBytes?: number; maxRowBytes?: number}): Promise<any[]>;
   /** Read-only snapshot; never authorizes physical pruning or translates opaque provider cursors to EI sequence floors. */
   inspectMcpSourceRetentionBarriers(options?: {
     maxSources?: number;
@@ -415,7 +417,7 @@ export declare class PostgresEventStore {
   putSemanticDecisionCache(key: string, decision: any): Promise<any>;
   semanticDecisionCacheSize(): Promise<number>;
   /** Validate whole hash chain and obtain tenant/genesis/terminal commitment to pin externally. */
-  getAuditCheckpoint(): Promise<{
+  getAuditCheckpoint(options?: {maxScanMs?: number; maxTotalBytes?: number; maxRowBytes?: number}): Promise<{
     scopeId: string;
     firstHash: string | null;
     endSequence: number;
@@ -444,7 +446,7 @@ export declare class PostgresEventStore {
   appendAudit(input: any): Promise<any>;
   listAudit(options?: { traceId?: string; afterSequence?: number }): Promise<any[]>;
   trace(traceId: string): Promise<any>;
-  auditLength(): Promise<number>;
+  auditLength(options?: {maxScanMs?: number}): Promise<number>;
   verifyAudit(): Promise<boolean>;
   drain(): Promise<void>;
   close(): Promise<void>;
