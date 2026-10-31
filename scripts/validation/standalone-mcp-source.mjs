@@ -29,7 +29,7 @@ function parseLog(text){
   return records;
 }
 function derive(records){
-  const ids=new Map();let lastTime=0,seal=0,revision=1,revoked=false;
+  const ids=new Map();let lastTime=0,seal=0,activeSeal=0,revision=1,revoked=false;
   for(const row of records){
     const p=row.payload;
     if(p.kind==='event'){
@@ -42,15 +42,15 @@ function derive(records){
       const t=Date.parse(p.completeThroughAt);
       if(!Number.isFinite(t)||t<lastTime||t<seal||p.revision!==revision)
         throw fail('SOURCE_LOG_CORRUPTED','Invalid signed-source seal');
-      seal=t;
+      seal=t;activeSeal=t;
     }else if(p.kind==='availability'){
       if(typeof p.revoked!=='boolean'||p.revoked===revoked||
         p.revision!==revision+1)
         throw fail('SOURCE_LOG_CORRUPTED','Invalid provider revocation transition');
-      revision++;revoked=p.revoked;
+      revision++;revoked=p.revoked;activeSeal=0;
     }else throw fail('SOURCE_LOG_CORRUPTED','Unknown source record kind');
   }
-  return {ids,lastTime,seal,revision,revoked,head:records.at(-1)?.hash??initialHash};
+  return {ids,lastTime,seal,activeSeal,revision,revoked,head:records.at(-1)?.hash??initialHash};
 }
 export async function createStandaloneSource({
   logPath,privateKeyPem,scopeId,sourceKeyDigest,connectionId,
@@ -87,6 +87,7 @@ export async function createStandaloneSource({
     records.push(row);model=derive(records);return row;
   };
   return {
+    eventName,
     async append({eventId,data={}}){
       return queue(async()=>{
         requireId(eventId);
@@ -150,7 +151,7 @@ export async function createStandaloneSource({
         nextPollMs:1000,sourceRevision:model.revision};
     },
     frontier({completenessRevision}={}){
-      if(model.revoked||!model.seal)throw fail('SOURCE_UNSEALED','No active durable source seal');
+      if(model.revoked||!model.activeSeal)throw fail('SOURCE_UNSEALED','No active durable source seal');
       if(!Number.isSafeInteger(completenessRevision)||completenessRevision<1)
         throw fail('SOURCE_REVISION_INVALID','Host completeness revision required');
       const issuedAtMs=now();
@@ -160,7 +161,7 @@ export async function createStandaloneSource({
         scopeDigest:hash(scopeId),sourceKeyDigest,
         argumentsDigest:hash(argumentsCanonical),
         connectionId,serverId,eventName,completenessRevision,
-        completeThroughAt:iso(model.seal),issuedAtMs,
+        completeThroughAt:iso(model.activeSeal),issuedAtMs,
         expiresAtMs:issuedAtMs+120000,
       });
       return {attestation:{payload:claim,
@@ -170,7 +171,7 @@ export async function createStandaloneSource({
     status(){
       return {schema:'ei.standalone-source-status.v1',sequence:records.length,
         head:model.head,revision:model.revision,revoked:model.revoked,
-        lastSeal:model.seal?iso(model.seal):null};
+        lastSeal:model.activeSeal?iso(model.activeSeal):null};
     },
     async close(){if(closed)return;closed=true;await serial;await rmdir(lockPath);},
   };
@@ -203,7 +204,7 @@ export async function serveStandaloneSource({source,token,port=0,host='127.0.0.1
       if(!body||typeof body!=='object'||Array.isArray(body))
         throw fail('SOURCE_PAYLOAD_INVALID','Invalid request');
       if(req.url==='/rpc'&&body.method==='events/list')
-        return send(200,{result:{events:[{name:body.eventName??'fixture.changed',
+        return send(200,{result:{events:[{name:source.eventName,
           delivery:['poll'],payloadSchema:{type:'object'}}]}});
       if(req.url==='/rpc'&&body.method==='events/poll')
         return send(200,{result:source.poll(body.params)});
