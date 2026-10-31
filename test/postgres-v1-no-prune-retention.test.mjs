@@ -98,9 +98,13 @@ integration('PG16 v1 no-prune: scoped source+dedup+audit survive real terminal c
       await sourceHolder.query('BEGIN');
       await sourceHolder.query('LOCK TABLE '+history+
         ' IN ACCESS EXCLUSIVE MODE');
+      await assert.rejects(()=>a.listMcpOccurrencesAfter(0,{maxScanMs:150}),
+        e=>e.code==='57014','source replay actual history SELECT bounded');
+      await assert.rejects(()=>a.auditLength({maxScanMs:150}),
+        e=>e.code==='57014','initial audit count SQL also bounded');
       await assert.rejects(()=>verifyPostgresV1NoPruneRetention({
         store:a,maxScanMs:150}),
-        e=>e.code==='57014','blocked source SQL must fail within budget');
+        e=>e.code==='57014','complete preflight must not wait on history lock');
     }finally{
       await sourceHolder.query('ROLLBACK');
       sourceHolder.release();
@@ -111,6 +115,8 @@ integration('PG16 v1 no-prune: scoped source+dedup+audit survive real terminal c
       await auditHolder.query(
         'SELECT pg_advisory_xact_lock(hashtextextended($1,0))',
         [prefix+':v1-A:audit:chain']);
+      await assert.rejects(()=>a.getAuditCheckpoint({maxScanMs:150}),
+        e=>e.code==='57014','audit checkpoint advisory lock bounded');
       await assert.rejects(()=>verifyPostgresV1NoPruneRetention({
         store:a,maxScanMs:150}),
         e=>e.code==='57014','blocked audit lock must fail within budget');
