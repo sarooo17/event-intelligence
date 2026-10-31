@@ -124,18 +124,18 @@
     {
       "id": "full-explainability",
       "issue": 48,
-      "required": false,
+      "required": true,
       "status": "blocked",
       "evidence": [],
-      "note": "P1 taxonomy, causal trace, tenant read access and bounded metrics remain separate from P0 release gates."
+      "note": "BLOCKED: full #48 explanation contract, externally trustworthy source completeness and representative high-cardinality full-path performance evidence remain mandatory for stable v1.0 per #41 (2026-10-30). Internal PG16/Railway samples do not certify independent provider completeness or production SLO."
     },
     {
       "id": "semantic-triage",
       "issue": 49,
-      "required": false,
+      "required": true,
       "status": "blocked",
       "evidence": [],
-      "note": "P2 labeled real data, budgets and costs may ship separately; synthetic corpus is not real quality."
+      "note": "BLOCKED: #49 semantic evaluation remains runtime opt-in, but its full acceptance is a stable v1.0 release gate per #41 (2026-10-30). Actual OpenAI Responses Railway staging returned one independently retrieved 14-input/11-output token usage receipt within reserved tokens; billing, cancellation, independently attributable settled project cost and external signoff remain unverified. No automatic extra provider spend."
     }
   ]
 }
