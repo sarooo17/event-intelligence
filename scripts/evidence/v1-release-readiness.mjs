@@ -4,15 +4,14 @@ import { resolve } from 'node:path';
 
 export const V1_REQUIRED_CRITERIA = Object.freeze([
   'host-contract-and-package',
-  'security-independent-review',
   'security-revocation-and-tenant',
   'pg-retention-audit',
   'pg-chaos-recovery',
-  'pg-scale-measured',
   'stored-state-upgrade',
   'packed-v1-and-breaking-notes',
   'downstream-pin-policy',
-  // Explicit 2026-10-30 product-owner v1 scope, see #41.
+  // 2026-10-31 explicit product-owner SDK v1 scope: #48 and #49
+  // are mandatory as bounded SDK contracts, not third-party certificates.
   'full-explainability',
   'semantic-triage',
 ]);
@@ -20,6 +19,12 @@ export const V1_OPTIONAL_CRITERIA = Object.freeze([
   // Product owner waived a SECOND developer under issue #42. Never mark
   // independent external adoption verified without actual external proof.
   'embedded-host-independent',
+  // Real production/deployed-host claims are separate from generic SDK correctness.
+  'security-independent-review',
+  'pg-scale-measured',
+  'external-source-finality',
+  'provider-billing-and-cancel',
+  'production-host-ha-slo',
 ]);
 
 // Acceptance ownership is part of the v1 contract; an otherwise valid
@@ -27,16 +32,19 @@ export const V1_OPTIONAL_CRITERIA = Object.freeze([
 export const V1_CRITERION_ISSUES = Object.freeze({
   'embedded-host-independent':42,
   'host-contract-and-package':42,
-  'security-independent-review':45,
+  'security-independent-review':317,
   'security-revocation-and-tenant':45,
   'pg-retention-audit':47,
   'pg-chaos-recovery':47,
-  'pg-scale-measured':47,
+  'pg-scale-measured':376,
   'stored-state-upgrade':50,
   'packed-v1-and-breaking-notes':50,
   'downstream-pin-policy':50,
   'full-explainability':48,
   'semantic-triage':49,
+  'external-source-finality':376,
+  'provider-billing-and-cancel':376,
+  'production-host-ha-slo':376,
 });
 
 function validSignoffDate(date) {

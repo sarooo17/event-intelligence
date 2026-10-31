@@ -1,13 +1,19 @@
 # v1.0 evidence ledger and release eligibility (issue #50)
 
 The checked-in `docs/releases/v1-readiness.json` is the explicit list
-of **eleven required stable-v1 criteria** which remain **blocking** and
-one optional, owner-waived independent-host-authorship criterion.
-The 2026-10-30 product-owner decision in #41 makes **both #48 and #49
-required for stable 1.0.0**, although hosts may omit semantic models at
-runtime. Security signoff is tracked by #317 alongside #45. Every row
-maps to its numbered issue. All rows start as `blocked` because the repo does not have
-independently reviewed evidence for full v1 acceptance yet.
+of **nine mandatory SDK correctness criteria** and **six optional
+production/integration certification criteria**. Optional means not a
+prerequisite to publishing the generic SDK, **not** verified or unnecessary.
+The explicit 2026-10-31 product-owner scope correction (#41) keeps both
+**#48 explainability and #49 optional-at-runtime semantics mandatory as
+bounded SDK contracts**. Their external provider truth/billing obligations
+are tracked under the **optional operational validation #376** instead.
+#45 mandatory security is SDK authorization/fail-closed reference behavior;
+#317 human-operated external-host security certification is separate and
+optional for the generic SDK. Real PostgreSQL16 correctness and defensible
+retention/recovery remain mandatory. Every row maps to its numbered issue.
+Every row remains `blocked` until release-specific manually reviewed evidence
+is attached; an issue marked completed does not auto-verify its ledger row.
 
 ```sh
 # Report only: validates manifest and emits a machine-readable blocked state.
@@ -36,12 +42,15 @@ Muffin/Artemis dependency pins are never touched by this workflow.
 
 Compatibility: this is an additive internal operator tool, no runtime or
 public package API change, no data migration and no published release.
-Production/HA capacity remains explicitly unverified until actual
-1k/10k/100k benchmarking, fault-soak, independent host adoption, security
-signoff and restore policy acceptance.
+Published 1k/10k/100k isolated PostgreSQL16 benchmarks and crash recovery
+tests are SDK engineering evidence, not production claims. Independently
+operated host adoption, full real-source finality, provider-billed spend,
+production PostgreSQL primary failover RPO/RTO, p99 latency and human security
+attestation remain open under #376/#317. **Do not advertise any of these as
+certified**, even when a generic SDK release gate is later eligible.
 
 **Scope regression guard:** `test/v1-release-readiness-ledger.test.mjs`
-refuses manifests that downgrade #48 or #49 to optional, and proves both
-remaining blocked rows prevent eligibility even if all other required rows
-carry formally valid manual reviewer records. This gate change does not
-claim #48/#49 completion or authorize automatic publishing.
+refuses downgrading the nine core SDK requirements (including #48 and #49),
+rejects promotion of external certification rows as mandatory without an
+explicit policy change, and confirms that optional external reports cannot
+bypass core retention/security gates. The checker never auto-publishes.
