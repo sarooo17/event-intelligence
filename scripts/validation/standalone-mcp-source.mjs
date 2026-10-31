@@ -40,7 +40,7 @@ function derive(records){
       ids.set(p.eventId,row);lastTime=Date.parse(p.occurredAt);
     }else if(p.kind==='seal'){
       const t=Date.parse(p.completeThroughAt);
-      if(!Number.isFinite(t)||t<lastTime||t<seal||p.revision!==revision)
+      if(!Number.isFinite(t)||t<lastTime||t<=seal||p.revision!==revision)
         throw fail('SOURCE_LOG_CORRUPTED','Invalid signed-source seal');
       seal=t;activeSeal=t;
     }else if(p.kind==='availability'){
@@ -117,7 +117,7 @@ export async function createStandaloneSource({
       return queue(async()=>{
         if(model.revoked)throw fail('SOURCE_REVOKED','Source is revoked');
         const current=now();
-        if(!Number.isSafeInteger(current)||current<model.lastTime||current<model.seal)
+        if(!Number.isSafeInteger(current)||current<model.lastTime||current<=model.seal)
           throw fail('SOURCE_CLOCK_REGRESSION','Provider seal cannot regress');
         const row=await add({kind:'seal',completeThroughAt:iso(current),
           revision:model.revision});
