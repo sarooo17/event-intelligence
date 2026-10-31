@@ -2747,11 +2747,15 @@ export class PostgresEventStore {
    * finish their sequence+history transaction before snapshot enumeration.
    * A 10k upper bound avoids accidental unbounded scans on live systems.
    */
-  async getMcpOccurrenceArchiveCheckpoint({ maxOccurrences = 10000, maxScanMs = 5000 } = {}) {
+  async getMcpOccurrenceArchiveCheckpoint({
+    maxOccurrences = 10000, maxScanMs = 5000, maxTotalBytes = null,
+  } = {}) {
     if (!Number.isSafeInteger(maxOccurrences) ||
         maxOccurrences < 1 || maxOccurrences > 10000 ||
         !Number.isSafeInteger(maxScanMs) ||
-        maxScanMs < 100 || maxScanMs > 30000) {
+        maxScanMs < 100 || maxScanMs > 30000 ||
+        (maxTotalBytes!==null && (!Number.isSafeInteger(maxTotalBytes) ||
+          maxTotalBytes<1024 || maxTotalBytes>64*1024*1024))) {
       const error = new TypeError('MCP archive checkpoint requires maxOccurrences 1..10000 and maxScanMs 100..30000');
       error.code = 'EVENT_INTELLIGENCE_MCP_ARCHIVE_POLICY_INVALID';
       throw error;
@@ -2774,6 +2778,19 @@ export class PostgresEventStore {
           const error = new Error('MCP occurrence history exceeds bounded archive policy');
           error.code = 'EVENT_INTELLIGENCE_MCP_ARCHIVE_SCAN_BUDGET_EXCEEDED';
           throw error;
+        }
+        // Read only an aggregate scalar BEFORE materializing JSONB payloads.
+        // The source-sequence writer fence pins this exact source snapshot.
+        if(maxTotalBytes!==null){
+          const bytes=await client.query(
+            'SELECT COALESCE(SUM(octet_length(payload::text)::bigint),0)::text AS n FROM '+
+            this.history+' WHERE scope_id=$1 AND kind=$2',
+            [this.scopeId,'mcp_occurrence']);
+          if(BigInt(bytes.rows[0]?.n??'0')>BigInt(maxTotalBytes)){
+            const error=new Error('MCP archive source bytes exceed operator cap');
+            error.code='EVENT_INTELLIGENCE_MCP_ARCHIVE_SCAN_BUDGET_EXCEEDED';
+            throw error;
+          }
         }
         const rows = await client.query(
           // Preserve the original PostgreSQL JSONB numeric lexemes. Parsing
@@ -2899,9 +2916,13 @@ export class PostgresEventStore {
     return Number(result.rows[0]?.value ?? 0);
   }
 
-  async listMcpOccurrencesAfter(sequence, { maxScanMs = null } = {}) {
-    if(maxScanMs!==null && (!Number.isSafeInteger(maxScanMs) ||
-        maxScanMs<100 || maxScanMs>30000)) {
+  async listMcpOccurrencesAfter(sequence, {
+    maxScanMs = null,maxTotalBytes = null,
+  } = {}) {
+    if((maxScanMs!==null && (!Number.isSafeInteger(maxScanMs) ||
+        maxScanMs<100 || maxScanMs>30000)) ||
+        (maxTotalBytes!==null && (!Number.isSafeInteger(maxTotalBytes) ||
+          maxTotalBytes<1024 || maxTotalBytes>64*1024*1024))) {
       const error=new TypeError('MCP replay SQL budget must be 100..30000 ms');
       error.code='EVENT_INTELLIGENCE_MCP_REPLAY_POLICY_INVALID';
       throw error;
@@ -2935,6 +2956,24 @@ export class PostgresEventStore {
         ' WHERE scope_id=$1 AND name=$2',
         [this.scopeId, 'mcp_occurrence'],
       );
+      // Complete source + immutable dedup snapshot size is checked by PG
+      // before any potentially huge JSONB history crosses into Node.
+      // READ ONLY REPEATABLE READ prevents concurrent appends from changing
+      // the verified budget and the subsequently materialized payloads.
+      if(maxTotalBytes!==null){
+        const size=await client.query(
+          'SELECT (SELECT COALESCE(SUM(octet_length(payload::text)::bigint),0) FROM '+
+          this.history+" WHERE scope_id=$1 AND kind='mcp_occurrence') +"+
+          ' (SELECT COALESCE(SUM((octet_length(payload::text) + '+
+          'octet_length(record_key))::bigint),0) FROM '+this.records+
+          " WHERE scope_id=$1 AND kind='mcp_occurrence_key') AS total_bytes",
+          [this.scopeId]);
+        if(BigInt(size.rows[0]?.total_bytes??'0')>BigInt(maxTotalBytes)){
+          const error=new Error('MCP replay history/dedup bytes exceed operator cap');
+          error.code='EVENT_INTELLIGENCE_MCP_REPLAY_BUDGET_EXCEEDED';
+          throw error;
+        }
+      }
       const endSequence = Number(c.rows[0]?.value ?? 0);
       if (!Number.isSafeInteger(endSequence) || endSequence < 0 ||
           sequence > endSequence) {
@@ -3706,9 +3745,13 @@ export class PostgresEventStore {
    * tenant/genesis/terminal commitment. Pin this checkpoint independently
    * (off-host/WORM) before trusting later exported archive windows.
    */
-  async getAuditCheckpoint({ maxScanMs = null } = {}) {
-    if(maxScanMs!==null && (!Number.isSafeInteger(maxScanMs) ||
-        maxScanMs<100 || maxScanMs>30000)) {
+  async getAuditCheckpoint({
+    maxScanMs = null,maxTotalBytes = null,
+  } = {}) {
+    if((maxScanMs!==null && (!Number.isSafeInteger(maxScanMs) ||
+        maxScanMs<100 || maxScanMs>30000)) ||
+        (maxTotalBytes!==null && (!Number.isSafeInteger(maxTotalBytes) ||
+          maxTotalBytes<1024 || maxTotalBytes>64*1024*1024))) {
       const error=new TypeError('Audit checkpoint SQL budget must be 100..30000 ms');
       error.code='EVENT_INTELLIGENCE_AUDIT_CHECKPOINT_POLICY_INVALID';
       throw error;
@@ -3721,6 +3764,19 @@ export class PostgresEventStore {
         "SELECT set_config('statement_timeout', $1, true)",
         [String(maxScanMs)+'ms']);
       await this.lock(client, 'audit', 'chain');
+      // Lock fences audit appenders, so this PG-side aggregate byte cap
+      // remains valid until the original full history SELECT completes.
+      if(maxTotalBytes!==null){
+        const size=await client.query(
+          'SELECT COALESCE(SUM(octet_length(payload::text)::bigint),0)::text AS n '+
+          'FROM '+this.history+' WHERE scope_id=$1 AND kind=$2',
+          [this.scopeId,'audit']);
+        if(BigInt(size.rows[0]?.n??'0')>BigInt(maxTotalBytes)){
+          const error=new Error('Audit checkpoint bytes exceed operator cap');
+          error.code='EVENT_INTELLIGENCE_AUDIT_CHECKPOINT_BUDGET_EXCEEDED';
+          throw error;
+        }
+      }
       // pg's JSONB parser would round numbers beyond IEEE-754 precision
       // before canonical AuditChain hashing, letting two different stored
       // byte sequences produce the same digest. Reject lossy lexemes first.
