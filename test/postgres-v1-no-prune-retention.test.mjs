@@ -145,6 +145,18 @@ integration('PG16 v1 no-prune: scoped source+dedup+audit survive real terminal c
       workerId:'late-after-restart',now:'2026-10-05T11:00:00.000Z'}),null);
     assert.deepEqual(await cold.getWakeDelivery('wake-fired'),receiptBefore);
     assert.equal((await cold.verifyAudit()),true);
+    // A real provider-state gap cannot become a source retention/prune
+    // authorization; source history remains locally intact while
+    // upstream completeness stays explicitly unknown.
+    await cold.putMcpClientState({connectionId:'source-conn',
+      serverId:'source',eventName:'fixture.source.updated',
+      arguments:{project:'private-scope'},cursor:'opaque-private-cursor',
+      deliveryMode:'poll',truncated:true});
+    const gap=await verifyPostgresV1NoPruneRetention({store:cold});
+    assert.equal(gap.sourceDeliveryGapsObserved,true);
+    assert.equal(gap.providerCompletenessCertified,false);
+    assert.equal(gap.sourcePruneAuthorized,false);
+    assert.deepEqual(await cold.listMcpOccurrencesAfter(0),sourceBefore);
     await assert.rejects(()=>verifyPostgresV1NoPruneRetention({
       store:cold,maxOccurrences:2}),
       e=>e.code==='EVENT_INTELLIGENCE_V1_RETENTION_BUDGET_EXCEEDED');
