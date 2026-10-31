@@ -12,13 +12,14 @@ export const V1_REQUIRED_CRITERIA = Object.freeze([
   'stored-state-upgrade',
   'packed-v1-and-breaking-notes',
   'downstream-pin-policy',
+  // Explicit 2026-10-30 product-owner v1 scope, see #41.
+  'full-explainability',
+  'semantic-triage',
 ]);
 export const V1_OPTIONAL_CRITERIA = Object.freeze([
   // Product owner waived a SECOND developer under issue #42. Never mark
   // independent external adoption verified without actual external proof.
   'embedded-host-independent',
-  'full-explainability',
-  'semantic-triage',
 ]);
 
 // Acceptance ownership is part of the v1 contract; an otherwise valid
