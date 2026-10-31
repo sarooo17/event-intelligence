@@ -144,3 +144,11 @@ failure domain; real external MCP provider timing, independent host effect,
 WORM retention, PostgreSQL primary failover, service CPU and independent
 security signoff remain outside this evidence. #47 and the v1 readiness
 production gates stay blocked.
+
+## Declared-event reconciliation and timing sample censoring (synthetic campaign diagnostics)
+
+Even when every **matched** wake settles, an ingestion/Pattern bug could fail to match some configured events and still let a benchmark finish with status `completed`. A completed Railway campaign must now reconcile every configured input event against attempted, accepted, matched, **persisted delivered** and **verified host-receipt** counts. The final settlement must have the exact original event budget, zero due/pending/dead-letter backlog, and zero duplicate external effects. Missing or excess counts are an explicit `completed-with-errors` failure, not a clean result. This is separate from synthetic workload-minute coverage.
+
+The signed campaign report also exposes `observed.timingCoverage` for each generated timing series: expected and observed sample counts, missing/extra values and per-stage completeness. It lists `partial-or-excess-latency-samples:<stage>` in `missingMetrics` whenever the stage's percentile series omits or duplicates measurements. The 2026-10-28 burst run had 1,200 durable receipts but only 1,192 Match→Wake timing samples: its p99 is an observed percentile for that **incomplete series**, not proof that the missing eight outcomes were fast. The pre-signoff production SLO matrix still requires independent raw sample inspection and must not silently treat a partial series as an uncensored p99 distribution.
+
+These changes improve synthetic evidence truthfulness only. They do not add real MCP provider latency, externally independent host effects, immutable off-host archival, database HA or production SLO signoff, and do not retroactively change previously signed campaign artifacts.
