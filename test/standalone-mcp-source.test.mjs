@@ -146,13 +146,16 @@ test('standalone HTTP provider and file oracle run in separate OS processes with
       eventId:'backdated',timestamp:'2020-01-01T00:00:00.000Z'})).status,400);
     const e=await request('/control/append',{eventId:'one',data:{value:1}});
     assert.equal(e.status,200);assert.equal(e.data.accepted,true);
-    const list=await request('/rpc',{method:'events/list',eventName:'evil'});
+    const init=await request('/rpc',{jsonrpc:'2.0',id:1,method:'initialize'});
+    assert.equal(init.data.result.capabilities.extensions['io.modelcontextprotocol/events'].listChanged,false);
+    const list=await request('/rpc',{jsonrpc:'2.0',id:2,method:'events/list',eventName:'evil'});
     assert.equal(list.data.result.events[0].name,'sample.changed');
+    assert.equal(list.data.result.resultType,'complete');
     const seal=await request('/control/seal',{});
     assert.equal(seal.status,200);
     const frontier=await request('/frontier',{completenessRevision:1});
     assert.equal(frontier.status,200);
-    const polled=await request('/rpc',{method:'events/poll',
+    const polled=await request('/rpc',{jsonrpc:'2.0',id:3,method:'events/poll',
       params:{cursor:'source-v1:0',maxEvents:10}});
     assert.deepEqual(polled.data.result.events.map(x=>x.eventId),['one']);
     const oracleParams={logPath:c.logPath,sourceLog:frontier.data.sourceLog,
@@ -170,7 +173,7 @@ test('standalone HTTP provider and file oracle run in separate OS processes with
     assert.equal(oracle.stdout.includes(token),false);
     const denied=await request('/control/revocation',{revoked:true});
     assert.equal(denied.status,200);
-    const forbidden=await request('/rpc',{method:'events/poll',params:{cursor:null}});
+    const forbidden=await request('/rpc',{jsonrpc:'2.0',id:4,method:'events/poll',params:{cursor:null}});
     assert.equal(forbidden.status,409);
     const old=await request('/frontier',{completenessRevision:1});
     assert.equal(old.status,409);
