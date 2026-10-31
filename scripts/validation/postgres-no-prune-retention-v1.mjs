@@ -7,11 +7,54 @@ function refusal(code,message){
   error.code=code;
   return error;
 }
+
+/**
+ * Read ONE receipt and its last source wake record under ONE bounded,
+ * read-only PG snapshot. No unbounded getWakeDelivery()/latestWake()
+ * JSONB read can bypass operator byte, timeout or tenant constraints.
+ */
+export async function readBoundedV1WakeWitness(store,id,{
+  maxScanMs=5000,maxWakeRowBytes=65536,
+}={}){
+  if(!store||typeof store.tx!=='function'||
+     typeof store.scopeId!=='string'||!store.scopeId||
+     typeof store.records!=='string'||typeof store.history!=='string'||
+     typeof id!=='string'||!id||id.length>240||
+     !integer(maxScanMs,100,30000)||
+     !integer(maxWakeRowBytes,1024,131072)){
+    throw refusal('EVENT_INTELLIGENCE_V1_RETENTION_POLICY_INVALID',
+      'Bounded wake witness requires a scoped PostgreSQL store and limits');
+  }
+  return store.tx(async client=>{
+    await client.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY');
+    await client.query("SELECT set_config('statement_timeout',$1,true)",
+      [String(maxScanMs)+'ms']);
+    const params=[store.scopeId,id,maxWakeRowBytes];
+    const [receipt,history]=await Promise.all([
+      client.query('SELECT CASE WHEN octet_length(payload::text)<=$3'+
+        ' THEN payload ELSE NULL END AS payload FROM '+store.records+
+        " WHERE scope_id=$1 AND kind='wake_delivery' AND record_key=$2",params),
+      client.query('SELECT CASE WHEN octet_length(payload::text)<=$3'+
+        ' THEN payload ELSE NULL END AS payload FROM '+store.history+
+        " WHERE scope_id=$1 AND kind='wake' AND record_key=$2"+
+        ' ORDER BY history_id DESC LIMIT 1',params),
+    ]);
+    if(receipt.rows.some(row=>row.payload===null)||
+       history.rows.some(row=>row.payload===null)){
+      throw refusal('EVENT_INTELLIGENCE_INSPECTION_BUDGET_EXCEEDED',
+        'Wake receipt or history source exceeds SQL-side byte budget');
+    }
+    return {delivery:receipt.rows[0]?.payload??null,
+      latest:history.rows[0]?.payload??null};
+  });
+}
+
 export async function verifyPostgresV1NoPruneRetention({
   store,maxOccurrences=10000,maxAuditRecords=10000,
   maxSources=1024,maxScanMs=5000,maxMatchRevisions=100,
   maxSourceBytes=16*1024*1024,maxAuditBytes=8*1024*1024,
   maxSourceRowBytes=131072,maxAuditRowBytes=131072,
+  maxWakeRowBytes=65536,
   matchIds=[],wakeIds=[],
 }={}){
   if(!store||typeof store.listMcpOccurrencesAfter!=='function'||
@@ -20,8 +63,7 @@ export async function verifyPostgresV1NoPruneRetention({
      typeof store.getAuditCheckpoint!=='function'||
      typeof store.getBoundedInspectionMatch!=='function'||
      typeof store.getRecentTriggerMatchHistory!=='function'||
-     typeof store.latestWake!=='function'||
-     typeof store.getWakeDelivery!=='function'||
+     typeof store.tx!=='function'||
      typeof store.latestMcpEventSequence!=='function'||
      typeof store.auditLength!=='function'||
      !integer(maxOccurrences,1,10000)||
@@ -33,6 +75,7 @@ export async function verifyPostgresV1NoPruneRetention({
      !integer(maxAuditBytes,1024,64*1024*1024)||
      !integer(maxSourceRowBytes,1024,1024*1024)||
      !integer(maxAuditRowBytes,1024,1024*1024)||
+     !integer(maxWakeRowBytes,1024,131072)||
      !Array.isArray(matchIds)||matchIds.length>100||
      !Array.isArray(wakeIds)||wakeIds.length>100||
      [...matchIds,...wakeIds].some(id=>typeof id!=='string'||!id||
@@ -109,9 +152,9 @@ export async function verifyPostgresV1NoPruneRetention({
   }
   const wakeWitnesses=[];
   for(const id of wakeIds){
-    const [delivery,latest]=await Promise.all([
-      store.getWakeDelivery(id),store.latestWake(id),
-    ]);
+    const {delivery,latest}=await readBoundedV1WakeWitness(store,id,{
+      maxScanMs,maxWakeRowBytes,
+    });
     if(!delivery||delivery.wakeId!==id||!latest||latest.wakeId!==id||
        delivery.status==='delivered'&&
        (typeof delivery.runtimeReceiptId!=='string'||
