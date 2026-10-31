@@ -72,8 +72,11 @@ bytes under the append fence; both guards run before the full JSONB read. The pr
 also checks requested latest-match provenance and selected durable wake receipt IDs,
 including a separate retained wake-history witness. Match history scans
 are bounded to 1–500 revisions per requested ID, 64 KiB per row,
-1 MiB aggregate serialized bytes and an SQL deadline; a truncated
-match history must fail closed rather than certifying missing provenance.
+1 MiB aggregate serialized bytes and an SQL deadline; the authoritative
+**current match** is independently selected by exact scoped key using
+the existing SQL-side 64 KiB/timeout bounded inspector method.
+A missing, oversized or truncated current/history witness fails closed
+rather than certifying missing provenance.
 It enforces explicit 1–10,000 source/audit budget and at most 100
 match/wake IDs per run. It emits no raw event payload, provider cursor,
 OAuth token or source arguments; in every result:
