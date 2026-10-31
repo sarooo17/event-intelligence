@@ -215,9 +215,10 @@ integration('PG16 no-prune fails closed after missing source, lost dedup or trun
   const b=mk(poolB,prefix,'damaged-dedup');
   const c=mk(poolB,prefix,'damaged-audit');
   const d=mk(poolB,prefix,'damaged-wake');
+  const big=mk(poolA,prefix,'oversized-current-match');
   const good=mk(poolA,prefix,'healthy-other-tenant');
   try{
-    await Promise.all([a.init(),b.init(),c.init(),d.init(),good.init()]);
+    await Promise.all([a.init(),b.init(),c.init(),d.init(),big.init(),good.init()]);
     for(const st of [a,b,c,good]){
       for(let i=0;i<2;i++)await st.appendMcpOccurrence(
         'remote',event(st.scopeId+'-'+i),'subscription');
@@ -254,6 +255,17 @@ integration('PG16 no-prune fails closed after missing source, lost dedup or trun
     await assert.rejects(()=>verifyPostgresV1NoPruneRetention({
       store:d,wakeIds:['lost-history']}),
       e=>e.code==='EVENT_INTELLIGENCE_V1_RETENTION_RECEIPT_INVALID');
+    // Current match payload must be capped independently of its small
+    // append-only history. Compression on disk is not a byte safety guard.
+    await big.appendTriggerMatch(match('big-current'));
+    await poolA.query('UPDATE '+records+
+      " SET payload=jsonb_set(payload,'{patternState,signature}',"+
+      "to_jsonb($3::text)) WHERE scope_id=$1 AND kind='trigger_match'"+
+      " AND record_key=$2",
+      [big.scopeId,'big-current','X'.repeat(75000)]);
+    await assert.rejects(()=>verifyPostgresV1NoPruneRetention({
+      store:big,matchIds:['big-current']}),
+      e=>e.code==='EVENT_INTELLIGENCE_INSPECTION_BUDGET_EXCEEDED');
     const safe=await verifyPostgresV1NoPruneRetention({store:good});
     assert.equal(safe.sourceTailSequence,2);
     assert.equal(safe.auditEndSequence,1);
