@@ -341,7 +341,7 @@ export declare class PostgresEventStore {
     limit?: number;
     maxScanMs?: number;
   }): Promise<McpOccurrenceArchiveWindow>;
-  latestMcpEventSequence(): Promise<number>;
+  latestMcpEventSequence(options?: {maxScanMs?: number}): Promise<number>;
   listMcpOccurrencesAfter(sequence: number, options?: {maxScanMs?: number; maxTotalBytes?: number; maxRowBytes?: number}): Promise<any[]>;
   /** Read-only snapshot; never authorizes physical pruning or translates opaque provider cursors to EI sequence floors. */
   inspectMcpSourceRetentionBarriers(options?: {
@@ -446,7 +446,7 @@ export declare class PostgresEventStore {
   appendAudit(input: any): Promise<any>;
   listAudit(options?: { traceId?: string; afterSequence?: number }): Promise<any[]>;
   trace(traceId: string): Promise<any>;
-  auditLength(): Promise<number>;
+  auditLength(options?: {maxScanMs?: number}): Promise<number>;
   verifyAudit(): Promise<boolean>;
   drain(): Promise<void>;
   close(): Promise<void>;
