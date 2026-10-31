@@ -55,8 +55,21 @@ EI_SOURCE_BIND_HOST=0.0.0.0
 
 Set Railway start command to:
 `node scripts/validation/run-standalone-mcp-source.mjs`.
-Set **one replica** and attach an isolated durable volume to `/data`.
+Set **one replica** and attach an isolated durable **pre-existing** volume
+mounted at `/data`. The source intentionally refuses to create an absent
+parent path, because even a successfully fsynced file does not make newly
+created ancestor directories durable. On initial log creation the source
+fsyncs the file **and its containing directory** before acknowledging the
+first record; further writes are fsynced. This reference source is
+POSIX/Linux-oriented and requires a filesystem supporting durable directory
+fsync; do not deploy on an unsupported filesystem.
 Do not store the signer private key on that volume or in GitHub logs.
+Source log growth is bounded to **16 MiB** (testable using a smaller
+explicit limit). Append refuses before accepting a record that would
+make the file too large, because a larger file would fail cold restart
+and full independent oracle verification. A failed/ambiguous open, write,
+fsync or close permanently poisons that writer instance: it must not
+issue further ACKs, replay or signatures until explicit cold recovery.
 The file-log writer lock is exclusive; a true SIGKILL can leave a
 **stale lock directory**, intentionally preventing blind restart. A
 human operator must verify that the former writer is dead, preserve
