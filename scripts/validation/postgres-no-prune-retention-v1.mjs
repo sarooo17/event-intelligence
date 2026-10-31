@@ -58,11 +58,11 @@ export async function verifyPostgresV1NoPruneRetention({
   }
   // Source reader verifies *all* history against dedup and persisted counter
   // even when a client normally asks only for an advanced cursor.
-  const occurrences=await store.listMcpOccurrencesAfter(0);
+  const occurrences=await store.listMcpOccurrencesAfter(0,{maxScanMs});
   const sourceCheckpoint=await store.getMcpOccurrenceArchiveCheckpoint({
     maxOccurrences,maxScanMs,
   });
-  const auditCheckpoint=await store.getAuditCheckpoint();
+  const auditCheckpoint=await store.getAuditCheckpoint({maxScanMs});
   if(occurrences.length!==sourceTail||
      sourceCheckpoint.endSequence!==sourceTail||
      inventory.sourceTailSequence!==sourceTail||
