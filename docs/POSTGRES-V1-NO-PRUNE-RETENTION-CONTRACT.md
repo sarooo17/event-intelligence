@@ -70,7 +70,10 @@ or audit record** default (configurable from 1 KiB to 1 MiB). The source
 archive checkpoint separately checks source payload aggregate and per-row
 bytes under the append fence; both guards run before the full JSONB read. The preflight
 also checks requested latest-match provenance and selected durable wake receipt IDs,
-including a separate retained wake-history witness. Match history scans
+including a separately validated wake-history witness read together with
+the matching durable receipt under one PostgreSQL read-only repeatable-read
+snapshot, with a 64 KiB per-wake-record SQL cap (configurable to 128 KiB)
+and PostgreSQL statement timeout. Match history scans
 are bounded to 1–500 revisions per requested ID, 64 KiB per row,
 1 MiB aggregate serialized bytes and an SQL deadline; the authoritative
 **current match** is independently selected by exact scoped key using
@@ -107,7 +110,9 @@ executing SQL DELETE and still claim SDK-supported no-prune semantics.
 - release/renew independent pool and cold state initialization, preserved
   provider event replay, duplicate rejection and wake host receipt;
 - manual source history deletion, dedup key deletion, wake history deletion
-  despite a still-present receipt, and audit prefix
+  despite a still-present receipt, oversized current match, wake receipt and
+  wake history payloads, timeout under wake-source history table lock, and
+  audit prefix
   deletion, all failing closed, while an unaffected tenant stays valid;
 - bounded preflight denial, no secret exposure, and no implicit
   external archive, provider finality or physical prune authorization.
