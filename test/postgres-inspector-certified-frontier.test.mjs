@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {randomBytes} from 'node:crypto';
+import {randomBytes,generateKeyPairSync,sign,createHash} from 'node:crypto';
+import {canonicalExternalSourceFrontierClaim,
+  persistExternallyAttestedFrontier,SOURCE_FRONTIER_COMPLETENESS_POLICY}
+  from '../scripts/validation/mcp-source-frontier-attestation.mjs';
 import {PostgresEventStore} from '../scripts/lib/postgres-event-store.mjs';
 import {TriggerInspector} from '../scripts/lib/trigger-inspector.mjs';
 
@@ -185,4 +188,67 @@ test('host certification does not infer provider completeness from event timesta
     triggerId:'release',triggerVersion:'1',matchId:'candidate-a'}),null);
   // A forged watermark inside source event data cannot become a store proof.
   assert.equal(partial.sourceEvents[0].data.watermarkAt,'2099-01-01T00:00:00Z');
+});
+
+integration('v1 full-path signed Ed25519 source frontier: selected impossibility is tenant- and revision-fenced, never global',async()=>{
+  const pool=new Pool({connectionString:url,max:3});
+  const a=store(pool,'signed-frontier-A');
+  const b=store(pool,'signed-frontier-B');
+  try{
+    await prepare(a,'signed-frontier-A');
+    await prepare(b,'signed-frontier-B');
+    const current=await a.getMcpClientState('conn','deploy.ok',{});
+    let witness=null;
+    const through='2026-10-29T10:02:00.000Z';
+    await assert.rejects(()=>a.recordVerifiedInspectionFrontier({
+      ...source,expectedCompletenessRevision:current.completenessRevision,
+      completeThroughAt:through,proofRef:'untrusted-probe',
+      verifyProof:async fact=>{witness=fact;return false;},
+    }),e=>e.code==='EVENT_INTELLIGENCE_UNVERIFIED_SOURCE_FRONTIER');
+    assert(witness);
+    const keys=generateKeyPairSync('ed25519');
+    const digest=x=>createHash('sha256').update(x).digest('hex');
+    const now=Date.UTC(2026,9,30,13,40,0);
+    const payload=canonicalExternalSourceFrontierClaim({
+      contract:'ei.external-source-frontier-claim.v1',
+      policy:SOURCE_FRONTIER_COMPLETENESS_POLICY,
+      scopeDigest:digest(witness.scopeId),
+      sourceKeyDigest:witness.sourceKeyDigest,
+      argumentsDigest:digest(witness.argumentsCanonical),
+      connectionId:witness.connectionId,serverId:witness.serverId,
+      eventName:witness.eventName,
+      completenessRevision:witness.completenessRevision,
+      completeThroughAt:through,
+      issuedAtMs:now,expiresAtMs:now+120000,
+    });
+    const attestation={payload,signature:sign(null,Buffer.from(payload,'utf8'),
+      keys.privateKey).toString('base64url')};
+    const args={source,expectedCompletenessRevision:current.completenessRevision,
+      trustedPublicKeyPem:keys.publicKey.export({format:'pem',type:'spki'}),
+      attestation,sourceCompletenessContractIndependentlyVerified:true,
+      now:()=>now+1000};
+    assert.equal((await inspector(a)).diagnosisV2.kind,'not_yet_satisfied');
+    assert.equal((await inspector(b)).diagnosisV2.kind,'not_yet_satisfied');
+    await persistExternallyAttestedFrontier({store:a,...args});
+    const explained=await inspector(a);
+    assert.equal(explained.diagnosisV2.kind,'candidate_impossible');
+    assert.equal(explained.diagnosisV2.scope,'selected_match');
+    assert.equal(explained.diagnosisV2.upstreamCompleteness,'unknown');
+    assert.equal((await inspector(b)).diagnosisV2.kind,'not_yet_satisfied');
+    await assert.rejects(()=>persistExternallyAttestedFrontier({
+      store:b,...args,
+    }),e=>e.code==='EVENT_INTELLIGENCE_UNVERIFIED_SOURCE_FRONTIER',
+    'signature for tenant A must not certify same trigger IDs in tenant B');
+    await a.putMcpClientState({...source,truncated:true});
+    assert.equal((await inspector(a)).diagnosisV2.kind,'source_gap_unresolved');
+    await assert.rejects(()=>persistExternallyAttestedFrontier({
+      store:a,...args,
+    }),e=>e.code==='EVENT_INTELLIGENCE_STALE_SOURCE_FRONTIER',
+    'new provider revision must invalidate formerly valid signed frontier');
+    assert.equal((await inspector(b)).diagnosisV2.kind,'not_yet_satisfied');
+  }finally{
+    for(const suffix of ['metadata','leases','history','records','counters'])
+      await pool.query('DROP TABLE IF EXISTS "'+prefix+'_'+suffix+'" CASCADE');
+    await pool.end();
+  }
 });
