@@ -41,8 +41,8 @@ a separately reviewed post-v1 pruning protocol can prove safe retention.
 
 ## Operator-only local integrity preflight
 
-The replay and audit-checkpoint store APIs support optional
-`{maxScanMs}` (100–30,000 ms) that applies PostgreSQL transaction-local
+Source-tail counts, audit counts, source replay and audit-checkpoint store
+APIs support optional `{maxScanMs}` (100–30,000 ms) that applies PostgreSQL transaction-local
 `statement_timeout` to the **actual** full source/dedup reads and audit
 advisory lock/checkpoint query. Legacy callers that omit this option
 retain their existing behavior. This is a **per SQL statement** cap,
