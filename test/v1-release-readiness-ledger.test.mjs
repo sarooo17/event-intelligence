@@ -76,7 +76,7 @@ test('documented verification structure alone never bypasses other blockers',()=
   const report=evaluateV1Readiness(isolated,'1.0.0');
   assert.deepEqual(report.errors,[]);
   assert.equal(report.status,'blocked');
-  assert.ok(report.blocked.includes('pg-scale-measured'));
+  assert.ok(report.blocked.includes('pg-retention-audit'));
   assert.equal(report.autoPublish,false);
 });
 
