@@ -207,6 +207,7 @@ test('standalone HTTP provider and file oracle run in separate OS processes with
     assert.equal(list.data.result.resultType,'complete');
     // Real TCP chunk boundary splits the three-byte UTF-8 euro sign.
     // The source must acknowledge the original literal without U+FFFD.
+    await new Promise(resolve=>setTimeout(resolve,5));
     const splitBody=Buffer.from(JSON.stringify({eventId:'utf8',
       data:{currency:'€'}}),'utf8');
     const euroIndex=splitBody.indexOf(Buffer.from('€','utf8'));
@@ -224,6 +225,7 @@ test('standalone HTTP provider and file oracle run in separate OS processes with
     });
     assert.equal(split.status,200);
     assert.equal(split.data.event.data.currency,'€');
+    await new Promise(resolve=>setTimeout(resolve,5));
     const seal=await request('/control/seal',{});
     assert.equal(seal.status,200);
     const frontier=await request('/frontier',{completenessRevision:1});
