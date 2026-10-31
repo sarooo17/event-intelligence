@@ -9,7 +9,7 @@ function refusal(code,message){
 }
 export async function verifyPostgresV1NoPruneRetention({
   store,maxOccurrences=10000,maxAuditRecords=10000,
-  maxSources=1024,maxScanMs=5000,
+  maxSources=1024,maxScanMs=5000,maxMatchRevisions=100,
   matchIds=[],wakeIds=[],
 }={}){
   if(!store||typeof store.listMcpOccurrencesAfter!=='function'||
@@ -17,6 +17,8 @@ export async function verifyPostgresV1NoPruneRetention({
      typeof store.inspectMcpSourceRetentionBarriers!=='function'||
      typeof store.getAuditCheckpoint!=='function'||
      typeof store.getTriggerMatch!=='function'||
+     typeof store.getRecentTriggerMatchHistory!=='function'||
+     typeof store.latestWake!=='function'||
      typeof store.getWakeDelivery!=='function'||
      typeof store.latestMcpEventSequence!=='function'||
      typeof store.auditLength!=='function'||
@@ -24,6 +26,7 @@ export async function verifyPostgresV1NoPruneRetention({
      !integer(maxAuditRecords,1,10000)||
      !integer(maxSources,1,16384)||
      !integer(maxScanMs,100,30000)||
+     !integer(maxMatchRevisions,1,500)||
      !Array.isArray(matchIds)||matchIds.length>100||
      !Array.isArray(wakeIds)||wakeIds.length>100||
      [...matchIds,...wakeIds].some(id=>typeof id!=='string'||!id||
@@ -69,20 +72,27 @@ export async function verifyPostgresV1NoPruneRetention({
   }
   const matchWitnesses=[];
   for(const id of matchIds){
-    const [current,history]=await Promise.all([
-      store.getTriggerMatch(id),store.listTriggerMatchHistory(id),
+    const [current,window]=await Promise.all([
+      store.getTriggerMatch(id),store.getRecentTriggerMatchHistory(id,{
+        limit:maxMatchRevisions,maxRowBytes:65536,
+        maxTotalBytes:1048576,maxScanMs:Math.min(maxScanMs,5000),
+      }),
     ]);
-    if(!current||!history.length||
-       JSON.stringify(history[history.length-1])!==JSON.stringify(current)){
+    if(!current||!window?.records?.length||window.hasMore||
+       JSON.stringify(window.records[window.records.length-1])!==
+       JSON.stringify(current)){
       throw refusal('EVENT_INTELLIGENCE_V1_RETENTION_MATCH_HISTORY_INVALID',
         'Missing latest durable match provenance');
     }
-    matchWitnesses.push({id,status:current.status,revisions:history.length});
+    matchWitnesses.push({id,status:current.status,
+      revisions:window.records.length});
   }
   const wakeWitnesses=[];
   for(const id of wakeIds){
-    const delivery=await store.getWakeDelivery(id);
-    if(!delivery||delivery.wakeId!==id||
+    const [delivery,latest]=await Promise.all([
+      store.getWakeDelivery(id),store.latestWake(id),
+    ]);
+    if(!delivery||delivery.wakeId!==id||!latest||latest.wakeId!==id||
        delivery.status==='delivered'&&
        (typeof delivery.runtimeReceiptId!=='string'||
         !delivery.runtimeReceiptId)||
