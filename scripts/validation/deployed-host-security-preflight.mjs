@@ -46,9 +46,10 @@ export function assessDeployedHostPreflight(input){
       failures.push(deny('LEGACY_WRITER_EXCLUSION_UNVERIFIED',
         label+' does not prove all legacy/unfenced writers excluded'));
     }
-    if(!Array.isArray(worker.runtimeEvidence?.connectionEpochWitnesses)||
-       !worker.runtimeEvidence.connectionEpochWitnesses.length||
-       worker.runtimeEvidence.connectionEpochWitnesses.some(v=>
+    const witnesses=worker.runtimeEvidence?.connectionEpochWitnesses;
+    if(!Array.isArray(witnesses)||!witnesses.length||
+       new Set(witnesses.map(v=>v?.sourceId)).size!==witnesses.length||
+       witnesses.some(v=>
          !safeName(v?.sourceId)||v.hostOwned!==true||
          typeof v.epochCommitmentSha256!=='string'||
          !/^[a-f0-9]{64}$/.test(v.epochCommitmentSha256))){
@@ -77,7 +78,7 @@ export function assessDeployedHostPreflight(input){
   }
   if(input?.independentReview?.completed!==true||
      input?.independentReview?.coversTwelveBoundaries!==true||
-     !sha.test(input.independentReview.sourceCommit??'')||
+     input.independentReview.sourceCommit!==input.sourceCommit||
      typeof input.independentReview.redactedReportDigest!=='string'||
      !/^[a-f0-9]{64}$/.test(input.independentReview.redactedReportDigest)){
     failures.push(deny('INDEPENDENT_HUMAN_REVIEW_PENDING',
