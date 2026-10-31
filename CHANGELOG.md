@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.12.0-next.1] — 2026-10-31 (candidate; not yet published)
+
+- **Feature-complete generic SDK preview** after #47/#48/#49 closure;
+  independent enterprise/production certification remains outside this
+  npm prerelease contract.
+- Versioned, bounded causal explainability and safe unknown-source finality
+  handling, including real PG16 inspector evidence.
+- Opt-in host-provided semantic classification with scoped caches and
+  durable worst-case estimated call/token/cost admission limits; no
+  external-provider invoice or remote cancellation guarantee.
+- **Conservative no-prune PostgreSQL16 retention:** preserve source/dedup,
+  audit, authoritative wake receipts and evidence; allow only safe terminal
+  duplicate-history compaction. Add bounded operator-only full-stream,
+  audit-chain, match/wake integrity preflight, contention/restart/negative
+  gap/corruption and JSONB size-refusal tests. Indefinite storage growth is
+  a documented trade-off, not production off-host archive.
+- Intentionally stricter host receipt and approval semantics since the
+  already published `0.12.0-next.0`: require actual host-issued receipt IDs;
+  remove obsolete implicit confirmations/void-delivery success.
+- Updated npm/package-lock/MCP metadata and
+  [versioned compatibility matrix](
+  docs/releases/0.12.0-next.1-compatibility.md). **Release only through
+  manual GitHub Actions `Publish npm` on main with `--tag next`; this
+  changelog entry does not certify npm publication or stable v1 readiness.**
+
 ## Unreleased (v1.0 development)
 
 ### Versioned pre-v1 breaking-change and storage compatibility notes

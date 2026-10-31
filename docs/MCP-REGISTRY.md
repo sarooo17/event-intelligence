@@ -46,7 +46,7 @@ The npm package declares the same identity through `package.json#mcpName`.
 
 `server.json` declares:
 
-- npm package: `mcp-event-intelligence@0.12.0-next.0`;
+- npm package: `mcp-event-intelligence@0.12.0-next.1`;
 - transport: `stdio`;
 - positional package argument: `mcp`;
 - only Event Intelligence control-plane/runtime settings, including optional Jev semantic-evaluator configuration.
@@ -55,7 +55,7 @@ It intentionally does **not** declare provider MCP connection configuration.
 
 ## Validation
 
-CI validates `server.json` with the official MCP publisher tooling. Release automation publishes the npm package, registers the matching MCP Registry version and creates the corresponding GitHub Release.
+CI validates `server.json` with the official MCP publisher tooling. **Prereleases are npm-only under the `next` dist-tag**, and are not registered as a new MCP Registry version or stable GitHub Release. Stable releases use the separately gated MCP Registry and GitHub Release automation. The metadata version here describes the checked-out package candidate, not a claim that it is already published.
 
 The Registry is a discovery/distribution channel for the optional control plane, not an integration hub for the host's other MCP servers.
 
