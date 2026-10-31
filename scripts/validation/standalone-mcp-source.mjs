@@ -151,7 +151,8 @@ export async function createStandaloneSource({
         nextPollMs:1000,sourceRevision:model.revision};
     },
     frontier({completenessRevision}={}){
-      if(model.revoked||!model.activeSeal)throw fail('SOURCE_UNSEALED','No active durable source seal');
+      if(model.revoked)throw fail('SOURCE_REVOKED','Source is revoked');
+      if(!model.activeSeal)throw fail('SOURCE_UNSEALED','No active durable source seal');
       if(!Number.isSafeInteger(completenessRevision)||completenessRevision<1)
         throw fail('SOURCE_REVISION_INVALID','Host completeness revision required');
       const issuedAtMs=now();
