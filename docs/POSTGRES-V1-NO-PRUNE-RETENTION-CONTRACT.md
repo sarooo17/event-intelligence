@@ -44,11 +44,15 @@ a separately reviewed post-v1 pruning protocol can prove safe retention.
 The optional, non-published validation module
 `scripts/validation/postgres-no-prune-retention-v1.mjs` provides
 `verifyPostgresV1NoPruneRetention({store,maxOccurrences,maxAuditRecords,
-maxSources,maxScanMs,matchIds,wakeIds})`.
+maxSources,maxScanMs,maxMatchRevisions,matchIds,wakeIds})`.
 
 It checks source-state inventory and the **full local source/dedup
 continuity**, source archive checkpoint, genesis-linked audit checkpoint,
-requested latest-match provenance and selected durable wake receipt IDs.
+requested latest-match provenance and selected durable wake receipt IDs,
+including a separate retained wake-history witness. Match history scans
+are bounded to 1–500 revisions per requested ID, 64 KiB per row,
+1 MiB aggregate serialized bytes and an SQL deadline; a truncated
+match history must fail closed rather than certifying missing provenance.
 It enforces explicit 1–10,000 source/audit budget and at most 100
 match/wake IDs per run. It emits no raw event payload, provider cursor,
 OAuth token or source arguments; in every result:
@@ -78,7 +82,8 @@ executing SQL DELETE and still claim SDK-supported no-prune semantics.
   or pending-wake deletion, stable source dedup/checkpoint and audit hash;
 - release/renew independent pool and cold state initialization, preserved
   provider event replay, duplicate rejection and wake host receipt;
-- manual source history deletion, dedup key deletion and audit prefix
+- manual source history deletion, dedup key deletion, wake history deletion
+  despite a still-present receipt, and audit prefix
   deletion, all failing closed, while an unaffected tenant stays valid;
 - bounded preflight denial, no secret exposure, and no implicit
   external archive, provider finality or physical prune authorization.
