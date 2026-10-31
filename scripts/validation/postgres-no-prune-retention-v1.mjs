@@ -55,7 +55,7 @@ export async function verifyPostgresV1NoPruneRetention({
       'Unverified source prune/replay authorization');
   }
   const [sourceTail,auditRows]=await Promise.all([
-    store.latestMcpEventSequence(),store.auditLength(),
+    store.latestMcpEventSequence({maxScanMs}),store.auditLength({maxScanMs}),
   ]);
   if(!integer(sourceTail,0,maxOccurrences)||
      !integer(auditRows,0,maxAuditRecords)){
