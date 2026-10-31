@@ -14,10 +14,86 @@ import { assessPostgresProductionSloEvidence } from '../scripts/evidence/postgre
 import { percentileStats, parsePrivateServiceUrl, listenValidationPrivateServer } from '../scripts/validation/common.mjs';
 import { verifyCampaignArtifact, verifyRawSampleArtifact } from '../scripts/validation/artifact.mjs';
 import { readWorkerConfig } from '../scripts/validation/worker-service.mjs';
-import { assessCampaignWindowCoverage, campaignInventory, isInspectorDiagnosticTerminal, campaignLaunchAt, monotonicAttemptBucket, readBenchmarkConfig, validateCampaign, waitForLaunch } from '../scripts/validation/benchmark-service.mjs';
+import { assessCampaignReconciliation, assessCampaignTimingCoverage, assessCampaignWindowCoverage, campaignInventory, isInspectorDiagnosticTerminal, campaignLaunchAt, monotonicAttemptBucket, readBenchmarkConfig, validateCampaign, waitForLaunch } from '../scripts/validation/benchmark-service.mjs';
 import { buildStartPayload } from '../scripts/validation/campaign-cli.mjs';
 import { PostgresEventStore } from '../scripts/lib/postgres-event-store.mjs';
 import { CompositeEventConsumer } from '../scripts/lib/composite-event-consumer.mjs';
+
+test('completed campaign must reconcile every configured event to matching and durable host receipts', () => {
+  const options={eventCount:1200};
+  const correct={attemptedEvents:1200,acceptedEvents:1200,matchedEvents:1200,
+    persistedDeliveredWakes:1200,verifiedWakes:1200,duplicateHostEffects:0,
+    wakeSettlement:{settled:true,expectedWakeCount:1200,
+      verifiedHostReceipts:1200,persistedDeliveredWakeCount:1200,
+      dueWakeBacklog:0,pendingWakeDeliveries:0,deadLetterWakeDeliveries:0}};
+  assert.deepEqual(assessCampaignReconciliation(options,correct),{complete:true,missing:[]});
+  const missingMatches=assessCampaignReconciliation(options,{
+    ...correct,matchedEvents:1192,verifiedWakes:1192,persistedDeliveredWakes:1192,
+    wakeSettlement:{...correct.wakeSettlement,expectedWakeCount:1192,
+      verifiedHostReceipts:1192,persistedDeliveredWakeCount:1192},
+  });
+  assert.equal(missingMatches.complete,false);
+  assert.ok(missingMatches.missing.includes('event-budget-mismatch:matchedEvents'));
+  assert.ok(missingMatches.missing.includes('durable-settlement-not-equal-to-event-budget'));
+
+  // Prior to this guard, settling all 0 matched wakes could return clean
+  // despite losing 100% of the configured trigger matches.
+  const zero=assessCampaignReconciliation({eventCount:10},{
+    attemptedEvents:10,acceptedEvents:10,matchedEvents:0,verifiedWakes:0,
+    persistedDeliveredWakes:0,duplicateHostEffects:0,
+    wakeSettlement:{settled:true,expectedWakeCount:0,verifiedHostReceipts:0,
+      persistedDeliveredWakeCount:0,dueWakeBacklog:0,
+      pendingWakeDeliveries:0,deadLetterWakeDeliveries:0}
+  });
+  assert.equal(zero.complete,false);
+  assert.ok(zero.missing.includes('event-budget-mismatch:verifiedWakes'));
+  const duplicated=assessCampaignReconciliation(options,{...correct,duplicateHostEffects:1});
+  assert.ok(duplicated.missing.includes('duplicate-host-effects'));
+  const timeout=assessCampaignReconciliation(options,{
+    ...correct,wakeSettlement:{...correct.wakeSettlement,settled:false,pendingWakeDeliveries:1}
+  });
+  assert.ok(timeout.missing.includes('durable-settlement-not-equal-to-event-budget'));
+});
+
+test('timing coverage identifies censored p99 evidence even when 1000+ samples remain', () => {
+  const input={acceptedEvents:1200,matchedEvents:1200,verifiedWakes:1200,
+    providerToWorkerSamples:Array(1200).fill(1),
+    ingestToMatchSamples:Array(1200).fill(1),
+    matchToWakeSamples:Array(1192).fill(1),
+    hostEffectSamples:Array(1200).fill(1),
+    endToEndSamples:Array(1200).fill(1)};
+  const coverage=assessCampaignTimingCoverage(input);
+  assert.equal(coverage.complete,false);
+  assert.deepEqual(coverage.incomplete,['matchToWake']);
+  assert.deepEqual(coverage.stages.matchToWake,{
+    expected:1200,measured:1192,missing:8,extra:0,complete:false
+  });
+  assert.equal(coverage.stages.ingestToMatch.complete,true);
+  assert.equal(assessCampaignTimingCoverage({
+    ...input,matchToWakeSamples:Array(1200).fill(1)
+  }).complete,true);
+  const extra=assessCampaignTimingCoverage({
+    ...input,matchToWakeSamples:Array(1201).fill(1)
+  });
+  assert.equal(extra.stages.matchToWake.extra,1);
+  assert.equal(extra.complete,false);
+  // ingestToMatch is measured per successfully ingested event, including
+  // valid nonmatching events; it must not use the lower match count.
+  const partialMatches={...input,matchedEvents:1192,
+    matchToWakeSamples:Array(1192).fill(1)};
+  const independent=assessCampaignTimingCoverage(partialMatches);
+  assert.equal(independent.stages.ingestToMatch.complete,true);
+  assert.equal(independent.stages.matchToWake.complete,true);
+  assert.equal(assessCampaignTimingCoverage({...partialMatches,
+    ingestToMatchSamples:Array(1192).fill(1)
+  }).stages.ingestToMatch.missing,8);
+
+  const unknown=assessCampaignTimingCoverage({
+    ...input,hostEffectSamples:null
+  });
+  assert.equal(unknown.complete,false);
+  assert.deepEqual(unknown.incomplete,['matchToWake','hostEffect']);
+});
 
 test('operator inventory exposes active benchmark, never events, tokens, internal errors or scopes', () => {
   const campaigns=new Map();
