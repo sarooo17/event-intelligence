@@ -230,12 +230,16 @@ export async function serveStandaloneSource({source,token,port=0,host='127.0.0.1
       return send(200,{ok:true,sourceReady:true});
     if(unauthorized(req))return send(401,{error:'unauthorized'});
     if(req.method!=='POST')return send(405,{error:'method-not-allowed'});
-    let buffer='';try{
+    const chunks=[];let byteCount=0;
+    try{
       for await(const chunk of req){
-        buffer+=chunk;
-        if(Buffer.byteLength(buffer)>32768)throw fail('SOURCE_BODY_LIMIT','Input too large');
+        const bytes=Buffer.isBuffer(chunk)?chunk:Buffer.from(chunk);
+        byteCount+=bytes.length;
+        if(byteCount>32768)throw fail('SOURCE_BODY_LIMIT','Input too large');
+        chunks.push(bytes);
       }
-      const body=JSON.parse(buffer||'{}');
+      const body=JSON.parse(byteCount?
+        Buffer.concat(chunks,byteCount).toString('utf8'):'{}');
       if(!body||typeof body!=='object'||Array.isArray(body))
         throw fail('SOURCE_PAYLOAD_INVALID','Invalid request');
       if(req.url==='/rpc'){
