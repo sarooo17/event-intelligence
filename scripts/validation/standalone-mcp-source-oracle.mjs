@@ -37,7 +37,7 @@ export async function verifyStandaloneOracle({logPath,sourceLog,
       events.push({eventId:p.eventId,name:p.name,timestamp:p.occurredAt,data:p.data});
     }else if(p?.kind==='seal'){
       const ms=Date.parse(p.completeThroughAt);
-      if(!Number.isFinite(ms)||ms<lastTime||ms<seal||p.revision!==revision)
+      if(!Number.isFinite(ms)||ms<lastTime||ms<=seal||p.revision!==revision)
         throw error('ORACLE_SEAL_INVALID');
       seal=ms;activeSeal=ms;
     }else if(p?.kind==='availability'){
