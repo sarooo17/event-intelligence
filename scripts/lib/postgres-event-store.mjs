@@ -2899,7 +2899,13 @@ export class PostgresEventStore {
     return Number(result.rows[0]?.value ?? 0);
   }
 
-  async listMcpOccurrencesAfter(sequence) {
+  async listMcpOccurrencesAfter(sequence, { maxScanMs = null } = {}) {
+    if(maxScanMs!==null && (!Number.isSafeInteger(maxScanMs) ||
+        maxScanMs<100 || maxScanMs>30000)) {
+      const error=new TypeError('MCP replay SQL budget must be 100..30000 ms');
+      error.code='EVENT_INTELLIGENCE_MCP_REPLAY_POLICY_INVALID';
+      throw error;
+    }
     // Retention safety fence: a missing historical occurrence or durable
     // dedup key must NEVER masquerade as a successful (partial) replay.
     // No source pruning is enabled today. Until a verified archive-backed
@@ -2918,6 +2924,12 @@ export class PostgresEventStore {
       await client.query(
         'SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY',
       );
+      // Optional bounded operator audit: enforce timeout in the same
+      // transaction that actually scans full source history and dedup.
+      // The normal legacy replay API remains unchanged without this opt-in.
+      if(maxScanMs!==null) await client.query(
+        "SELECT set_config('statement_timeout', $1, true)",
+        [String(maxScanMs)+'ms']);
       const c = await client.query(
         'SELECT value FROM ' + this.counters +
         ' WHERE scope_id=$1 AND name=$2',
@@ -3694,8 +3706,20 @@ export class PostgresEventStore {
    * tenant/genesis/terminal commitment. Pin this checkpoint independently
    * (off-host/WORM) before trusting later exported archive windows.
    */
-  async getAuditCheckpoint() {
+  async getAuditCheckpoint({ maxScanMs = null } = {}) {
+    if(maxScanMs!==null && (!Number.isSafeInteger(maxScanMs) ||
+        maxScanMs<100 || maxScanMs>30000)) {
+      const error=new TypeError('Audit checkpoint SQL budget must be 100..30000 ms');
+      error.code='EVENT_INTELLIGENCE_AUDIT_CHECKPOINT_POLICY_INVALID';
+      throw error;
+    }
     return this.tx(async (client) => {
+      // Limit both the scope audit advisory-lock wait and the complete
+      // genesis-linked read/verification; never claim bounded inspection
+      // if the real PG SQL call has no timeout.
+      if(maxScanMs!==null) await client.query(
+        "SELECT set_config('statement_timeout', $1, true)",
+        [String(maxScanMs)+'ms']);
       await this.lock(client, 'audit', 'chain');
       // pg's JSONB parser would round numbers beyond IEEE-754 precision
       // before canonical AuditChain hashing, letting two different stored
