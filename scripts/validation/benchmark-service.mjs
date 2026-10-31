@@ -171,6 +171,71 @@ export function assessCampaignWindowCoverage(options, { attemptedEvents, elapsed
   return Object.freeze({ covered: missing.length === 0, missing: Object.freeze(missing) });
 }
 
+/**
+ * A campaign can complete its observation window and settle every *matched*
+ * wake while silently failing to match some configured events. Reconcile
+ * against the declared input event budget, never just the match count.
+ */
+export function assessCampaignReconciliation(options, observed) {
+  const required = [
+    ['attemptedEvents', observed?.attemptedEvents],
+    ['acceptedEvents', observed?.acceptedEvents],
+    ['matchedEvents', observed?.matchedEvents],
+    ['persistedDeliveredWakes', observed?.persistedDeliveredWakes],
+    ['verifiedWakes', observed?.verifiedWakes],
+  ];
+  const missing = [];
+  if (!Number.isSafeInteger(options?.eventCount) || options.eventCount < 1) {
+    missing.push('invalid-expected-event-budget');
+  } else {
+    for (const [field, value] of required) {
+      if (!Number.isSafeInteger(value) || value !== options.eventCount) {
+        missing.push('event-budget-mismatch:' + field);
+      }
+    }
+  }
+  if (observed?.duplicateHostEffects !== 0) missing.push('duplicate-host-effects');
+  const settled = observed?.wakeSettlement;
+  if (settled?.settled !== true || !Number.isSafeInteger(settled?.expectedWakeCount) ||
+      settled.expectedWakeCount !== options?.eventCount ||
+      settled.verifiedHostReceipts !== options?.eventCount ||
+      settled.persistedDeliveredWakeCount !== options?.eventCount ||
+      settled.dueWakeBacklog !== 0 || settled.pendingWakeDeliveries !== 0 ||
+      settled.deadLetterWakeDeliveries !== 0) {
+    missing.push('durable-settlement-not-equal-to-event-budget');
+  }
+  return Object.freeze({ complete: missing.length === 0, missing: Object.freeze(missing) });
+}
+
+/**
+ * Count all missing or extra synthetic measurement samples, even if there
+ * are still >=1000 valid values and the published percentile looks healthy.
+ * Reporting a partial timing sample set never constitutes SLO certification.
+ */
+export function assessCampaignTimingCoverage({ acceptedEvents, matchedEvents, verifiedWakes,
+  providerToWorkerSamples, ingestToMatchSamples, matchToWakeSamples, hostEffectSamples, endToEndSamples }) {
+  const entries = [
+    ['providerToWorkerResponse', acceptedEvents, providerToWorkerSamples],
+    ['ingestToMatch', acceptedEvents, ingestToMatchSamples],
+    ['matchToWake', matchedEvents, matchToWakeSamples],
+    ['hostEffect', verifiedWakes, hostEffectSamples],
+    ['providerToHostEndToEnd', verifiedWakes, endToEndSamples],
+  ];
+  const stages = {};
+  const incomplete = [];
+  for (const [name, expected, samples] of entries) {
+    const measured = Array.isArray(samples) ? samples.length : NaN;
+    const valid = Number.isSafeInteger(expected) && expected >= 0 &&
+      Number.isSafeInteger(measured) && measured >= 0;
+    const missing = valid ? Math.max(0, expected - measured) : null;
+    const extra = valid ? Math.max(0, measured - expected) : null;
+    stages[name] = { expected, measured: Number.isFinite(measured) ? measured : null,
+      missing, extra, complete: valid && measured === expected };
+    if (!stages[name].complete) incomplete.push(name);
+  }
+  return Object.freeze({ complete: incomplete.length === 0, stages, incomplete });
+}
+
 export async function waitForLaunch(launchAt, { now = () => performance.now(), sleep = ms => new Promise(resolve => setTimeout(resolve, ms)), signal } = {}) {
   let delay = launchAt - now();
   while (delay > 0 && !signal?.aborted) {
@@ -246,7 +311,7 @@ export function createBenchmarkService({ env = process.env, pool: suppliedPool, 
   }
 
   function emptyCampaign(id, scopeId, options, createdAt = new Date().toISOString()) {
-    return { id, options, scopeId, status: 'queued', createdAt, startedAt: null, completedAt: null, attemptedEvents: 0, acceptedEvents: 0, matchedEvents: 0, persistedDeliveredWakes: 0, duplicateCallbackAttempts: 0, duplicateHostEffects: 0, errorCount: 0, verifiedWakes: new Set(), eventStarts: new Map(), rawSampleRows: [], providerToWorkerSamples: [], ingestToMatchSamples: [], matchToWakeSamples: [], hostEffectSamples: [], endToEndSamples: [], workerRequestCounts: new Map(), workerMetrics: null, postgresStats: null, databaseStorageGrowthBytes: null, errors: [], faults: [], attemptedMinuteBuckets: [], outOfWindowAttemptCount: 0, loadCoverage: null, artifactPath: null, artifactSha256: null, rawArtifactPath: null, rawArtifactSha256: null, report: null, elapsedSeconds: 0 };
+    return { id, options, scopeId, status: 'queued', createdAt, startedAt: null, completedAt: null, attemptedEvents: 0, acceptedEvents: 0, matchedEvents: 0, persistedDeliveredWakes: 0, duplicateCallbackAttempts: 0, duplicateHostEffects: 0, errorCount: 0, verifiedWakes: new Set(), eventStarts: new Map(), rawSampleRows: [], providerToWorkerSamples: [], ingestToMatchSamples: [], matchToWakeSamples: [], hostEffectSamples: [], endToEndSamples: [], workerRequestCounts: new Map(), workerMetrics: null, postgresStats: null, databaseStorageGrowthBytes: null, errors: [], faults: [], attemptedMinuteBuckets: [], outOfWindowAttemptCount: 0, loadCoverage: null, reconciliation: null, artifactPath: null, artifactSha256: null, rawArtifactPath: null, rawArtifactSha256: null, report: null, elapsedSeconds: 0 };
   }
 
   async function persistCampaign(campaign) {
@@ -356,13 +421,14 @@ export function createBenchmarkService({ env = process.env, pool: suppliedPool, 
       trafficSource: 'synthetic MCP-shaped events generated by ei-benchmark over private HTTP',
       externalProviderMeasured: false,
       configuration: { ...campaign.options, workers: config.workers.map(({ id }) => id), partitions: campaign.options.partitions },
-      observed: { elapsedSeconds: campaign.elapsedSeconds, requestedEvents: campaign.options.eventCount, attemptedEvents: campaign.attemptedEvents, attemptedMinuteBuckets: campaign.attemptedMinuteBuckets, outOfWindowAttemptCount: campaign.outOfWindowAttemptCount, loadCoverage: campaign.loadCoverage, acceptedEvents: campaign.acceptedEvents, matchedEvents: campaign.matchedEvents, persistedDeliveredWakes: campaign.persistedDeliveredWakes, verifiedWakes: campaign.verifiedWakes.size, duplicateCallbackAttempts: campaign.duplicateCallbackAttempts, duplicateHostEffects: campaign.duplicateHostEffects, errors: campaign.errorCount, lostEvents: Math.max(0, campaign.attemptedEvents - campaign.verifiedWakes.size), requestedEventRatePerSecond: campaign.options.requestedRatePerSecond, achievedRequestRatePerSecond: campaign.elapsedSeconds ? campaign.acceptedEvents / campaign.elapsedSeconds : 0, workerRequestCounts: Object.fromEntries(campaign.workerRequestCounts), workerCpuUsageMicros: campaign.workerCpuUsageMicros, backlog: campaign.workerMetrics ? Object.fromEntries(Object.entries(campaign.workerMetrics).map(([key, value]) => [key, value?.dueWakeBacklog ?? null])) : null, pendingWakeDeliveries: campaign.wakeSettlement?.pendingWakeDeliveries ?? null, wakeSettlement: campaign.wakeSettlement ?? null, queueDepth: null, workerMetrics: campaign.workerMetrics, postgresDatabaseStats: campaign.postgresStats, databaseStorageGrowthBytes: campaign.databaseStorageGrowthBytes },
+      observed: { elapsedSeconds: campaign.elapsedSeconds, requestedEvents: campaign.options.eventCount, attemptedEvents: campaign.attemptedEvents, attemptedMinuteBuckets: campaign.attemptedMinuteBuckets, outOfWindowAttemptCount: campaign.outOfWindowAttemptCount, loadCoverage: campaign.loadCoverage, reconciliation: campaign.reconciliation, timingCoverage: assessCampaignTimingCoverage({ acceptedEvents: campaign.acceptedEvents, matchedEvents: campaign.matchedEvents, verifiedWakes: campaign.verifiedWakes.size, providerToWorkerSamples: campaign.providerToWorkerSamples, ingestToMatchSamples: campaign.ingestToMatchSamples, matchToWakeSamples: campaign.matchToWakeSamples, hostEffectSamples: campaign.hostEffectSamples, endToEndSamples: campaign.endToEndSamples }), acceptedEvents: campaign.acceptedEvents, matchedEvents: campaign.matchedEvents, persistedDeliveredWakes: campaign.persistedDeliveredWakes, verifiedWakes: campaign.verifiedWakes.size, duplicateCallbackAttempts: campaign.duplicateCallbackAttempts, duplicateHostEffects: campaign.duplicateHostEffects, errors: campaign.errorCount, lostEvents: Math.max(0, campaign.attemptedEvents - campaign.verifiedWakes.size), requestedEventRatePerSecond: campaign.options.requestedRatePerSecond, achievedRequestRatePerSecond: campaign.elapsedSeconds ? campaign.acceptedEvents / campaign.elapsedSeconds : 0, workerRequestCounts: Object.fromEntries(campaign.workerRequestCounts), workerCpuUsageMicros: campaign.workerCpuUsageMicros, backlog: campaign.workerMetrics ? Object.fromEntries(Object.entries(campaign.workerMetrics).map(([key, value]) => [key, value?.dueWakeBacklog ?? null])) : null, pendingWakeDeliveries: campaign.wakeSettlement?.pendingWakeDeliveries ?? null, wakeSettlement: campaign.wakeSettlement ?? null, queueDepth: null, workerMetrics: campaign.workerMetrics, postgresDatabaseStats: campaign.postgresStats, databaseStorageGrowthBytes: campaign.databaseStorageGrowthBytes },
       latency: { providerToWorkerResponse: percentileStatsOrMissing(campaign.providerToWorkerSamples), hostEffect: percentileStatsOrMissing(campaign.hostEffectSamples), providerToHostEndToEnd: percentileStatsOrMissing(campaign.endToEndSamples), providerToIngest: null, ingestToMatch: percentileStatsOrMissing(campaign.ingestToMatchSamples), matchToWake: percentileStatsOrMissing(campaign.matchToWakeSamples) },
       rawSamples: { file: `ei-validation-${campaign.id}.jsonl`, rows: campaign.rawSampleRows.length, maxRows: MAX_RAW_SAMPLE_ROWS, truncated: campaign.acceptedEvents > campaign.rawSampleRows.length },
       missingMetrics: [
         'providerToIngest (no clock-safe ingest acknowledgement boundary)',
         ...(campaign.ingestToMatchSamples.length ? [] : ['ingestToMatch (no valid worker timing samples)']),
         ...(campaign.matchToWakeSamples.length ? [] : ['matchToWake (no successful wake delivery timing samples)']),
+        ...assessCampaignTimingCoverage({ acceptedEvents: campaign.acceptedEvents, matchedEvents: campaign.matchedEvents, verifiedWakes: campaign.verifiedWakes.size, providerToWorkerSamples: campaign.providerToWorkerSamples, ingestToMatchSamples: campaign.ingestToMatchSamples, matchToWakeSamples: campaign.matchToWakeSamples, hostEffectSamples: campaign.hostEffectSamples, endToEndSamples: campaign.endToEndSamples }).incomplete.map(name => 'partial-or-excess-latency-samples:' + name),
         'total pending wake queue depth (campaign reports per-scope unsettled deliveries, not full service queue depth)',
         'PostgreSQL service CPU/memory attribution',
         'independent provider and host failure domains',
@@ -521,6 +587,23 @@ export function createBenchmarkService({ env = process.env, pool: suppliedPool, 
     if (!campaign.wakeSettlement.settled) {
       campaign.errorCount++;
       if (campaign.errors.length < 100) campaign.errors.push({ worker: 'wake-settlement', message: campaign.wakeSettlement.timedOut ? 'wake delivery settlement timed out' : 'final persisted wake, host receipt, backlog, or dead-letter counts did not match settlement requirements' });
+    }
+    campaign.reconciliation = assessCampaignReconciliation(options, {
+      attemptedEvents: campaign.attemptedEvents,
+      acceptedEvents: campaign.acceptedEvents,
+      matchedEvents: campaign.matchedEvents,
+      persistedDeliveredWakes: campaign.persistedDeliveredWakes,
+      verifiedWakes: campaign.verifiedWakes.size,
+      duplicateHostEffects: campaign.duplicateHostEffects,
+      wakeSettlement: campaign.wakeSettlement,
+    });
+    if (!campaign.reconciliation.complete && !controller.signal.aborted) {
+      campaign.errorCount++;
+      if (campaign.errors.length < 100) campaign.errors.push({
+        worker: 'reconciliation',
+        message: 'Campaign input budget and durable host effects do not match: ' +
+          campaign.reconciliation.missing.join(', '),
+      });
     }
     campaign.finalStatus = controller.signal.aborted ? 'stopped' : (campaign.errors.length ? 'completed-with-errors' : 'completed');
     const dbEnd = await pool.query("SELECT pg_database_size(current_database())::bigint AS bytes, (SELECT xact_commit FROM pg_stat_database WHERE datname=current_database())::bigint AS commits");
