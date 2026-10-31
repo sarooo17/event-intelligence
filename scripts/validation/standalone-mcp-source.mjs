@@ -7,13 +7,14 @@ import {canonicalExternalSourceFrontierClaim,
 
 const hash=x=>createHash('sha256').update(x).digest('hex');
 const initialHash='0'.repeat(64);
+const MAX_SOURCE_LOG_BYTES=16*1024*1024;
 const fail=(code,msg)=>Object.assign(new Error(msg),{code});
 const iso=ms=>new Date(ms).toISOString();
 function requireId(x){if(typeof x!=='string'||!x||x.length>180||
   !/^[a-zA-Z0-9._:-]+$/.test(x))throw fail('SOURCE_ID_INVALID','Invalid source identity');
   return x;}
 function parseLog(text){
-  if(text.length>16*1024*1024)throw fail('SOURCE_LOG_BUDGET_EXCEEDED','Source log exceeds bounded in-process evidence budget');
+  if(Buffer.byteLength(text,'utf8')>MAX_SOURCE_LOG_BYTES)throw fail('SOURCE_LOG_BUDGET_EXCEEDED','Source log exceeds bounded in-process evidence budget');
   if(text&&!text.endsWith('\n'))throw fail('SOURCE_LOG_TRUNCATED','Unterminated append-only source record');
   const lines=text?text.trimEnd().split('\n'):[];
   const records=[];let prev=initialHash;
@@ -28,10 +29,14 @@ function parseLog(text){
   }
   return records;
 }
-function derive(records){
+function derive(records,identity){
   const ids=new Map();let lastTime=0,seal=0,activeSeal=0,revision=1,revoked=false;
+  if(records.length&&(records[0].payload?.kind!=='identity'||
+     JSON.stringify(records[0].payload)!==JSON.stringify(identity)))
+    throw fail('SOURCE_IDENTITY_MISMATCH','Durable source identity cannot be rebound');
   for(const row of records){
     const p=row.payload;
+    if(p.kind==='identity' && row.seq===1)continue;
     if(p.kind==='event'){
       if(typeof p.eventId!=='string'||!p.eventId||ids.has(p.eventId)||
          typeof p.occurredAt!=='string'||!Number.isFinite(Date.parse(p.occurredAt))||
@@ -69,28 +74,57 @@ export async function createStandaloneSource({
     if(e.code==='EEXIST')throw fail('SOURCE_WRITER_LOCKED','Another or unrecovered writer lock exists');
     throw e;
   }
-  let records,model,closed=false,serial=Promise.resolve();
-  try{records=parseLog(await readFile(logPath,'utf8').catch(e=>{
-    if(e.code==='ENOENT')return '';throw e;}));
-    model=derive(records);
+  const identity={kind:'identity',scopeId,sourceKeyDigest,
+    connectionId,serverId,eventName,argumentsCanonical};
+  let records,model,closed=false,unhealthy=false,serial=Promise.resolve();
+  let rawLog='';
+  try{rawLog=await readFile(logPath,'utf8').catch(e=>{
+    if(e.code==='ENOENT')return '';throw e;});
+    records=parseLog(rawLog);
+    model=derive(records,identity);
   }catch(e){await rmdir(lockPath).catch(()=>{});throw e;}
   const queue=fn=>{const next=serial.then(fn);serial=next.catch(()=>{});return next;};
-  const add=async payload=>{
+  let sizeBytes=Buffer.byteLength(rawLog,'utf8');
+  const healthy=()=>{
+    if(unhealthy)throw fail('SOURCE_LOG_WRITE_UNCERTAIN',
+      'Ambiguous source write requires operator log recovery');
     if(closed)throw fail('SOURCE_CLOSED','Source closed');
+  };
+  const add=async payload=>{
+    healthy();
     const prev=model.head,seq=records.length+1;
     const row={seq,prev,payload,hash:hash(prev+'\n'+JSON.stringify(payload))};
-    const file=await open(logPath,'a');
-    try{await file.writeFile(JSON.stringify(row)+'\n');await file.sync();}
-    finally{await file.close();}
-    // Never advance in-memory state before durable file sync; fail closed on
-    // subsequent errors rather than continuing after ambiguous writes.
-    records.push(row);model=derive(records);return row;
+    const bytes=Buffer.from(JSON.stringify(row)+'\n','utf8');
+    if(sizeBytes+bytes.length>MAX_SOURCE_LOG_BYTES)
+      throw fail('SOURCE_LOG_BUDGET_EXCEEDED',
+        'Source log full: stop before irrecoverable append');
+    let file;
+    try{
+      file=await open(logPath,'a');
+      await file.writeFile(bytes);
+      await file.sync();
+      await file.close();
+      file=null;
+      records.push(row);
+      sizeBytes+=bytes.length;
+      model=derive(records,identity);
+      return row;
+    }catch(e){
+      // After a failed open/write/sync/close, bytes MAY already be on
+      // disk. Never reuse a sequence or issue a frontier until a cold
+      // restart explicitly revalidates the entire durable log.
+      unhealthy=true;
+      if(file)await file.close().catch(()=>{});
+      throw fail('SOURCE_LOG_WRITE_UNCERTAIN',
+        'Ambiguous source write requires operator log recovery');
+    }
   };
+  if(!records.length)await add(identity);
   return {
     eventName,
     async append({eventId,data={}}){
       return queue(async()=>{
-        requireId(eventId);
+        healthy();requireId(eventId);
         if(model.revoked)throw fail('SOURCE_REVOKED','Source is revoked');
         if(!data||typeof data!=='object'||Array.isArray(data)||
            Buffer.byteLength(JSON.stringify(data))>16384)
@@ -115,7 +149,7 @@ export async function createStandaloneSource({
     },
     async seal(){
       return queue(async()=>{
-        if(model.revoked)throw fail('SOURCE_REVOKED','Source is revoked');
+        healthy();if(model.revoked)throw fail('SOURCE_REVOKED','Source is revoked');
         const current=now();
         if(!Number.isSafeInteger(current)||current<model.lastTime||current<=model.seal)
           throw fail('SOURCE_CLOCK_REGRESSION','Provider seal cannot regress');
@@ -127,14 +161,14 @@ export async function createStandaloneSource({
     },
     async setRevoked(revoked){
       return queue(async()=>{
-        if(typeof revoked!=='boolean')throw fail('SOURCE_CONFIG_INVALID','Bad availability');
+        healthy();if(typeof revoked!=='boolean')throw fail('SOURCE_CONFIG_INVALID','Bad availability');
         if(model.revoked===revoked)return {revision:model.revision,revoked};
         await add({kind:'availability',revoked,revision:model.revision+1});
         return {revision:model.revision,revoked};
       });
     },
     poll({cursor=null,maxEvents=50}={}){
-      if(model.revoked)throw fail('SOURCE_REVOKED','Source is revoked');
+      healthy();if(model.revoked)throw fail('SOURCE_REVOKED','Source is revoked');
       if(!Number.isSafeInteger(maxEvents)||maxEvents<1||maxEvents>256)
         throw fail('SOURCE_CURSOR_INVALID','Invalid page limit');
       const start=cursor===null?0:
@@ -151,7 +185,7 @@ export async function createStandaloneSource({
         nextPollMs:1000,sourceRevision:model.revision};
     },
     frontier({completenessRevision}={}){
-      if(model.revoked)throw fail('SOURCE_REVOKED','Source is revoked');
+      healthy();if(model.revoked)throw fail('SOURCE_REVOKED','Source is revoked');
       if(!model.activeSeal)throw fail('SOURCE_UNSEALED','No active durable source seal');
       if(!Number.isSafeInteger(completenessRevision)||completenessRevision<1)
         throw fail('SOURCE_REVISION_INVALID','Host completeness revision required');
@@ -170,7 +204,7 @@ export async function createStandaloneSource({
         sourceLog:{sequence:records.length,head:model.head,providerRevision:model.revision}};
     },
     status(){
-      return {schema:'ei.standalone-source-status.v1',sequence:records.length,
+      healthy();return {schema:'ei.standalone-source-status.v1',sequence:records.length,
         head:model.head,revision:model.revision,revoked:model.revoked,
         lastSeal:model.activeSeal?iso(model.activeSeal):null};
     },
