@@ -291,8 +291,27 @@ integration('PG16 no-prune preflight rejects huge source/dedup and audit JSONB b
     await assert.rejects(()=>verifyPostgresV1NoPruneRetention({
       store:audit,maxAuditBytes:1024}),
       e=>e.code==='EVENT_INTELLIGENCE_AUDIT_CHECKPOINT_BUDGET_EXCEEDED');
+    // Per-record limits must also be enforced in PostgreSQL before any
+    // oversized record is deserialized, even when its aggregate cap is ample.
+    await assert.rejects(()=>src.listMcpOccurrencesAfter(0,{
+      maxScanMs:1500,maxRowBytes:1024}),
+      e=>e.code==='EVENT_INTELLIGENCE_MCP_REPLAY_BUDGET_EXCEEDED');
+    await assert.rejects(()=>src.getMcpOccurrenceArchiveCheckpoint({
+      maxScanMs:1500,maxRowBytes:1024}),
+      e=>e.code==='EVENT_INTELLIGENCE_MCP_ARCHIVE_SCAN_BUDGET_EXCEEDED');
+    await assert.rejects(()=>verifyPostgresV1NoPruneRetention({
+      store:src,maxSourceRowBytes:1024}),
+      e=>e.code==='EVENT_INTELLIGENCE_MCP_REPLAY_BUDGET_EXCEEDED');
+    await assert.rejects(()=>audit.getAuditCheckpoint({
+      maxScanMs:1500,maxRowBytes:1024}),
+      e=>e.code==='EVENT_INTELLIGENCE_AUDIT_CHECKPOINT_BUDGET_EXCEEDED');
+    await assert.rejects(()=>verifyPostgresV1NoPruneRetention({
+      store:audit,maxAuditRowBytes:1024}),
+      e=>e.code==='EVENT_INTELLIGENCE_AUDIT_CHECKPOINT_BUDGET_EXCEEDED');
     for(const request of [{store:src,maxSourceBytes:0},
-      {store:audit,maxAuditBytes:64*1024*1024+1}]){
+      {store:audit,maxAuditBytes:64*1024*1024+1},
+      {store:src,maxSourceRowBytes:0},
+      {store:audit,maxAuditRowBytes:1024*1024+1}]){
       await assert.rejects(()=>verifyPostgresV1NoPruneRetention(request),
         e=>e.code==='EVENT_INTELLIGENCE_V1_RETENTION_POLICY_INVALID');
     }
