@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {randomBytes} from 'node:crypto';
 import {PostgresEventStore} from '../scripts/lib/postgres-event-store.mjs';
-import {verifyPostgresV1NoPruneRetention} from
+import {verifyPostgresV1NoPruneRetention,readBoundedV1WakeWitness} from
   '../scripts/validation/postgres-no-prune-retention-v1.mjs';
 
 const url=process.env.POSTGRES_URL;
@@ -100,6 +100,9 @@ integration('PG16 v1 no-prune: scoped source+dedup+audit survive real terminal c
         ' IN ACCESS EXCLUSIVE MODE');
       await assert.rejects(()=>a.listMcpOccurrencesAfter(0,{maxScanMs:150}),
         e=>e.code==='57014','source replay actual history SELECT bounded');
+      await assert.rejects(()=>readBoundedV1WakeWitness(
+        a,'wake-fired',{maxScanMs:150}),
+        e=>e.code==='57014','wake history bounded under shared table lock');
       await assert.rejects(()=>a.auditLength({maxScanMs:150}),
         e=>e.code==='57014','initial audit count SQL also bounded');
       await assert.rejects(()=>verifyPostgresV1NoPruneRetention({
@@ -216,9 +219,11 @@ integration('PG16 no-prune fails closed after missing source, lost dedup or trun
   const c=mk(poolB,prefix,'damaged-audit');
   const d=mk(poolB,prefix,'damaged-wake');
   const big=mk(poolA,prefix,'oversized-current-match');
+  const hugeWake=mk(poolB,prefix,'oversized-wake-receipt');
+  const hugeHistory=mk(poolA,prefix,'oversized-wake-history');
   const good=mk(poolA,prefix,'healthy-other-tenant');
   try{
-    await Promise.all([a.init(),b.init(),c.init(),d.init(),big.init(),good.init()]);
+    await Promise.all([a.init(),b.init(),c.init(),d.init(),big.init(),hugeWake.init(),hugeHistory.init(),good.init()]);
     for(const st of [a,b,c,good]){
       for(let i=0;i<2;i++)await st.appendMcpOccurrence(
         'remote',event(st.scopeId+'-'+i),'subscription');
@@ -265,6 +270,29 @@ integration('PG16 no-prune fails closed after missing source, lost dedup or trun
       [big.scopeId,'big-current','X'.repeat(75000)]);
     await assert.rejects(()=>verifyPostgresV1NoPruneRetention({
       store:big,matchIds:['big-current']}),
+      e=>e.code==='EVENT_INTELLIGENCE_INSPECTION_BUDGET_EXCEEDED');
+    for(const st of [hugeWake,hugeHistory]){
+      await st.appendWake(wake('wide-wake','queued'));
+      await st.ensureWakeDelivery({wakeId:'wide-wake',matchId:'not-yet',
+        triggerId:'no-prune-trigger',triggerVersion:'1',
+        runtime:'fixture-host',now:at});
+    }
+    await poolA.query('UPDATE '+records+
+      " SET payload=jsonb_set(payload,'{lastError}',to_jsonb($3::text))"+
+      " WHERE scope_id=$1 AND kind='wake_delivery' AND record_key=$2",
+      [hugeWake.scopeId,'wide-wake','X'.repeat(75000)]);
+    await assert.rejects(()=>verifyPostgresV1NoPruneRetention({
+      store:hugeWake,wakeIds:['wide-wake']}),
+      e=>e.code==='EVENT_INTELLIGENCE_INSPECTION_BUDGET_EXCEEDED');
+    await poolB.query('UPDATE '+history+
+      " SET payload=jsonb_set(payload,'{target,id}',to_jsonb($3::text))"+
+      " WHERE scope_id=$1 AND kind='wake' AND record_key=$2",
+      [hugeHistory.scopeId,'wide-wake','Y'.repeat(75000)]);
+    await assert.rejects(()=>readBoundedV1WakeWitness(
+      hugeHistory,'wide-wake'),
+      e=>e.code==='EVENT_INTELLIGENCE_INSPECTION_BUDGET_EXCEEDED');
+    await assert.rejects(()=>verifyPostgresV1NoPruneRetention({
+      store:hugeHistory,wakeIds:['wide-wake']}),
       e=>e.code==='EVENT_INTELLIGENCE_INSPECTION_BUDGET_EXCEEDED');
     const safe=await verifyPostgresV1NoPruneRetention({store:good});
     assert.equal(safe.sourceTailSequence,2);
