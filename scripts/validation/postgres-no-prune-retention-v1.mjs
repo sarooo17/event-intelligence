@@ -11,6 +11,7 @@ export async function verifyPostgresV1NoPruneRetention({
   store,maxOccurrences=10000,maxAuditRecords=10000,
   maxSources=1024,maxScanMs=5000,maxMatchRevisions=100,
   maxSourceBytes=16*1024*1024,maxAuditBytes=8*1024*1024,
+  maxSourceRowBytes=131072,maxAuditRowBytes=131072,
   matchIds=[],wakeIds=[],
 }={}){
   if(!store||typeof store.listMcpOccurrencesAfter!=='function'||
@@ -30,6 +31,8 @@ export async function verifyPostgresV1NoPruneRetention({
      !integer(maxMatchRevisions,1,500)||
      !integer(maxSourceBytes,1024,64*1024*1024)||
      !integer(maxAuditBytes,1024,64*1024*1024)||
+     !integer(maxSourceRowBytes,1024,1024*1024)||
+     !integer(maxAuditRowBytes,1024,1024*1024)||
      !Array.isArray(matchIds)||matchIds.length>100||
      !Array.isArray(wakeIds)||wakeIds.length>100||
      [...matchIds,...wakeIds].some(id=>typeof id!=='string'||!id||
@@ -62,13 +65,14 @@ export async function verifyPostgresV1NoPruneRetention({
   // Source reader verifies *all* history against dedup and persisted counter
   // even when a client normally asks only for an advanced cursor.
   const occurrences=await store.listMcpOccurrencesAfter(0,{
-    maxScanMs,maxTotalBytes:maxSourceBytes,
+    maxScanMs,maxTotalBytes:maxSourceBytes,maxRowBytes:maxSourceRowBytes,
   });
   const sourceCheckpoint=await store.getMcpOccurrenceArchiveCheckpoint({
     maxOccurrences,maxScanMs,maxTotalBytes:maxSourceBytes,
+    maxRowBytes:maxSourceRowBytes,
   });
   const auditCheckpoint=await store.getAuditCheckpoint({
-    maxScanMs,maxTotalBytes:maxAuditBytes,
+    maxScanMs,maxTotalBytes:maxAuditBytes,maxRowBytes:maxAuditRowBytes,
   });
   if(occurrences.length!==sourceTail||
      sourceCheckpoint.endSequence!==sourceTail||
