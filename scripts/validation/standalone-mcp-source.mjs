@@ -74,7 +74,12 @@ export async function createStandaloneSource({
   // The operator must provision a PRE-EXISTING durable mount/directory.
   // Creating unflushed ancestors here would invalidate fsync ACK safety.
   const parent=dirname(logPath);
-  if(!(await stat(parent)).isDirectory())
+  let parentMeta;
+  try{parentMeta=await stat(parent);}catch{
+    throw fail('SOURCE_LOG_PARENT_INVALID',
+      'Pre-provisioned log parent must exist before source startup');
+  }
+  if(!parentMeta.isDirectory())
     throw fail('SOURCE_LOG_PARENT_INVALID','Pre-provisioned log parent must be directory');
   const lockPath=logPath+'.writer-lock';
   try{await mkdir(lockPath);}catch(e){
