@@ -1,5 +1,5 @@
 import {createHash,createPrivateKey,sign as edSign,timingSafeEqual} from 'node:crypto';
-import {mkdir,open,readFile,rmdir} from 'node:fs/promises';
+import {mkdir,open,readFile,rmdir,stat} from 'node:fs/promises';
 import {dirname} from 'node:path';
 import {createServer} from 'node:http';
 import {canonicalExternalSourceFrontierClaim,
@@ -71,7 +71,11 @@ export async function createStandaloneSource({
   const key=createPrivateKey(privateKeyPem);
   if(key.asymmetricKeyType!=='ed25519')
     throw fail('SOURCE_CONFIG_INVALID','Ed25519 signing key required');
-  await mkdir(dirname(logPath),{recursive:true});
+  // The operator must provision a PRE-EXISTING durable mount/directory.
+  // Creating unflushed ancestors here would invalidate fsync ACK safety.
+  const parent=dirname(logPath);
+  if(!(await stat(parent)).isDirectory())
+    throw fail('SOURCE_LOG_PARENT_INVALID','Pre-provisioned log parent must be directory');
   const lockPath=logPath+'.writer-lock';
   try{await mkdir(lockPath);}catch(e){
     if(e.code==='EEXIST')throw fail('SOURCE_WRITER_LOCKED','Another or unrecovered writer lock exists');
@@ -110,6 +114,12 @@ export async function createStandaloneSource({
       await file.sync();
       await file.close();
       file=null;
+      if(!records.length){
+        // fsync(file) alone does not durably commit a newly-created name.
+        // The source never exposes a sealed log or ACK before fsync(parent).
+        const directory=await open(parent,'r');
+        try{await directory.sync();}finally{await directory.close();}
+      }
       records.push(row);
       sizeBytes+=bytes.length;
       model=derive(records,identity);
