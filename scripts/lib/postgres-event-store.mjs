@@ -2914,13 +2914,27 @@ export class PostgresEventStore {
     }
   }
 
-  async latestMcpEventSequence() {
-    const result = await this.pool.query(
-      'SELECT value FROM ' + this.counters +
-      " WHERE scope_id = $1 AND name = 'mcp_occurrence'",
-      [this.scopeId],
-    );
-    return Number(result.rows[0]?.value ?? 0);
+  async latestMcpEventSequence({ maxScanMs = null } = {}) {
+    if(maxScanMs!==null && (!Number.isSafeInteger(maxScanMs) ||
+        maxScanMs<100 || maxScanMs>30000)){
+      const error=new TypeError('Source tail count SQL budget must be 100..30000 ms');
+      error.code='EVENT_INTELLIGENCE_MCP_REPLAY_POLICY_INVALID';
+      throw error;
+    }
+    const query=async db=>{
+      const result=await db.query(
+        'SELECT value FROM ' + this.counters +
+        " WHERE scope_id = $1 AND name = 'mcp_occurrence'",
+        [this.scopeId],
+      );
+      return Number(result.rows[0]?.value ?? 0);
+    };
+    if(maxScanMs===null)return query(this.pool);
+    return this.tx(async client=>{
+      await client.query("SELECT set_config('statement_timeout',$1,true)",
+        [String(maxScanMs)+'ms']);
+      return query(client);
+    });
   }
 
   async listMcpOccurrencesAfter(sequence, {
@@ -3988,13 +4002,27 @@ export class PostgresEventStore {
     };
   }
 
-  async auditLength() {
-    const result = await this.pool.query(
-      'SELECT count(*)::bigint AS count FROM ' + this.history +
-      " WHERE scope_id = $1 AND kind = 'audit'",
-      [this.scopeId],
-    );
-    return Number(result.rows[0]?.count ?? 0);
+  async auditLength({ maxScanMs = null } = {}) {
+    if(maxScanMs!==null && (!Number.isSafeInteger(maxScanMs) ||
+        maxScanMs<100 || maxScanMs>30000)){
+      const error=new TypeError('Audit count SQL budget must be 100..30000 ms');
+      error.code='EVENT_INTELLIGENCE_AUDIT_CHECKPOINT_POLICY_INVALID';
+      throw error;
+    }
+    const query=async db=>{
+      const result=await db.query(
+        'SELECT count(*)::bigint AS count FROM ' + this.history +
+        " WHERE scope_id = $1 AND kind = 'audit'",
+        [this.scopeId],
+      );
+      return Number(result.rows[0]?.count ?? 0);
+    };
+    if(maxScanMs===null)return query(this.pool);
+    return this.tx(async client=>{
+      await client.query("SELECT set_config('statement_timeout',$1,true)",
+        [String(maxScanMs)+'ms']);
+      return query(client);
+    });
   }
 
   async verifyAudit() {
