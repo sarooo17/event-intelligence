@@ -60,8 +60,11 @@ function derive(records,identity){
 export async function createStandaloneSource({
   logPath,privateKeyPem,scopeId,sourceKeyDigest,connectionId,
   serverId,eventName,argumentsCanonical='{}',now=()=>Date.now(),
+  maxLogBytes=MAX_SOURCE_LOG_BYTES,openWriter=open,
 }={}){
   if(typeof logPath!=='string'||!logPath||typeof now!=='function'||
+     typeof openWriter!=='function'||!Number.isSafeInteger(maxLogBytes)||
+     maxLogBytes<1024||maxLogBytes>MAX_SOURCE_LOG_BYTES||
      !/^[a-f0-9]{64}$/.test(sourceKeyDigest??''))
     throw fail('SOURCE_CONFIG_INVALID','Invalid source fixture configuration');
   requireId(scopeId);requireId(connectionId);requireId(serverId);requireId(eventName);
@@ -81,6 +84,8 @@ export async function createStandaloneSource({
   try{rawLog=await readFile(logPath,'utf8').catch(e=>{
     if(e.code==='ENOENT')return '';throw e;});
     records=parseLog(rawLog);
+    if(Buffer.byteLength(rawLog,'utf8')>maxLogBytes)
+      throw fail('SOURCE_LOG_BUDGET_EXCEEDED','Existing log exceeds configured budget');
     model=derive(records,identity);
   }catch(e){await rmdir(lockPath).catch(()=>{});throw e;}
   const queue=fn=>{const next=serial.then(fn);serial=next.catch(()=>{});return next;};
@@ -95,12 +100,12 @@ export async function createStandaloneSource({
     const prev=model.head,seq=records.length+1;
     const row={seq,prev,payload,hash:hash(prev+'\n'+JSON.stringify(payload))};
     const bytes=Buffer.from(JSON.stringify(row)+'\n','utf8');
-    if(sizeBytes+bytes.length>MAX_SOURCE_LOG_BYTES)
+    if(sizeBytes+bytes.length>maxLogBytes)
       throw fail('SOURCE_LOG_BUDGET_EXCEEDED',
         'Source log full: stop before irrecoverable append');
     let file;
     try{
-      file=await open(logPath,'a');
+      file=await openWriter(logPath,'a');
       await file.writeFile(bytes);
       await file.sync();
       await file.close();
