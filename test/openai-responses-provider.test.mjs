@@ -307,3 +307,53 @@ integration('adversarial provider reports more output tokens than reserved witho
     await pool.end();
   }
 });
+
+integration('v1 timeout: unknown remote charge cannot free trigger or batch admission across workers',async()=>{
+  const pa=new Pool({connectionString:url,max:2});
+  const pb=new Pool({connectionString:url,max:2});
+  const a=new PostgresEventStore({pool:pa,dispatchPoolIdentity:pa,
+    scopeId:'openai-v1-uncertain-gate',tablePrefix:prefix});
+  const b=new PostgresEventStore({pool:pb,dispatchPoolIdentity:pb,
+    scopeId:'openai-v1-uncertain-gate',tablePrefix:prefix});
+  try{
+    await a.init();await b.init();
+    const {transport,calls}=mockProvider({throwOnCreate:true});
+    const opts={store:a,transport,batchId:'one-shot-unknown',
+      budgetEpoch:'explicit-policy-1',reservationId:'possibly-billed-call-1'};
+    const uncertain=await runOpenAIResponsesValidationCase(opts);
+    assert.equal(uncertain.status,'remote_billing_unknown');
+    assert.equal(uncertain.reservationRetained,true);
+    assert.equal(uncertain.providerRequests,1);
+    for(const candidate of [
+      {...opts,store:b},
+      {...opts,store:b,reservationId:'new-intent-same-batch'},
+      {...opts,store:b,batchId:'different-batch',
+        reservationId:'new-intent-different-batch'},
+    ]){
+      const denied=await runOpenAIResponsesValidationCase(candidate);
+      assert.equal(denied.status,'admission_denied');
+      assert.equal(denied.providerRequests,0);
+    }
+    assert.equal(calls.filter(x=>x.path==='/v1/responses').length,1);
+    const trigger=await b.get('semantic_budget',
+      'trigger:'+JSON.stringify(['ei-provider-validation@1','explicit-policy-1']));
+    assert.equal(trigger.calls,1);
+    assert.equal(trigger.costMicros,100000);
+    const receipt=await b.get('semantic_budget_receipt',
+      'reservation:'+JSON.stringify(['ei-provider-validation@1',
+        'explicit-policy-1',
+        createHash('sha256').update('possibly-billed-call-1').digest('hex')]));
+    assert.equal(receipt.status,'reserved_billing_unknown');
+    // Only a new explicit host policy epoch can authorize another
+    // potentially chargeable request, never a silent retry.
+    const separate=await runOpenAIResponsesValidationCase({
+      ...opts,store:b,batchId:'operator-authorized-next',
+      budgetEpoch:'explicit-policy-2',reservationId:'operator-new-intent'});
+    assert.equal(separate.status,'remote_billing_unknown');
+    assert.equal(calls.filter(x=>x.path==='/v1/responses').length,2);
+  }finally{
+    for(const suffix of ['metadata','leases','history','records','counters'])
+      await pa.query('DROP TABLE IF EXISTS "'+prefix+'_'+suffix+'" CASCADE');
+    await pa.end();await pb.end();
+  }
+});
