@@ -66,7 +66,7 @@ test('first-party standalone log oracle independently verifies durable monotonic
     await assert.rejects(()=>verifyStandaloneOracle({logPath:c.logPath,
       sourceLog:signed.sourceLog,attestation:signed.attestation,
       publicKeyPem:publicPem(k),expected:{...expected(c),scopeId:'other'},
-      now:time+1}),e=>e.code==='ORACLE_FRONTIER_UNVERIFIED');
+      now:time+1}),e=>e.code==='ORACLE_SOURCE_IDENTITY_MISMATCH');
     await assert.rejects(()=>verifyStandaloneOracle({logPath:c.logPath,
       sourceLog:signed.sourceLog,attestation:{...signed.attestation,
         signature:'a'.repeat(86)},publicKeyPem:publicPem(k),
