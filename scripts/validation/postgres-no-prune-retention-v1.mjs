@@ -18,7 +18,7 @@ export async function verifyPostgresV1NoPruneRetention({
      typeof store.getMcpOccurrenceArchiveCheckpoint!=='function'||
      typeof store.inspectMcpSourceRetentionBarriers!=='function'||
      typeof store.getAuditCheckpoint!=='function'||
-     typeof store.getTriggerMatch!=='function'||
+     typeof store.getBoundedInspectionMatch!=='function'||
      typeof store.getRecentTriggerMatchHistory!=='function'||
      typeof store.latestWake!=='function'||
      typeof store.getWakeDelivery!=='function'||
@@ -83,15 +83,24 @@ export async function verifyPostgresV1NoPruneRetention({
   }
   const matchWitnesses=[];
   for(const id of matchIds){
-    const [current,window]=await Promise.all([
-      store.getTriggerMatch(id),store.getRecentTriggerMatchHistory(id,{
-        limit:maxMatchRevisions,maxRowBytes:65536,
-        maxTotalBytes:1048576,maxScanMs:Math.min(maxScanMs,5000),
-      }),
-    ]);
-    if(!current||!window?.records?.length||window.hasMore||
-       JSON.stringify(window.records[window.records.length-1])!==
-       JSON.stringify(current)){
+    const window=await store.getRecentTriggerMatchHistory(id,{
+      limit:maxMatchRevisions,maxRowBytes:65536,
+      maxTotalBytes:1048576,maxScanMs:Math.min(maxScanMs,5000),
+    });
+    if(!window?.records?.length||window.hasMore){
+      throw refusal('EVENT_INTELLIGENCE_V1_RETENTION_MATCH_HISTORY_INVALID',
+        'Missing or truncated durable match provenance');
+    }
+    // The current authoritative match must ALSO use a bounded SQL
+    // payload read. Never transfer its unbounded JSONB concurrently with
+    // the already-bounded history window.
+    const latest=window.records[window.records.length-1];
+    const current=await store.getBoundedInspectionMatch({
+      triggerId:latest.triggerId,version:latest.triggerVersion,
+      matchId:id,maxRowBytes:65536,
+      maxScanMs:Math.min(maxScanMs,5000),maxCandidates:1,
+    });
+    if(!current||JSON.stringify(latest)!==JSON.stringify(current)){
       throw refusal('EVENT_INTELLIGENCE_V1_RETENTION_MATCH_HISTORY_INVALID',
         'Missing latest durable match provenance');
     }
