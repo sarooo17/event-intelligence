@@ -127,8 +127,10 @@ try{
  evidence.oldRotatedWrongTenantRevisionExpiredTamperedDenied=true;
  // Revocation changes only this isolated first-party evidence provider,
  // not any EI worker or external host permission. Restore in finally.
- const revoke=await post('/control/revocation',{revoked:true});
+ // Arm rollback BEFORE the mutating RPC: the source can durably revoke
+ // even if the HTTP response or connection is lost.
  revoked=true;
+ const revoke=await post('/control/revocation',{revoked:true});
  if(revoke.revoked!==true)throw Error('SOURCE_REVOKE_NOT_EFFECTIVE');
  const blocked=await Promise.all([
   post('/rpc',{jsonrpc:'2.0',id:9,method:'events/poll',
@@ -146,8 +148,8 @@ try{
   throw Error('REVOCATION_NOT_DURABLE');
  evidence.revocationInDurableLog=true;
  const resumed=await post('/control/revocation',{revoked:false});
- revoked=false;
  if(resumed.revoked!==false)throw Error('SOURCE_RESTORE_FAILED');
+ revoked=false;
  const stale=await post('/frontier',{completenessRevision:1},400);
  if(stale.error!=='SOURCE_UNSEALED')
   throw Error('PRE_REVOCATION_FRONTIER_UNSAFELY_REUSED');
@@ -167,7 +169,7 @@ try{
  if(!proof.valid||proof.revision!==resumed.revision)
   throw Error('NEW_REVOKED_SOURCE_ERA_UNVERIFIED');
  await negative('old-signed-head',{...args,sourceLog:latest.sourceLog,now:Date.now()},
-  ['ORACLE_SOURCE_CHECKPOINT_MISMATCH']);
+  ['ORACLE_FRONTIER_UNVERIFIED']);
  evidence.staleSignedHeadDenied=true;
  // Negative network outage simulation: never restart the actual provider.
  const unavailable=new URL(source);unavailable.port='1';
@@ -190,8 +192,11 @@ try{
  process.exitCode=1;
 }finally{
  if(revoked){
-  try{await post('/control/revocation',{revoked:false});}
-  catch{console.error(JSON.stringify({event:'ei_e48_negative_restore',
+  try{
+   const restored=await post('/control/revocation',{revoked:false});
+   if(restored.revoked!==false)throw Error('SOURCE_RESTORE_NOT_CONFIRMED');
+  }catch{
+   console.error(JSON.stringify({event:'ei_e48_negative_restore',
     status:'operator-intervention-required',code:'PROVIDER_MAY_BE_REVOKED'}));
     process.exitCode=1;}
  }
