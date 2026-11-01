@@ -77,6 +77,13 @@ try{
  await db.putMcpClientState({...sourceSpec,sourceAvailability:'available'});
  if((await inspector()).diagnosisV2.kind==='candidate_impossible')
   throw Error('UNPROVEN_SOURCE_PREMATURE_TERMINAL');
+ // Record the exact durable source sequence BEFORE new event writes.
+ // Poll from this cursor, not from the beginning of an unbounded
+ // retained history, so the test remains valid after many campaigns.
+ const baseline=await sourcePost('/status',{});
+ if(!Number.isSafeInteger(baseline.sequence)||baseline.sequence<1)
+  throw Error('SOURCE_START_CHECKPOINT_INVALID');
+ const cursor='source-v1:'+baseline.sequence;
  // Generate two unique, provably durable event occurrences on the
  // separately deployed provider and capture a signed live source seal.
  for(let i=0;i<2;i++){
@@ -141,7 +148,7 @@ try{
  const poll=async(timeoutMs=3000)=>{
   const resp=await fetch(endpoint,{method:'POST',headers:{'content-type':'application/json'},
    body:JSON.stringify({jsonrpc:'2.0',id:1,method:'events/poll',
-    params:{cursor:'source-v1:0',maxEvents:256}}),
+    params:{cursor,maxEvents:256}}),
    signal:AbortSignal.timeout(timeoutMs)});
   if(resp.status!==200)throw Error('PROXY_NON_200');
   return (await resp.json()).result;
@@ -173,13 +180,32 @@ try{
  if(unresolved.diagnosisV2.kind!=='source_gap_unresolved')
   throw Error('PG_INSPECTOR_DID_NOT_FAIL_CLOSED_ON_HTTP_GAP');
  evidence.pgGapUnresolvedOnTruncatedWireResponse=true;
+ // Only a fully fetched and independently reverified original source
+ // archive can support the host-owned CAS gap-reconciliation receipt.
+ // This clears the previous fault before the *distinct* disconnect
+ // trial, so outage denial cannot pass solely on the earlier gap.
+ const beforeRecovery=await db.getMcpClientState(connectionId,eventName,{});
+ await db.putMcpClientState({...sourceSpec,sourceAvailability:'available',
+  gapReconciled:true,
+  reconciliationEvidenceId:'oracle-source-sha256:'+archive.sha256,
+  expectedCompletenessRevision:beforeRecovery.completenessRevision});
+ const postRecovery=await inspector();
+ if(postRecovery.diagnosisV2.kind==='source_gap_unresolved'||
+    postRecovery.diagnosisV2.kind==='candidate_impossible')
+  throw Error('PG_GAP_NOT_RECONCILED_BEFORE_OUTAGE');
+ evidence.independentRawLogReconciledBeforeOutage=true;
  mode='disconnect';
  let disconnected=false;
  try{await poll(1000);}catch{disconnected=true;}
  if(!disconnected)throw Error('REAL_TCP_DISCONNECT_NOT_DETECTED');
- await db.putMcpClientState({...sourceSpec,sourceAvailability:'unavailable'});
- if((await inspector()).diagnosisV2.kind==='candidate_impossible')
-  throw Error('PROVIDER_OUTAGE_UPGRADED_TO_TERMINAL');
+ const afterDisconnect=await db.putMcpClientState({...sourceSpec,
+  gapUnresolved:true,lastError:'E48_TCP_TRANSPORT_DISCONNECTED'});
+ if(afterDisconnect.gapUnresolved!==true||
+    afterDisconnect.lastError!=='E48_TCP_TRANSPORT_DISCONNECTED')
+  throw Error('PG_TRANSPORT_FAILURE_NOT_PERSISTED');
+ const disconnectInspection=await inspector();
+ if(disconnectInspection.diagnosisV2.kind!=='source_gap_unresolved')
+  throw Error('PG_OUTAGE_DID_NOT_FAIL_CLOSED_INDEPENDENTLY');
  evidence.realTcpDisconnectDeniedTerminal=true;
  mode='delay';
  let timedOut=false;
@@ -207,6 +233,7 @@ try{
   sourceEventCount:oracle.eventCount,
   signedClaimDigest:hash(frontier.attestation.payload),
   inspectorReason:unresolved.diagnosisV2.kind,
+  disconnectInspectorReason:(await inspector()).diagnosisV2.kind,
   pgState:{completenessRevision:state.completenessRevision,
    truncated:state.truncated,sourceAvailability:state.sourceAvailability,
    gapUnresolved:state.gapUnresolved},
