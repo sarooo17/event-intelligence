@@ -56,6 +56,12 @@ test('first-party standalone log oracle independently verifies durable monotonic
     assert.throws(()=>source.poll({cursor:'source-v1:999'}),
       e=>e.code==='SOURCE_CURSOR_INVALID');
     const signed=source.frontier({completenessRevision:1});
+    const archive=await source.exportOperatorArchive();
+    assert.equal(archive.schema,'ei.source-operator-archive.v1');
+    assert.equal(archive.sourceLog.sequence,signed.sourceLog.sequence);
+    assert.equal(archive.sourceLog.head,signed.sourceLog.head);
+    assert.equal(archive.bytes,Buffer.from(archive.base64,'base64').length);
+    assert.equal(archive.sha256,hash(Buffer.from(archive.base64,'base64')));
     const oracle=await verifyStandaloneOracle({logPath:c.logPath,
       sourceLog:signed.sourceLog,attestation:signed.attestation,
       publicKeyPem:publicPem(k),expected:expected(c),now:time+1});
@@ -239,10 +245,19 @@ test('standalone HTTP provider and file oracle run in separate OS processes with
     assert.equal(seal.status,200);
     const frontier=await request('/frontier',{completenessRevision:1});
     assert.equal(frontier.status,200);
+    const deniedArchive=await request('/control/operator-archive',{},false);
+    assert.equal(deniedArchive.status,401);
+    const archiveResponse=await request('/control/operator-archive',{});
+    assert.equal(archiveResponse.status,200);
+    assert.equal(archiveResponse.data.sourceLog.head,frontier.data.sourceLog.head);
+    const archiveBytes=Buffer.from(archiveResponse.data.base64,'base64');
+    assert.equal(hash(archiveBytes),archiveResponse.data.sha256);
+    const archiveFile=join(dir,'independent-archive.jsonl');
+    await writeFile(archiveFile,archiveBytes,{mode:0o600});
     const polled=await request('/rpc',{jsonrpc:'2.0',id:3,method:'events/poll',
       params:{cursor:'source-v1:0',maxEvents:10}});
     assert.deepEqual(polled.data.result.events.map(x=>x.eventId),['one','utf8']);
-    const oracleParams={logPath:c.logPath,sourceLog:frontier.data.sourceLog,
+    const oracleParams={logPath:archiveFile,sourceLog:frontier.data.sourceLog,
       attestation:frontier.data.attestation,
       publicKeyPem:publicPem(k),expected:expected(c),now:Date.now()};
     const oracleFile=join(dir,'oracle-input.json');
