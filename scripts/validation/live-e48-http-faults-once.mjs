@@ -71,8 +71,22 @@ try{
  await db.putTrigger(definition);
  await db.setTriggerState(triggerId,'1','active',null,
   {connectionIds:[connectionId],owner:{type:'user',principal_id:scope,tenant_id:scope}});
+ // PR #386 already registered the canonical host-scoped source id
+ // `e48-source`. The initial HTTP fault campaign accidentally added
+ // `bound-source` as a SECOND enabled record for the same MCP identity,
+ // making source provenance ambiguous and correctly suppressing
+ // Inspector's terminal/gap attribution. Retire only that known stale
+ // fixture row in this explicitly isolated test scope. Do not scan or
+ // disable arbitrary production source registrations.
  await db.putEventSource({sourceId:'bound-source',...sourceSpec,
+  enabled:false,delivery:['poll']});
+ await db.putEventSource({sourceId:'e48-source',...sourceSpec,
   enabled:true,delivery:['poll']});
+ const active=(await db.listEventSources({
+  connectionIds:[connectionId],enabledOnly:true})).filter(item=>
+   item.serverId===serverId&&item.eventName===eventName);
+ if(active.length!==1||active[0].sourceId!=='e48-source')
+  throw Error('AMBIGUOUS_MCP_SOURCE_IDENTITY');
  await db.appendTriggerMatch(partial);
  await db.putMcpClientState({...sourceSpec,sourceAvailability:'available'});
  if((await inspector()).diagnosisV2.kind==='candidate_impossible')
