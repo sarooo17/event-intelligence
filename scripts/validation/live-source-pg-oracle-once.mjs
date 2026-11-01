@@ -8,6 +8,7 @@ import {join} from 'node:path';
 import pg from 'pg';
 import {PostgresEventStore} from '../lib/postgres-event-store.mjs';
 import {verifyStandaloneOracle} from './standalone-mcp-source-oracle.mjs';
+import {parsePrivateServiceUrl} from './common.mjs';
 
 const {Pool}=pg;
 const digest=x=>createHash('sha256').update(x).digest('hex');
@@ -17,10 +18,10 @@ function requireEnv(name){
  return v;
 }
 const env={
- sourceUrl:requireEnv('EI_LIVE_SOURCE_URL').replace(/\/$/,''),
+ sourceUrl:parsePrivateServiceUrl(requireEnv('EI_LIVE_SOURCE_URL'),'EI_LIVE_SOURCE_URL'),
  sourceToken:requireEnv('EI_LIVE_SOURCE_TOKEN'),
- workerA:requireEnv('EI_LIVE_WORKER_A_URL').replace(/\/$/,''),
- workerB:requireEnv('EI_LIVE_WORKER_B_URL').replace(/\/$/,''),
+ workerA:parsePrivateServiceUrl(requireEnv('EI_LIVE_WORKER_A_URL'),'EI_LIVE_WORKER_A_URL'),
+ workerB:parsePrivateServiceUrl(requireEnv('EI_LIVE_WORKER_B_URL'),'EI_LIVE_WORKER_B_URL'),
  workerToken:requireEnv('EI_LIVE_WORKER_TOKEN'),
  baseScope:requireEnv('EI_LIVE_BASE_SCOPE'),
  databaseUrl:requireEnv('DATABASE_URL'),
@@ -36,11 +37,6 @@ const env={
 const expectedPublicKeySha256=requireEnv('EI_SOURCE_TRUSTED_PUBLIC_KEY_SHA256');
 if(digest(env.publicKey)!==expectedPublicKeySha256)
  throw new Error('PINNED_SOURCE_PUBLIC_KEY_MISMATCH');
-if(!/^https?:\/\//.test(env.sourceUrl)||
-   !env.sourceUrl.includes('.railway.internal')||
-   !env.workerA.includes('.railway.internal')||
-   !env.workerB.includes('.railway.internal'))
- throw new Error('LIVE_VALIDATION_PRIVATE_NETWORK_REQUIRED');
 const pool=new Pool({connectionString:env.databaseUrl,max:3,
  connectionTimeoutMillis:5000,statement_timeout:15000});
 const run=randomUUID(),scope=env.baseScope+':'+run;
@@ -86,11 +82,21 @@ try{
  if(duplicate.accepted!==false)throw Error('SOURCE_REPLAY_NOT_DEDUPED');
  await wait(40);
  await request(source,'/control/seal',{},control);
- const polled=await request(source,'/rpc',
-   {jsonrpc:'2.0',id:2,method:'events/poll',
-    params:{cursor:'source-v1:0',maxEvents:256}},control);
- if(polled.result?.truncated!==false)throw Error('SOURCE_UNEXPECTED_GAP');
- const event=polled.result.events.find(e=>e.eventId===eventId);
+ let cursor='source-v1:0',event=null,pages=0;
+ while(pages++<256){
+   const polled=await request(source,'/rpc',
+     {jsonrpc:'2.0',id:2,method:'events/poll',
+      params:{cursor,maxEvents:256}},control);
+   if(polled.result?.truncated!==false||
+      !Array.isArray(polled.result.events))
+     throw Error('SOURCE_UNEXPECTED_GAP');
+   event=polled.result.events.find(e=>e.eventId===eventId)??event;
+   if(event||polled.result.hasMore!==true)break;
+   const next=polled.result.cursor;
+   if(typeof next!=='string'||next===cursor)
+     throw Error('SOURCE_REPLAY_PAGINATION_STALLED');
+   cursor=next;
+ }
  if(!event||event.timestamp!==appended.event.occurredAt)
    throw Error('SOURCE_EVENT_REPLAY_DISAGREEMENT');
  const input={scopeId:scope,traceId,serverId:env.sourceServerId,event};
@@ -143,6 +149,16 @@ try{
     receipts.rows.length!==1||!receipts.rows[0].receipt_id||
     Number(receipts.rows[0].attempt_count)!==1)
    throw Error('PG_MATCH_WAKE_HOST_RECEIPT_ORACLE_MISMATCH');
+ const wakeId=matches[0].firedWakeId;
+ if(typeof wakeId!=='string'||!wakeId||
+    receipts.rows[0].wake_id!==wakeId)
+   throw Error('HOST_WAKE_ID_NOT_PINNED_TO_PG_MATCH');
+ const delivery=await store.getWakeDelivery(wakeId);
+ const persistedWake=await store.latestWake(wakeId);
+ if(delivery?.status!=='delivered'||persistedWake?.status!=='delivered'||
+    delivery.runtimeReceiptId!==receipts.rows[0].receipt_id||
+    persistedWake.runtimeReceiptId!==receipts.rows[0].receipt_id)
+   throw Error('HOST_RECEIPT_ID_NOT_PINNED_TO_PG_WAKE');
  console.log(JSON.stringify({
    event:'ei_e48_oracle_pg_live',status:'passed',
    providerSeparateService:true,sourceAppendIdempotent:true,
