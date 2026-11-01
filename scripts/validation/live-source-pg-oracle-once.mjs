@@ -131,6 +131,9 @@ try{
    tablePrefix:env.tablePrefix,scopeId:scope});
  await store.init();
  const matches=await store.listTriggerMatches(triggerId);
+ if(matches.length!==1||!Array.isArray(matches[0].sourceEvents)||
+    !matches[0].sourceEvents.some(e=>e.sourceEventId===eventId&&e.occurredAt===event.timestamp))
+   throw Error('PG_SOURCE_EVENT_LINEAGE_MISMATCH');
  const wakes=await store.countWakeDeliveryStates();
  const receipts=await pool.query(
    'SELECT wake_id,receipt_id,attempt_count FROM ei_validation_host_receipts WHERE scope_id=$1',
