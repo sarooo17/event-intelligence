@@ -97,6 +97,25 @@ POST /rpc      {"jsonrpc":"2.0","id":3,"method":"events/poll","params":{"cursor"
 POST /frontier {"completenessRevision":1}
 ```
 
+### Restricted operator archive (for actual independent reader)
+
+`POST /control/operator-archive` requires the same dedicated Bearer
+control token as source append/seal (never serve it on a public domain).
+It serializes behind pending fsynced appends, revalidates that the
+complete log matches the in-memory sequence/head/source identity and
+returns `{schema,sourceLog,bytes,sha256,base64}`. The base64 represents
+**the exact complete original raw JSONL bytes**, bounded by 16 MiB,
+not reserialized event objects. Handle it as a PRIVATE evidence artifact:
+do NOT print or upload the raw response to public CI logs, GitHub issues
+or an unencrypted bug report. Store it in an isolated 0600 temporary file,
+verify its SHA-256 independently, compare source checkpoint, and run the
+separate-process oracle with an **independently pinned source public key**
+and explicit scope/source/subscription/revision identity. Delete the
+temporary raw archive after retaining only redacted digests and privately
+controlled original copies. A source service replying consistently to
+its own questions does not automatically prove provider business truth.
+A complete archive response does not grant EI any destructive pruning.
+
 Use the real host's persisted source completeness revision in the
 `/frontier` request. The source signs only a seal it has already durably
 recorded; it cannot know an arbitrary host's revision. The EI
