@@ -19,11 +19,11 @@ poll response inside the consumer path.
 | Reordered | Proxy physically reverses real events in an HTTP response | Consumer must not mistake cursor/event time for unconditional completeness |
 | Missing | Proxy physically drops real events from the HTTP response; original provider log and oracle prove they exist | Delivery gap may be hidden by an untruthful transport; never assume terminal absence |
 | Truncated | Proxy sends real `truncated:true` over HTTP, and host records it in actual shared PostgreSQL 16 MCP state | `TriggerInspector.inspect()` MUST report `source_gap_unresolved` and no `candidate_impossible` |
-| Disconnected | Proxy physically destroys its TCP connection before replying | Actual host fetch fails; PostgreSQL source marked unavailable; inspection MUST NOT certify terminal absence |
+| Disconnected | Proxy physically destroys its TCP connection before replying | After **independently oracle-verified** prior-gap reconciliation, real host fetch fails; PG records `gapUnresolved:true` and `lastError=E48_TCP_TRANSPORT_DISCONNECTED`; inspection MUST return `source_gap_unresolved`. The last successfully observed `sourceAvailability` may remain `available`, and is **not** a network-current-status flag |
 | Timeout | Proxy delays its HTTP response past host AbortSignal deadline | Actual timeout, still UNKNOWN; this is **not** a provider-side billing/cancel proof |
 
 The honest provenance of these cases is **intentional network fault injection**.
-The upstream source process itself is not crashed or restarted. These are
+The source poll begins at a source-reported durable sequence checkpoint taken before the two injected fixture events, so this remains testable after multiple prior retained events. The upstream source process itself is not crashed or restarted. These are
 genuine failed/malformed/late TCP/HTTP deliveries to the host, but **not
 independent provider production outages**.
 
