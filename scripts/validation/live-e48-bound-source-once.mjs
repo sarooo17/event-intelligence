@@ -19,6 +19,7 @@ const required=k=>{const x=process.env[k];if(!x)throw Error('CONFIG_MISSING_'+k)
 const url=parsePrivateServiceUrl(required('EI_LIVE_SOURCE_URL'),'EI_LIVE_SOURCE_URL');
 const worker=parsePrivateServiceUrl(required('EI_LIVE_WORKER_A_URL'),'EI_LIVE_WORKER_A_URL');
 const workerB=parsePrivateServiceUrl(required('EI_LIVE_WORKER_B_URL'),'EI_LIVE_WORKER_B_URL');
+if(worker===workerB)throw Error('LIVE_DISTINCT_WORKERS_REQUIRED');
 const sourceToken=required('EI_LIVE_SOURCE_TOKEN');
 const workerToken=required('EI_LIVE_WORKER_TOKEN');
 const scope=required('EI_SOURCE_SCOPE_ID');
@@ -163,6 +164,10 @@ try{
  if(one.matched!==1||one.persistedDeliveredWakes!==1)
   throw Error('POST_FRONTIER_WORKER_WAKE_FAILED');
  const two=await request(workerB,'/v1/events',req,workerToken);
+ if(typeof one.workerId!=='string'||!one.workerId||
+    typeof two.workerId!=='string'||!two.workerId||
+    one.workerId===two.workerId)
+  throw Error('PG_WORKER_ID_NOT_DISTINCT');
  if(two.persistedDeliveredWakes!==0)
   throw Error('POST_FRONTIER_REPLAY_DUPLICATED_WAKE');
  const matches=await db.listTriggerMatches(positiveId);
