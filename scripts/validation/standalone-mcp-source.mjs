@@ -223,6 +223,29 @@ export async function createStandaloneSource({
         signature:edSign(null,Buffer.from(claim,'utf8'),key).toString('base64url')},
         sourceLog:{sequence:records.length,head:model.head,providerRevision:model.revision}};
     },
+    async exportOperatorArchive(){
+      return queue(async()=>{
+        healthy();
+        // Serialize behind pending appends to produce one complete immutable
+        // source-log snapshot. Never return it through public health or MCP.
+        const raw=await readFile(logPath);
+        if(raw.length!==sizeBytes||raw.length>maxLogBytes)
+          throw fail('SOURCE_LOG_ARCHIVE_MISMATCH','Archive file size mismatched durable checkpoint');
+        const rows=parseLog(raw.toString('utf8'));
+        const observed=derive(rows,identity);
+        if(rows.length!==records.length||observed.head!==model.head||
+           observed.revision!==model.revision)
+          throw fail('SOURCE_LOG_ARCHIVE_MISMATCH','Archive checkpoint differs from live state');
+        return Object.freeze({
+          schema:'ei.source-operator-archive.v1',
+          sourceLog:{sequence:records.length,head:model.head,
+            providerRevision:model.revision},
+          bytes:raw.length,
+          sha256:hash(raw),
+          base64:raw.toString('base64'),
+        });
+      });
+    },
     status(){
       healthy();return {schema:'ei.standalone-source-status.v1',sequence:records.length,
         head:model.head,revision:model.revision,revoked:model.revoked,
@@ -292,6 +315,8 @@ export async function serveStandaloneSource({source,token,port=0,host='127.0.0.1
       if(req.url==='/control/seal')return send(200,await source.seal());
       if(req.url==='/control/revocation')return send(200,await source.setRevoked(body.revoked));
       if(req.url==='/frontier')return send(200,source.frontier(body));
+      if(req.url==='/control/operator-archive')
+        return send(200,await source.exportOperatorArchive());
       if(req.url==='/status')return send(200,source.status());
       return send(404,{error:'not-found'});
     }catch(e){
