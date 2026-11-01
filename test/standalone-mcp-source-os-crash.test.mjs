@@ -56,7 +56,10 @@ test('E48-A real separate provider OS SIGKILL causes actual MCP transport outage
   assert.equal((await response.json()).accepted,true);
   response=await rpc('/control/seal',{});
   assert.equal(response.status,200);
-  const oldSeal=(await response.json()).completeThroughAt;
+  const sealed=await response.json();
+  const oldSeal=sealed.completeThroughAt;
+  assert.match(sealed.head,/^[a-f0-9]{64}$/);
+  const beforeKillBytes=await readFile(source.logPath);
   // Deliberately SIGKILL without provider shutdown cleanup. This is
   // physical separate-process outage, NOT a simulated status flag.
   killed=child.kill('SIGKILL');
@@ -71,7 +74,10 @@ test('E48-A real separate provider OS SIGKILL causes actual MCP transport outage
   // death would endanger a legitimate writer.
   await assert.rejects(()=>createStandaloneSource(source),
    e=>e.code==='SOURCE_WRITER_LOCKED');
-  const raw=await readFile(source.logPath,'utf8');
+  const rawAfterKill=await readFile(source.logPath);
+  assert.deepEqual(rawAfterKill,beforeKillBytes,
+   'source original fsynced bytes must be unchanged after SIGKILL');
+  const raw=rawAfterKill.toString('utf8');
   assert.match(raw,/"eventId":"e48-crash-event"/);
   assert.match(raw,/"kind":"seal"/);
   // Explicit manual operator simulation AFTER the child has demonstrably
@@ -87,6 +93,12 @@ test('E48-A real separate provider OS SIGKILL causes actual MCP transport outage
   const newer=restarted.frontier({completenessRevision:1});
   assert.equal(newer.sourceLog.sequence,status.sequence);
   assert.equal(newer.sourceLog.head,status.head);
+  assert.equal(newer.sourceLog.head,sealed.head,
+   'restarted source head must match exact pre-kill acknowledged seal hash');
+  assert.equal(newer.sourceLog.sequence,sealed.sequence,
+   'restarted source sequence must match exact pre-kill acknowledged seal');
+  assert.deepEqual(await readFile(source.logPath),beforeKillBytes,
+   'cold recovery and idempotent replay must not rewrite durable bytes');
  }finally{
   await restarted?.close().catch(()=>{});
   if(!killed){child.kill('SIGKILL');await exited.catch(()=>{});}
