@@ -53,3 +53,44 @@ test('unsafe self-reported rates, duplicated source sequences, forged receipt or
  for(const attack of attacks){const f=fixture();attack(f);
   assert.throws(()=>assessProgressiveE47CStage(f));}
 });
+
+function withOffers(){
+ const f=fixture(5);
+ f.manifest.ratePacingIsSerialAppend=false;
+ f.manifest.offeredPacingIndependentOfAck=true;
+ f.manifest.stage.maxSourceAppendInflight=4;
+ f.manifest.stage.maxObservedSourceAppendInflight=1;
+ f.manifest.stage.sourceAcceptedOffers=50;
+ f.manifest.stage.sourceRejectedOffers=0;
+ f.manifest.stage.offeredEventRateMeasuredPerSecond=5;
+ f.manifest.stage.acceptedAppendCompletionRateMeasuredPerSecond=5;
+ f.offers=f.source.map((row,i)=>({
+  index:i,eventId:row.eventId,status:'accepted',
+  scheduledAtMs:i*200,offeredAtMs:i*200,
+  offerLatenessMs:0,completedAtMs:i*200+80,
+ }));
+ return f;
+}
+test('independent recheck accepts complete first-party open-loop offers but does not certify',()=>{
+ const result=assessProgressiveE47CStage(withOffers());
+ assert.equal(result.sourcePacingIsSerial,false);
+ assert.equal(result.sourceOpenLoop.rate,5);
+ assert.equal(result.sourceOpenLoop.completionRate,5);
+ assert.equal(result.acceptanceE47CVerified,false);
+});
+test('independent recheck rejects forged pacing, censored offers, bad peak or receipt mapping',()=>{
+ const attacks=[
+  f=>{f.offers.pop();},
+  f=>{f.offers[0].status='failed';},
+  f=>{f.offers[0].eventId=f.offers[1].eventId;},
+  f=>{f.offers[4].offeredAtMs+=800;},
+  f=>{f.offers[1].completedAtMs+=500;},
+  f=>{f.manifest.stage.offeredEventRateMeasuredPerSecond=50;},
+  f=>{f.manifest.stage.acceptedAppendCompletionRateMeasuredPerSecond=50;},
+  f=>{f.manifest.stage.maxObservedSourceAppendInflight=4;},
+  f=>{f.manifest.stage.sourceRejectedOffers=1;},
+  f=>{f.manifest.stage.maxSourceAppendInflight=9;},
+ ];
+ for(const attack of attacks){const f=withOffers();attack(f);
+  assert.throws(()=>assessProgressiveE47CStage(f));}
+});
