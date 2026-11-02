@@ -179,7 +179,7 @@ async function main(env=process.env){
    raw.source.push({eventId,sourceSequence:acknowledgements.get(eventId).sourceSequence,occurredAt:events.get(eventId).timestamp,slot:i});
    raw.host.push({eventId,wakeId,runtimeReceiptId:receipt.receipt_id,attemptCount:1});
    raw.ei[i].wakeId=wakeId;raw.ei[i].runtimeReceiptId=receipt.receipt_id;
-   raw.ei[i].endToEndMs=raw.ei[i].workerRequestToHostReceiptMs;
+   // Worker-request-to-host-receipt is NOT provider-to-business-effect end-to-end.
   }
   const frontier=await call(c.source,'/frontier',{completenessRevision:1},c.token);
   const archive=await call(c.source,'/control/operator-archive',{},c.token);
