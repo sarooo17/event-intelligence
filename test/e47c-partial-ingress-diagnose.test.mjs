@@ -83,3 +83,19 @@ test('sparse parser rejects unbounded and malformed artifacts',()=>{
  assert.throws(()=>parseLines('\n',250,false));
  assert.throws(()=>parseLines(Array(252).fill('{}').join('\n')+'\n',250,true));
 });
+
+
+test('all worker requests failed: zero ACKs means runner omitted partial-ei.jsonl',()=>{
+ const f=fixture();
+ f.ingest.forEach(x=>{x.status='failed';x.errorCode='E47C_WORKER_INGRESS_ACK_INVALID';});
+ f.ei=[]; // runner has NO partial-ei file in this case
+ f.manifest.observed=0;
+ f.manifest.ingestMetrics.accepted=0;
+ f.manifest.ingestMetrics.rejected=50;
+ const diag=summarizeFailedWorkerIngress(f);
+ assert.equal(diag.workerWakeAcknowledged,0);
+ assert.equal(diag.failureCount,50);
+ assert.equal(diag.statusCounts.failed,50);
+ assert.equal(diag.statusCounts.accepted,0);
+ assert.equal(diag.productionSloCertified,false);
+});
