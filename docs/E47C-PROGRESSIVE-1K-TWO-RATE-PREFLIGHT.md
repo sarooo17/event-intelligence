@@ -104,3 +104,56 @@ verifier is **read-only**, never sends an event and never opens a PostgreSQL
 connection. It recomputes original sample quantiles and authenticates the
 historical signed frontier claim against the pinned raw source-log
 bytes. No E47-C checkbox is automatically changed even on success.
+
+
+## Open-loop source append pacing extension (follow-up preflight)
+
+The initial serial source runs with 1,000 durable triggers and 50 events
+per cohort verified against original private signed-frontier artifacts:
+- requested **1 event/s**, achieved **0.874 completed appends/s**
+- requested **5 events/s**, achieved **2.901 completed appends/s**
+
+Those are serial-ACK completion rates, **not EI's maximum throughput**.
+This update uses an absolute monotonic **offer** schedule rather than
+sleeping after each provider ACK. A maximum of **4** in-flight source
+requests is the default, configurable only within `1..8` via
+`EI_E47C_MAX_INFLIGHT`. Any offered event rejected for backpressure,
+a source failure, a missing durable provider ACK, or a missing source
+sequence **fails the whole campaign**. No retry, rate adaptation, hidden
+drop, or automatic promotion to E47-C certification is permitted.
+
+Raw `offer.jsonl` records original offered index, source event ID,
+planned monotonic offset, actual launch offset, lateness, completion offset
+and explicit acceptance/refusal. The original source hash-chain still
+verifies **provider accepted sequence and event content**; the offline
+verifier cross-checks every offered ID against the source/worker/host
+observations and recomputes offered-vs-completed rates from those original
+per-event timestamps, plus peak in-flight requests. Open-loop offers from
+one process do not establish an external independently-operated source;
+the provider's own append implementation still serializes durable
+writes internally.
+
+Two distinct quantities must be kept separate:
+- **Offered rate:** events launched per unit wall duration from the
+  *independent* monotonic schedule. This is the input to the source
+  endpoint, even when ACKs are slow.
+- **Accepted completion rate:** source ACK completions per unit time.
+  It measures how quickly the durable source returns; the provider may
+  have queued requests and does not promise this equals offered rate.
+
+EI **worker ingestion remains serialized after source polling** in this
+calibration runner; it cannot yet measure multi-concurrent provider→EI
+ingress or provider-produced→host external end-to-end latency. Those
+limits, 50 events per rate, first-party source/host and shared PostgreSQL
+still block E47-C acceptance.
+
+Run exactly as above but set `EI_E47C_STAGE_RATE=5` and, for example,
+`EI_E47C_MAX_INFLIGHT=4` in a separate isolated one-shot service
+deployment with operator-only auto-watch disabled and a pinned SHA.
+The read-only re-audit uses the same
+`scripts/validation/e47c-progressive-1k-recheck.mjs` and separately
+observed original manifest/source hashes. Legacy serial raw artifacts
+remain re-auditable; the new manifest sets
+`ratePacingIsSerialAppend:false` and
+`offeredPacingIndependentOfAck:true` and requires the new original offer
+artifact. No production/readiness checkbox changes automatically.
