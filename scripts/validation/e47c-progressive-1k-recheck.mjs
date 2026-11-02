@@ -7,6 +7,7 @@ import {constants} from 'node:fs';
 import {join,resolve,isAbsolute} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {verifyStandaloneOracle} from './standalone-mcp-source-oracle.mjs';
+import {rateFromTimeline} from './e47c-open-loop-pacing.mjs';
 
 const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
 const fail=code=>{const e=new Error(code);e.code=code;throw e;};
@@ -60,7 +61,70 @@ function stats(rows,field){
  return {p50:percentile(series,.5),p95:percentile(series,.95),
    p99:percentile(series,.99)};
 }
-export function assessProgressiveE47CStage({manifest,source,host,ei,originalEvents,originalSequenceById}={}){
+function verifySourceOpenLoop({manifest,offers,sourceById,count}){
+ if(manifest.ratePacingIsSerialAppend!==false||
+    manifest.offeredPacingIndependentOfAck!==true||
+    !Array.isArray(offers)||offers.length!==count||
+    manifest.stage.sourceAcceptedOffers!==count||
+    manifest.stage.sourceRejectedOffers!==0||
+    !Number.isSafeInteger(manifest.stage.maxSourceAppendInflight)||
+    manifest.stage.maxSourceAppendInflight<1||
+    manifest.stage.maxSourceAppendInflight>8||
+    !Number.isSafeInteger(manifest.stage.maxObservedSourceAppendInflight)||
+    manifest.stage.maxObservedSourceAppendInflight<1||
+    manifest.stage.maxObservedSourceAppendInflight>manifest.stage.maxSourceAppendInflight)
+  fail('E47C_OPEN_LOOP_METADATA_OR_COUNTS');
+ const ids=new Set(),timeline=[];
+ for(let i=0;i<count;i++){
+  const o=offers[i];
+  const nominal=i*1000/manifest.stage.requestedRatePerSecond;
+  if(o?.index!==i||!exactId(o?.eventId)||ids.has(o.eventId)||
+     !sourceById.has(o.eventId)||o.status!=='accepted'||
+     !validTiming(o.scheduledAtMs)||!validTiming(o.offeredAtMs)||
+     !validTiming(o.offerLatenessMs)||!validTiming(o.completedAtMs)||
+     !Number.isSafeInteger(o.offerOrder)||!Number.isSafeInteger(o.completedOrder)||
+     o.offerOrder<1||o.completedOrder<=o.offerOrder||
+     Math.abs(o.scheduledAtMs-nominal)>0.002||
+     o.offeredAtMs<o.scheduledAtMs-0.002||
+     Math.abs(Math.max(0,o.offeredAtMs-o.scheduledAtMs)-o.offerLatenessMs)>0.003||
+     o.completedAtMs<o.offeredAtMs)
+    fail('E47C_OPEN_LOOP_RAW_OR_SEQUENCE_INVALID');
+  ids.add(o.eventId);
+  timeline.push({kind:1,t:o.offeredAtMs,order:o.offerOrder},
+   {kind:-1,t:o.completedAtMs,order:o.completedOrder});
+ }
+ // Native monotonic transition ordinals disambiguate equal rounded
+ // timestamps, including zero-duration ACKs. No fabricated overlap.
+ timeline.sort((a,b)=>a.order-b.order);
+ let active=0,peak=0,lastTime=0;
+ for(let i=0;i<timeline.length;i++){
+  const mark=timeline[i];
+  if(mark.order!==i+1||mark.t+0.002<lastTime)
+   fail('E47C_OPEN_LOOP_TRANSITION_ORDER_INVALID');
+  lastTime=Math.max(lastTime,mark.t);
+  active+=mark.kind;
+  if(active<0)fail('E47C_OPEN_LOOP_NEGATIVE_INFLIGHT');
+  peak=Math.max(peak,active);
+ }
+ if(active!==0)fail('E47C_OPEN_LOOP_UNSETTLED_OFFERS');
+ if(peak>manifest.stage.maxSourceAppendInflight||
+    peak!==manifest.stage.maxObservedSourceAppendInflight)
+  fail('E47C_OPEN_LOOP_INFLIGHT_MISMATCH');
+ const offered=rateFromTimeline(offers,'offeredAtMs');
+ const completed=rateFromTimeline(
+  [...offers].sort((a,b)=>a.completedAtMs-b.completedAtMs),'completedAtMs');
+ if(offered===null||completed===null||
+    !validTiming(manifest.stage.offeredEventRateMeasuredPerSecond)||
+    manifest.stage.offeredEventRateMeasuredPerSecond<=0||
+    !validTiming(manifest.stage.acceptedAppendCompletionRateMeasuredPerSecond)||
+    manifest.stage.acceptedAppendCompletionRateMeasuredPerSecond<=0||
+    Math.abs(offered-manifest.stage.offeredEventRateMeasuredPerSecond)>0.002||
+    Math.abs(completed-manifest.stage.acceptedAppendCompletionRateMeasuredPerSecond)>0.002)
+  fail('E47C_OPEN_LOOP_RATE_MISMATCH');
+ return {rate:offered,completionRate:completed,
+  peakInflight:manifest.stage.maxObservedSourceAppendInflight};
+}
+export function assessProgressiveE47CStage({manifest,source,host,ei,offers,originalEvents,originalSequenceById}={}){
  if(manifest?.schema!=='ei.e47c.progressive-1k-preflight.v1'||
     manifest?.acceptanceE47CVerified!==false||
     manifest?.productionSloCertified!==false||
@@ -110,6 +174,8 @@ export function assessProgressiveE47CStage({manifest,source,host,ei,originalEven
   receipts.add(row.runtimeReceiptId);workers.add(row.workerId);
  }
  if(workers.size!==2)fail('E47C_NOT_TWO_DISTINCT_WORKERS');
+ const openLoop=manifest.ratePacingIsSerialAppend===false?
+  verifySourceOpenLoop({manifest,offers,sourceById,count}):null;
  const observedLatency=stats(ei,'workerRequestToHostReceiptMs');
  for(const k of ['p50','p95','p99']){
   if(!validTiming(manifest.stage.workerRequestToHostReceiptMs?.[k])||
@@ -123,8 +189,9 @@ export function assessProgressiveE47CStage({manifest,source,host,ei,originalEven
   status:'raw-consistent-first-party-staging-only',
   triggerCount:1000,
   requestedRatePerSecond:manifest.stage.requestedRatePerSecond,
-  observedAppendCompletionRatePerSecond:manifest.stage.offeredEventRateMeasuredPerSecond,
-  sourcePacingIsSerial:true,
+  observedAppendCompletionRatePerSecond:openLoop?.completionRate??manifest.stage.offeredEventRateMeasuredPerSecond,
+  sourcePacingIsSerial:openLoop===null,
+  sourceOpenLoop:openLoop,
   acceptanceE47CVerified:false,productionSloCertified:false,
   independentlyOperatedBusinessProviderProven:false,
   independentHostReceiptStorageProven:false,
@@ -161,6 +228,8 @@ export async function verifyPersistedProgressiveE47CStage({
  const source=decodeJsonl(await readBoundedArtifact(folder,manifest.rawManifest?.source));
  const host=decodeJsonl(await readBoundedArtifact(folder,manifest.rawManifest?.host));
  const ei=decodeJsonl(await readBoundedArtifact(folder,manifest.rawManifest?.ei));
+ const offers=manifest.ratePacingIsSerialAppend===false?
+  decodeJsonl(await readBoundedArtifact(folder,manifest.rawManifest?.offer)):undefined;
  const proof=decodeJson(await readBoundedArtifact(folder,manifest.frontierProof,1024*1024));
  if(proof.schema!=='ei.e47c.frontier-proof.v1'||proof.signerSha256!==signerSha256)
   fail('E47C_FRONTIER_PROOF_MISMATCH');
@@ -192,7 +261,7 @@ export async function verifyPersistedProgressiveE47CStage({
    originalSequenceById.set(row.payload.eventId,row.seq);
   }
  }
- const audit=assessProgressiveE47CStage({manifest,source,host,ei,
+ const audit=assessProgressiveE47CStage({manifest,source,host,ei,offers,
   originalEvents:oracle.events,originalSequenceById});
  return Object.freeze({...audit,sourceCommitSha:manifest.sourceCommitSha,
   runId,rawManifestSha256:hash(manifestBytes),

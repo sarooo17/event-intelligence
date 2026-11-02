@@ -10,6 +10,7 @@ import {PostgresEventStore} from '../lib/postgres-event-store.mjs';
 import {parsePrivateServiceUrl} from './common.mjs';
 import {verifyStandaloneOracle} from './standalone-mcp-source-oracle.mjs';
 import {verifyLiveFiredSourceLineage} from './verify-live-source-lineage.mjs';
+import {scheduleBoundedSourceOffers} from './e47c-open-loop-pacing.mjs';
 
 const sha=b=>createHash('sha256').update(b).digest('hex');
 const required=(env,k)=>{if(!env[k])throw Error('E47C_MISSING_'+k);return env[k];};
@@ -21,9 +22,11 @@ export function progressiveConfig(env){
  const count=Number(env.EI_E47C_STAGE_EVENTS??50);
  const triggers=1000;
  const delayMs=1000/rate;
+ const maxInflight=Number(env.EI_E47C_MAX_INFLIGHT??4);
  if(!Number.isSafeInteger(count)||count<10||count>250||
     !Number.isSafeInteger(triggers)||triggers<count||triggers>1000||
-    !Number.isSafeInteger(delayMs)||delayMs<0||delayMs>5000)
+    !Number.isSafeInteger(delayMs)||delayMs<0||delayMs>5000||
+    !Number.isSafeInteger(maxInflight)||maxInflight<1||maxInflight>8)
   throw Error('E47C_PILOT_LIMIT_EXCEEDED');
  const dir=required(env,'EI_E47C_ARTIFACT_DIR');
  if(!isAbsolute(dir)||dir==='/'||dir.startsWith('/tmp'))
@@ -31,7 +34,7 @@ export function progressiveConfig(env){
  const sourceSha=required(env,'EI_E47C_SOURCE_SHA');
  if(!/^[0-9a-f]{40}$/.test(sourceSha))throw Error('E47C_SOURCE_SHA_REQUIRED');
  return {
-  count,triggers,delayMs,rate,dir,sourceSha,
+  count,triggers,delayMs,rate,maxInflight,dir,sourceSha,
   source:parsePrivateServiceUrl(required(env,'EI_LIVE_SOURCE_URL'),'EI_LIVE_SOURCE_URL'),
   token:required(env,'EI_LIVE_SOURCE_TOKEN'),
   workerA:parsePrivateServiceUrl(required(env,'EI_LIVE_WORKER_A_URL'),'EI_LIVE_WORKER_A_URL'),
@@ -59,7 +62,6 @@ export function nearestRank(values,q){
  const sorted=[...values].sort((a,b)=>a-b);
  return Math.round(sorted[Math.ceil(q*sorted.length)-1]*1000)/1000;
 }
-const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 async function call(base,path,body,token,expectedStatus=200){
  const response=await fetch(base+path,{method:'POST',headers:{
   authorization:'Bearer '+token,'content-type':'application/json'},
@@ -85,11 +87,11 @@ async function main(env=process.env){
   connectionTimeoutMillis:5000,statement_timeout:15000});
  const evidenceDir=join(c.dir,prefix);
  let inserted=0,appended=0,observed=0,sourceRaw=null;
- const raw={source:[],host:[],ei:[]};
+ const raw={source:[],host:[],ei:[],offer:[]};
+ let offerMetrics=null;
  const acknowledgements=new Map();
  const validTiming=x=>typeof x==='number'&&Number.isFinite(x)&&x>=0;
  const elapsed=[];
- const appendAt=[];
  try{
   await mkdir(evidenceDir,{recursive:false,mode:0o700});
   await pool.query('SELECT 1');
@@ -108,16 +110,30 @@ async function main(env=process.env){
    if(res.inserted!==Math.min(250,triggers.length-i))throw Error('E47C_TRIGGER_REGISTER_FAILED');
    inserted+=res.inserted;
   }
-  const ids=[];
+  const ids=Array.from({length:c.count},(_,i)=>'e47c-'+runId+'-'+i);
   const stageStart=performance.now();
+  // Timestamped offers are driven by a fixed monotonic schedule. ACKs may
+  // overlap; exceeding maxInflight is an explicit failed campaign, not a
+  // hidden queue/dropped sample or lower "successful" rate.
+  const offers=await scheduleBoundedSourceOffers({
+   count:c.count,rate:c.rate,maxInflight:c.maxInflight,
+   send:i=>call(c.source,'/control/append',
+    {eventId:ids[i],data:{slot:i,pilotRun:runId}},c.token)
+  });
+  offerMetrics={offeredRate:offers.offeredRate,
+   acceptedCompletionRate:offers.acceptedCompletionRate,
+   peakInflight:offers.peakInflight,accepted:offers.accepted,
+   rejected:offers.rejected};
+  raw.offer.push(...offers.rows.map(row=>({...row,eventId:ids[row.index]})));
   for(let i=0;i<c.count;i++){
-   const eventId='e47c-'+runId+'-'+i;
-   const result=await call(c.source,'/control/append',
-    {eventId,data:{slot:i,pilotRun:runId}},c.token);
-   if(result.accepted!==true)throw Error('E47C_SOURCE_APPEND_REJECTED');
-   ids.push(eventId);acknowledgements.set(eventId,{...result.event,sourceSequence:result.sequence});appendAt.push(performance.now());appended++;
-   if(c.delayMs)await sleep(c.delayMs);
+   const result=offers.responses[i];
+   if(result?.accepted!==true)continue;
+   acknowledgements.set(ids[i],{...result.event,sourceSequence:result.sequence});
+   appended++;
   }
+  if(!offers.allAccepted||offers.offeredRate===null||
+     offers.acceptedCompletionRate===null)
+   throw Error('E47C_OPEN_LOOP_SOURCE_BACKPRESSURE_OR_ACK_FAILURE');
   await call(c.source,'/control/seal',{},c.token);
   let cursor='source-v1:0',page=0;
   const wanted=new Set(ids),events=new Map();
@@ -219,8 +235,12 @@ async function main(env=process.env){
   const report={schema:'ei.e47c.progressive-1k-preflight.v1',
    sourceCommitSha:c.sourceSha,runId,scopeDigest:sha(scope),
    stage:{triggers:inserted,requestedRatePerSecond:c.rate,
-    offeredEventRateMeasuredPerSecond:appendAt.length>1?
-     Math.round((appendAt.length-1)*1000*1000/(appendAt.at(-1)-appendAt[0]))/1000:null,
+    offeredEventRateMeasuredPerSecond:offerMetrics.offeredRate,
+    acceptedAppendCompletionRateMeasuredPerSecond:offerMetrics.acceptedCompletionRate,
+    maxSourceAppendInflight:c.maxInflight,
+    maxObservedSourceAppendInflight:offerMetrics.peakInflight,
+    sourceAcceptedOffers:offerMetrics.accepted,
+    sourceRejectedOffers:offerMetrics.rejected,
     durationSeconds:Math.round((performance.now()-stageStart)/10)/100,
     events:appended,observed,
     independentEIPools:2,sourceFirstPartySeparateService:true,
@@ -232,15 +252,21 @@ async function main(env=process.env){
      p99:nearestRank(elapsed,.99)}},
    rawManifest:manifests,frontierProof:savedProof,
    acceptanceE47CVerified:false,productionSloCertified:false,
-   ratePacingIsSerialAppend:true,sourceAndHostAreFirstParty:true,
+   ratePacingIsSerialAppend:false,sourceAndHostAreFirstParty:true,
+   offeredPacingIndependentOfAck:true,
    limitations:['stage-event-count-below-1000','one-cardinality-per-run',
-    'two-rate-completion-requires-distinct-runs','serial-append-rate-not-independent-offered-load','shared-host-ei-postgres',
+    'only-source-offers-open-loop-worker-ingest-remains-serial',
+    'two-rate-completion-requires-distinct-runs','shared-host-ei-postgres',
     'no-independent-enterprise-security-or-physical-db-io-signoff']};
   const reportBytes=Buffer.from(JSON.stringify(report,null,2)+'\n');
   const saved=await saveRaw(evidenceDir,'pilot-manifest.json',reportBytes);
   console.log(JSON.stringify({event:'ei_e47c_progressive_1k_stage',
    status:'passed',runId,stageTriggerCount:inserted,
-   requestedRatePerSecond:c.rate,artifactSha256:saved.sha256,
+   requestedRatePerSecond:c.rate,
+   offeredRateMeasuredPerSecond:offerMetrics.offeredRate,
+   acceptedAppendCompletionRateMeasuredPerSecond:offerMetrics.acceptedCompletionRate,
+   maxObservedSourceAppendInflight:offerMetrics.peakInflight,
+   artifactSha256:saved.sha256,
    sourceLogSha256:fileArchive.sha256,eventCount:observed,
    twoWorkers:true,hostReceipts:receipts.rows.length,
    productionSloCertified:false,acceptanceE47CVerified:false}));
@@ -249,9 +275,9 @@ async function main(env=process.env){
   try{
    const partial={schema:'ei.e47c.live-pilot-partial.v1',
     sourceCommitSha:c.sourceSha,runId,scopeDigest:sha(scope),
-    inserted,appended,observed,
+    inserted,appended,observed,offerMetrics,
     acceptanceE47CVerified:false,productionSloCertified:false,
-   ratePacingIsSerialAppend:true,sourceAndHostAreFirstParty:true,
+   ratePacingIsSerialAppend:false,sourceAndHostAreFirstParty:true,
     status:'failed',errorCode:String(e?.message??'UNKNOWN').slice(0,110)};
    for(const [kind,rows] of Object.entries(raw)){
     if(!rows.length)continue;
