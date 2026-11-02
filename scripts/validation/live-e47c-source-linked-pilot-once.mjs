@@ -82,6 +82,8 @@ async function main(env=process.env){
  const evidenceDir=join(c.dir,prefix);
  let inserted=0,appended=0,observed=0,sourceRaw=null;
  const raw={source:[],host:[],ei:[]};
+ const acknowledgements=new Map();
+ const validTiming=x=>typeof x==='number'&&Number.isFinite(x)&&x>=0;
  const elapsed=[];
  try{
   await mkdir(evidenceDir,{recursive:false,mode:0o700});
@@ -107,7 +109,7 @@ async function main(env=process.env){
    const result=await call(c.source,'/control/append',
     {eventId,data:{slot:i,pilotRun:runId}},c.token);
    if(result.accepted!==true)throw Error('E47C_SOURCE_APPEND_REJECTED');
-   ids.push(eventId);appended++;
+   ids.push(eventId);acknowledgements.set(eventId,result.event);appended++;
    if(c.delayMs)await sleep(c.delayMs);
   }
   await call(c.source,'/control/seal',{},c.token);
@@ -134,9 +136,10 @@ async function main(env=process.env){
    },c.workerToken);
    const duration=performance.now()-started;
    if(result.accepted!==true||result.matched!==1||result.persistedDeliveredWakes!==1||
-      !Number.isFinite(result.timings?.ingestToMatchMs)||
+      !validTiming(result.timings?.ingestToMatchMs)||
       !Array.isArray(result.timings?.matchToWakeSamplesMs)||
-      result.timings.matchToWakeSamplesMs.length!==1)
+      result.timings.matchToWakeSamplesMs.length!==1||
+      !validTiming(result.timings.matchToWakeSamplesMs[0]))
     throw Error('E47C_EI_WAKE_OR_TIMING_MISMATCH');
    elapsed.push(duration);
    raw.ei.push({eventId,workerId:result.workerId,
@@ -185,8 +188,22 @@ async function main(env=process.env){
    publicKeyPem:c.signer,expected:c.oracleExpected,now:Date.now()
   });
   if(!independent.valid)throw Error('E47C_SOURCE_ORACLE_INVALID');
-  for(const id of ids)if(!independent.events.some(e=>e.eventId===id))
-   throw Error('E47C_SOURCE_ORACLE_MISSING_EVENT');
+  for(const id of ids){
+   const original=independent.events.find(e=>e.eventId===id);
+   const polled=events.get(id),ack=acknowledgements.get(id);
+   if(!original||!polled||!ack||original.name!==polled.name||
+      original.timestamp!==polled.timestamp||
+      original.name!==ack.name||original.timestamp!==ack.occurredAt||
+      JSON.stringify(original.data)!==JSON.stringify(polled.data)||
+      JSON.stringify(original.data)!==JSON.stringify(ack.data))
+    throw Error('E47C_SOURCE_ORACLE_PAYLOAD_OR_TIME_DISAGREEMENT');
+  }
+  const frontierProof={schema:'ei.e47c.frontier-proof.v1',
+    verifiedAt:new Date().toISOString(),sourceLog:frontier.sourceLog,
+    attestation:frontier.attestation,
+    expected:c.oracleExpected,signerSha256:c.signerSha};
+  const proofBytes=Buffer.from(JSON.stringify(frontierProof,null,2)+'\n');
+  const savedProof=await saveRaw(evidenceDir,'source-frontier-proof.json',proofBytes);
   const manifests={};
   for(const [kind,rows] of Object.entries(raw)){
    const bytes=Buffer.from(rows.map(v=>JSON.stringify(v)).join('\n')+'\n');
@@ -202,7 +219,7 @@ async function main(env=process.env){
     workerRequestToHostReceiptMs:{
      p50:nearestRank(elapsed,.5),p95:nearestRank(elapsed,.95),
      p99:nearestRank(elapsed,.99)}},
-   rawManifest:manifests,
+   rawManifest:manifests,frontierProof:savedProof,
    acceptanceE47CVerified:false,productionSloCertified:false,
    limitations:['pilot-event-count-below-1000','single-trigger-cardinality',
     'no-two-rate-high-cardinality-campaign','shared-host-ei-postgres',
@@ -215,6 +232,24 @@ async function main(env=process.env){
    twoWorkers:true,hostReceipts:receipts.rows.length,
    productionSloCertified:false,acceptanceE47CVerified:false}));
  }catch(e){
+  // Preserve all original observations available on partial failure.
+  try{
+   const partial={schema:'ei.e47c.live-pilot-partial.v1',
+    sourceCommitSha:c.sourceSha,runId,scopeDigest:sha(scope),
+    inserted,appended,observed,
+    acceptanceE47CVerified:false,productionSloCertified:false,
+    status:'failed',errorCode:String(e?.message??'UNKNOWN').slice(0,110)};
+   for(const [kind,rows] of Object.entries(raw)){
+    if(!rows.length)continue;
+    const bytes=Buffer.from(rows.map(v=>JSON.stringify(v)).join('\n')+'\n');
+    await saveRaw(evidenceDir,'partial-'+kind+'.jsonl',bytes);
+   }
+   await saveRaw(evidenceDir,'partial-manifest.json',
+    Buffer.from(JSON.stringify(partial,null,2)+'\n'));
+  }catch(archiveError){
+   console.error(JSON.stringify({event:'e47c_partial_archive_failed',
+    code:String(archiveError?.message??'UNKNOWN').slice(0,100)}));
+  }
   console.error(JSON.stringify({event:'ei_e47c_source_linked_live_pilot',
    status:'failed',code:String(e?.message??'unknown').slice(0,110),
    runId,inserted,appended,observed,
