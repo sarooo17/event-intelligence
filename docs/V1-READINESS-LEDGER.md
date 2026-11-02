@@ -15,6 +15,22 @@ retention/recovery remain mandatory. Every row maps to its numbered issue.
 Every row remains `blocked` until release-specific manually reviewed evidence
 is attached; an issue marked completed does not auto-verify its ledger row.
 
+**Status as of 2026-11-02:** SDK implementation workstreams #42–#50 are
+closed; the scoped Host Adapter Kit #269 is closed with an explicit
+no-new-generic-API/ROI conclusion. All **9 required stable-v1 ledger
+attestations are still blocked**, despite substantial completed SDK evidence.
+The **6 optional deployment/enterprise ledger categories remain blocked**,
+even though [#376](https://github.com/sarooo17/event-intelligence/issues/376)
+now records **E48-A and E48-B verified (2/10)** for isolated first-party
+source and Railway staging measurement/independent raw recheck ([#391](https://github.com/sarooo17/event-intelligence/pull/391)).
+These partial observations do not certify all requirements of a broader
+optional category. [#317](https://github.com/sarooo17/event-intelligence/issues/317)
+remains 0/5. The maintainer reports publishing `0.12.0-next.1` to npm
+`next`; registry/workflow publication evidence was not independently read
+during this documentation audit, and **it does not authorize stable v1**.
+The [live roadmap](https://github.com/sarooo17/event-intelligence/issues/41)
+supersedes historic implementation checklists.
+
 ```sh
 # Report only: validates manifest and emits a machine-readable blocked state.
 node scripts/evidence/v1-release-readiness.mjs --report
@@ -40,8 +56,7 @@ must verify both completeness and truth of those artifacts. A green
 declared, not that an npm publish is safe or authorized. Existing exact
 Muffin/Artemis dependency pins are never touched by this workflow.
 
-Compatibility: this is an additive internal operator tool, no runtime or
-public package API change, no data migration and no published release.
+Compatibility: this ledger checker is an internal operator tool, not a runtime/API change, database migration or publication action. Its source/CI report does not itself publish or attest any npm version.
 Published 1k/10k/100k isolated PostgreSQL16 benchmarks and crash recovery
 tests are SDK engineering evidence, not production claims. Independently
 operated host adoption, full real-source finality, provider-billed spend,

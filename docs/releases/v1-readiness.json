@@ -27,7 +27,7 @@
         "https://github.com/sarooo17/event-intelligence/pull/282",
         "https://github.com/sarooo17/event-intelligence/actions/runs/40554825385"
       ],
-      "note": "Canonical v1 HostContract and packed multi-host conformance merged; the npm 0.12.0-next.0 prerelease was published to next and externally consumed by owner-maintained Muffin fork. Still BLOCKED for final stable 1.0.0 package/source/declarations, release signoff and a new exact-head stable candidate review; do not confuse CI green with production readiness."
+      "note": "Reviewed SDK host-contract/package conformance and packed-preview evidence exist; prerelease 0.12.0-next.0 was historically published and 0.12.0-next.1 publication is maintainer-reported as of 2026-11-02, not independently registry-attested in this doc update. BLOCKED solely for release-specific review and actual stable 1.0.0 package/source/declarations, exact-head tests and signoff. Do not infer stable or production-readiness from preview publication."
     },
     {
       "id": "security-independent-review",
@@ -42,8 +42,14 @@
       "issue": 45,
       "required": true,
       "status": "blocked",
-      "evidence": [],
-      "note": "BLOCKED pending SDK-v1 reviewer signoff on code+PG16 reference boundaries: tenant/owner isolation, fail-closed authority epoch and revocation, no silently authorized host effect. EI cannot assert external host OAuth, provider credentials or deployed-host final authorizations. Independent host security assessment OPTIONAL #317/#376."
+      "evidence": [
+        "https://github.com/sarooo17/event-intelligence/issues/45",
+        "https://github.com/sarooo17/event-intelligence/pull/309",
+        "https://github.com/sarooo17/event-intelligence/pull/311",
+        "https://github.com/sarooo17/event-intelligence/pull/314",
+        "https://github.com/sarooo17/event-intelligence/pull/315"
+      ],
+      "note": "MANDATORY SDK #45 closed 5/5 with adversarial tenant/owner, strict session authority epoch revocation, PG16 shared-worker fencing and host-owned effects/receipts reference evidence; reviewed PRs #309/#311/#314/#315. Still BLOCKED for release-specific review/attestation at the exact stable-v1 commit. EI does not certify external host OAuth, deployed-host final authorization or a third-party security assessment; optional #317/#376 remain unverified."
     },
     {
       "id": "pg-retention-audit",
@@ -58,9 +64,10 @@
         "https://github.com/sarooo17/event-intelligence/pull/254",
         "https://github.com/sarooo17/event-intelligence/pull/256",
         "https://github.com/sarooo17/event-intelligence/pull/257",
-        "https://github.com/sarooo17/event-intelligence/pull/258"
+        "https://github.com/sarooo17/event-intelligence/pull/258",
+        "https://github.com/sarooo17/event-intelligence/pull/378"
       ],
-      "note": "BLOCKED for required SDK core bounded retention correctness: safe existing terminal duplicate compaction, replay/dedup and scoped audit integrity are tested (#254), but full event/match/audit lifecycle contract and verified fail-closed replay floor must be resolved in #47. WORM/off-host archive and production-scale backup/failover signoff remain optional production work #376."
+      "note": "MANDATORY SDK source/event/match/audit/wake-receipt retention implementation is CLOSED 6/6 in #47, with independently reviewed/merged #378 and actual PG16 cross-pool, corrupted-state, restart and lock/timeout negatives. The accepted conservative policy is LOSSLESS NO-PRUNE for source/audit/dedup, except proven safe terminal-duplicate history compaction; storage may grow indefinitely. Still BLOCKED for stable-v1 exact-artifact evidence review, owner/date/procedure signoff, and explicit capacity/backup limitations. WORM/off-host archive, physical TTL and production HA/RPO/RTO remain OPTIONAL in #376, not missing SDK core implementation."
     },
     {
       "id": "pg-chaos-recovery",
@@ -71,7 +78,8 @@
         "https://github.com/sarooo17/event-intelligence/pull/253",
         "https://github.com/sarooo17/event-intelligence/actions/runs/39568691478",
         "https://github.com/sarooo17/event-intelligence/issues/47",
-        "https://github.com/sarooo17/event-intelligence/pull/263"
+        "https://github.com/sarooo17/event-intelligence/pull/263",
+        "https://github.com/sarooo17/event-intelligence/pull/378"
       ],
       "note": "BLOCKED pending reviewer signoff on mandatory SDK worker crash/recovery correctness across actual PG16 independent OS workers (e.g. #253/#263); EI-authored fixtures are valid core correctness evidence. Separately operated provider/host and primary PG failover RPO/RTO are OPTIONAL production certification #376."
     },
@@ -97,7 +105,8 @@
       "status": "blocked",
       "evidence": [
         "https://github.com/sarooo17/event-intelligence/issues/47",
-        "https://github.com/sarooo17/event-intelligence/pull/258"
+        "https://github.com/sarooo17/event-intelligence/pull/258",
+        "https://github.com/sarooo17/event-intelligence/pull/378"
       ],
       "note": "BLOCKED pending reviewed v1 SDK fail-closed version/backup/reset/recovery contract and docs (#47/#50). Production PostgreSQL primary failover and off-host operator RPO/RTO certification optional #376."
     },
@@ -126,16 +135,25 @@
       "issue": 48,
       "required": true,
       "status": "blocked",
-      "evidence": [],
-      "note": "BLOCKED pending manual reviewed SDK-v1 signoff only: versioned conservative cause contract; absence of trusted external provider event-time completeness MUST remain unknown, never fabricated candidate_impossible. PR #375 real PG16 signed test-source/tenant/revision/gap conformance; #371 whole-inspector capped 100k candidate measurements. Independent provider's true finality and contended externally operated host inspector SLO are tracked OPTIONAL as production evidence #376, not SDK feature acceptance. No verified signoff recorded."
+      "evidence": [
+        "https://github.com/sarooo17/event-intelligence/issues/48",
+        "https://github.com/sarooo17/event-intelligence/pull/375",
+        "https://github.com/sarooo17/event-intelligence/pull/390",
+        "https://github.com/sarooo17/event-intelligence/pull/391",
+        "https://github.com/sarooo17/event-intelligence/issues/376"
+      ],
+      "note": "MANDATORY SDK #48 closed 5/5 for the versioned conditional fail-closed cause contract and resource-bounded strict PostgreSQL inspector. Optional #376 E48-A/B are now VERIFIED as of 2026-11-02 (2/10): separately deployed first-party MCP source/log oracle; independent second-process Railway raw evidence recheck #391 after 900 full Inspector inspections across 1k/10k/100k PG16 persisted candidates and real separately deployed host load (stage IO/CPU/RSS/p99 and failure matrix). Neither is proof of third-party business source finality, each statement's physical IO or production SLO. This REQUIRED stable-v1 row stays BLOCKED for release-specific reviewed source/reviewer/date/procedure evidence and exact stable candidate signoff, not because #48 implementation is unfinished."
     },
     {
       "id": "semantic-triage",
       "issue": 49,
       "required": true,
       "status": "blocked",
-      "evidence": [],
-      "note": "BLOCKED pending manual reviewed SDK-v1 signoff only: optional host-provided semantic evaluator, deterministic prefilter, scoped cache, exact PG16 trigger/batch budgets, idempotent reservation, timeouts and conservative unknown-outcome handling. Reviewed #374 plus live Railway OpenAI 14 input + 11 output tokens and duplicate denied are bounded real evidence; EI does not certify the provider's final bill or cancellation. External provider invoice/financial settlement optional production proof #376. No verified signoff recorded."
+      "evidence": [
+        "https://github.com/sarooo17/event-intelligence/issues/49",
+        "https://github.com/sarooo17/event-intelligence/pull/374"
+      ],
+      "note": "MANDATORY SDK #49 closed 5/5 for opt-in host-provided evaluator, deterministic prefilter, tenant-scoped cache, durable PG16 trigger/batch reservation and timeout/unknown-outcome no-refund/no-retry boundaries. Reviewed/merged #374 and redacted live provider token witness are bounded SDK evidence. This row remains BLOCKED for stable-v1 release-specific review/signoff, not missing core implementation. Actual provider invoice/cancellation/billing guarantees are OPTIONAL and unchecked #376 E49-A/B."
     },
     {
       "id": "external-source-finality",
@@ -143,9 +161,12 @@
       "required": false,
       "status": "blocked",
       "evidence": [
-        "https://github.com/sarooo17/event-intelligence/pull/375"
+        "https://github.com/sarooo17/event-intelligence/pull/375",
+        "https://github.com/sarooo17/event-intelligence/issues/376",
+        "https://github.com/sarooo17/event-intelligence/pull/382",
+        "https://github.com/sarooo17/event-intelligence/pull/389"
       ],
-      "note": "OPTIONAL provider-specific proof for production adapters: separately operated MCP Events source and independently verified no-backdating/completeThroughAt guarantees, source-log oracle and failure cases. Signed test fixture alone authenticates claims but not independent business finality. An unknown result remains the correct generic SDK fallback."
+      "note": "OPTIONAL provider/deployed-source production certification remains BLOCKED overall. #376 E48-A passed (separately deployed FIRST-PARTY MCP Events source with its own signed completeThroughAt and source-log oracle; negative/replay/fault tests), but does not prove independently operated third-party business-system finality or other broad provider guarantees. Generic SDK must preserve unknown completeness when not signed/verified."
     },
     {
       "id": "provider-billing-and-cancel",
@@ -163,9 +184,12 @@
       "required": false,
       "status": "blocked",
       "evidence": [
-        "https://github.com/sarooo17/event-intelligence/issues/47"
+        "https://github.com/sarooo17/event-intelligence/issues/47",
+        "https://github.com/sarooo17/event-intelligence/issues/376",
+        "https://github.com/sarooo17/event-intelligence/pull/390",
+        "https://github.com/sarooo17/event-intelligence/pull/391"
       ],
-      "note": "OPTIONAL production deployment certification: independent host, sustained fault/scale testing, PG primary failover RPO/RTO, service CPU/IO and long-haul end-to-end p95/p99. No production SLO is inferred from EI-authored PG16/railway trials."
+      "note": "OPTIONAL production/enterprise category remains BLOCKED. #376 E48-B passed on isolated Railway staging full Inspector with 1k/10k/100k persisted PG16, independent raw-recheck, externally deployed first-party host, CPU/RSS/p99 and scoped table IO/EXPLAIN; it does NOT prove generic end-to-end sustained host SLO, independent enterprise host, full-call physical DB IO, physical primary failover RPO/RTO, WORM retention or production security signoff. E47-A/B/C and E317-A/B/C remain unchecked in #376; #317 is 0/5."
     }
   ]
 }

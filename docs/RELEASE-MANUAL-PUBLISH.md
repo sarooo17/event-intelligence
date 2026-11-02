@@ -36,7 +36,7 @@ still prevents overwriting an already published version.
 ## npm prerelease vs. stable MCP Registry
 
 The official MCP Registry publisher does **not** currently accept a
-prerelease string like `0.12.0-next.0` in `server.json`. Consequently a
+prerelease string like `0.12.0-next.1` in `server.json`. Consequently a
 candidate may be published to **npm next** but may not claim MCP Registry
 compatibility or create a stable GitHub release. `MCP Launch Check` still
 tests stdio and the actual packed npm artifact and checks full release

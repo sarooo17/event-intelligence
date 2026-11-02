@@ -4,11 +4,20 @@ The primary integration is to embed Event Intelligence once at the **harness lev
 
 ## 1. Embed the package and point it at the host registry
 
-After publication:
+Install the chosen channel deliberately. Unqualified npm installation follows
+`latest` (not `next`); the `0.12.0-next.1` preview was reported published
+by the maintainer on 2026-11-02, but should be verified on npm before use:
 
 ```bash
+# Current stable npm channel (version depends on registry):
 npm install mcp-event-intelligence
+# Pre-v1 SDK preview: explicit exact pin, never an implicit upgrade:
+npm install --save-exact mcp-event-intelligence@0.12.0-next.1
 ```
+
+The example below is a host-owned reference; check the [preview compatibility
+and migration matrix](releases/0.12.0-next.1-compatibility.md) for supported
+exports, breaking behavior and persisted-state reset requirements.
 
 ```js
 import {

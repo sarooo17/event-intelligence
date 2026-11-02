@@ -27,11 +27,13 @@ Install from npm:
 
 ```bash
 npm install mcp-event-intelligence
+# Opt in explicitly to the pre-v1 SDK preview (not npm latest):
+npm install --save-exact mcp-event-intelligence@0.12.0-next.1
 ```
 
 Published package: [npm](https://www.npmjs.com/package/mcp-event-intelligence) · [Official MCP Registry](https://registry.modelcontextprotocol.io/?q=io.github.sarooo17%2Fevent-intelligence)
 
-**Pre-v1 upgrades:** see the [0.12.0-next.0 versioned compatibility and breaking-change notes](docs/releases/0.12.0-next.0-compatibility.md) before moving an existing host or persistent store. Published prerelease `next` does not upgrade pinned consumers and is not stable 1.0.
+**Pre-v1 upgrades:** the current SDK preview is `0.12.0-next.1` (maintainer-reported npm publish; check the [npm version](https://www.npmjs.com/package/mcp-event-intelligence?activeTab=versions) and `next` dist-tag before installation). See the [versioned breaking-change and storage migration matrix](docs/releases/0.12.0-next.1-compatibility.md) and [release notes](docs/releases/v0.12.0-next.1.md). Plain `npm install mcp-event-intelligence` follows npm `latest`, **not** `next`; neither install command changes an already pinned host or migrates persisted data. Stable `1.0.0` has not been released.
 
 For most runtimes, start with the runtime-neutral integration surface:
 
@@ -553,13 +555,13 @@ The standalone service supports manual/provider-native event ingress. It does no
 ### Docker
 
 ```bash
-docker build -t mcp-event-intelligence:0.6.1 .
+docker build -t mcp-event-intelligence:local .
 
 docker run --rm \
   -p 3000:3000 \
   -v mcp-event-intelligence-data:/data \
   -e SERVICE_AUTH_TOKEN="$(openssl rand -hex 32)" \
-  mcp-event-intelligence:0.6.1
+  mcp-event-intelligence:local
 ```
 
 ## Optional MCP control plane
@@ -652,9 +654,9 @@ io.github.sarooo17/event-intelligence
 
 ## Project status
 
-**v0.6.x reference implementation / experimental.**
+**SDK v1 feature implementation complete; current pre-v1 preview: `0.12.0-next.1` (npm publication reported by maintainer; registry verification remains separate). Stable `1.0.0` is not yet approved.**
 
-The architecture is implemented and exercised end-to-end. Storage is now injectable and scoped, while the bundled JSONL backend remains a single-process reference implementation. Remaining work is primarily production database adapters/HA validation, scale benchmarks and upstream feedback.
+The canonical host-neutral facade, bounded explainability, opt-in semantic evaluation and shared PostgreSQL16 correctness/reference recovery paths have been implemented and tested. The bundled JSONL store remains **single-process only**. PostgreSQL retention deliberately uses a **lossless no-prune** policy; storage growth needs operator management. The [v1 release-readiness ledger](docs/V1-READINESS-LEDGER.md) still has **9 required stable-specific gates blocked pending explicit review and signoff**, not nine unimplemented features. [Production/enterprise validation #376](https://github.com/sarooo17/event-intelligence/issues/376) is **2/10** (E48-A/B verified in separate staging) and [deployed-host security #317](https://github.com/sarooo17/event-intelligence/issues/317) is **0/5**: neither constitutes generic-SDK stable release blocking or a certification EI can claim. See the [current roadmap #41](https://github.com/sarooo17/event-intelligence/issues/41), [SDK release scope](docs/V1-SDK-RELEASE-SCOPE.md) and [pre-v1 security boundaries](SECURITY.md).
 
 ## Example
 
