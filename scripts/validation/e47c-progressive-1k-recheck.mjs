@@ -124,7 +124,78 @@ function verifySourceOpenLoop({manifest,offers,sourceById,count}){
  return {rate:offered,completionRate:completed,
   peakInflight:manifest.stage.maxObservedSourceAppendInflight};
 }
-export function assessProgressiveE47CStage({manifest,source,host,ei,offers,originalEvents,originalSequenceById}={}){
+
+function verifyWorkerIngress({manifest,ingest,ei,sourceById,count}){
+ const stage=manifest.stage;
+ if(manifest.workerIngressPacingIndependentOfAck!==true||
+    stage.workerIngestPacedIndependently!==true||
+    !Array.isArray(ingest)||ingest.length!==count||
+    stage.workerIngressAccepted!==count||stage.workerIngressRejected!==0||
+    !Number.isSafeInteger(stage.workerIngressMaxInflight)||
+    stage.workerIngressMaxInflight<1||stage.workerIngressMaxInflight>8||
+    !Number.isSafeInteger(stage.workerIngressPeakInflight)||
+    stage.workerIngressPeakInflight<1||
+    stage.workerIngressPeakInflight>stage.workerIngressMaxInflight||
+    !Array.isArray(stage.workerIngressWorkerIds)||
+    stage.workerIngressWorkerIds.length!==2||
+    stage.workerIngressWorkerIds.some(id=>!exactId(id))||
+    stage.workerIngressWorkerIds[0]===stage.workerIngressWorkerIds[1])
+  fail('E47C_WORKER_INGRESS_METADATA_INVALID');
+ const activeTransitions=[],seen=new Set();
+ for(let i=0;i<count;i++){
+  const item=ingest[i],expectedWorker=stage.workerIngressWorkerIds[i%2];
+  const nominal=i*1000/stage.requestedRatePerSecond;
+  if(item?.index!==i||item?.status!=='accepted'||
+     !exactId(item.eventId)||!sourceById.has(item.eventId)||
+     seen.has(item.eventId)||item.workerId!==expectedWorker||
+     ei[i]?.eventId!==item.eventId||ei[i].workerId!==expectedWorker||
+     !validTiming(item.scheduledAtMs)||!validTiming(item.offeredAtMs)||
+     !validTiming(item.offerLatenessMs)||!validTiming(item.completedAtMs)||
+     !Number.isSafeInteger(item.offerOrder)||
+     !Number.isSafeInteger(item.completedOrder)||
+     item.offerOrder<1||item.completedOrder<=item.offerOrder||
+     Math.abs(item.scheduledAtMs-nominal)>0.002||
+     item.offeredAtMs<item.scheduledAtMs-0.002||
+     Math.abs(Math.max(0,item.offeredAtMs-item.scheduledAtMs)-
+      item.offerLatenessMs)>0.003||
+     item.completedAtMs<item.offeredAtMs||
+     Math.abs((item.completedAtMs-item.offeredAtMs)-
+      ei[i].workerRequestToHostReceiptMs)>0.003)
+   fail('E47C_WORKER_INGRESS_LINEAGE_OR_TIME_INVALID');
+  seen.add(item.eventId);
+  activeTransitions.push({order:item.offerOrder,time:item.offeredAtMs,delta:1},
+   {order:item.completedOrder,time:item.completedAtMs,delta:-1});
+ }
+ activeTransitions.sort((a,b)=>a.order-b.order);
+ let active=0,peak=0,lastTime=0;
+ for(let i=0;i<activeTransitions.length;i++){
+  const t=activeTransitions[i];
+  if(t.order!==i+1||t.time+0.002<lastTime)
+   fail('E47C_WORKER_INGRESS_ORDER_INVALID');
+  lastTime=Math.max(lastTime,t.time);
+  active+=t.delta;
+  if(active<0)fail('E47C_WORKER_INGRESS_NEGATIVE_INFLIGHT');
+  peak=Math.max(peak,active);
+ }
+ if(active!==0||peak!==stage.workerIngressPeakInflight)
+  fail('E47C_WORKER_INGRESS_PEAK_MISMATCH');
+ const offered=rateFromTimeline(ingest,'offeredAtMs');
+ const completed=rateFromTimeline(
+  [...ingest].sort((a,b)=>a.completedAtMs-b.completedAtMs),
+  'completedAtMs');
+ if(offered===null||completed===null||
+    !validTiming(stage.workerIngressOfferedRatePerSecond)||
+    stage.workerIngressOfferedRatePerSecond<=0||
+    !validTiming(stage.workerIngressCompletionRatePerSecond)||
+    stage.workerIngressCompletionRatePerSecond<=0||
+    Math.abs(offered-stage.workerIngressOfferedRatePerSecond)>0.002||
+    Math.abs(completed-stage.workerIngressCompletionRatePerSecond)>0.002)
+  fail('E47C_WORKER_INGRESS_RATE_MISMATCH');
+ return {offeredRate:offered,completionRate:completed,peakInflight:peak,
+  distinctWorkers:2};
+}
+
+export function assessProgressiveE47CStage({manifest,source,host,ei,offers,ingest,originalEvents,originalSequenceById}={}){
  if(manifest?.schema!=='ei.e47c.progressive-1k-preflight.v1'||
     manifest?.acceptanceE47CVerified!==false||
     manifest?.productionSloCertified!==false||
@@ -176,6 +247,8 @@ export function assessProgressiveE47CStage({manifest,source,host,ei,offers,origi
  if(workers.size!==2)fail('E47C_NOT_TWO_DISTINCT_WORKERS');
  const openLoop=manifest.ratePacingIsSerialAppend===false?
   verifySourceOpenLoop({manifest,offers,sourceById,count}):null;
+ const workerIngress=manifest.workerIngressPacingIndependentOfAck===true?
+  verifyWorkerIngress({manifest,ingest,ei,sourceById,count}):null;
  const observedLatency=stats(ei,'workerRequestToHostReceiptMs');
  for(const k of ['p50','p95','p99']){
   if(!validTiming(manifest.stage.workerRequestToHostReceiptMs?.[k])||
@@ -192,6 +265,7 @@ export function assessProgressiveE47CStage({manifest,source,host,ei,offers,origi
   observedAppendCompletionRatePerSecond:openLoop?.completionRate??manifest.stage.offeredEventRateMeasuredPerSecond,
   sourcePacingIsSerial:openLoop===null,
   sourceOpenLoop:openLoop,
+  workerIngress,
   acceptanceE47CVerified:false,productionSloCertified:false,
   independentlyOperatedBusinessProviderProven:false,
   independentHostReceiptStorageProven:false,
@@ -230,6 +304,8 @@ export async function verifyPersistedProgressiveE47CStage({
  const ei=decodeJsonl(await readBoundedArtifact(folder,manifest.rawManifest?.ei));
  const offers=manifest.ratePacingIsSerialAppend===false?
   decodeJsonl(await readBoundedArtifact(folder,manifest.rawManifest?.offer)):undefined;
+ const ingest=manifest.workerIngressPacingIndependentOfAck===true?
+  decodeJsonl(await readBoundedArtifact(folder,manifest.rawManifest?.ingest)):undefined;
  const proof=decodeJson(await readBoundedArtifact(folder,manifest.frontierProof,1024*1024));
  if(proof.schema!=='ei.e47c.frontier-proof.v1'||proof.signerSha256!==signerSha256)
   fail('E47C_FRONTIER_PROOF_MISMATCH');
@@ -261,7 +337,7 @@ export async function verifyPersistedProgressiveE47CStage({
    originalSequenceById.set(row.payload.eventId,row.seq);
   }
  }
- const audit=assessProgressiveE47CStage({manifest,source,host,ei,offers,
+ const audit=assessProgressiveE47CStage({manifest,source,host,ei,offers,ingest,
   originalEvents:oracle.events,originalSequenceById});
  return Object.freeze({...audit,sourceCommitSha:manifest.sourceCommitSha,
   runId,rawManifestSha256:hash(manifestBytes),

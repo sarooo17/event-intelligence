@@ -37,6 +37,7 @@ test('1k stage requires explicit operator opt-in and exact one of two offered ra
   assert.equal(c.triggers,1000);
   assert.equal(c.rate,Number(rate));
   assert.equal(c.delayMs,1000/Number(rate));
+  assert.equal(c.workerInflight,4);
   assert.equal(c.count,50);
  }
 });
@@ -46,6 +47,15 @@ test('stage bounds prevent accidental 10k/100k load and unlimited source appends
    /E47C_PILOT_LIMIT_EXCEEDED/);
  }
  assert.equal(progressiveConfig({...env,EI_E47C_STAGE_EVENTS:'250'}).count,250);
+});
+test('worker ingress concurrency limit refuses zero, negative and unbounded values',()=>{
+ for(const n of ['0','-1','9','100','abc']){
+  assert.throws(()=>progressiveConfig({...env,EI_E47C_WORKER_MAX_INFLIGHT:n}),
+   /E47C_PILOT_LIMIT_EXCEEDED/);
+ }
+ for(const n of ['1','2','4','8']){
+  assert.equal(progressiveConfig({...env,EI_E47C_WORKER_MAX_INFLIGHT:n}).workerInflight,Number(n));
+ }
 });
 test('stage refuses public URLs, unpinned sources and ephemeral archives',()=>{
  assert.throws(()=>progressiveConfig({...env,EI_LIVE_SOURCE_URL:'https://example.com'}));

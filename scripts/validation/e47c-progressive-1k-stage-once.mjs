@@ -11,6 +11,7 @@ import {parsePrivateServiceUrl} from './common.mjs';
 import {verifyStandaloneOracle} from './standalone-mcp-source-oracle.mjs';
 import {verifyLiveFiredSourceLineage} from './verify-live-source-lineage.mjs';
 import {scheduleBoundedSourceOffers} from './e47c-open-loop-pacing.mjs';
+import {scheduleBoundedWorkerIngress} from './e47c-bounded-worker-ingress.mjs';
 
 const sha=b=>createHash('sha256').update(b).digest('hex');
 const required=(env,k)=>{if(!env[k])throw Error('E47C_MISSING_'+k);return env[k];};
@@ -23,10 +24,12 @@ export function progressiveConfig(env){
  const triggers=1000;
  const delayMs=1000/rate;
  const maxInflight=Number(env.EI_E47C_MAX_INFLIGHT??4);
+ const workerInflight=Number(env.EI_E47C_WORKER_MAX_INFLIGHT??4);
  if(!Number.isSafeInteger(count)||count<10||count>250||
     !Number.isSafeInteger(triggers)||triggers<count||triggers>1000||
     !Number.isSafeInteger(delayMs)||delayMs<0||delayMs>5000||
-    !Number.isSafeInteger(maxInflight)||maxInflight<1||maxInflight>8)
+    !Number.isSafeInteger(maxInflight)||maxInflight<1||maxInflight>8||
+    !Number.isSafeInteger(workerInflight)||workerInflight<1||workerInflight>8)
   throw Error('E47C_PILOT_LIMIT_EXCEEDED');
  const dir=required(env,'EI_E47C_ARTIFACT_DIR');
  if(!isAbsolute(dir)||dir==='/'||dir.startsWith('/tmp'))
@@ -34,7 +37,7 @@ export function progressiveConfig(env){
  const sourceSha=required(env,'EI_E47C_SOURCE_SHA');
  if(!/^[0-9a-f]{40}$/.test(sourceSha))throw Error('E47C_SOURCE_SHA_REQUIRED');
  return {
-  count,triggers,delayMs,rate,maxInflight,dir,sourceSha,
+  count,triggers,delayMs,rate,maxInflight,workerInflight,dir,sourceSha,
   source:parsePrivateServiceUrl(required(env,'EI_LIVE_SOURCE_URL'),'EI_LIVE_SOURCE_URL'),
   token:required(env,'EI_LIVE_SOURCE_TOKEN'),
   workerA:parsePrivateServiceUrl(required(env,'EI_LIVE_WORKER_A_URL'),'EI_LIVE_WORKER_A_URL'),
@@ -87,8 +90,8 @@ async function main(env=process.env){
   connectionTimeoutMillis:5000,statement_timeout:15000});
  const evidenceDir=join(c.dir,prefix);
  let inserted=0,appended=0,observed=0,sourceRaw=null;
- const raw={source:[],host:[],ei:[],offer:[]};
- let offerMetrics=null;
+ const raw={source:[],host:[],ei:[],offer:[],ingest:[]};
+ let offerMetrics=null,ingestMetrics=null;
  const acknowledgements=new Map();
  const validTiming=x=>typeof x==='number'&&Number.isFinite(x)&&x>=0;
  const elapsed=[];
@@ -149,27 +152,49 @@ async function main(env=process.env){
    cursor=p.result.cursor;
   }
   if(events.size!==c.count)throw Error('E47C_SOURCE_POLL_MISSING_ACKED_EVENTS');
+  // Force the host's scope context to initialize once on each worker
+  // before opening parallel requests; this excludes cold-start context
+  // races and records the worker identities used in the raw ingress audit.
+  const readyA=await call(c.workerA,'/v1/recover',{scopeId:scope},c.workerToken);
+  const readyB=await call(c.workerB,'/v1/recover',{scopeId:scope},c.workerToken);
+  if(!readyA.workerId||!readyB.workerId||readyA.workerId===readyB.workerId)
+   throw Error('E47C_WORKER_PREWARM_IDENTITY_INVALID');
   for(let i=0;i<c.count;i++){
-   const eventId=ids[i],event=events.get(eventId);
-   if(event?.data?.slot!==i)throw Error('E47C_SOURCE_SLOT_MISMATCH');
-   const worker=i%2?c.workerB:c.workerA,started=performance.now();
-   const result=await call(worker,'/v1/events',{
-    scopeId:scope,traceId:'trace-'+eventId,serverId:c.sourceServerId,event
-   },c.workerToken);
-   const duration=performance.now()-started;
-   if(result.accepted!==true||result.matched!==1||result.persistedDeliveredWakes!==1||
-      !validTiming(result.timings?.ingestToMatchMs)||
-      !Array.isArray(result.timings?.matchToWakeSamplesMs)||
-      result.timings.matchToWakeSamplesMs.length!==1||
-      !validTiming(result.timings.matchToWakeSamplesMs[0]))
-    throw Error('E47C_EI_WAKE_OR_TIMING_MISMATCH');
-   elapsed.push(duration);
-   raw.ei.push({eventId,workerId:result.workerId,
+   if(events.get(ids[i])?.data?.slot!==i)
+    throw Error('E47C_SOURCE_SLOT_MISMATCH');
+  }
+  const ingested=await scheduleBoundedWorkerIngress({
+   count:c.count,rate:c.rate,maxInflight:c.workerInflight,
+   workerIds:[readyA.workerId,readyB.workerId],
+   send:i=>call(i%2?c.workerB:c.workerA,'/v1/events',{
+    scopeId:scope,traceId:'trace-'+ids[i],serverId:c.sourceServerId,
+    event:events.get(ids[i])
+   },c.workerToken),
+  });
+  ingestMetrics={
+   offeredRate:ingested.offeredRate,
+   completedRate:ingested.acceptedCompletionRate,
+   peakInflight:ingested.peakInflight,accepted:ingested.accepted,
+   rejected:ingested.rejected,workerIds:[readyA.workerId,readyB.workerId]
+  };
+  raw.ingest.push(...ingested.rows.map(row=>({
+   ...row,eventId:ids[row.index]
+  })));
+  for(let i=0;i<c.count;i++){
+   const result=ingested.responses[i],row=ingested.rows[i];
+   if(result?.accepted!==true||row.status!=='accepted')continue;
+   const duration=row.completedAtMs-row.offeredAtMs;
+   if(!validTiming(duration))throw Error('E47C_WORKER_DURATION_INVALID');
+   raw.ei[i]={eventId:ids[i],workerId:result.workerId,
     ingestToMatchMs:result.timings.ingestToMatchMs,
     matchToWakeMs:result.timings.matchToWakeSamplesMs[0],
-    workerRequestToHostReceiptMs:duration});
+    workerRequestToHostReceiptMs:Math.round(duration*1000)/1000};
+   elapsed.push(duration);
    observed++;
   }
+  if(!ingested.allAccepted||ingested.offeredRate===null||
+     ingested.acceptedCompletionRate===null)
+   throw Error('E47C_WORKER_INGRESS_BACKPRESSURE_OR_ACK_FAILURE');
   const store=new PostgresEventStore({pool,dispatchPoolIdentity:pool,
     tablePrefix:c.tablePrefix,scopeId:scope});
   await store.init();
@@ -237,10 +262,21 @@ async function main(env=process.env){
    stage:{triggers:inserted,requestedRatePerSecond:c.rate,
     offeredEventRateMeasuredPerSecond:offerMetrics.offeredRate,
     acceptedAppendCompletionRateMeasuredPerSecond:offerMetrics.acceptedCompletionRate,
+   workerIngressOfferedRateMeasuredPerSecond:ingestMetrics.offeredRate,
+   workerIngressCompletionRateMeasuredPerSecond:ingestMetrics.completedRate,
+   workerIngressPeakInflight:ingestMetrics.peakInflight,
     maxSourceAppendInflight:c.maxInflight,
     maxObservedSourceAppendInflight:offerMetrics.peakInflight,
     sourceAcceptedOffers:offerMetrics.accepted,
     sourceRejectedOffers:offerMetrics.rejected,
+    workerIngestPacedIndependently:true,
+    workerIngressMaxInflight:c.workerInflight,
+    workerIngressPeakInflight:ingestMetrics.peakInflight,
+    workerIngressAccepted:ingestMetrics.accepted,
+    workerIngressRejected:ingestMetrics.rejected,
+    workerIngressOfferedRatePerSecond:ingestMetrics.offeredRate,
+    workerIngressCompletionRatePerSecond:ingestMetrics.completedRate,
+    workerIngressWorkerIds:ingestMetrics.workerIds,
     durationSeconds:Math.round((performance.now()-stageStart)/10)/100,
     events:appended,observed,
     independentEIPools:2,sourceFirstPartySeparateService:true,
@@ -254,8 +290,9 @@ async function main(env=process.env){
    acceptanceE47CVerified:false,productionSloCertified:false,
    ratePacingIsSerialAppend:false,sourceAndHostAreFirstParty:true,
    offeredPacingIndependentOfAck:true,
+   workerIngressPacingIndependentOfAck:true,
    limitations:['stage-event-count-below-1000','one-cardinality-per-run',
-    'only-source-offers-open-loop-worker-ingest-remains-serial',
+    'source-append-and-worker-ingest-two-separate-phases-not-live-overlapped',
     'two-rate-completion-requires-distinct-runs','shared-host-ei-postgres',
     'no-independent-enterprise-security-or-physical-db-io-signoff']};
   const reportBytes=Buffer.from(JSON.stringify(report,null,2)+'\n');
@@ -275,7 +312,7 @@ async function main(env=process.env){
   try{
    const partial={schema:'ei.e47c.live-pilot-partial.v1',
     sourceCommitSha:c.sourceSha,runId,scopeDigest:sha(scope),
-    inserted,appended,observed,offerMetrics,
+    inserted,appended,observed,offerMetrics,ingestMetrics,
     acceptanceE47CVerified:false,productionSloCertified:false,
    ratePacingIsSerialAppend:false,sourceAndHostAreFirstParty:true,
     status:'failed',errorCode:String(e?.message??'UNKNOWN').slice(0,110)};
