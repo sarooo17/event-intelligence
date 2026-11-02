@@ -23,20 +23,26 @@ export async function scheduleBoundedSourceOffers({
  const start=now();
  if(!finite(start))throw Error('E47C_BAD_MONOTONIC_CLOCK');
  const rows=Array(count),responses=Array(count);
- let inflight=0,peakInflight=0;
+ let inflight=0,peakInflight=0,transitionOrder=0;
  const tasks=[];
  for(let i=0;i<count;i++){
   const scheduledAtMs=i*1000/rate;
-  const remaining=start+scheduledAtMs-now();
-  if(remaining>0)await wait(remaining);
+  // Timers can wake early for sub-millisecond deadlines. Recheck the
+  // monotonic deadline, rather than misreporting an early source offer.
+  for(;;){
+   const remaining=start+scheduledAtMs-now();
+   if(!(remaining>0))break;
+   await wait(remaining);
+  }
   const offeredAtMs=now()-start;
   if(!finite(offeredAtMs))throw Error('E47C_BAD_MONOTONIC_CLOCK');
   const base={index:i,scheduledAtMs:round(scheduledAtMs),
    offeredAtMs:round(offeredAtMs),
-   offerLatenessMs:round(Math.max(0,offeredAtMs-scheduledAtMs))};
+   offerLatenessMs:round(Math.max(0,offeredAtMs-scheduledAtMs)),
+   offerOrder:++transitionOrder};
   if(inflight>=maxInflight){
    rows[i]={...base,completedAtMs:round(offeredAtMs),
-    status:'backpressure-refused'};
+    completedOrder:++transitionOrder,status:'backpressure-refused'};
    continue;
   }
   inflight++;
@@ -50,12 +56,13 @@ export async function scheduleBoundedSourceOffers({
     if(result?.accepted!==true)
      throw Error('E47C_SOURCE_ACK_REJECTED');
     responses[i]=result;
-    rows[i]={...base,completedAtMs:round(completedAtMs),status:'accepted'};
+    rows[i]={...base,completedAtMs:round(completedAtMs),
+     completedOrder:++transitionOrder,status:'accepted'};
    }catch(e){
     const completedAtMs=now()-start;
     rows[i]={...base,
      completedAtMs:round(finite(completedAtMs)?completedAtMs:offeredAtMs),
-     status:'failed',
+     status:'failed',completedOrder:++transitionOrder,
      // Error code only, never propagate URLs/headers/tokens into artifacts.
      errorCode:/^E47C_[A-Z0-9_]+$/.test(e?.message??'')?
       e.message:'E47C_SOURCE_SEND_FAILED'};
