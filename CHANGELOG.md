@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.12.0-next.1] — 2026-10-31 (candidate; not yet published)
+## [0.12.0-next.1] — source prepared 2026-10-31; npm publish reported by maintainer 2026-11-02 (registry unverified here)
 
 - **Feature-complete generic SDK preview** after #47/#48/#49 closure;
   independent enterprise/production certification remains outside this
@@ -23,7 +23,7 @@
   [versioned compatibility matrix](
   docs/releases/0.12.0-next.1-compatibility.md). **Release only through
   manual GitHub Actions `Publish npm` on main with `--tag next`; this
-  changelog entry does not certify npm publication or stable v1 readiness.**
+  changelog entry alone does not verify the npm registry or certify stable v1 readiness.**
 
 ## Unreleased (v1.0 development)
 
