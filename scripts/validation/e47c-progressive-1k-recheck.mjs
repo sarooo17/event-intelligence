@@ -60,7 +60,7 @@ function stats(rows,field){
  return {p50:percentile(series,.5),p95:percentile(series,.95),
    p99:percentile(series,.99)};
 }
-export function assessProgressiveE47CStage({manifest,source,host,ei,originalEvents}={}){
+export function assessProgressiveE47CStage({manifest,source,host,ei,originalEvents,originalSequenceById}={}){
  if(manifest?.schema!=='ei.e47c.progressive-1k-preflight.v1'||
     manifest?.acceptanceE47CVerified!==false||
     manifest?.productionSloCertified!==false||
@@ -100,6 +100,8 @@ export function assessProgressiveE47CStage({manifest,source,host,ei,originalEven
   if(!s||!h||!original||s.occurredAt!==original.timestamp||
      !Number.isSafeInteger(s.sourceSequence)||s.sourceSequence<=0||
      sourceSequences.has(s.sourceSequence)||
+     !(originalSequenceById instanceof Map)||
+     originalSequenceById.get(row.eventId)!==s.sourceSequence||
      !Number.isSafeInteger(s.slot)||original.data?.slot!==s.slot||
      h.wakeId!==row.wakeId||h.runtimeReceiptId!==row.runtimeReceiptId||
      h.attemptCount!==1)
@@ -179,8 +181,19 @@ export async function verifyPersistedProgressiveE47CStage({
   expected:proof.expected,now:verifiedAtMs
  });
  if(oracle?.valid!==true)fail('E47C_SIGNED_SOURCE_ORACLE_INVALID');
+ const originalSequenceById=new Map();
+ // The oracle validated the complete source hash-chain over these same
+ // bounded bytes, so the sequence is anchored to the original snapshot.
+ for(const line of originalBytes.toString('utf8').trimEnd().split('\n')){
+  const row=JSON.parse(line);
+  if(row.payload?.kind==='event'){
+   if(originalSequenceById.has(row.payload.eventId))
+    fail('E47C_DUPLICATE_ORIGINAL_SOURCE_SEQUENCE');
+   originalSequenceById.set(row.payload.eventId,row.seq);
+  }
+ }
  const audit=assessProgressiveE47CStage({manifest,source,host,ei,
-  originalEvents:oracle.events});
+  originalEvents:oracle.events,originalSequenceById});
  return Object.freeze({...audit,sourceCommitSha:manifest.sourceCommitSha,
   runId,rawManifestSha256:hash(manifestBytes),
   sourceLogSha256:hash(originalBytes),
