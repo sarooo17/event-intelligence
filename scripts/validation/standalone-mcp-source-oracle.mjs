@@ -6,15 +6,20 @@ const error=(code)=>Object.assign(new Error(code),{code});
 const canonicalKeys=['contract','policy','scopeDigest','sourceKeyDigest',
   'argumentsDigest','connectionId','serverId','eventName',
   'completenessRevision','completeThroughAt','issuedAtMs','expiresAtMs'];
-export async function verifyStandaloneOracle({logPath,sourceLog,
+export async function verifyStandaloneOracle({logPath,logBytes,sourceLog,
   attestation,publicKeyPem,expected,now=Date.now()}={}){
-  if(typeof logPath!=='string'||!logPath||!expected||
-     typeof publicKeyPem!=='string'||!Number.isSafeInteger(now))
+  const fromBuffer=Buffer.isBuffer(logBytes);
+  // Either provide a path (legacy oracle tests), or the exact previously
+  // bounded/hash-verified bytes. Never reopen a path after hashing bytes.
+  if((fromBuffer ? logPath!==undefined : typeof logPath!=='string'||!logPath||logBytes!==undefined)||
+     !expected||typeof publicKeyPem!=='string'||!Number.isSafeInteger(now))
     throw error('ORACLE_CONFIG_INVALID');
   // This verifier deliberately does NOT call the provider's parser,
   // state/nonce/clock logic or external frontier verifier. Separate
   // reader and cryptographic trust root; it still is a first-party oracle.
-  const raw=await readFile(logPath,'utf8');
+  if(fromBuffer&&logBytes.byteLength>16*1024*1024)
+    throw error('ORACLE_LOG_INVALID');
+  const raw=fromBuffer?logBytes.toString('utf8'):await readFile(logPath,'utf8');
   if(raw.length>16*1024*1024||raw&&!raw.endsWith('\n'))
     throw error('ORACLE_LOG_INVALID');
   const rows=raw?raw.trimEnd().split('\n'):[];
