@@ -1,25 +1,35 @@
 # E48-B raw evidence — second-process replay of one real Railway campaign
 
-Evidence already measured: `ei-e48b-inspector-once` Railway deployment
-`bfb4c523-cecd-44a6-b503-ad8c29f24dd9` using merged source SHA
-`2490030c62cb23009b0decb14ffabce61997e5eb`. Main runner emitted
-`ei_e48b_full_inspector status=passed` with exactly 1k/10k/100k candidates,
-900 real full-Inspector measurements, 150 remote host receipts, real PG16
-pool contention and backend termination/recovery, and raw artifact retention.
+The original Railway benchmark (deployment `bfb4c523-cecd-44a6-b503-ad8c29f24dd9`,
+source SHA `2490030c62cb23009b0decb14ffabce61997e5eb`,
+manifest SHA-256 `31c95ac26fef3826d7dd6b3b95d0de932d1ba46d036722ed13ad8cc5b90e6d07`)
+**passed as a measurement**, but cannot pass this new independent raw
+audit: its stage files did not retain receipt-row identities, worker request
+intervals, or manifest-pinned stage-file digests. Do not treat that original
+manifest as independently certified, or fabricate the missing observations.
 
-Pinned manifest SHA-256:
+**Required new campaign** (isolated staging only):
 
-`31c95ac26fef3826d7dd6b3b95d0de932d1ba46d036722ed13ad8cc5b90e6d07`
+1. Merge the reviewed collector/verifier changes and pin
+   `ei-e48b-inspector-once` to the resulting exact commit SHA.
+2. Run `node scripts/validation/live-e48b-inspector-once.mjs` with its
+   existing scoped Railway secrets and private `/evidence` volume.
+   Require `ei_e48b_full_inspector status=passed`; record the new
+   `sourceSha`, `manifestSha256`, deployment ID and stage counts.
+3. With the same **read-only-mounted evidence dataset** and a new OS
+   process, execute the verifier using those NEW, matching values:
 
-The main benchmark's final success JSON alone is **not** an independently
-recomputed measurement; use the separate operator verifier:
-
-```text
-EI_E48B_ARTIFACT_DIR=/evidence
-EI_E48B_EXPECTED_MANIFEST_SHA256=31c95ac26fef3826d7dd6b3b95d0de932d1ba46d036722ed13ad8cc5b90e6d07
-EI_E48B_MEASURED_SOURCE_SHA=2490030c62cb23009b0decb14ffabce61997e5eb
+```sh
+EI_E48B_ARTIFACT_DIR=/evidence \
+EI_E48B_EXPECTED_MANIFEST_SHA256=<NEW_VERIFIED_MANIFEST_SHA256> \
+EI_E48B_MEASURED_SOURCE_SHA=<NEW_EXACT_COLLECTOR_COMMIT_SHA> \
 node scripts/validation/verify-e48b-raw-evidence-once.mjs
 ```
+
+4. Keep E48-B unchecked unless the verifier returns
+   `ei_e48b_raw_evidence_independent_recheck status=passed`, with
+   artifact hashes recorded in the issue. Any error requires truthful
+   correction and a fresh campaign, not rewriting immutable raw artifacts.
 
 This verifier runs as a **separate OS process** on the exact same isolated
 persistent Railway evidence volume; it never connects to PostgreSQL or
