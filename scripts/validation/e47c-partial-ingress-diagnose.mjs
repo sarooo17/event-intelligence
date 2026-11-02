@@ -11,6 +11,12 @@ const fail=(code)=>{throw Object.assign(new Error(code),{code});};
 const safeId=v=>typeof v==='string'&&/^[a-z0-9-]{36}$/.test(v);
 const errorCategory=code=>{
  if(code==='E47C_WORKER_INGRESS_ACK_INVALID')return 'invalid-worker-ack';
+ if(code==='E47C_WORKER_ACK_NOT_ACCEPTED')return 'worker-not-accepted';
+ if(code==='E47C_WORKER_ACK_IDENTITY_MISMATCH')return 'worker-identity-mismatch';
+ if(code==='E47C_WORKER_ACK_MATCH_COUNT_INVALID')return 'worker-match-count-invalid';
+ if(code==='E47C_WORKER_ACK_IMMEDIATE_DELIVERY_MISSING')return 'immediate-delivery-not-proven';
+ if(code==='E47C_WORKER_ACK_INGEST_TIMING_INVALID')return 'ingest-timing-invalid';
+ if(code==='E47C_WORKER_ACK_WAKE_TIMING_INVALID')return 'wake-timing-invalid';
  // The source runner collapses HTTP errors and transport failures to this
  // generic saved code. It does NOT identify the underlying failure mode.
  if(code==='E47C_SOURCE_SEND_FAILED')return 'unknown-worker-send-failure';
