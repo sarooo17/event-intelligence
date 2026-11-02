@@ -1,6 +1,6 @@
 # Event Intelligence v1.0 engineering roadmap
 
-> **Status:** proposed, planning only. Baseline `mcp-event-intelligence@0.11.0` (2026-10). No claim that proposed features/tests already exist. Tracks [#41](https://github.com/sarooo17/event-intelligence/issues/41).
+> **Historical planning snapshot (written against `0.11.0`, October 2026) — NOT the current implementation/acceptance ledger.** The implementation workstreams #42–#50 and the scoped #269 integration decision are now closed, while stable `1.0.0` release-specific signoffs remain open. The later owner-approved [SDK release scope](V1-SDK-RELEASE-SCOPE.md) explicitly **requires #48 explainability and #49 bounded optional-at-runtime semantics as SDK implementations**, and classifies independent host/security/production SLO certification as optional [#317](https://github.com/sarooo17/event-intelligence/issues/317)/[#376](https://github.com/sarooo17/event-intelligence/issues/376) work. Historical "do not block on #49" and independent host/scale requirements below are superseded. For decisions and status see [#41](https://github.com/sarooo17/event-intelligence/issues/41), [v1-readiness](V1-READINESS-LEDGER.md), and [current release notes](releases/v0.12.0-next.1.md). No stable 1.0.0 release is certified.
 
 ## Mission and positioning
 
