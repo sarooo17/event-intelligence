@@ -63,9 +63,15 @@ abort this attempt rather than letting it pass with an altered frontier.
    checks duplicate attempt count.
 5. Downloads the actual acknowledged original source log privately,
    verifies its SHA-256 and source checkpoint, then runs the independent
-   Ed25519 source oracle (not the producer parser).
-6. Writes raw source/wake/worker JSONL, original source log and a versioned
-   JSON manifest, each with SHA-256, exclusively to the private volume.
+   Ed25519 source oracle (not the producer parser). It compares the original
+   oracle's timestamp, name and payload to both the polled event and the
+   provider's append acknowledgement, and retains the complete signed
+   frontier plus signer pin for later independent verification.
+6. Writes raw source/wake/worker JSONL, original source log, signed frontier
+   and a versioned JSON manifest, each with SHA-256, exclusively to the
+   private volume. On any later failure it additionally saves available
+   partial samples and a failed/incomplete manifest; a failed campaign
+   is never silently omitted from the evidence set.
    Logs expose run ID, counts and artifact hashes only.
 
 Any partial pilot still leaves recorded source events and triggers in the
