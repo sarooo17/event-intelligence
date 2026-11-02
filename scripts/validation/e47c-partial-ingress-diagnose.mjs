@@ -11,8 +11,9 @@ const fail=(code)=>{throw Object.assign(new Error(code),{code});};
 const safeId=v=>typeof v==='string'&&/^[a-z0-9-]{36}$/.test(v);
 const errorCategory=code=>{
  if(code==='E47C_WORKER_INGRESS_ACK_INVALID')return 'invalid-worker-ack';
- if(/^E47C_REQUEST_FAILED__v1_events_[0-9]{3}$/.test(code??''))return 'worker-http-error';
- if(code==='E47C_SOURCE_SEND_FAILED')return 'worker-transport-error';
+ // The source runner collapses HTTP errors and transport failures to this
+ // generic saved code. It does NOT identify the underlying failure mode.
+ if(code==='E47C_SOURCE_SEND_FAILED')return 'unknown-worker-send-failure';
  if(code==='E47C_BAD_MONOTONIC_CLOCK')return 'clock-error';
  return 'unknown-error';
 };
