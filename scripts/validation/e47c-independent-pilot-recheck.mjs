@@ -126,14 +126,20 @@ export function assessLiveE47CPilot({manifest,source,host,ei,originalEvents}={})
 }
 export async function verifyPersistedLiveE47CPilot({
  dir,runId,publicKeyPem,signerSha256,
+ expectedManifestSha256,expectedSourceLogSha256,
 }={}){
  if(!isAbsolute(dir)||dir==='/'||dir.startsWith('/tmp')||
     !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(runId??'')||
     !publicKeyPem||!hex64(signerSha256)||
+    !hex64(expectedManifestSha256)||!hex64(expectedSourceLogSha256)||
     hash(publicKeyPem)!==signerSha256)
   fail('E47C_REAUDIT_CONFIG_INVALID');
  const folder=join(dir,'ei-e47c-pilot-'+runId);
  const manifestBytes=await readBoundedFile(join(folder,'pilot-manifest.json'),1024*1024);
+ // Independently pinned from the original Railway deployment's structured
+ // append-only runtime log, not from writable files on this volume.
+ if(hash(manifestBytes)!==expectedManifestSha256)
+  fail('E47C_OUT_OF_BAND_MANIFEST_SHA_MISMATCH');
  const manifest=decodeJson(manifestBytes);
  if(manifest.runId!==runId||
     !/^[a-f0-9]{40}$/.test(manifest.sourceCommitSha??''))
@@ -146,8 +152,9 @@ export async function verifyPersistedLiveE47CPilot({
   fail('E47C_FRONTIER_PROOF_MISMATCH');
  const originalPath=join(folder,'original-source.jsonl');
  const originalBytes=await readBoundedFile(originalPath,32*1024*1024);
- if(hash(originalBytes)!==manifest.stage?.sourceEventLogSha256)
-  fail('E47C_ORIGINAL_SOURCE_SHA_MISMATCH');
+ if(hash(originalBytes)!==manifest.stage?.sourceEventLogSha256||
+    hash(originalBytes)!==expectedSourceLogSha256)
+  fail('E47C_OUT_OF_BAND_SOURCE_LOG_SHA_MISMATCH');
  // This is a *historical* signed frontier, not a currently valid completeness
  // guarantee. Offline review uses saved observation-time claim and must not
  // imply it was freshly received from a third-party provider.
@@ -155,7 +162,7 @@ export async function verifyPersistedLiveE47CPilot({
  if(!Number.isFinite(verifiedAtMs)||verifiedAtMs>Date.now()+300000)
   fail('E47C_FRONTIER_TIME_INVALID');
  const oracle=await verifyStandaloneOracle({
-  logPath:originalPath,sourceLog:proof.sourceLog,
+  logBytes:originalBytes,sourceLog:proof.sourceLog,
   attestation:proof.attestation,publicKeyPem,
   expected:proof.expected,now:verifiedAtMs
  });
@@ -165,7 +172,13 @@ export async function verifyPersistedLiveE47CPilot({
  return Object.freeze({...audit,sourceCommitSha:manifest.sourceCommitSha,
   runId,rawManifestSha256:hash(manifestBytes),
   sourceLogSha256:hash(originalBytes),
-  sourceLogSignatureReverified:true,
+  outOfBandManifestHashVerified:true,
+  outOfBandSourceLogHashVerified:true,
+  // Ed25519 covers the historical frontier claim, not the source-log hash
+  // chain bytes. Raw log anchoring is from separately observed deployment
+  // hashes, not a signature over each event.
+  sourceLogSignatureReverified:false,
+  signedFrontierClaimSignatureReverified:true,
   signedClaimReplayedAtStoredObservationTime:true,
   signedClaimCurrentlyFresh:false});
 }
@@ -176,7 +189,9 @@ if(process.argv[1]&&import.meta.url===pathToFileURL(resolve(process.argv[1])).hr
    dir:process.env.EI_E47C_ARTIFACT_DIR,
    runId:process.env.EI_E47C_PILOT_RUN_ID,
    publicKeyPem:process.env.EI_SOURCE_TRUSTED_PUBLIC_KEY_PEM?.replace(/\\n/g,'\n'),
-   signerSha256:process.env.EI_SOURCE_TRUSTED_PUBLIC_KEY_SHA256
+   signerSha256:process.env.EI_SOURCE_TRUSTED_PUBLIC_KEY_SHA256,
+   expectedManifestSha256:process.env.EI_E47C_EXPECTED_MANIFEST_SHA256,
+   expectedSourceLogSha256:process.env.EI_E47C_EXPECTED_SOURCE_LOG_SHA256,
   });
   console.log(JSON.stringify({event:'e47c_independent_pilot_raw_reaudit',...result}));
  }catch(e){
