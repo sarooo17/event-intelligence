@@ -18,7 +18,7 @@ export function latencyStatistics(observations){
    observations.some(x=>!Number.isFinite(x)||x<0))
   throw new TypeError('Measured nonnegative latency samples required');
  const a=[...observations].sort((x,y)=>x-y);
- const p=q=>Math.round(a[Math.min(a.length-1,Math.ceil(q*a.length)-1)]*1000)/1000;
+ const p=q=>Math.round(a[Math.max(0,Math.min(a.length-1,Math.ceil(q*a.length)-1))]*1000)/1000;
  return {n:a.length,p50:p(.5),p95:p(.95),p99:p(.99),
   min:p(0),max:p(1),
   mean:Math.round(a.reduce((sum,x)=>sum+x,0)/a.length*1000)/1000};
