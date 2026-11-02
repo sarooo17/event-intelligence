@@ -131,11 +131,19 @@ production claim. For complex temporal conditions, inspect
 `describeTriggerLanguage({ category: 'pattern' })`, then use canonical
 Pattern AST v2 instead of inventing a DSL.
 
-For model-facing tools prefer
-`event_sources_list` → `trigger_language_describe` (if necessary) →
-`trigger_plan` → **host-authorized** `trigger_create`. The MCP stdio
-adapter is a **management plane**, not a provider-side event gateway.
-Mutations are disabled by default and require explicit confirmation.
+For **embedded model-facing tools**, the portable `toolCatalog` exposes
+`event_sources_list`, `trigger_create` and lifecycle tools;
+**`trigger_plan` and `trigger_language_describe` are NOT exported as
+embedded portable tools**. Either submit an agent-friendly plan to
+embedded `trigger_create` (which invokes the scoped planner internally
+with host-owned authorization), or call `scoped.planTrigger()` from
+trusted host code as above.
+
+For the **separate MCP stdio management control plane**, the discovery
+flow is `event_sources_list` → `trigger_language_describe` (as
+needed) → `trigger_plan` → **host-confirmed** `trigger_create`.
+The stdio adapter is **not** a provider event gateway. Its durable
+mutations are disabled by default and require explicit confirmation.
 
 ## 4. Check real delivery semantics
 
