@@ -2,7 +2,8 @@
 // PILOT ONLY: bounded small cohort. Not a 1k/10k/100k multi-rate certification.
 import {createHash,randomUUID} from 'node:crypto';
 import {mkdir,open} from 'node:fs/promises';
-import {join,isAbsolute} from 'node:path';
+import {join,isAbsolute,resolve} from 'node:path';
+import {pathToFileURL} from 'node:url';
 import pg from 'pg';
 import {performance} from 'node:perf_hooks';
 import {PostgresEventStore} from '../lib/postgres-event-store.mjs';
@@ -221,4 +222,4 @@ async function main(env=process.env){
   process.exitCode=1;
  }finally{await pool.end().catch(()=>{});}
 }
-if(import.meta.url==='file://'+process.argv[1])await main();
+if(process.argv[1]&&import.meta.url===pathToFileURL(resolve(process.argv[1])).href)await main();
