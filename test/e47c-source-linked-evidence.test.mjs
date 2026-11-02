@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
+import {mkdtemp,writeFile,symlink,rm} from 'node:fs/promises';
+import {join} from 'node:path';
+import {tmpdir} from 'node:os';
+import {inspectE47CArtifactDirectory} from '../scripts/validation/e47c-evidence-cli.mjs';
 import {assessE47CSourceLinkedEvidence,E47C_SCHEMA} from '../scripts/validation/e47c-source-linked-evidence.mjs';
 
 const digest=s=>createHash('sha256').update(s).digest('hex');
@@ -109,4 +113,21 @@ test('missing/raw invalid files reject path escapes or hash-only invented source
 test('no fabricated approval with empty or malformed report',()=>{
  for(const v of [null,{}, {schema:E47C_SCHEMA}, {schema:E47C_SCHEMA,stages:[]}])
   assert.equal(assessE47CSourceLinkedEvidence({manifest:v,files:{}}).status,'blocked');
+});
+
+test('private artifact CLI rejects symlinked manifest and original raw files',async()=>{
+ const directory=await mkdtemp(join(tmpdir(),'ei-e47c-'));
+ try{
+  const f=fixture();
+  const first=f.manifest.stages[0].sourceRaw.file;
+  const outer=join(directory,'original.jsonl');
+  await writeFile(outer,f.files[first]);
+  await writeFile(join(directory,'manifest.json'),JSON.stringify(f.manifest));
+  await symlink(outer,join(directory,first));
+  await assert.rejects(inspectE47CArtifactDirectory(directory));
+  await rm(join(directory,first));
+  await rm(join(directory,'manifest.json'));
+  await symlink(outer,join(directory,'manifest.json'));
+  await assert.rejects(inspectE47CArtifactDirectory(directory));
+ }finally{await rm(directory,{recursive:true,force:true});}
 });
