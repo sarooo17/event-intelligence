@@ -157,3 +157,49 @@ remain re-auditable; the new manifest sets
 `ratePacingIsSerialAppend:false` and
 `offeredPacingIndependentOfAck:true` and requires the new original offer
 artifact. No production/readiness checkbox changes automatically.
+
+
+## Concurrent EI worker ingress — bounded two-phase calibration
+
+After the source has durably appended/sealed events and the runner has
+polled all acknowledged occurrences, the runner prewarms **both**
+authenticated EI worker scope contexts via `/v1/recover`. It then
+delivers original polled occurrences on an independent monotonic schedule
+using `EI_E47C_STAGE_RATE` and `EI_E47C_WORKER_MAX_INFLIGHT=4`.
+Permitted worker in-flight cap: **1–8**. Worker assignment alternates
+two real distinct worker identities. Each response must acknowledge one
+match and one persisted delivered wake; any failure or saturation makes
+the campaign fail rather than silently lowering the offered rate.
+
+Private `ingest.jsonl` contains every event ID, assigned worker ID,
+monotonic scheduled/offered/completed offsets, original transition order,
+and outcome. The independent read-only verifier checks all these raw
+rows against the original source, EI event and durable host receipt,
+recalculates worker ingress offered rate, ACK-completed rate and peak
+in-flight count, and rejects fabricated missing or inconsistent samples.
+
+**Important:** source append→poll is a completed **first phase**,
+followed by runner→EI worker ingestion in the **second phase**. This is
+not continuous provider→agent end-to-end latency. The existing host
+receipt store shares EI PostgreSQL; no externally operated provider
+or independently deployed host is implied. Database physical IO,
+failure/recovery profiles and the full 1k/10k/100k x two-rate matrix
+remain separate #376 acceptance requirements.
+
+Example parameters on the existing isolated, one-shot staging service:
+
+```sh
+EI_E47C_STAGE_CONFIRM=RUN_1000_FIRST_PARTY_STAGING
+EI_E47C_STAGE_RATE=5
+EI_E47C_STAGE_EVENTS=50
+EI_E47C_MAX_INFLIGHT=4
+EI_E47C_WORKER_MAX_INFLIGHT=4
+node scripts/validation/e47c-progressive-1k-stage-once.mjs
+```
+
+After the runner logs the original `runId`, manifest SHA-256 and
+source-log SHA-256 **outside the writable private volume**, run
+`e47c-progressive-1k-recheck.mjs` as a separate one-shot read-only
+process with those externally observed hash pins. Both scripts must
+always mark `acceptanceE47CVerified:false` and
+`productionSloCertified:false`.
