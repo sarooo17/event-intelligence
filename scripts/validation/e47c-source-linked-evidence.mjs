@@ -49,7 +49,7 @@ function correctClaims(samples,claimed,name,missing){
    missing.push(name+':incorrect-or-censored-'+field);
  }
 }
-function evaluateStage(stage,files,serviceIds,seenEvents,missing){
+function evaluateStage(stage,files,serviceIds,seenEvents,seenWakeIds,seenReceipts,missing){
  const prefix='stage:'+String(stage?.triggerCount)+':'+String(stage?.requestedRatePerSecond);
  if(!STAGES.includes(stage?.triggerCount)||!positive(stage?.requestedRatePerSecond)||
     !nonnegative(stage?.durationSeconds)||stage.durationSeconds<60||
@@ -65,10 +65,10 @@ function evaluateStage(stage,files,serviceIds,seenEvents,missing){
  const host=readRaw(files,stage?.hostRaw,prefix+':host',missing);
  const observed=readRaw(files,stage?.eiRaw,prefix+':ei',missing);
  if(!source||!host||!observed)return {prefix,readable:false};
- const expected=stage.expectedEventCount;
+ const expected=stage?.expectedEventCount;
  if(source.length!==expected||host.length!==expected||observed.length!==expected)
   missing.push(prefix+':raw-row-count-vs-expected-event-budget');
- const sourceMap=new Map(),hostMap=new Map(),sampleMap=new Map(),seqs=new Set(),receipts=new Set();
+ const sourceMap=new Map(),hostMap=new Map(),sampleMap=new Map(),seqs=new Set();
  for(const row of source){
   if(!identity(row.eventId)||!positive(row.sourceSequence)||seqs.has(row.sourceSequence)||
      sourceMap.has(row.eventId)||seenEvents.has(row.eventId))
@@ -77,9 +77,9 @@ function evaluateStage(stage,files,serviceIds,seenEvents,missing){
  }
  for(const row of host){
   if(!identity(row.eventId)||!identity(row.wakeId)||!identity(row.runtimeReceiptId)||
-     hostMap.has(row.eventId)||receipts.has(row.runtimeReceiptId))
+     hostMap.has(row.eventId)||seenWakeIds.has(row.wakeId)||seenReceipts.has(row.runtimeReceiptId))
     missing.push(prefix+':invalid-or-duplicate-host-receipt');
-  else {hostMap.set(row.eventId,row);receipts.add(row.runtimeReceiptId);}
+  else {hostMap.set(row.eventId,row);seenWakeIds.add(row.wakeId);seenReceipts.add(row.runtimeReceiptId);}
  }
  const workers=new Set(),latency={ingestToMatch:[],matchToWake:[],endToEnd:[]};
  for(const row of observed){
@@ -140,14 +140,14 @@ export function assessE47CSourceLinkedEvidence({manifest,files}={}){
  const stages=Array.isArray(manifest?.stages)?manifest.stages:[];
  if(stages.length!==6||stages.some(x=>!x||typeof x!=='object'))missing.push('six-tier-rate-matrix');
  const keys=new Set(),rates=new Map(STAGES.map(n=>[n,new Set()]));
- const seenEvents=new Set(),evidence=[];
+ const seenEvents=new Set(),seenWakeIds=new Set(),seenReceipts=new Set(),evidence=[];
  for(const stage of stages.slice(0,30)){
-  const key=String(stage.triggerCount)+':'+String(stage.requestedRatePerSecond);
+  const key=String(stage?.triggerCount)+':'+String(stage?.requestedRatePerSecond);
   if(keys.has(key))missing.push('duplicate-stage:'+key);
   keys.add(key);
-  if(rates.has(stage.triggerCount)&&positive(stage.requestedRatePerSecond))
+  if(rates.has(stage?.triggerCount)&&positive(stage?.requestedRatePerSecond))
    rates.get(stage.triggerCount).add(stage.requestedRatePerSecond);
-  evidence.push(evaluateStage(stage,files,workerIds,seenEvents,missing));
+  evidence.push(evaluateStage(stage,files,workerIds,seenEvents,seenWakeIds,seenReceipts,missing));
  }
  for(const [tier,list] of rates)if(list.size!==2)missing.push('missing-two-rates-for-'+tier);
  const unique=[...new Set(missing)];
