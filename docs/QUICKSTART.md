@@ -5,8 +5,8 @@ The primary integration is to embed Event Intelligence once at the **harness lev
 ## 1. Embed the package and point it at the host registry
 
 Install the chosen channel deliberately. Unqualified npm installation follows
-`latest` (not `next`); the `0.12.0-next.1` preview was reported published
-by the maintainer on 2026-11-02, but should be verified on npm before use:
+`latest` (not `next`); npm versions UI showed `latest` = `0.11.0`
+and `next` = `0.12.0-next.1` in the screenshot checked on 2026-11-02:
 
 ```bash
 # Current stable npm channel (version depends on registry):
