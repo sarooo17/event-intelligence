@@ -1,6 +1,6 @@
 # EI pre-1.0 release policy, state safety and consumer-owned upgrades
 
-> Policy and operator guidance for [#50](https://github.com/sarooo17/event-intelligence/issues/50) and umbrella [#41](https://github.com/sarooo17/event-intelligence/issues/41). The **concrete implemented candidate compatibility/breaking-change matrix** for npm `0.12.0-next.0` is in [the versioned release note](releases/0.12.0-next.0-compatibility.md). This policy is NOT a guarantee that a stable `1.0.0` has been published or production-certified.
+> Policy and operator guidance for [#50](https://github.com/sarooo17/event-intelligence/issues/50) and umbrella [#41](https://github.com/sarooo17/event-intelligence/issues/41). The **current pre-v1 preview compatibility/breaking-change matrix** for npm `0.12.0-next.1` is [versioned here](releases/0.12.0-next.1-compatibility.md), with [release notes](releases/v0.12.0-next.1.md). Older `next.0` notes remain historical. This policy is NOT a guarantee that a stable `1.0.0` has been published or production-certified.
 
 ## Why three kinds of version matter
 
@@ -112,24 +112,22 @@ independently to prove the gate detects skew.
 This ensures metadata *consistency only*. It does not prove a safe database
 migration, protocol conformance, vulnerability review or v1.0 readiness. It
 does not bump `package.json`, publish an npm version, tag a release, or update
-Muffin/Artemis. The release policy and #50 remain open.
+Muffin/Artemis. Issue #50 is closed for the implemented scoped release contract; the **stable-v1 manual readiness ledger** in #41 remains blocked.
 
 ## Pre-v1 removal: embedded boolean authorize hook
 
 The deprecated `createEventIntelligenceAgentTools({ authorize })` option and
-`AuthorizationDecision` public type are intentionally removed in the upcoming
-canonical release. A model-facing embedded host MUST supply the host-owned
+`AuthorizationDecision` public type are intentionally removed in the current pre-v1
+`0.12.0-next.1` candidate contract. A model-facing embedded host MUST supply the host-owned
 `control(request)` callback, which returns either `{ action: 'execute' }`
 (with host-supplied execution context) or `{ action: 'return', result }`.
 Host suspension exceptions pass through. Integrations with only `authorize`
 fail during setup; EI does not translate boolean grants into durable-write
 authority. Headless embeddings can omit model-facing tooling.
 
-This is **an unreleased breaking change** only: no npm version has been bumped,
-and downstream locked consumers stay unchanged until they opt into a new EI
-version. It does not change persisted-state schemas.
+This is a **pre-v1 breaking change included in the `0.12.0-next.1` source/package**; publication is maintainer-reported and should be checked against the npm registry. Downstream locked consumers remain unchanged unless their owners explicitly migrate and update. This API removal does not itself change persisted-state schemas.
 
-## Candidate signature/semantic identity version guard — #50 (unreleased)
+## Candidate signature/semantic identity version guard — #50 (pre-v1)
 
 **Important distinction:** Pattern AST wire version remains `2` and the
 PostgreSQL physical layout remains `1`. Nevertheless, the latest Pattern v2
@@ -184,8 +182,7 @@ provided by a third-party host must enforce an equivalent semantic marker
 before opening old Pattern state; this change does not magically certify
 unknown external store implementations. The test suite includes JSONL
 reopen/legacy marker corruption and PG16 wrong/missing marker rollback;
-a full backup-reset-replay operator exercise remains a separate #50 release
-acceptance item. No npm release or downstream consumer upgrade is performed.
+a full backup-reset-replay operator exercise remains a **stable-v1 release-specific** review item in #41. No downstream consumer upgrade is performed by this library change.
 
 ## 2026-10-27 acceptance update: #42 authored-host waiver is NOT a v1 readiness signoff
 
@@ -204,7 +201,7 @@ upgrade and deliberate downstream consumer version policy. A zero-error
 `v1-readiness` report is NOT an eligible release: status stays
 `blocked` until every required row has real reviewer/date/procedure evidence
 **and** the checked package version is 1.0.0. Publishing prerelease
-`0.12.0-next.0` under npm `next` does not satisfy the stable 1.0 release.
+`0.12.0-next.0` or maintainer-reported `0.12.0-next.1` under npm `next` does not satisfy the stable 1.0 release.
 
 The manifest evidence descriptions have been updated to reflect merges of
 #188/#189/#258/#259/#263 and the actual manual npm `next` publication.
