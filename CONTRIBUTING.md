@@ -63,7 +63,7 @@ Avoid broad refactors mixed with protocol semantics unless they are required for
 
 ## Protocol changes
 
-The current internal Event Intelligence protocol/schema compatibility line is v0.1, while package releases are versioned independently (currently 0.5.x). The contracts are experimental but versioned.
+The current trigger protocol and schema are `0.2.0` / `trigger.v0.2`, with canonical Pattern AST `version: "2"`; the internal persisted compatibility markers are separate from npm releases. The current source package is `0.12.0-next.1` (pre-v1), not `0.5.x`. Review [the version-specific compatibility matrix](docs/releases/0.12.0-next.1-compatibility.md) before changing public or durable contracts. The contracts are experimental but versioned.
 
 Changes that alter trigger semantics, derived-event contracts, wake lifecycle, or persistence compatibility need:
 
