@@ -44,25 +44,27 @@ test('over capacity is explicitly refused and never counted as a delivered wake'
  assert.ok(r.rejected>0);
  assert.ok(r.rows.some(row=>row.status==='backpressure-refused'));
 });
-test('worker identity and wake receipt semantics fail closed',async()=>{
- for(const mutate of [
-  v=>{v.workerId='wrong-worker';},
-  v=>{v.persistedDeliveredWakes=0;},
-  v=>{v.matched=2;},
-  v=>{v.timings.ingestToMatchMs=-1;},
-  v=>{v.timings.matchToWakeSamplesMs=[];},
-  v=>{v.accepted=false;},
- ]){
+test('worker ACK reasons are fixed safe codes, not proof of lost effects',async()=>{
+ const cases=[
+  [v=>{v.workerId='wrong-worker';},'E47C_WORKER_ACK_IDENTITY_MISMATCH'],
+  [v=>{v.persistedDeliveredWakes=0;},'E47C_WORKER_ACK_IMMEDIATE_DELIVERY_MISSING'],
+  [v=>{v.persistedDeliveredWakes=2;},'E47C_WORKER_ACK_IMMEDIATE_DELIVERY_MISSING'],
+  [v=>{v.matched=2;},'E47C_WORKER_ACK_MATCH_COUNT_INVALID'],
+  [v=>{v.timings.ingestToMatchMs=-1;},'E47C_WORKER_ACK_INGEST_TIMING_INVALID'],
+  [v=>{v.timings.matchToWakeSamplesMs=[];},'E47C_WORKER_ACK_WAKE_TIMING_INVALID'],
+  [v=>{v.accepted=false;},'E47C_WORKER_ACK_NOT_ACCEPTED'],
+ ];
+ for(const [mutate,code] of cases){
   const r=receipt(0,'ei-a');mutate(r);
-  assert.throws(()=>validateWorkerIngestReceipt(r,'ei-a'),
-   /E47C_WORKER_INGRESS_ACK_INVALID/);
+  assert.throws(()=>validateWorkerIngestReceipt(r,'ei-a'),e=>e.message===code);
  }
  const r=await scheduleBoundedWorkerIngress({
   count:10,rate:5,maxInflight:4,workerIds:['ei-a','ei-b'],
   send:async i=>i===3?receipt(i,'ei-a'):receipt(i,i%2?'ei-b':'ei-a'),
  });
  assert.equal(r.allAccepted,false);
- assert.ok(r.rows.some(x=>x.status==='failed'&&x.errorCode==='E47C_WORKER_INGRESS_ACK_INVALID'));
+ assert.ok(r.rows.some(x=>x.status==='failed'&&
+  x.errorCode==='E47C_WORKER_ACK_IDENTITY_MISMATCH'));
 });
 test('worker schedule refuses spoofed identities and unsafe caps',async()=>{
  for(const workerIds of [[],['a'],['a','a'],[1,2]]){
