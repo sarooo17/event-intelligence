@@ -1,6 +1,6 @@
 # Event Intelligence Protocol v0.2
 
-This document describes the current **internal persisted protocol/schema line** used by Event Intelligence v0.6.x. Package and internal protocol versions are independent, but v0.6 intentionally introduces a breaking persisted-trigger boundary: the pre-Pattern trigger representation is no longer accepted.
+This document describes the **internal trigger protocol `0.2.0` / schema `trigger.v0.2`** in use by the current pre-v1 SDK preview (`0.12.0-next.1` source). Package, MCP transport, Pattern AST, candidate identity and physical store schema versions evolve independently. The earlier v0.6 release introduced the breaking persisted-trigger boundary: pre-Pattern trigger representations are not accepted. See [the current compatibility matrix](releases/0.12.0-next.1-compatibility.md) for supported profiles and fail-closed stored-state rules.
 
 Event Intelligence defines a runtime protocol above event transport and below agent execution. It is **not** an MCP specification.
 
