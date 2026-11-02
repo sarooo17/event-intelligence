@@ -166,6 +166,9 @@ try{
    'HOST_WORKER_IDS_NOT_REPRODUCIBLE');
   assert(Array.isArray(host.latencyMs)&&
    host.latencyMs.length===host.attempted&&
+   host.latencyMs.every((v,i)=>finite(v)&&v>=0&&
+    Math.abs(v-Math.round(
+     (host.intervals[i].end-host.intervals[i].begin)*1000)/1000)<0.002)&&
    JSON.stringify(stats(host.latencyMs.map(elapsedMs=>({elapsedMs})),{minimum:10}))===
     JSON.stringify(host.latencySummaryMs),
    'HOST_REQUEST_LATENCIES_NOT_REPRODUCIBLE');
@@ -178,8 +181,9 @@ try{
    'ACTUAL_HOST_EFFECT_OVERLAP_NOT_REPRODUCIBLE');
   const late=Math.round((window.end-
     Math.max(...overlapping.map(x=>x.end)))*1000)/1000;
-  assert(Math.abs(late-host.lastOverlappingRequestAgeMs)<0.003,
-   'OVERLAP_TIMING_SUMMARY_DIFFERENT_FROM_RAW');
+  assert(Math.abs(late-host.lastOverlappingRequestAgeMs)<0.003&&
+   late<=Math.max(1500,(window.end-window.start)*.5),
+   'OVERLAP_TIMING_OR_HOST_LOAD_FRESHNESS_INVALID');
   verified.push({count,p99BaselineMs:p99Baseline,p99HostLoadedMs:p99Loaded,
    hostReceipts:host.hostReceiptCount,
    actualDeliveredOverlap:host.overlappingDeliveredHostEffectCount});
