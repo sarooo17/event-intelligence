@@ -102,15 +102,19 @@ test('independent recheck rejects forged pacing, censored offers, bad peak or re
 test('zero-duration first ACK retains exact peak concurrency without phantom overlap',()=>{
  const f=withOffers();
  f.offers[0].completedAtMs=f.offers[0].offeredAtMs;
+ // The first completion moved, so its measured completion rate changes.
+ f.manifest.stage.acceptedAppendCompletionRateMeasuredPerSecond=4.96;
  const result=assessProgressiveE47CStage(f);
  assert.equal(result.sourceOpenLoop.peakInflight,1);
 });
 test('top-level completion throughput comes from completions, not source offers',()=>{
  const f=withOffers();
- f.offers.forEach((o,i)=>o.completedAtMs=o.offeredAtMs+80+10*i);
- f.manifest.stage.acceptedAppendCompletionRateMeasuredPerSecond=4.762;
+ // Keep every completion before the next scheduled offer; transition order
+ // remains valid while ACK completion throughput differs from offered rate.
+ f.offers.forEach((o,i)=>o.completedAtMs=o.offeredAtMs+80+2*i);
+ f.manifest.stage.acceptedAppendCompletionRateMeasuredPerSecond=4.95;
  const result=assessProgressiveE47CStage(f);
  assert.equal(result.sourceOpenLoop.rate,5);
- assert.equal(result.sourceOpenLoop.completionRate,4.762);
- assert.equal(result.observedAppendCompletionRatePerSecond,4.762);
+ assert.equal(result.sourceOpenLoop.completionRate,4.95);
+ assert.equal(result.observedAppendCompletionRatePerSecond,4.95);
 });
