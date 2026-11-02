@@ -222,13 +222,20 @@ async function faultProbe(id){
  const faultInspector=new TriggerInspector({store:faultStore,
   inspectionWindowLimit:8,matchHistoryLimit:8,evidenceRefLimit:8});
  let hold=null,slowStarted=false,backendTerminated=null;
+ let observedPgSleepQueryMs=null;
  try{
   hold=await faultPool.connect();
+  const sleepStart=performance.now();
   const sleepQuery=hold.query('SELECT pg_sleep(0.55)')
-   .then(()=>{slowStarted=true;}).catch(()=>{slowStarted=false;});
+   .then(()=>{slowStarted=true;
+    observedPgSleepQueryMs=Math.round((performance.now()-sleepStart)*1000)/1000;
+   }).catch(()=>{slowStarted=false;});
   const queue=await profileFullInspector({inspector:faultInspector,
     ids:[id],iterations:3});
   await sleepQuery;
+  if(!slowStarted||!Number.isFinite(observedPgSleepQueryMs)||
+     observedPgSleepQueryMs<450)
+   throw Error('E48B_REAL_PG_SLEEP_QUERY_NOT_CONFIRMED');
   hold.release();hold=null;
   const recovery=await profileFullInspector({inspector:faultInspector,
     ids:[id],iterations:3});
@@ -260,7 +267,8 @@ async function faultProbe(id){
     ids:[id],iterations:3});
   if(afterTermination.refusals!==0)
    throw Error('E48B_RECOVERY_AFTER_ISOLATED_PG_TERMINATION_FAILED');
-  return {serverSidePgSleepMs:550,queuedFullInspect:queue,
+  return {serverSidePgSleepMs:550,observedPgSleepQueryMs,
+    queuedFullInspect:queue,
     recoveredFullInspect:recovery,
     testOnlyBackendTerminationSucceeded:backendTerminated,
     afterBackendRestartFullInspect:afterTermination,
@@ -393,6 +401,7 @@ try{
    rawArtifactSha256:sha256(faultBytes),
    rawArtifactName:'e48b-'+runId+'-fault.json',
    serverSidePgSleepMs:fault.serverSidePgSleepMs,
+   observedPgSleepQueryMs:fault.observedPgSleepQueryMs,
    contendedInspectorRefusals:fault.queuedFullInspect.refusals,
    afterSleepRecoveryRefusals:fault.recoveredFullInspect.refusals,
    backendTerminationSucceeded:fault.testOnlyBackendTerminationSucceeded,
