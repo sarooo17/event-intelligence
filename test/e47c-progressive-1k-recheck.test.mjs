@@ -118,3 +118,66 @@ test('top-level completion throughput comes from completions, not source offers'
  assert.equal(result.sourceOpenLoop.completionRate,4.95);
  assert.equal(result.observedAppendCompletionRatePerSecond,4.95);
 });
+
+
+function withParallelIngress(){
+ const f=withOffers();
+ f.manifest.workerIngressPacingIndependentOfAck=true;
+ const stage=f.manifest.stage;
+ stage.workerIngestPacedIndependently=true;
+ stage.workerIngressMaxInflight=4;
+ stage.workerIngressPeakInflight=2;
+ stage.workerIngressAccepted=50;
+ stage.workerIngressRejected=0;
+ stage.workerIngressOfferedRatePerSecond=5;
+ stage.workerIngressCompletionRatePerSecond=5;
+ stage.workerIngressWorkerIds=['worker-a','worker-b'];
+ f.ingest=f.source.map((x,i)=>({
+  index:i,eventId:x.eventId,workerId:i%2?'worker-b':'worker-a',
+  status:'accepted',scheduledAtMs:i*200,offeredAtMs:i*200,
+  offerLatenessMs:0,completedAtMs:i*200+300,
+ }));
+ const transitions=f.ingest.flatMap((row,i)=>[
+  {i,kind:'offer',t:row.offeredAtMs},
+  {i,kind:'complete',t:row.completedAtMs},
+ ]).sort((a,b)=>a.t-b.t);
+ transitions.forEach((row,index)=>{
+  f.ingest[row.i][row.kind==='offer'?'offerOrder':'completedOrder']=index+1;
+ });
+ f.ei.forEach(r=>{r.workerRequestToHostReceiptMs=300;});
+ stage.workerRequestToHostReceiptMs={p50:300,p95:300,p99:300};
+ return f;
+}
+test('re-audit two EI worker ingesters with actual overlapping ACKs and 2 workers',()=>{
+ const f=withParallelIngress();
+ const result=assessProgressiveE47CStage(f);
+ assert.equal(result.workerIngress.peakInflight,2);
+ assert.equal(result.workerIngress.offeredRate,5);
+ assert.equal(result.workerIngress.completionRate,5);
+ assert.equal(result.distinctEIWorkers,2);
+ assert.equal(result.productionSloCertified,false);
+ assert.equal(result.acceptanceE47CVerified,false);
+});
+test('independent ingest evidence rejects tampering, censored rows and forged throughput',()=>{
+ const attacks=[
+  f=>{f.ingest.pop();},
+  f=>{f.ingest[0].workerId='worker-b';},
+  f=>{f.ingest[1].eventId=f.ingest[0].eventId;},
+  f=>{f.ingest[1].status='backpressure-refused';},
+  f=>{f.ingest[0].completedAtMs+=500;},
+  f=>{f.ingest[0].offerOrder=f.ingest[1].offerOrder;},
+  f=>{f.manifest.stage.workerIngressPeakInflight=1;},
+  f=>{f.manifest.stage.workerIngressAccepted=49;},
+  f=>{f.manifest.stage.workerIngressRejected=1;},
+  f=>{f.manifest.stage.workerIngressWorkerIds=['worker-a','worker-a'];},
+  f=>{f.manifest.stage.workerIngressOfferedRatePerSecond=50;},
+  f=>{f.manifest.stage.workerIngressCompletionRatePerSecond=0;},
+  f=>{delete f.manifest.stage.workerIngressCompletionRatePerSecond;},
+  f=>{f.manifest.stage.workerIngressMaxInflight=9;},
+  f=>{f.ei[0].workerRequestToHostReceiptMs=2;},
+ ];
+ for(const attack of attacks){
+  const f=withParallelIngress();attack(f);
+  assert.throws(()=>assessProgressiveE47CStage(f));
+ }
+});
