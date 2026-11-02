@@ -130,7 +130,7 @@ async function populate(from,to){
  FROM "${table}" WHERE scope_id=$1 AND kind='trigger_match'`,[profileScope]);
  if(r.rows[0]?.total!==to)throw Error('E48B_PERSISTED_CANDIDATE_COUNT_MISMATCH');
 }
-async function remoteHostLoad(count,stage){
+async function remoteHostLoad(count,stage,{ready}={}){
  const scope=hostScopeBase+':e48b-'+runId+'-'+stage;
  const trig='e48b-remote-'+runId+'-'+stage;
  const def={triggerId:trig,version:'1',clauses:[{
@@ -144,7 +144,8 @@ async function remoteHostLoad(count,stage){
   {scopeId:scope,triggers:[def]},201);
  if(made.inserted!==1)throw Error('E48B_HOST_TRIGGER_NOT_REGISTERED');
  const r={attempted:0,accepted:0,matched:0,delivered:0,
-  refused:0,workerIds:[],latencyMs:[],errors:[]};
+  refused:0,workerIds:[],latencyMs:[],errors:[],intervals:[]};
+ if(ready)ready();
  for(let i=0;i<count;i++){
   const base=i%2===0?workerA:workerB,begin=performance.now();
   r.attempted++;
@@ -163,8 +164,10 @@ async function remoteHostLoad(count,stage){
    r.delivered+=out.persistedDeliveredWakes;r.workerIds.push(out.workerId);
   }catch(error){r.refused++;r.errors.push({
    code:String(error?.code??error?.message??'UNKNOWN').slice(0,95)})}
-  r.latencyMs.push(Math.round((performance.now()-begin)*1000)/1000);
-  await sleep(12);
+  const end=performance.now();
+  r.latencyMs.push(Math.round((end-begin)*1000)/1000);
+  r.intervals.push({begin,end});
+  await sleep(45);
  }
  const observed=await pool.query(
   'SELECT count(*)::int AS n,count(DISTINCT wake_id)::int AS unique_n,'
@@ -210,13 +213,24 @@ async function faultProbe(id){
   // workers or the database primary. The role may lack permission.
   hold=await faultPool.connect();
   const pid=(await hold.query('SELECT pg_backend_pid() AS pid')).rows[0]?.pid;
-  if(Number.isSafeInteger(pid)){
-   try{
-    const outcome=await pool.query('SELECT pg_terminate_backend($1) AS terminated',[pid]);
-    backendTerminated=outcome.rows[0]?.terminated===true;
-   }catch{backendTerminated=false;}
+  // node-postgres idle checked-out clients emit *asynchronous* error
+  // events on physical backend termination. Catch them explicitly
+  // before asking PG to terminate this isolated test backend.
+  const clientErrors=[];
+  const onClientError=error=>clientErrors.push(String(error?.code??'PG_BACKEND_ENDED'));
+  hold.on('error',onClientError);
+  try{
+   if(Number.isSafeInteger(pid)){
+    try{
+     const outcome=await pool.query('SELECT pg_terminate_backend($1) AS terminated',[pid]);
+     backendTerminated=outcome.rows[0]?.terminated===true;
+     if(backendTerminated)await sleep(150);
+    }catch{backendTerminated=false;}
+   }
+  }finally{
+   hold.removeListener('error',onClientError);
+   hold.release(true);hold=null;
   }
-  hold.release(true);hold=null;
   const afterTermination=await profileFullInspector({inspector:faultInspector,
     ids:[id],iterations:3});
   if(afterTermination.refusals!==0)
@@ -258,11 +272,33 @@ try{
   await sleep(100);
   const startAt=new Date().toISOString();
   const beforeHost=await pgStats();
-  const [loaded,host]=await Promise.all([
-   profileFullInspector({inspector,ids:sampleIds(count),
-    iterations:config.samplesPerPhase}),
-   remoteHostLoad(loadCount,String(count)),
-  ]);
+  // Finish remote host trigger registration BEFORE collecting the first
+  // Inspector sample; only count latency as under host load when actual
+  // remote ingest requests overlap the timed inspection interval.
+  let signalReady;
+  const hostReady=new Promise(resolve=>{signalReady=resolve});
+  const loadPromise=remoteHostLoad(loadCount,String(count),
+   {ready:signalReady});
+  await hostReady;
+  const inspectionStart=performance.now();
+  const loaded=await profileFullInspector({inspector,ids:sampleIds(count),
+    iterations:config.samplesPerPhase,
+    onSample:async()=>{await sleep(20);}});
+  const inspectionEnd=performance.now();
+  const host=await loadPromise;
+  const overlapping=host.intervals.filter(x=>
+   x.begin<=inspectionEnd&&x.end>=inspectionStart);
+  host.overlappingRequestCount=overlapping.length;
+  host.inspectionWindowMs=Math.round((inspectionEnd-inspectionStart)*1000)/1000;
+  host.lastOverlappingRequestAgeMs=overlapping.length?
+   Math.round((inspectionEnd-Math.max(...overlapping.map(x=>x.end)))*1000)/1000:null;
+  // Explicitly reject schedules where registration or a short burst
+  // finished before the actual measurement (old Promise.all bug).
+  if(overlapping.length<5||
+    host.lastOverlappingRequestAgeMs>
+      Math.max(1500,host.inspectionWindowMs*.5))
+   throw Error('E48B_HOST_LOAD_DID_NOT_OVERLAP_INSPECTION_WINDOW');
+  delete host.intervals;
   await sleep(1000);
   const afterHost=await pgStats();
   const exactPlan=await explainExact(sampleIds(count)[2]);
@@ -302,6 +338,11 @@ try{
   try{await handle.writeFile(bytes);await handle.sync();}finally{await handle.close();}
  }
  const fault=await faultProbe(sampleIds(100000)[0]);
+ const faultBytes=Buffer.from(JSON.stringify({schema:'ei.e48b.fault.raw.v1',
+  runId,sourceSha:source.sourceSha,fault},null,2)+'\n');
+ const faultFile=await open(join(dir,'e48b-'+runId+'-fault.json'),'wx',0o600);
+ try{await faultFile.writeFile(faultBytes);await faultFile.sync();}
+ finally{await faultFile.close();}
  const manifest={schema:'ei.e48b.independent-full-inspector-railway.v1',
   runId,runAt:new Date().toISOString(),config,source,
   candidateCases:reports.map(x=>({
@@ -314,6 +355,8 @@ try{
    tableIO:x.pgReadIO,
   })),
   fault:{
+   rawArtifactSha256:sha256(faultBytes),
+   rawArtifactName:'e48b-'+runId+'-fault.json',
    serverSidePgSleepMs:fault.serverSidePgSleepMs,
    contendedInspectorRefusals:fault.queuedFullInspect.refusals,
    afterSleepRecoveryRefusals:fault.recoveredFullInspect.refusals,
