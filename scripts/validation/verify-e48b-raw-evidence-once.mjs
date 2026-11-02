@@ -115,6 +115,8 @@ try{
    host.actualHostEffectReceiptsVerified===true&&
    host.hostReceiptCount>=10&&host.refused===0&&
    host.hostReceiptCount===host.delivered&&
+   host.accepted===host.delivered&&
+   host.accepted+host.refused===host.attempted&&
    host.uniqueHostWakes===host.hostReceiptCount&&
    host.uniqueHostReceipts===host.hostReceiptCount&&
    host.distinctWorkerCount===2&&
@@ -128,6 +130,8 @@ try{
    JSON.stringify(brief.loaded)===
      JSON.stringify(r.loaded.percentileLatencyMs)&&
    brief.hostReceipts===host.hostReceiptCount&&
+   brief.baselineRefusals===r.baseline.refusals&&
+   brief.loadedRefusals===r.loaded.refusals&&
    JSON.stringify(brief.tableIO)===JSON.stringify(r.pgReadIO),
    'MANIFEST_FULL_SUMMARY_OR_IO_DIFFERS_FROM_RAW');
   // Independently recompute host effect counts/worker diversity and
@@ -154,6 +158,17 @@ try{
    (x.delivered===false||typeof x.workerId==='string')),
    'INVALID_RAW_HOST_REQUEST_INTERVALS');
   const delivered=host.intervals.filter(x=>x.delivered===true);
+  const workerSequence=delivered.map(x=>x.workerId);
+  assert(workerSequence.length===host.accepted&&
+   JSON.stringify(workerSequence)===JSON.stringify(host.workerIds)&&
+   new Set(workerSequence).size===2&&
+   host.intervals.every(x=>x.delivered||x.workerId===null),
+   'HOST_WORKER_IDS_NOT_REPRODUCIBLE');
+  assert(Array.isArray(host.latencyMs)&&
+   host.latencyMs.length===host.attempted&&
+   JSON.stringify(stats(host.latencyMs.map(elapsedMs=>({elapsedMs})),{minimum:10}))===
+    JSON.stringify(host.latencySummaryMs),
+   'HOST_REQUEST_LATENCIES_NOT_REPRODUCIBLE');
   const overlapping=delivered.filter(x=>
    x.begin<=window.end&&x.end>=window.start);
   assert(delivered.length===host.delivered&&
@@ -176,7 +191,19 @@ try{
  assert(hash(faultRaw)===manifest.fault?.rawArtifactSha256&&
    manifest.fault.rawArtifactName===faultName,
    'UNPINNED_FAULT_SAMPLES');
- const fault=JSON.parse(faultRaw.toString('utf8')).fault;
+ const rawFault=JSON.parse(faultRaw.toString('utf8'));
+ assert(rawFault.schema==='ei.e48b.fault.raw.v1'&&
+  rawFault.runId===run&&rawFault.sourceSha===sourceSHA,
+  'FAULT_SOURCE_OR_RUN_MISMATCH');
+ const fault=rawFault.fault;
+ assert(manifest.fault.serverSidePgSleepMs===fault.serverSidePgSleepMs&&
+  manifest.fault.contendedInspectorRefusals===fault.queuedFullInspect?.refusals&&
+  manifest.fault.afterSleepRecoveryRefusals===fault.recoveredFullInspect?.refusals&&
+  manifest.fault.postTerminationRecoveryRefusals===
+   fault.afterBackendRestartFullInspect?.refusals&&
+  fault.PGPrimaryWasNOTRestarted===true&&
+  manifest.fault.postgresPrimaryNeverRestarted===true,
+  'FAULT_MANIFEST_MISMATCH');
  function verifyFaultProfile(profile){
   assert(profile?.fullInspectorCalls===3&&
    Number.isSafeInteger(profile.successes)&&
