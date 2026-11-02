@@ -91,3 +91,44 @@ host independence or PG primary failover/RPO/RTO. Its raw schema
 `ei.e47c.live-pilot.v1` is intentionally **different from** the
 six-stage E47-C verifier's full production schema; a passing pilot must
 not be fed to that gate as if it were completed.
+
+
+## Independent offline raw re-audit (post-pilot)
+
+The first pilot was run on exact Git commit
+`181812ee782493e063da360ef4103165899e75f4`, Railway deployment
+`9034e86f-1a5b-45fd-8f27-aff00a460648`.
+Its structured **out-of-band Railway runtime log** recorded:
+
+- `runId=cd63f908-e94c-4b7f-81b5-cfc6f02ecf6a`
+- `artifactSha256=690ec6002b2850566c92e79f75a7430b2db1f3fcda3a299c0fd324c602564dab`
+- `sourceLogSha256=78a5886482434baca3b0a5744b8c03dadc687025cb25597d8a6e0bb09b02276b`
+- 10/10 events and 10/10 host receipts with two EI workers; first-party staging, not production certification.
+
+To perform a **new process** independent raw re-audit on the same
+persistent private volume, pin these values from that original deployment log,
+not by reading and copying mutable manifest fields:
+
+```sh
+EI_E47C_ARTIFACT_DIR=/evidence
+EI_E47C_PILOT_RUN_ID=cd63f908-e94c-4b7f-81b5-cfc6f02ecf6a
+EI_E47C_EXPECTED_MANIFEST_SHA256=690ec6002b2850566c92e79f75a7430b2db1f3fcda3a299c0fd324c602564dab
+EI_E47C_EXPECTED_SOURCE_LOG_SHA256=78a5886482434baca3b0a5744b8c03dadc687025cb25597d8a6e0bb09b02276b
+# Source key pin variables are provided by private Railway variable references:
+# EI_SOURCE_TRUSTED_PUBLIC_KEY_PEM
+# EI_SOURCE_TRUSTED_PUBLIC_KEY_SHA256
+node scripts/validation/e47c-independent-pilot-recheck.mjs
+```
+
+The new process verifies raw byte hashes against these **external log pins**,
+reconciles all source/worker/host receipt IDs and p50/p95/p99 samples, and
+verifies the signed **historical frontier claim** from the previously bounded
+byte buffer. The Ed25519 frontier signature **does not cover the source
+archive hash**; the log hash remains anchored in the separately observed
+Railway deployment log. These are first-party artifacts, not tamper-proof
+remote storage or a third-party operator signature. A historical frontier
+claim is not a currently fresh provider completeness guarantee.
+
+A passing result always says
+`acceptanceE47CVerified:false` and
+`productionSloCertified:false`.
