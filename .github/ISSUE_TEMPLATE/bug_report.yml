@@ -1,0 +1,62 @@
+name: Bug report
+description: Report a reproducible EI SDK, MCP Events, storage or wake regression.
+title: "[Bug] "
+body:
+  - type: markdown
+    attributes:
+      value: "Do not disclose vulnerabilities or credentials here; follow SECURITY.md for private security reports."
+  - type: input
+    id: version
+    attributes:
+      label: EI version and commit
+      description: Include the exact npm version or Git commit when possible.
+      placeholder: "0.12.0-next.1 / SHA"
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Affected area
+      options:
+        - MCP Events transport / source
+        - Pattern v2 / timing semantics
+        - Trigger lifecycle / control plane
+        - Wake / receipt / recovery
+        - PostgreSQL / persistence
+        - Embedded host integration
+        - CLI / diagnostics / documentation
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Include safe steps, minimized trigger and event structure (no customer payloads).
+      placeholder: "1. Configure...
+2. Run...
+3. Observe..."
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected vs. actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment and relevant evidence
+      description: Node version, store mode, deployment topology, logs/test artifacts and the failure boundary; redact secrets.
+    validations:
+      required: false
+  - type: checkboxes
+    id: confirmation
+    attributes:
+      label: Confirmation
+      options:
+        - label: I have removed credentials, private payloads and personal information.
+          required: true
+        - label: This is not an undisclosed security vulnerability.
+          required: true
