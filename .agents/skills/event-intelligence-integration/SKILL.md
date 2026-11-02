@@ -78,9 +78,19 @@ connectionIds: plan.connectionIds, actor, owner })` after host policy.
 Describe only supported sources. Advanced logic uses **Pattern AST v2**,
 not a new prompt-generated DSL.
 
-Recommended agent tool discovery:
-`event_sources_list` → `trigger_language_describe` (when needed) →
-`trigger_plan` → host-authorized `trigger_create`.
+Two **different** model/control surfaces:
+
+- **Embedded facade** `createEventIntelligence()`: the exported
+  `toolCatalog` has `event_sources_list`, `trigger_create` and
+  lifecycle tools; **it does NOT expose** `trigger_plan` or
+  `trigger_language_describe` as portable tools. Embedded
+  `trigger_create` can compile an agent-friendly plan internally;
+  alternatively use `integration.host.scope(scopeId).planTrigger(input)`
+  from trusted host code and persist it with host-owned control.
+- **MCP stdio control plane** only: `event_sources_list` →
+  `trigger_language_describe` (when needed) → `trigger_plan` →
+  host-confirmed `trigger_create`. These tool names must not be
+  assumed available on the embedded `toolCatalog`.
 
 ## Verify and report
 
