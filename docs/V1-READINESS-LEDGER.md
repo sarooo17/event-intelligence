@@ -25,9 +25,10 @@ now records **E48-A and E48-B verified (2/10)** for isolated first-party
 source and Railway staging measurement/independent raw recheck ([#391](https://github.com/sarooo17/event-intelligence/pull/391)).
 These partial observations do not certify all requirements of a broader
 optional category. [#317](https://github.com/sarooo17/event-intelligence/issues/317)
-remains 0/5. The maintainer reports publishing `0.12.0-next.1` to npm
-`next`; registry/workflow publication evidence was not independently read
-during this documentation audit, and **it does not authorize stable v1**.
+remains 0/5. The npm versions UI screenshot checked on 2026-11-02
+confirms `0.12.0-next.1` under `next` and `0.11.0` under `latest`;
+the underlying npm API response and publishing workflow run were not
+separately examined. **This does not authorize stable v1**.
 The [live roadmap](https://github.com/sarooo17/event-intelligence/issues/41)
 supersedes historic implementation checklists.
 

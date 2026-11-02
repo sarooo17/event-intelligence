@@ -2,15 +2,15 @@
 
 ## Supported versions
 
-The public package remains **pre-1.0**. The maintainer reports publishing the
-`0.12.0-next.1` SDK preview; verify the exact version in npm before relying on
-it. This prerelease is **not** a third-party security audit or stable `1.0.0`
+The public package remains **pre-1.0**. The npm versions UI screenshot checked on 2026-11-02 confirms
+`0.12.0-next.1` on `next` and `0.11.0` on `latest`; pinned consumers
+must explicitly opt into the prerelease. This prerelease is **not** a third-party security audit or stable `1.0.0`
 certification. Existing hosts keep their explicitly pinned versions.
 
 | Version / channel | Security maintenance |
 | --- | --- |
-| `0.12.0-next.1` (npm `next`, operator-reported) | Current preview candidate; fixes only via a **new** reviewed/published version, not mutation of the existing artifact |
-| `0.11.x` (prior stable release line / npm `latest` unless independently changed) | Maintenance where practical; no guaranteed backport SLA |
+| `0.12.0-next.1` (npm `next`, visually verified 2026-11-02) | Current preview candidate; fixes only via a **new** reviewed/published version, not mutation of the existing artifact |
+| `0.11.x` (prior stable release line; npm `latest` was `0.11.0` on 2026-11-02) | Maintenance where practical; no guaranteed backport SLA |
 | `0.1.x`–`0.10.x` | Unsupported; upgrade deliberately |
 | Current repository `main` | Under CI/review; a source commit is **not** itself a published security release |
 

@@ -125,7 +125,7 @@ Host suspension exceptions pass through. Integrations with only `authorize`
 fail during setup; EI does not translate boolean grants into durable-write
 authority. Headless embeddings can omit model-facing tooling.
 
-This is a **pre-v1 breaking change included in the `0.12.0-next.1` source/package**; publication is maintainer-reported and should be checked against the npm registry. Downstream locked consumers remain unchanged unless their owners explicitly migrate and update. This API removal does not itself change persisted-state schemas.
+This is a **pre-v1 breaking change included in the `0.12.0-next.1` source/package**; publication under npm `next` is confirmed by a 2026-11-02 npm versions UI screenshot, without a separate API/provenance audit. Downstream locked consumers remain unchanged unless their owners explicitly migrate and update. This API removal does not itself change persisted-state schemas.
 
 ## Candidate signature/semantic identity version guard — #50 (pre-v1)
 
@@ -201,7 +201,7 @@ upgrade and deliberate downstream consumer version policy. A zero-error
 `v1-readiness` report is NOT an eligible release: status stays
 `blocked` until every required row has real reviewer/date/procedure evidence
 **and** the checked package version is 1.0.0. Publishing prerelease
-`0.12.0-next.0` or maintainer-reported `0.12.0-next.1` under npm `next` does not satisfy the stable 1.0 release.
+`0.12.0-next.0` or published `0.12.0-next.1` under npm `next` does not satisfy the stable 1.0 release.
 
 The manifest evidence descriptions have been updated to reflect merges of
 #188/#189/#258/#259/#263 and the actual manual npm `next` publication.
