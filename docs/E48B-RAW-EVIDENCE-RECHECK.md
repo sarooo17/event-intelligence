@@ -16,8 +16,9 @@ manifest as independently certified, or fabricate the missing observations.
    existing scoped Railway secrets and private `/evidence` volume.
    Require `ei_e48b_full_inspector status=passed`; record the new
    `sourceSha`, `manifestSha256`, deployment ID and stage counts.
-3. With the same **read-only-mounted evidence dataset** and a new OS
-   process, execute the verifier using those NEW, matching values:
+3. Using the same persisted evidence volume (mounted writable by Railway,
+   but accessed **read-only by the verifier**) in a new OS process, execute
+   the verifier using those NEW, matching values:
 
 ```sh
 EI_E48B_ARTIFACT_DIR=/evidence \
