@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.12.0-next.1] — source prepared 2026-10-31; npm publish reported by maintainer 2026-11-02 (registry unverified here)
+## [0.12.0-next.1] — published to npm `next` (npm UI screenshot verified 2026-11-02)
 
 - **Feature-complete generic SDK preview** after #47/#48/#49 closure;
   independent enterprise/production certification remains outside this
