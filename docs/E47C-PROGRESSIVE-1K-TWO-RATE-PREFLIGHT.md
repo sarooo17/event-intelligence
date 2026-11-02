@@ -25,9 +25,9 @@ intentionally below the >=1,000-event campaign requirement; they are a
 correctness/performance calibration, not the full gate. At most 250 source
 events per invocation and no more than 1k triggers can be requested.
 A later representative stage can increase the event budget only after
-this raw evidence is checked. The provided rate is a *serial append pacing
-target*, not an independently measured offered arrival distribution;
-the manifest also reports measured source append completion rate.
+this raw evidence is checked. Historically, the initial runs used a
+*serial append pacing target*; the open-loop extension below separately
+measures offered arrival rate and source ACK-completion rate.
 
 ## Run in isolated one-shot Railway staging service with a private volume
 
@@ -141,9 +141,10 @@ Two distinct quantities must be kept separate:
   It measures how quickly the durable source returns; the provider may
   have queued requests and does not promise this equals offered rate.
 
-EI **worker ingestion remains serialized after source polling** in this
-calibration runner; it cannot yet measure multi-concurrent provider→EI
-ingress or provider-produced→host external end-to-end latency. Those
+In the **original #400 source-only open-loop calibration**, EI worker
+ingestion remained serialized after polling. The concurrent-worker extension
+below now separately measures bounded runner→EI ingestion; neither mode
+measures continuous provider-produced→host external end-to-end latency. Those
 limits, 50 events per rate, first-party source/host and shared PostgreSQL
 still block E47-C acceptance.
 
