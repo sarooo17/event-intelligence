@@ -155,7 +155,7 @@ async function remoteHostLoad(count,stage,{ready,rejectReady}={}){
  for(let i=0;i<count;i++){
   const base=i%2===0?workerA:workerB,begin=performance.now();
   r.attempted++;
-  let deliveredThisRequest=false;
+  let deliveredThisRequest=false,workerIdThisRequest=null;
   try{
    const out=await hostRequest(base,'/v1/events',{
     scopeId:scope,traceId:'e48b-'+runId+'-'+stage+'-'+i,
@@ -170,11 +170,13 @@ async function remoteHostLoad(count,stage,{ready,rejectReady}={}){
    r.accepted++;r.matched+=out.matched;
    r.delivered+=out.persistedDeliveredWakes;r.workerIds.push(out.workerId);
    deliveredThisRequest=true;
+   workerIdThisRequest=out.workerId;
   }catch(error){r.refused++;r.errors.push({
    code:String(error?.code??error?.message??'UNKNOWN').slice(0,95)})}
   const end=performance.now();
   r.latencyMs.push(Math.round((end-begin)*1000)/1000);
-  r.intervals.push({begin,end,delivered:deliveredThisRequest});
+  r.intervals.push({index:i,begin,end,delivered:deliveredThisRequest,
+   workerId:workerIdThisRequest});
   await sleep(45);
  }
  const observed=await pool.query(
@@ -186,7 +188,22 @@ async function remoteHostLoad(count,stage,{ready,rejectReady}={}){
  r.uniqueHostReceipts=observed.rows[0]?.receipts??0;
  r.distinctWorkerCount=new Set(r.workerIds).size;
  r.latencySummaryMs=latencyStatistics(r.latencyMs);
- delete r.workerIds;delete r.latencyMs;
+ // Keep independently auditable per-effect receipt digests and worker
+ // identities only on the private evidence volume, not stdout.
+ const receipts=await pool.query(
+  'SELECT wake_id,receipt_id,attempt_count FROM ei_validation_host_receipts WHERE scope_id=$1 ORDER BY wake_id',
+  [scope]);
+ r.receiptRows=receipts.rows.map(x=>({
+  wakeDigest:sha256(runId+':wake:'+x.wake_id),
+  receiptDigest:sha256(runId+':receipt:'+x.receipt_id),
+  attemptCount:Number(x.attempt_count),
+ }));
+ if(r.receiptRows.length!==r.hostReceiptCount||
+  r.receiptRows.some(x=>!Number.isSafeInteger(x.attemptCount)||
+    x.attemptCount!==1)||
+  new Set(r.receiptRows.map(x=>x.wakeDigest)).size!==r.receiptRows.length||
+  new Set(r.receiptRows.map(x=>x.receiptDigest)).size!==r.receiptRows.length)
+  throw Error('E48B_RAW_HOST_RECEIPT_ROWS_NOT_DISTINCT');
  if(r.accepted<10||r.distinctWorkerCount!==2||
     r.hostReceiptCount!==r.delivered||
     r.uniqueHostReceipts!==r.hostReceiptCount||
@@ -253,7 +270,7 @@ async function faultProbe(id){
   await faultPool.end().catch(()=>{});
  }
 }
-let fatal=null,completed=0;const reports=[];
+let fatal=null,completed=0;const reports=[],stageDigests={};
 try{
  const volume=await stat(dir);
  if(!volume.isDirectory())throw Error('E48B_PRIVATE_VOLUME_REQUIRED');
@@ -303,6 +320,7 @@ try{
    x.delivered===true&&x.begin<=inspectionEnd&&x.end>=inspectionStart);
   host.overlappingDeliveredHostEffectCount=overlapping.length;
   host.inspectionWindowMs=Math.round((inspectionEnd-inspectionStart)*1000)/1000;
+  host.inspectionWindow={start:inspectionStart,end:inspectionEnd};
   host.lastOverlappingRequestAgeMs=overlapping.length?
    Math.round((inspectionEnd-Math.max(...overlapping.map(x=>x.end)))*1000)/1000:null;
   // Explicitly reject schedules where registration or a short burst
@@ -311,7 +329,9 @@ try{
     host.lastOverlappingRequestAgeMs>
       Math.max(1500,host.inspectionWindowMs*.5))
    throw Error('E48B_HOST_LOAD_DID_NOT_OVERLAP_INSPECTION_WINDOW');
-  delete host.intervals;
+  // Preserve the complete individual on-wire intervals and worker IDs
+  // in private raw stage evidence; an independent process must be able
+  // to recalculate the delivered host-effect overlap.
   await sleep(1000);
   const afterHost=await pgStats();
   const exactPlan=await explainExact(sampleIds(count)[2]);
@@ -349,6 +369,7 @@ try{
   const bytes=Buffer.from(JSON.stringify({config,source,caseReport},null,2)+'\n');
   const handle=await open(name,'wx',0o600);
   try{await handle.writeFile(bytes);await handle.sync();}finally{await handle.close();}
+  stageDigests[count]=sha256(bytes);
  }
  const fault=await faultProbe(sampleIds(100000)[0]);
  const faultBytes=Buffer.from(JSON.stringify({schema:'ei.e48b.fault.raw.v1',
@@ -360,6 +381,7 @@ try{
   runId,runAt:new Date().toISOString(),config,source,
   candidateCases:reports.map(x=>({
    population:x.candidatePopulation,
+   stageArtifactSha256:stageDigests[x.candidatePopulation],
    baseline:x.baseline.percentileLatencyMs,
    loaded:x.loaded.percentileLatencyMs,
    baselineRefusals:x.baseline.refusals,
