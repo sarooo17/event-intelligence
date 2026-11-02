@@ -67,9 +67,9 @@ Reports use `ei.e47c.progressive-1k-preflight.v1` and persist:
   sample rows, source/host mismatches and bad numerical timing abort
 
 A worker request→host receipt duration is **not** true upstream provider
-event generation→EI ingress time; the `endToEndMs` alias in the raw
-experimental record is the same observed local round trip and **MUST NOT**
-be treated as full source-to-business-effect SLO. Source logs are signed at
+event generation→EI ingress time. The stage deliberately does **not**
+claim full source-to-business-effect end-to-end latency; do not relabel
+local worker-to-receipt observations as that production SLO. Source logs are signed at
 the *frontier-claim* level only, not across raw source archive bytes;
 pin artifact SHA-256 from the original Railway runtime log and verify in a
 separate process to avoid self-certification. The raw verifier from #394
@@ -84,3 +84,23 @@ host/external billing, physical PostgreSQL I/O attribution or SLO signoff.
 Always preserve `acceptanceE47CVerified:false` and
 `productionSloCertified:false`; **do not check E47-C** merely because
 one or both 1k preflight runs pass.
+
+## Re-audit a rate-specific run
+
+Once an original deployment prints a successful
+`event=ei_e47c_progressive_1k_stage` receipt, record its `runId`,
+`artifactSha256` and `sourceLogSha256` **from Railway log outside the
+volume**. Change the one-shot start command to:
+
+```sh
+node scripts/validation/e47c-progressive-1k-recheck.mjs
+```
+
+Pass `EI_E47C_PILOT_RUN_ID`, `EI_E47C_STAGE_RATE`,
+`EI_E47C_EXPECTED_MANIFEST_SHA256` and
+`EI_E47C_EXPECTED_SOURCE_LOG_SHA256` using those independently observed
+values, and keep the original private `/evidence` volume mounted. The
+verifier is **read-only**, never sends an event and never opens a PostgreSQL
+connection. It recomputes original sample quantiles and authenticates the
+historical signed frontier claim against the pinned raw source-log
+bytes. No E47-C checkbox is automatically changed even on success.
