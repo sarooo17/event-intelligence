@@ -100,7 +100,7 @@ function verifySourceOpenLoop({manifest,offers,sourceById,count}){
   peak=Math.max(peak,active);
  }
  if(peak>manifest.stage.maxSourceAppendInflight||
-    Math.abs(peak-manifest.stage.maxObservedSourceAppendInflight)>1)
+    peak!==manifest.stage.maxObservedSourceAppendInflight)
   fail('E47C_OPEN_LOOP_INFLIGHT_MISMATCH');
  const offered=rateFromTimeline(offers,'offeredAtMs');
  const completed=rateFromTimeline(
