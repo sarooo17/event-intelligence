@@ -2,15 +2,17 @@
 
 ## Supported versions
 
-The public package is pre-1.0; the current published baseline is **0.11.0**.
-Security maintenance is focused on the latest 0.11.x release line and future
-current releases. Older pre-1.0 lines are **not** promised backports.
+The public package remains **pre-1.0**. The maintainer reports publishing the
+`0.12.0-next.1` SDK preview; verify the exact version in npm before relying on
+it. This prerelease is **not** a third-party security audit or stable `1.0.0`
+certification. Existing hosts keep their explicitly pinned versions.
 
-| Version | Security maintenance |
+| Version / channel | Security maintenance |
 | --- | --- |
-| 0.11.x | Current release line; receive fixes where practical |
-| 0.1.x–0.10.x | Unsupported; upgrade deliberately |
-| Unreleased main | Under CI and review; **not** a published security release |
+| `0.12.0-next.1` (npm `next`, operator-reported) | Current preview candidate; fixes only via a **new** reviewed/published version, not mutation of the existing artifact |
+| `0.11.x` (prior stable release line / npm `latest` unless independently changed) | Maintenance where practical; no guaranteed backport SLA |
+| `0.1.x`–`0.10.x` | Unsupported; upgrade deliberately |
+| Current repository `main` | Under CI/review; a source commit is **not** itself a published security release |
 
 Publishing a new package version does not change downstream applications
 pinned to an exact version; consuming hosts must opt into any upgrade.
@@ -34,7 +36,7 @@ Useful reports include:
 
 ## Security boundaries
 
-Event Intelligence 0.11.x is an experimental reference implementation with scoped multi-tenant host support. It is not a turnkey hardened hosted service.
+Event Intelligence is a pre-v1 runtime-neutral SDK with scoped multi-tenant host support. The reviewed library/reference tests do **not** certify security of any independently operated host, OAuth system, transport, or deployed production environment ([#317](https://github.com/sarooo17/event-intelligence/issues/317)).
 
 Important defaults and constraints:
 
