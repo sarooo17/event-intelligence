@@ -5,14 +5,24 @@ import {scheduleBoundedSourceOffers} from './e47c-open-loop-pacing.mjs';
 
 const timing=x=>typeof x==='number'&&Number.isFinite(x)&&x>=0;
 export function validateWorkerIngestReceipt(result,expectedWorkerId){
- if(!expectedWorkerId||typeof expectedWorkerId!=='string'||
-    result?.accepted!==true||result?.workerId!==expectedWorkerId||
-    result.matched!==1||result.persistedDeliveredWakes!==1||
-    !timing(result.timings?.ingestToMatchMs)||
-    !Array.isArray(result.timings?.matchToWakeSamplesMs)||
+ // Fixed, non-payload-bearing codes distinguish what the *response* failed
+ // to prove. They do NOT imply missing durable wakes or host effects.
+ if(!expectedWorkerId||typeof expectedWorkerId!=='string')
+  throw Error('E47C_WORKER_ACK_CONFIG_INVALID');
+ if(result?.accepted!==true)
+  throw Error('E47C_WORKER_ACK_NOT_ACCEPTED');
+ if(result.workerId!==expectedWorkerId)
+  throw Error('E47C_WORKER_ACK_IDENTITY_MISMATCH');
+ if(result.matched!==1)
+  throw Error('E47C_WORKER_ACK_MATCH_COUNT_INVALID');
+ if(result.persistedDeliveredWakes!==1)
+  throw Error('E47C_WORKER_ACK_IMMEDIATE_DELIVERY_MISSING');
+ if(!timing(result.timings?.ingestToMatchMs))
+  throw Error('E47C_WORKER_ACK_INGEST_TIMING_INVALID');
+ if(!Array.isArray(result.timings?.matchToWakeSamplesMs)||
     result.timings.matchToWakeSamplesMs.length!==1||
     !timing(result.timings.matchToWakeSamplesMs[0]))
-  throw Error('E47C_WORKER_INGRESS_ACK_INVALID');
+  throw Error('E47C_WORKER_ACK_WAKE_TIMING_INVALID');
  return result;
 }
 export async function scheduleBoundedWorkerIngress({
