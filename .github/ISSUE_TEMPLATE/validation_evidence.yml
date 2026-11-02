@@ -1,0 +1,51 @@
+name: Validation or external-evidence report
+description: Submit reproducible evidence for a bounded claim, including negative outcomes.
+title: "[Evidence] "
+body:
+  - type: markdown
+    attributes:
+      value: "This form records evidence; it does not certify enterprise/production readiness or authorize checking acceptance boxes. Keep raw secrets and customer data off GitHub."
+  - type: input
+    id: acceptance
+    attributes:
+      label: Tracking issue and exact acceptance
+      placeholder: "#376 E47-C (subset)"
+    validations:
+      required: true
+  - type: textarea
+    id: claim
+    attributes:
+      label: Claim and boundaries
+      description: State exactly what is observed, and explicitly what the results do not prove.
+    validations:
+      required: true
+  - type: textarea
+    id: identity
+    attributes:
+      label: Artifact and execution identity
+      description: Pinned SHA, source/host/worker deployment IDs, UTC timestamps, environment/PG version and redacted artifact hashes.
+    validations:
+      required: true
+  - type: textarea
+    id: methodology
+    attributes:
+      label: Reproduction, raw measurements and independent verification
+      description: Include runbook, source of truth, raw artifact access, independent oracle/verifier and test limits.
+    validations:
+      required: true
+  - type: textarea
+    id: failures
+    attributes:
+      label: Negative cases, failures and missing evidence
+      description: Do not omit failed runs, censored samples, unknown provider finality, billing or operator signoff.
+    validations:
+      required: true
+  - type: checkboxes
+    id: declarations
+    attributes:
+      label: Evidence safety
+      options:
+        - label: All shared links/artifacts have been checked for credentials and sensitive raw event data.
+          required: true
+        - label: I have not equated synthetic fixtures or self-reported passes with independent production certification.
+          required: true
