@@ -21,6 +21,22 @@ An agent can express an intent such as:
 
 Event Intelligence persists the future condition independently of the model, waits for the world to satisfy it, and wakes the host only when the condition has an activation target. Conditions may also exist without an agent continuation; higher-level facts are composed separately through derived-event triggers.
 
+## Integrate with a coding agent
+
+If you use Codex, Cursor, Copilot, Claude Code or another coding agent to add EI
+to an existing application, start with the
+**[agent integration guide](docs/AI-AGENT-INTEGRATION.md)** or the
+[portable integration skill](.agents/skills/event-intelligence-integration/SKILL.md).
+Coding agents **working on this repository** should also read
+[AGENTS.md](AGENTS.md). The
+[LLM documentation index](llms.txt) is a lightweight discovery aid, not an
+automatically installed agent plugin.
+
+These guides use public SDK exports, keep MCP credentials and continuations
+host-owned, and explain how to prove durable receipt/replay behavior. The skill
+is stored **in this GitHub repository**; a consumer must explicitly make it
+available to their own agent environment according to that client's support.
+
 ## Embed it in an existing agent host
 
 Install from npm:

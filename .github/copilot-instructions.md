@@ -1,6 +1,9 @@
 # Repository-wide code review and assistant instructions
 
 Event Intelligence is a runtime-neutral, pre-v1 event intelligence SDK.
+Read [AGENTS.md](../AGENTS.md) for shared coding-agent instructions, and
+[the consumer integration guide](../docs/AI-AGENT-INTEGRATION.md) when
+integrating EI into a different runtime.
 Follow [CONTRIBUTING.md](../CONTRIBUTING.md),
 [SECURITY.md](../SECURITY.md) and
 [the v1 SDK release scope](../docs/V1-SDK-RELEASE-SCOPE.md).

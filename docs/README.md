@@ -2,6 +2,10 @@
 
 Documentation for the current source and pre-v1 SDK preview (`mcp-event-intelligence@0.12.0-next.1`, publication and dist-tags confirmed from npm versions UI screenshot on 2026-11-02). The unqualified npm `latest` tag and the MCP Registry listing are separate release channels:
 
+- [AI coding agent integration (consumer-focused)](AI-AGENT-INTEGRATION.md)
+- [Repo AGENTS.md (for contributing agents)](../AGENTS.md)
+- [Portable integration Agent Skill](../.agents/skills/event-intelligence-integration/SKILL.md)
+- [LLM discovery index](../llms.txt)
 - [Quickstart](QUICKSTART.md)
 - [Embedded runtime integration](embedded-runtime-integration.md)
 - [Architecture](ARCHITECTURE.md)

@@ -1,0 +1,24 @@
+# Event Intelligence — documentation for coding agents and LLMs
+
+> Host-neutral pre-v1 SDK for durable future conditions, event-time
+> correlation, source provenance and targeted wakeups; not an LLM runner.
+
+- [Coding agent repository instructions](AGENTS.md)
+- [Agent-first integration guide](docs/AI-AGENT-INTEGRATION.md)
+- [Reusable integration skill](.agents/skills/event-intelligence-integration/SKILL.md)
+- [Installation and host quickstart](docs/QUICKSTART.md)
+- [Embedded integration/authority contracts](docs/embedded-runtime-integration.md)
+- [Host conformance v3](conformance/README.md)
+- [Persistence and shared-worker storage](docs/STORAGE.md)
+- [Security policy](SECURITY.md)
+- [Pre-v1 compatibility/migrations](docs/releases/0.12.0-next.1-compatibility.md)
+- [Package exports (authoritative)](package.json)
+
+Package: `mcp-event-intelligence` (Node.js >=22).
+Preview version at this repository's source date: `0.12.0-next.1`
+(`next`, not npm `latest`). Verify current version and exported APIs;
+the stable `1.0.0` release has not been approved.
+
+This file is a convenience index only. It is not an MCP endpoint, an
+agent-executable configuration or a guarantee that arbitrary LLM clients
+will auto-discover the repository.
