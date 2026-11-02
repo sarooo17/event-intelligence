@@ -27,7 +27,7 @@
         "https://github.com/sarooo17/event-intelligence/pull/282",
         "https://github.com/sarooo17/event-intelligence/actions/runs/40554825385"
       ],
-      "note": "Reviewed SDK host-contract/package conformance and packed-preview evidence exist; prerelease 0.12.0-next.0 was historically published and 0.12.0-next.1 publication is maintainer-reported as of 2026-11-02, not independently registry-attested in this doc update. BLOCKED solely for release-specific review and actual stable 1.0.0 package/source/declarations, exact-head tests and signoff. Do not infer stable or production-readiness from preview publication."
+      "note": "Reviewed SDK host-contract/package conformance and packed-preview evidence exist; prerelease 0.12.0-next.0 was historically published and 0.12.0-next.1 publication under npm `next` and unchanged `latest` = 0.11.0 were confirmed in the npm versions UI screenshot checked on 2026-11-02; the npm API response, publishing workflow run and tarball integrity were not separately audited. BLOCKED solely for release-specific review and actual stable 1.0.0 package/source/declarations, exact-head tests and signoff. Do not infer stable or production-readiness from preview publication."
     },
     {
       "id": "security-independent-review",
