@@ -68,6 +68,7 @@ function withOffers(){
   index:i,eventId:row.eventId,status:'accepted',
   scheduledAtMs:i*200,offeredAtMs:i*200,
   offerLatenessMs:0,completedAtMs:i*200+80,
+  offerOrder:2*i+1,completedOrder:2*i+2,
  }));
  return f;
 }
@@ -87,10 +88,29 @@ test('independent recheck rejects forged pacing, censored offers, bad peak or re
   f=>{f.offers[1].completedAtMs+=500;},
   f=>{f.manifest.stage.offeredEventRateMeasuredPerSecond=50;},
   f=>{f.manifest.stage.acceptedAppendCompletionRateMeasuredPerSecond=50;},
+  f=>{delete f.manifest.stage.acceptedAppendCompletionRateMeasuredPerSecond;},
+  f=>{f.manifest.stage.acceptedAppendCompletionRateMeasuredPerSecond='5';},
+  f=>{f.offers[0].offerOrder=f.offers[1].offerOrder;},
   f=>{f.manifest.stage.maxObservedSourceAppendInflight=4;},
   f=>{f.manifest.stage.sourceRejectedOffers=1;},
   f=>{f.manifest.stage.maxSourceAppendInflight=9;},
  ];
  for(const attack of attacks){const f=withOffers();attack(f);
   assert.throws(()=>assessProgressiveE47CStage(f));}
+});
+
+test('zero-duration first ACK retains exact peak concurrency without phantom overlap',()=>{
+ const f=withOffers();
+ f.offers[0].completedAtMs=f.offers[0].offeredAtMs;
+ const result=assessProgressiveE47CStage(f);
+ assert.equal(result.sourceOpenLoop.peakInflight,1);
+});
+test('top-level completion throughput comes from completions, not source offers',()=>{
+ const f=withOffers();
+ f.offers.forEach((o,i)=>o.completedAtMs=o.offeredAtMs+80+10*i);
+ f.manifest.stage.acceptedAppendCompletionRateMeasuredPerSecond=4.762;
+ const result=assessProgressiveE47CStage(f);
+ assert.equal(result.sourceOpenLoop.rate,5);
+ assert.equal(result.sourceOpenLoop.completionRate,4.762);
+ assert.equal(result.observedAppendCompletionRatePerSecond,4.762);
 });
