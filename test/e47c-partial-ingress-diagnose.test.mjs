@@ -79,6 +79,24 @@ test('diagnostic categorizes errors via fixed allowlist and only worker aliases'
  const x=summarizeFailedWorkerIngress(g);
  assert.equal(x.failedRequests[0].category,'unknown-worker-send-failure');
 });
+test('diagnostic categorizes new fixed worker ACK reasons without raw payloads',()=>{
+ const codes=[
+  ['E47C_WORKER_ACK_NOT_ACCEPTED','worker-not-accepted'],
+  ['E47C_WORKER_ACK_IDENTITY_MISMATCH','worker-identity-mismatch'],
+  ['E47C_WORKER_ACK_MATCH_COUNT_INVALID','worker-match-count-invalid'],
+  ['E47C_WORKER_ACK_IMMEDIATE_DELIVERY_MISSING','immediate-delivery-not-proven'],
+  ['E47C_WORKER_ACK_INGEST_TIMING_INVALID','ingest-timing-invalid'],
+  ['E47C_WORKER_ACK_WAKE_TIMING_INVALID','wake-timing-invalid'],
+ ];
+ for(const [code,category] of codes){
+  const f=fixture();f.ingest[8].errorCode=code;
+  const d=summarizeFailedWorkerIngress(f);
+  assert.equal(d.failedRequests[0].category,category);
+  assert.equal(d.productionSloCertified,false);
+  assert.ok(!JSON.stringify(d).includes(f.manifest.runId));
+ }
+});
+
 test('sparse parser rejects unbounded and malformed artifacts',()=>{
  assert.throws(()=>parseLines('garbage\n',250,true));
  assert.throws(()=>parseLines('{"a":1}',250,true));
