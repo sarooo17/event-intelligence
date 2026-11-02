@@ -201,6 +201,9 @@ try{
   'FAULT_SOURCE_OR_RUN_MISMATCH');
  const fault=rawFault.fault;
  assert(manifest.fault.serverSidePgSleepMs===fault.serverSidePgSleepMs&&
+  finite(fault.observedPgSleepQueryMs)&&
+  fault.observedPgSleepQueryMs>=450&&
+  manifest.fault.observedPgSleepQueryMs===fault.observedPgSleepQueryMs&&
   manifest.fault.contendedInspectorRefusals===fault.queuedFullInspect?.refusals&&
   manifest.fault.afterSleepRecoveryRefusals===fault.recoveredFullInspect?.refusals&&
   manifest.fault.postTerminationRecoveryRefusals===
