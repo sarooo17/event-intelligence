@@ -1,14 +1,27 @@
 #!/usr/bin/env node
 // Read-only. Read pre-existing original artifacts from a trusted local
 // directory; never sends HTTP, mutates PostgreSQL, publishes or certifies.
-import {readFile} from 'node:fs/promises';
+import {open} from 'node:fs/promises';
+import {constants} from 'node:fs';
 import {resolve,join} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {assessE47CSourceLinkedEvidence} from './e47c-source-linked-evidence.mjs';
 
+async function readPrivateFile(path,maxBytes){
+ // O_NOFOLLOW rejects source/host artifacts redirected by symlinks.
+ const handle=await open(path,constants.O_RDONLY|constants.O_NOFOLLOW);
+ try{
+  const stat=await handle.stat();
+  if(!stat.isFile()||stat.size<1||stat.size>maxBytes)
+   throw Error('E47C_UNSAFE_FILE_OR_SIZE');
+  const text=await handle.readFile('utf8');
+  if(Buffer.byteLength(text)>maxBytes)throw Error('E47C_FILE_GREW_BEYOND_CAP');
+  return text;
+ }finally{await handle.close();}
+}
 export async function inspectE47CArtifactDirectory(root){
  const directory=resolve(root);
- const manifest=JSON.parse(await readFile(join(directory,'manifest.json'),'utf8'));
+ const manifest=JSON.parse(await readPrivateFile(join(directory,'manifest.json'),1024*1024));
  const files={};
  const refs=Array.isArray(manifest?.stages)?
   manifest.stages.flatMap(stage=>[stage?.sourceRaw,stage?.hostRaw,stage?.eiRaw]):[];
@@ -17,7 +30,7 @@ export async function inspectE47CArtifactDirectory(root){
   if(typeof ref?.file!=='string'||
      !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,159}\.jsonl$/.test(ref.file))
    throw Error('E47C_UNSAFE_ARTIFACT_NAME');
-  if(!(ref.file in files))files[ref.file]=await readFile(join(directory,ref.file),'utf8');
+  if(!(ref.file in files))files[ref.file]=await readPrivateFile(join(directory,ref.file),32*1024*1024);
  }
  return assessE47CSourceLinkedEvidence({manifest,files});
 }
