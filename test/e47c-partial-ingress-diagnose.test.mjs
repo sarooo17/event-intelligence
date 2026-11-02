@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {summarizeFailedWorkerIngress,parseLines} from
  '../scripts/validation/e47c-partial-ingress-diagnose.mjs';
+import {scheduleBoundedWorkerIngress} from
+ '../scripts/validation/e47c-bounded-worker-ingress.mjs';
 
 const runId='a21f3548-569f-42b6-9e38-e265d699d758';
 function fixture(){
@@ -73,9 +75,9 @@ test('diagnostic categorizes errors via fixed allowlist and only worker aliases'
  assert.equal(d.failedRequests[0].category,'unknown-error');
  assert.equal(d.failedRequests[0].worker,'worker-0');
  assert.ok(!JSON.stringify(d).includes('SECRET_RICCARDO'));
- const g=fixture();g.ingest[8].errorCode='E47C_REQUEST_FAILED__v1_events_503';
+ const g=fixture();g.ingest[8].errorCode='E47C_SOURCE_SEND_FAILED';
  const x=summarizeFailedWorkerIngress(g);
- assert.equal(x.failedRequests[0].category,'worker-http-error');
+ assert.equal(x.failedRequests[0].category,'unknown-worker-send-failure');
 });
 test('sparse parser rejects unbounded and malformed artifacts',()=>{
  assert.throws(()=>parseLines('garbage\n',250,true));
@@ -98,4 +100,21 @@ test('all worker requests failed: zero ACKs means runner omitted partial-ei.json
  assert.equal(diag.statusCounts.failed,50);
  assert.equal(diag.statusCounts.accepted,0);
  assert.equal(diag.productionSloCertified,false);
+});
+
+// Exercise the actual worker-ingress sanitization. HTTP status codes from
+// the request helper are NOT preserved in the prior run's raw evidence.
+test('producer redaction cannot be mistaken for a proven transport fault',async()=>{
+ let clock=0;
+ const job=await scheduleBoundedWorkerIngress({count:2,rate:5,maxInflight:2,
+  workerIds:['ei-worker-a','ei-worker-b'],now:()=>clock,
+  wait:async ms=>{clock+=ms;},
+  send:async()=>{throw Error('E47C_REQUEST_FAILED__v1_events_503');}
+ });
+ assert.equal(job.rejected,2);
+ assert.equal(job.rows[0].errorCode,'E47C_SOURCE_SEND_FAILED');
+ const f=fixture();
+ f.ingest[8].errorCode=job.rows[0].errorCode;
+ assert.equal(summarizeFailedWorkerIngress(f).failedRequests[0].category,
+  'unknown-worker-send-failure');
 });
