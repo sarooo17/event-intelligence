@@ -82,23 +82,31 @@ function verifySourceOpenLoop({manifest,offers,sourceById,count}){
      !sourceById.has(o.eventId)||o.status!=='accepted'||
      !validTiming(o.scheduledAtMs)||!validTiming(o.offeredAtMs)||
      !validTiming(o.offerLatenessMs)||!validTiming(o.completedAtMs)||
+     !Number.isSafeInteger(o.offerOrder)||!Number.isSafeInteger(o.completedOrder)||
+     o.offerOrder<1||o.completedOrder<=o.offerOrder||
      Math.abs(o.scheduledAtMs-nominal)>0.002||
      o.offeredAtMs<o.scheduledAtMs-0.002||
      Math.abs(Math.max(0,o.offeredAtMs-o.scheduledAtMs)-o.offerLatenessMs)>0.003||
      o.completedAtMs<o.offeredAtMs)
     fail('E47C_OPEN_LOOP_RAW_OR_SEQUENCE_INVALID');
   ids.add(o.eventId);
-  timeline.push({kind:1,t:o.offeredAtMs},{kind:-1,t:o.completedAtMs});
+  timeline.push({kind:1,t:o.offeredAtMs,order:o.offerOrder},
+   {kind:-1,t:o.completedAtMs,order:o.completedOrder});
  }
- // Completions are processed before launches at equal timestamps.
- timeline.sort((a,b)=>a.t-b.t||a.kind-b.kind);
- let active=0,peak=0;
- for(const mark of timeline){active+=mark.kind;
-  // Rounding to 1us may cause zero-duration intervals: allow an
-  // equal-timestamp completion without fictitious negative occupancy.
-  if(active<0)active=0;
+ // Native monotonic transition ordinals disambiguate equal rounded
+ // timestamps, including zero-duration ACKs. No fabricated overlap.
+ timeline.sort((a,b)=>a.order-b.order);
+ let active=0,peak=0,lastTime=0;
+ for(let i=0;i<timeline.length;i++){
+  const mark=timeline[i];
+  if(mark.order!==i+1||mark.t+0.002<lastTime)
+   fail('E47C_OPEN_LOOP_TRANSITION_ORDER_INVALID');
+  lastTime=Math.max(lastTime,mark.t);
+  active+=mark.kind;
+  if(active<0)fail('E47C_OPEN_LOOP_NEGATIVE_INFLIGHT');
   peak=Math.max(peak,active);
  }
+ if(active!==0)fail('E47C_OPEN_LOOP_UNSETTLED_OFFERS');
  if(peak>manifest.stage.maxSourceAppendInflight||
     peak!==manifest.stage.maxObservedSourceAppendInflight)
   fail('E47C_OPEN_LOOP_INFLIGHT_MISMATCH');
@@ -106,6 +114,10 @@ function verifySourceOpenLoop({manifest,offers,sourceById,count}){
  const completed=rateFromTimeline(
   [...offers].sort((a,b)=>a.completedAtMs-b.completedAtMs),'completedAtMs');
  if(offered===null||completed===null||
+    !validTiming(manifest.stage.offeredEventRateMeasuredPerSecond)||
+    manifest.stage.offeredEventRateMeasuredPerSecond<=0||
+    !validTiming(manifest.stage.acceptedAppendCompletionRateMeasuredPerSecond)||
+    manifest.stage.acceptedAppendCompletionRateMeasuredPerSecond<=0||
     Math.abs(offered-manifest.stage.offeredEventRateMeasuredPerSecond)>0.002||
     Math.abs(completed-manifest.stage.acceptedAppendCompletionRateMeasuredPerSecond)>0.002)
   fail('E47C_OPEN_LOOP_RATE_MISMATCH');
@@ -177,7 +189,7 @@ export function assessProgressiveE47CStage({manifest,source,host,ei,offers,origi
   status:'raw-consistent-first-party-staging-only',
   triggerCount:1000,
   requestedRatePerSecond:manifest.stage.requestedRatePerSecond,
-  observedAppendCompletionRatePerSecond:manifest.stage.offeredEventRateMeasuredPerSecond,
+  observedAppendCompletionRatePerSecond:openLoop?.completionRate??manifest.stage.offeredEventRateMeasuredPerSecond,
   sourcePacingIsSerial:openLoop===null,
   sourceOpenLoop:openLoop,
   acceptanceE47CVerified:false,productionSloCertified:false,
