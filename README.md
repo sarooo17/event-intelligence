@@ -664,7 +664,11 @@ See the [release-gate example](docs/examples/release-gate.md) for a composed fut
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md), the
+[Code of Conduct](CODE_OF_CONDUCT.md) and the
+[repository/merge rules](.github/REPOSITORY_RULES.md). New issues support
+bug reports, feature requests and validation-evidence forms; pull requests
+have a checklist for tests, compatibility and security boundaries.
 
 Contributions are especially useful around host adapters, MCP Events compatibility, temporal semantics, production persistence, security review and reproducible provider integrations.
 

@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability (private reporting guidance)
+    url: https://github.com/sarooo17/event-intelligence/blob/main/SECURITY.md
+    about: Read the private-reporting policy; never include exploit details or credentials in a public issue.
+  - name: Development and contribution guidelines
+    url: https://github.com/sarooo17/event-intelligence/blob/main/CONTRIBUTING.md
+    about: Find setup, tests and the project contribution scope.

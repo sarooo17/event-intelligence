@@ -1,0 +1,39 @@
+name: Feature or integration proposal
+description: Propose a new behavior with an explicit host/SDK ownership boundary.
+title: "[Proposal] "
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem and concrete use case
+      description: Describe what a real consumer or operator cannot do today.
+    validations:
+      required: true
+  - type: textarea
+    id: existing
+    attributes:
+      label: Existing approaches and why they are insufficient
+      description: Consider SDK composition, host-owned behavior and existing MCP Events primitives.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed API or behavioral contract
+      description: Include inputs, outputs, ownership, error/refusal handling and neutrality across runtimes.
+    validations:
+      required: true
+  - type: textarea
+    id: safety
+    attributes:
+      label: Compatibility, authority and data safety
+      description: Address tenant boundaries, persisted-state changes, event provenance, wake receipts and breaking changes as relevant.
+    validations:
+      required: false
+  - type: textarea
+    id: validation
+    attributes:
+      label: Test plan and success criteria
+      description: Specify falsifiable acceptance and, for performance claims, actual workload measurements.
+    validations:
+      required: false
