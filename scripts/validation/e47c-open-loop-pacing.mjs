@@ -66,7 +66,9 @@ export async function scheduleBoundedSourceOffers({
  await Promise.all(tasks);
  const offeredRate=rateFromTimeline(rows,'offeredAtMs');
  const accepted=rows.filter(row=>row?.status==='accepted');
- const completedRate=rateFromTimeline(accepted,'completedAtMs');
+ const completedRate=rateFromTimeline(
+  [...accepted].sort((a,b)=>a.completedAtMs-b.completedAtMs),
+  'completedAtMs');
  return {rows,responses,peakInflight,
   offeredRate,acceptedCompletionRate:completedRate,
   allAccepted:accepted.length===count,
