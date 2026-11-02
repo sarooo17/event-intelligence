@@ -44,7 +44,7 @@ function parseObject(text){
  if(!o||typeof o!=='object'||Array.isArray(o))fail('E47C_DIAG_JSON_INVALID');
  return o;
 }
-function parseLines(text,cap,allowSparse=false){
+export function parseLines(text,cap,allowSparse=false){
  if(!text.endsWith('\n')||text.includes('\r'))
   fail('E47C_DIAG_TRUNCATED');
  const lines=text.slice(0,-1).split('\n');
