@@ -130,7 +130,7 @@ async function populate(from,to){
  FROM "${table}" WHERE scope_id=$1 AND kind='trigger_match'`,[profileScope]);
  if(r.rows[0]?.total!==to)throw Error('E48B_PERSISTED_CANDIDATE_COUNT_MISMATCH');
 }
-async function remoteHostLoad(count,stage,{ready}={}){
+async function remoteHostLoad(count,stage,{ready,rejectReady}={}){
  const scope=hostScopeBase+':e48b-'+runId+'-'+stage;
  const trig='e48b-remote-'+runId+'-'+stage;
  const def={triggerId:trig,version:'1',clauses:[{
@@ -140,15 +140,22 @@ async function remoteHostLoad(count,stage,{ready}={}){
   lifecycle:{oneShot:false,cooldownMs:0,completeOnGoal:false},
   withinMs:60000,target:{runtime:'ei-validation-host',
    kind:'benchmark-task',id:'e48b-remote-load'}};
- const made=await hostRequest(workerA,'/v1/triggers/batch',
-  {scopeId:scope,triggers:[def]},201);
- if(made.inserted!==1)throw Error('E48B_HOST_TRIGGER_NOT_REGISTERED');
+ let made;
+ try{
+  made=await hostRequest(workerA,'/v1/triggers/batch',
+   {scopeId:scope,triggers:[def]},201);
+  if(made.inserted!==1)throw Error('E48B_HOST_TRIGGER_NOT_REGISTERED');
+ }catch(error){
+  rejectReady?.(error);
+  throw error;
+ }
  const r={attempted:0,accepted:0,matched:0,delivered:0,
   refused:0,workerIds:[],latencyMs:[],errors:[],intervals:[]};
  if(ready)ready();
  for(let i=0;i<count;i++){
   const base=i%2===0?workerA:workerB,begin=performance.now();
   r.attempted++;
+  let deliveredThisRequest=false;
   try{
    const out=await hostRequest(base,'/v1/events',{
     scopeId:scope,traceId:'e48b-'+runId+'-'+stage+'-'+i,
@@ -162,11 +169,12 @@ async function remoteHostLoad(count,stage,{ready}={}){
     throw Error('E48B_HOST_WAKE_NOT_DELIVERED');
    r.accepted++;r.matched+=out.matched;
    r.delivered+=out.persistedDeliveredWakes;r.workerIds.push(out.workerId);
+   deliveredThisRequest=true;
   }catch(error){r.refused++;r.errors.push({
    code:String(error?.code??error?.message??'UNKNOWN').slice(0,95)})}
   const end=performance.now();
   r.latencyMs.push(Math.round((end-begin)*1000)/1000);
-  r.intervals.push({begin,end});
+  r.intervals.push({begin,end,delivered:deliveredThisRequest});
   await sleep(45);
  }
  const observed=await pool.query(
@@ -275,10 +283,15 @@ try{
   // Finish remote host trigger registration BEFORE collecting the first
   // Inspector sample; only count latency as under host load when actual
   // remote ingest requests overlap the timed inspection interval.
-  let signalReady;
-  const hostReady=new Promise(resolve=>{signalReady=resolve});
+  let signalReady,rejectReady;
+  const hostReady=new Promise((resolve,reject)=>{
+   signalReady=resolve;rejectReady=reject;
+  });
   const loadPromise=remoteHostLoad(loadCount,String(count),
-   {ready:signalReady});
+   {ready:signalReady,rejectReady});
+  // Observe the producer's early rejection *immediately*, including
+  // before its ready signal; await the original promise later.
+  loadPromise.catch(()=>{});
   await hostReady;
   const inspectionStart=performance.now();
   const loaded=await profileFullInspector({inspector,ids:sampleIds(count),
@@ -287,8 +300,8 @@ try{
   const inspectionEnd=performance.now();
   const host=await loadPromise;
   const overlapping=host.intervals.filter(x=>
-   x.begin<=inspectionEnd&&x.end>=inspectionStart);
-  host.overlappingRequestCount=overlapping.length;
+   x.delivered===true&&x.begin<=inspectionEnd&&x.end>=inspectionStart);
+  host.overlappingDeliveredHostEffectCount=overlapping.length;
   host.inspectionWindowMs=Math.round((inspectionEnd-inspectionStart)*1000)/1000;
   host.lastOverlappingRequestAgeMs=overlapping.length?
    Math.round((inspectionEnd-Math.max(...overlapping.map(x=>x.end)))*1000)/1000:null;
