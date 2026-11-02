@@ -11,7 +11,6 @@ const identity=s=>typeof s==='string'&&/^[a-zA-Z0-9][a-zA-Z0-9:_-]{0,159}$/.test
 const nonnegative=x=>typeof x==='number'&&Number.isFinite(x)&&x>=0;
 const positive=x=>Number.isSafeInteger(x)&&x>0;
 const STAGES=[1000,10000,100000];
-const PERCENTILES=['p50','p95','p99'];
 
 function readRaw(files,entry,kind,missing){
  if(!entry||typeof entry.file!=='string'||
@@ -86,7 +85,6 @@ function evaluateStage(stage,files,serviceIds,seenEvents,missing){
  for(const row of observed){
   if(!identity(row.eventId)||!identity(row.workerId)||!serviceIds.has(row.workerId)||
      !identity(row.wakeId)||!identity(row.runtimeReceiptId)||
-     !PERCENTILES.every(()=>true)||
      !nonnegative(row.ingestToMatchMs)||!nonnegative(row.matchToWakeMs)||
      !nonnegative(row.endToEndMs)||sampleMap.has(row.eventId)){
     missing.push(prefix+':invalid-ei-raw-sample');continue;
