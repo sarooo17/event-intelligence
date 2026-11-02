@@ -131,7 +131,15 @@ export async function inspectFailedWorkerIngress({dir,runId,rate}={}){
    if(manifest.runId!==runId)fail('E47C_DIAG_RUN_ID_MISMATCH');
    const offers=parseLines(await readBoundedFromDirectory(child,'partial-offer.jsonl',2*1024*1024),250);
    const ingest=parseLines(await readBoundedFromDirectory(child,'partial-ingest.jsonl',2*1024*1024),250);
-   const ei=parseLines(await readBoundedFromDirectory(child,'partial-ei.jsonl',2*1024*1024),250,true);
+   // The runner deliberately omits the partial EI file if no worker
+   // ACK ever succeeded. Allow that ONLY for an explicitly zero-ACK
+   // manifest. Any missing artifact with positive ACKs still fails.
+   const eiText=await readBoundedFromDirectory(
+    child,'partial-ei.jsonl',2*1024*1024).catch(err=>{
+    if(err?.code==='ENOENT'&&manifest.observed===0)return null;
+    throw err;
+   });
+   const ei=eiText===null?[]:parseLines(eiText,250,true);
    return summarizeFailedWorkerIngress({manifest,offers,ingest,ei});
   }finally{await child.close();}
  }finally{await root.close();}
