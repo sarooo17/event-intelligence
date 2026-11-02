@@ -11,6 +11,19 @@ event transport
 → runtime execution
 ```
 
+## Community and reporting
+
+Read the [Code of Conduct](CODE_OF_CONDUCT.md) before participating.
+Use the [bug report](.github/ISSUE_TEMPLATE/bug_report.yml),
+[feature proposal](.github/ISSUE_TEMPLATE/feature_request.yml) and
+[validation evidence](.github/ISSUE_TEMPLATE/validation_evidence.yml)
+forms when helpful. For confidential security reports, follow
+[SECURITY.md](SECURITY.md); do not disclose vulnerabilities or customer
+data in public issues.
+
+The [repository rules guide](.github/REPOSITORY_RULES.md) documents intended
+merge protections; it is **not** itself an enabled GitHub ruleset.
+
 ## Before opening a PR
 
 1. Check whether the change belongs in Event Intelligence rather than in a provider adapter or agent runtime.
@@ -38,6 +51,14 @@ docker build -t mcp-event-intelligence:dev .
 ```
 
 ## Pull requests
+
+Use the [PR template](.github/PULL_REQUEST_TEMPLATE.md). Describe exact
+HEAD evidence and the **limits** of testing. CI success and a PR review
+do not imply independent third-party production or security certification.
+Only a separately approved, directly evidenced issue acceptance may be
+checked; optional #376/#317 validation is distinct from the stable SDK
+v1 readiness gates.
+
 
 A useful PR explains:
 
