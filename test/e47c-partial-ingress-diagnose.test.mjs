@@ -136,3 +136,64 @@ test('producer redaction cannot be mistaken for a proven transport fault',async(
  assert.equal(summarizeFailedWorkerIngress(f).failedRequests[0].category,
   'unknown-worker-send-failure');
 });
+
+function largeFailedFixture(){
+ const f=fixture();
+ f.offers=[];f.ingest=[];f.ei=[];
+ for(let i=0;i<1000;i++){
+  const eventId='e47c-'+runId+'-'+i;
+  const workerId=i%2?'ei-worker-b':'ei-worker-a';
+  const status=i<760?'accepted':'backpressure-refused';
+  f.offers.push({index:i,eventId,status:'accepted'});
+  f.ingest.push({index:i,eventId,workerId,status});
+  if(status==='accepted')f.ei[i]={eventId,workerId};
+ }
+ Object.assign(f.manifest,{
+  appended:1000,observed:760,deliveryMode:'eventual',
+  ratePacingIsSerialAppend:false,sourceAndHostAreFirstParty:true,
+  sourceCommitSha:'a'.repeat(40),offerMetrics:{accepted:1000,rejected:0},
+  ingestMetrics:{workerIds:['ei-worker-a','ei-worker-b'],
+   accepted:760,rejected:240,peakInflight:8}
+ });
+ return f;
+}
+test('read-only failure classifier covers exact opt-in 1000-event run and sparse data',()=>{
+ const f=largeFailedFixture();
+ const raw=f.ei.map(x=>JSON.stringify(x)).join('\n')+'\n';
+ const parsed=parseLines(raw,1000,true);
+ assert.equal(parsed.length,1000);
+ assert.equal(parsed[999],null);
+ assert.throws(()=>parseLines(raw,250,true),/E47C_DIAG_BOUNDS/);
+ const d=summarizeFailedWorkerIngress({...f,ei:parsed});
+ assert.equal(d.sourceAppended,1000);
+ assert.equal(d.workerWakeAcknowledged,760);
+ assert.equal(d.failureCount,240);
+ assert.deepEqual(d.statusCounts,{
+  accepted:760,failed:0,backpressureRefused:240
+ });
+ assert.equal(d.productionSloCertified,false);
+ assert.equal(d.verifiedOutOfBand,false);
+ assert.ok(!JSON.stringify(d).includes(runId));
+ assert.ok(!JSON.stringify(d).includes('ei-worker-a'));
+});
+test('exact 1k failure classification rejects fraudulent scope, missing rows and non-opt-in',()=>{
+ const attacks=[
+  f=>{f.manifest.deliveryMode='immediate';},
+  f=>{f.manifest.ratePacingIsSerialAppend=true;},
+  f=>{f.manifest.sourceAndHostAreFirstParty=false;},
+  f=>{f.manifest.sourceCommitSha='main';},
+  f=>{f.manifest.offerMetrics.accepted=999;},
+  f=>{f.manifest.offerMetrics.rejected=1;},
+  f=>{f.manifest.appended=999;},
+  f=>{f.manifest.observed=759;},
+  f=>{f.ingest.pop();},
+  f=>{f.offers[10].status='backpressure-refused';},
+  f=>{f.ingest[0].workerId='some-other-worker';},
+  f=>{f.ei[700].eventId='other-event';},
+  f=>{f.manifest.productionSloCertified=true;},
+ ];
+ for(const mutate of attacks){
+  const f=largeFailedFixture();mutate(f);
+  assert.throws(()=>summarizeFailedWorkerIngress(f));
+ }
+});
