@@ -47,23 +47,33 @@ export async function waitForDurableReceiptCount({
  if(!isFiniteTiming(start))fail('E47C_DURABLE_DRAIN_CLOCK_INVALID');
  let polls=0;
  for(;;){
-  const sample=await readCounts();
+  const beforeRead=now()-start;
+  if(!isFiniteTiming(beforeRead))fail('E47C_DURABLE_DRAIN_CLOCK_INVALID');
+  if(beforeRead>=maxWaitMs)fail('E47C_DURABLE_DRAIN_TIMEOUT');
+  // Callers can scope DB statement_timeout to the remaining budget.
+  const sample=await readCounts({
+   remainingMs:Math.max(1,Math.floor(maxWaitMs-beforeRead))
+  });
   polls++;
   const receipts=sample?.receipts,uniqueWakes=sample?.uniqueWakes,
-   uniqueReceipts=sample?.uniqueReceipts;
+   uniqueReceipts=sample?.uniqueReceipts,delivered=sample?.delivered;
   if(!Number.isSafeInteger(receipts)||!Number.isSafeInteger(uniqueWakes)||
-     !Number.isSafeInteger(uniqueReceipts)||receipts<0||
-     uniqueWakes<0||uniqueReceipts<0||receipts>expectedCount||
-     uniqueWakes>expectedCount||uniqueReceipts>expectedCount||
+     !Number.isSafeInteger(uniqueReceipts)||!Number.isSafeInteger(delivered)||
+     receipts<0||uniqueWakes<0||uniqueReceipts<0||delivered<0||
+     receipts>expectedCount||uniqueWakes>expectedCount||
+     uniqueReceipts>expectedCount||delivered>receipts||
      receipts!==uniqueWakes||receipts!==uniqueReceipts)
    fail('E47C_DURABLE_DRAIN_COUNT_MISMATCH');
   const elapsed=now()-start;
   if(!isFiniteTiming(elapsed))fail('E47C_DURABLE_DRAIN_CLOCK_INVALID');
-  if(receipts===expectedCount)return Object.freeze({
-   settledCount:receipts,polls,drainElapsedMs:Math.round(elapsed*1000)/1000,
-   requirePerEventLineage:true,productionSloCertified:false
-  });
+  // A late query must never turn a timed-out campaign into a pass.
   if(elapsed>=maxWaitMs)fail('E47C_DURABLE_DRAIN_TIMEOUT');
+  if(receipts===expectedCount&&delivered===expectedCount)
+   return Object.freeze({
+    settledCount:receipts,durableDelivered:delivered,polls,
+    drainElapsedMs:Math.round(elapsed*1000)/1000,
+    requirePerEventLineage:true,productionSloCertified:false
+   });
   await wait(Math.min(pollMs,maxWaitMs-elapsed));
  }
 }
