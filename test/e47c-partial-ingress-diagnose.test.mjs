@@ -161,8 +161,10 @@ test('read-only failure classifier covers exact opt-in 1000-event run and sparse
  const f=largeFailedFixture();
  const raw=f.ei.map(x=>JSON.stringify(x)).join('\n')+'\n';
  const parsed=parseLines(raw,1000,true);
- assert.equal(parsed.length,1000);
- assert.equal(parsed[999],null);
+ // The runner's sparse EI array ends at its last accepted index:
+ // tail backpressure rows have no EI ACK and are not serialized.
+ assert.equal(parsed.length,760);
+ assert.equal(parsed[999],undefined);
  assert.throws(()=>parseLines(raw,250,true),/E47C_DIAG_BOUNDS/);
  const d=summarizeFailedWorkerIngress({...f,ei:parsed});
  assert.equal(d.sourceAppended,1000);
