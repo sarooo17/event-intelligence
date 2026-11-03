@@ -181,3 +181,47 @@ test('independent ingest evidence rejects tampering, censored rows and forged th
   assert.throws(()=>assessProgressiveE47CStage(f));
  }
 });
+
+function withEventualDurability(){
+ const f=withParallelIngress();
+ f.manifest.schema='ei.e47c.progressive-1k-durable-preflight.v2';
+ f.manifest.stage.deliveryMode='eventual';
+ f.manifest.stage.durableDrain={settledCount:50,polls:3,
+  drainElapsedMs:850,requirePerEventLineage:true,
+  productionSloCertified:false};
+ f.manifest.stage.deferredImmediateResponses=2;
+ f.manifest.stage.workerRequestCompletionMs={p50:300,p95:300,p99:300};
+ delete f.manifest.stage.workerRequestToHostReceiptMs;
+ f.ei.forEach((row,i)=>{
+  row.immediateDelivered=i!==4&&i!==31;
+  row.matchToWakeMs=row.immediateDelivered?2:null;
+  row.workerRequestCompletionMs=300;
+  delete row.workerRequestToHostReceiptMs;
+ });
+ return f;
+}
+test('independent recheck records deferred samples as censored, not invented p99',()=>{
+ const f=withEventualDurability();
+ const result=assessProgressiveE47CStage(f);
+ assert.equal(result.eventCount,50);
+ assert.equal(result.latency.matchToWakeObservedSamples,48);
+ assert.equal(result.latency.matchToWakeCensoredSamples,2);
+ assert.equal(result.latency.workerRequestCompletion.p99,300);
+ assert.equal(result.latency.workerRequestToHostReceipt,null);
+ assert.equal(result.productionSloCertified,false);
+});
+test('eventual verifier rejects fake settlement, forged sample, missing response and misattribution',()=>{
+ for(const change of [
+  f=>{f.manifest.stage.durableDrain.settledCount=49;},
+  f=>{f.manifest.stage.durableDrain.requirePerEventLineage=false;},
+  f=>{f.manifest.stage.durableDrain.productionSloCertified=true;},
+  f=>{f.manifest.stage.deferredImmediateResponses=0;},
+  f=>{f.ei[4].matchToWakeMs=5;},
+  f=>{f.ei[31].immediateDelivered=true;},
+  f=>{f.ei[10].workerRequestCompletionMs=-1;},
+  f=>{f.ingest[0].status='backpressure-refused';},
+  f=>{f.manifest.stage.workerRequestCompletionMs.p99=800;},
+  f=>{f.host[0].runtimeReceiptId='not-a-host-receipt';},
+ ]){const f=withEventualDurability();change(f);
+  assert.throws(()=>assessProgressiveE47CStage(f));}
+});
