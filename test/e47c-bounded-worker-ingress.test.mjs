@@ -135,3 +135,21 @@ test('bounded receipt drain rejects missing, duplicated, over-counted or timed-o
   expectedCount:10,maxWaitMs:0,pollMs:100,readCounts:async()=>({})
  }),/E47C_DURABLE_DRAIN_CONFIG_INVALID/);
 });
+
+test('eventual ACK mode counts admitted-but-not-yet-delivered responses, never runner refusals',async()=>{
+ const deferred=(i,id)=>({accepted:true,workerId:id,matched:1,
+  persistedDeliveredWakes:0,
+  timings:{ingestToMatchMs:3+i,matchToWakeSamplesMs:[]}});
+ const job=await scheduleBoundedWorkerIngress({count:10,rate:5,maxInflight:4,
+  deliveryMode:'eventual',workerIds:['ei-a','ei-b'],
+  send:async i=>i===3?deferred(i,'ei-b'):receipt(i,i%2?'ei-b':'ei-a')});
+ assert.equal(job.allAccepted,true);
+ assert.equal(job.rejected,0);
+ assert.equal(job.responses[3].persistedDeliveredWakes,0);
+ const invalid=await scheduleBoundedWorkerIngress({count:10,rate:5,maxInflight:4,
+  deliveryMode:'eventual',workerIds:['ei-a','ei-b'],
+  send:async i=>i===3?{...deferred(i,'ei-b'),matched:0}:
+   receipt(i,i%2?'ei-b':'ei-a')});
+ assert.equal(invalid.allAccepted,false);
+ assert.equal(invalid.rows[3].errorCode,'E47C_WORKER_ACK_MATCH_COUNT_INVALID');
+});
