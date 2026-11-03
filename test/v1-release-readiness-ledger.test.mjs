@@ -5,6 +5,7 @@ import {
   evaluateV1Readiness, readV1Readiness,
   V1_REQUIRED_CRITERIA,V1_OPTIONAL_CRITERIA,verifyV1ReviewedSource,
 } from '../scripts/evidence/v1-release-readiness.mjs';
+import {classifySafeReleaseVersion} from '../scripts/evidence/safe-release-channel.mjs';
 
 const ledger=JSON.parse(readFileSync(
   new URL('../docs/releases/v1-readiness.json',import.meta.url)));
@@ -266,10 +267,31 @@ test('npm and MCP stable release workflows fail closed on unsigned 1.0 readiness
     assert.ok(text.indexOf('v1-release-readiness.mjs --strict') <
       text.indexOf(finalAction),workflow);
     assert.ok(text.includes('test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_SHA"'),workflow);
-    assert.ok(text.includes('if [[ "$VERSION" =~ ^[1-9][0-9]*\\.[0-9]+\\.[0-9]+$ ]]; then'),workflow);
+    assert.ok(text.includes('node scripts/evidence/safe-release-channel.mjs "$VERSION"'),workflow);
+    assert.ok(text.includes('if [ "$VERSION" = "1.0.0" ]; then'),workflow);
   }
   assert.ok(publish.includes('fetch-depth: 0'));
   assert.ok(publish.includes('Stable npm version already exists; refusing no-op publish'));
   assert.ok(release.includes('head_branch == \'main\''));
   assert.ok(!/^  push:/m.test(release),'Release must not mint stable tags on code pushes');
+});
+
+test('canonical npm release classifier blocks build-metadata downgrade and unreviewed future stable',()=>{
+  assert.deepEqual(classifySafeReleaseVersion('0.12.0-next.1'),
+    {tag:'next',stableV1:false});
+  assert.deepEqual(classifySafeReleaseVersion('1.0.0-rc.1'),
+    {tag:'next',stableV1:false});
+  assert.deepEqual(classifySafeReleaseVersion('0.11.0'),
+    {tag:'latest',stableV1:false});
+  assert.deepEqual(classifySafeReleaseVersion('1.0.0'),
+    {tag:'latest',stableV1:true});
+  for(const invalid of [
+    '1.0.0+build-foo','1.0.0+build.foo','1.0.0+evidence-1',
+    '01.0.0','1.00.0','1.0.00','1.0.0-rc.01',
+    '1.0.0--','1.0.0-rc..1','v1.0.0','1.0','1.0.0 garbage',
+    '1.0.1','1.1.0','2.0.0',
+  ]) {
+    assert.throws(()=>classifySafeReleaseVersion(invalid),
+      e=>['EI_RELEASE_VERSION_NOT_CANONICAL','EI_FUTURE_STABLE_POLICY_REQUIRED'].includes(e?.code),invalid);
+  }
 });
