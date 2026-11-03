@@ -14,6 +14,7 @@ const errorCategory=code=>{
  if(code==='E47C_WORKER_ACK_NOT_ACCEPTED')return 'worker-not-accepted';
  if(code==='E47C_WORKER_ACK_IDENTITY_MISMATCH')return 'worker-identity-mismatch';
  if(code==='E47C_WORKER_ACK_MATCH_COUNT_INVALID')return 'worker-match-count-invalid';
+ if(code==='E47C_WORKER_ACK_DELIVERY_COUNT_INVALID')return 'worker-delivery-count-invalid';
  if(code==='E47C_WORKER_ACK_IMMEDIATE_DELIVERY_MISSING')return 'immediate-delivery-not-proven';
  if(code==='E47C_WORKER_ACK_INGEST_TIMING_INVALID')return 'ingest-timing-invalid';
  if(code==='E47C_WORKER_ACK_WAKE_TIMING_INVALID')return 'wake-timing-invalid';
@@ -60,13 +61,20 @@ export function parseLines(text,cap,allowSparse=false){
 }
 export function summarizeFailedWorkerIngress({manifest,offers,ingest,ei}={}){
  const runId=manifest?.runId,count=manifest?.appended;
+ const large=count===1000&&manifest?.deliveryMode==='eventual'&&
+  manifest?.ratePacingIsSerialAppend===false&&
+  manifest?.sourceAndHostAreFirstParty===true&&
+  manifest?.offerMetrics?.accepted===1000&&
+  manifest?.offerMetrics?.rejected===0&&
+  /^[0-9a-f]{40}$/.test(manifest?.sourceCommitSha??'');
  if(!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(runId??'')||
     manifest.status!=='failed'||
     manifest.errorCode!=='E47C_WORKER_INGRESS_BACKPRESSURE_OR_ACK_FAILURE'||
     manifest.acceptanceE47CVerified!==false||
     manifest.productionSloCertified!==false||
     manifest.inserted!==1000||
-    !Number.isSafeInteger(count)||count<10||count>250||
+    !Number.isSafeInteger(count)||count<10||
+    (count>250&&!large)||count>1000||
     !Number.isSafeInteger(manifest.observed)||manifest.observed<0||
     !Array.isArray(offers)||offers.length!==count||
     !Array.isArray(ingest)||ingest.length!==count||
@@ -80,7 +88,7 @@ export function summarizeFailedWorkerIngress({manifest,offers,ingest,ei}={}){
  const counts={accepted:0,failed:0,backpressureRefused:0};
  const workerCounts={'worker-0':{accepted:0,failed:0,backpressureRefused:0},
   'worker-1':{accepted:0,failed:0,backpressureRefused:0}};
- const failures=[];
+ const failures=[],failureCategoryCounts={};
  for(let i=0;i<count;i++){
   const expectedEventId='e47c-'+runId+'-'+i;
   const offer=offers[i],row=ingest[i],ack=ei[i]??null;
@@ -98,8 +106,9 @@ export function summarizeFailedWorkerIngress({manifest,offers,ingest,ei}={}){
    if(ack!==null)fail('E47C_DIAG_UNEXPECTED_EI_ACK');
    if(row.status==='failed'){
     counts.failed++;workerCounts[alias].failed++;
-    failures.push({index:i,worker:alias,status:'failed',
-     category:errorCategory(row.errorCode)});
+    const category=errorCategory(row.errorCode);
+    failureCategoryCounts[category]=(failureCategoryCounts[category]||0)+1;
+    failures.push({index:i,worker:alias,status:'failed',category});
    }else{
     counts.backpressureRefused++;workerCounts[alias].backpressureRefused++;
     failures.push({index:i,worker:alias,status:'backpressure-refused'});
@@ -117,7 +126,7 @@ export function summarizeFailedWorkerIngress({manifest,offers,ingest,ei}={}){
   acceptanceE47CVerified:false,productionSloCertified:false,
   triggers:1000,sourceAppended:count,
   workerWakeAcknowledged:manifest.observed,
-  statusCounts:counts,workerCounts,
+  statusCounts:counts,workerCounts,failureCategoryCounts,
   failedRequests:failures.slice(0,30),
   failureCount:failures.length,
   boundedCampaign:true
@@ -136,8 +145,9 @@ export async function inspectFailedWorkerIngress({dir,runId,rate}={}){
   try{
    const manifest=parseObject(await readBoundedFromDirectory(child,'partial-manifest.json',1024*1024));
    if(manifest.runId!==runId)fail('E47C_DIAG_RUN_ID_MISMATCH');
-   const offers=parseLines(await readBoundedFromDirectory(child,'partial-offer.jsonl',2*1024*1024),250);
-   const ingest=parseLines(await readBoundedFromDirectory(child,'partial-ingest.jsonl',2*1024*1024),250);
+   const cap=manifest.appended===1000?1000:250;
+   const offers=parseLines(await readBoundedFromDirectory(child,'partial-offer.jsonl',2*1024*1024),cap);
+   const ingest=parseLines(await readBoundedFromDirectory(child,'partial-ingest.jsonl',2*1024*1024),cap);
    // The runner deliberately omits the partial EI file if no worker
    // ACK ever succeeded. Allow that ONLY for an explicitly zero-ACK
    // manifest. Any missing artifact with positive ACKs still fails.
@@ -146,7 +156,7 @@ export async function inspectFailedWorkerIngress({dir,runId,rate}={}){
     if(err?.code==='ENOENT'&&manifest.observed===0)return null;
     throw err;
    });
-   const ei=eiText===null?[]:parseLines(eiText,250,true);
+   const ei=eiText===null?[]:parseLines(eiText,cap,true);
    return summarizeFailedWorkerIngress({manifest,offers,ingest,ei});
   }finally{await child.close();}
  }finally{await root.close();}
