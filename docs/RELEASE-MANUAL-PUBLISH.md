@@ -36,6 +36,13 @@ The source already reviewed must include exact package/lock/Registry identity,
 compatibility notes, frozen release workflows, tests and ABI. After that,
 only a ledger-only signoff PR may be merged without invalidating approvals.
 
+The canonical npm version is parsed **before channel selection**, rejecting
+SemVer build metadata (including deceptive `1.0.0+build-foo`), malformed
+aliases and leading-zero versions. The present nine-gate dossier only
+covers the initial **exact `1.0.0`** stable publication: future stable
+`1.0.1`/`1.1.0`/`2.0.0` are explicitly blocked until a separate revised
+release-readiness policy is reviewed, rather than inheriting v1.0 approval.
+
 The separate `Release` workflow now starts exclusively after a successful
 `Publish npm` workflow on `main` (no push-based release of workflow edits).
 It repeats the strict source gate before creating any stable MCP Registry
