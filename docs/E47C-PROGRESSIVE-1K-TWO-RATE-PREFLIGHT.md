@@ -204,3 +204,52 @@ source-log SHA-256 **outside the writable private volume**, run
 process with those externally observed hash pins. Both scripts must
 always mark `acceptanceE47CVerified:false` and
 `productionSloCertified:false`.
+
+## Opt-in eventual delivery and bounded durable-settlement proof
+
+The existing strict `/v1/events` calibration default remains
+`EI_E47C_DELIVERY_MODE=immediate`: one match **and** one immediately delivered
+host wake must appear in each response. This is deliberately stricter than
+EI's durable delivery semantics and can fail even when the wake is later
+persisted. Do **not** reinterpret an immediate ACK failure as a lost wake.
+
+To test the actual asynchronous delivery semantics in a **separate, opt-in**
+first-party staging run, set:
+
+```sh
+EI_E47C_DELIVERY_MODE=eventual
+EI_E47C_DURABLE_DRAIN_MS=30000
+EI_E47C_WORKER_MAX_INFLIGHT=8
+```
+
+`eventual` accepts a strict identity/one-match worker response when immediate
+host delivery count is **0 or 1** with exactly corresponding timing samples.
+It does **not** accept missing worker ACKs, 0/2 matches, forged worker IDs,
+malformed timing or runner backpressure. The immutable open-loop offered-rate
+schedule and explicit finite ingress cap are unchanged. Do not silently retry
+or drop failed requests. The operator must choose the concurrency limit and
+report it with the full offered/ACK completion rate and refusal count.
+
+After every source-linked event is admitted, the runner polls **read-only**
+exact-scope PostgreSQL host receipt counts for a bounded 1–120 second timeout.
+It fails on missing/duplicate/overcounted wake or receipt identities and on
+timeout. Passing the count alone is **never enough**: the subsequent strict
+per-event original source→fired match→distinct wake→durable delivered record→
+linked host receipt/attempt count reconciliation still runs. This remains one
+shared PG16 first-party host, not independent enterprise host certification.
+
+The new optional raw manifest is
+`ei.e47c.progressive-1k-durable-preflight.v2`. It stores **worker request
+completion** timing separately from an actual host receipt; an ACK with no
+immediate delivery has `matchToWakeMs:null` and `immediateDelivered:false`.
+The second-process raw verifier recomputes the sample coverage and explicitly
+marks the missing immediate timing samples as **censored**. It does not claim
+full provider→host end-to-end p99, independent source/business effect, 10k/100k
+load, externally immutable off-host logs or E47-C certification. Older
+`v1` manifest rechecks remain supported unchanged.
+
+For a real test, first obtain exact-head green CI + independent review, then
+pin the reviewed commit in the isolated one-shot service, explicitly enable
+the new mode, preserve original source SHA and raw manifest hashes from the
+**original** Railway runtime logs, and re-audit from a **separate process**.
+If any stage fails, preserve failure evidence and leave E47-C unchecked.
