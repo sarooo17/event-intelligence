@@ -99,28 +99,30 @@ test('deferred worker admission accepts exactly one persisted match without forc
 });
 test('bounded receipt drain waits for late durable host effects; exact lineage is still required',async()=>{
  let clock=0,n=0;
- const receipts=[0,7,10];
+ const receipts=[0,7,10,10],delivered=[0,5,9,10];
  const r=await waitForDurableReceiptCount({
   expectedCount:10,maxWaitMs:3000,pollMs:200,
   now:()=>clock,wait:async ms=>{clock+=ms;},
   readCounts:async()=>{
-   const count=receipts[Math.min(n++,receipts.length-1)];
-   return {receipts:count,uniqueWakes:count,uniqueReceipts:count};
+   const index=Math.min(n++,receipts.length-1),count=receipts[index];
+   return {receipts:count,uniqueWakes:count,uniqueReceipts:count,
+    delivered:delivered[index]};
   }
  });
  assert.equal(r.settledCount,10);
- assert.equal(r.polls,3);
- assert.equal(r.drainElapsedMs,400);
+ assert.equal(r.durableDelivered,10);
+ assert.equal(r.polls,4);
+ assert.equal(r.drainElapsedMs,600);
  assert.equal(r.requirePerEventLineage,true);
  assert.equal(r.productionSloCertified,false);
 });
 test('bounded receipt drain rejects missing, duplicated, over-counted or timed-out outcomes',async()=>{
  const base={expectedCount:10,maxWaitMs:1000,pollMs:250};
  for(const response of [
-  {receipts:10,uniqueWakes:9,uniqueReceipts:10},
-  {receipts:11,uniqueWakes:11,uniqueReceipts:11},
-  {receipts:10,uniqueWakes:10,uniqueReceipts:9},
-  {receipts:10,uniqueWakes:10,uniqueReceipts:'10'}
+  {receipts:10,uniqueWakes:9,uniqueReceipts:10,delivered:10},
+  {receipts:11,uniqueWakes:11,uniqueReceipts:11,delivered:11},
+  {receipts:10,uniqueWakes:10,uniqueReceipts:9,delivered:10},
+  {receipts:10,uniqueWakes:10,uniqueReceipts:'10',delivered:10}
  ]){
   await assert.rejects(waitForDurableReceiptCount({
    ...base,readCounts:async()=>response
@@ -129,7 +131,7 @@ test('bounded receipt drain rejects missing, duplicated, over-counted or timed-o
  let clock=0;
  await assert.rejects(waitForDurableReceiptCount({...base,now:()=>clock,
   wait:async ms=>{clock+=ms;},
-  readCounts:async()=>({receipts:9,uniqueWakes:9,uniqueReceipts:9})
+  readCounts:async()=>({receipts:9,uniqueWakes:9,uniqueReceipts:9,delivered:9})
  }),/E47C_DURABLE_DRAIN_TIMEOUT/);
  await assert.rejects(waitForDurableReceiptCount({
   expectedCount:10,maxWaitMs:0,pollMs:100,readCounts:async()=>({})
@@ -152,4 +154,17 @@ test('eventual ACK mode counts admitted-but-not-yet-delivered responses, never r
    receipt(i,i%2?'ei-b':'ei-a')});
  assert.equal(invalid.allAccepted,false);
  assert.equal(invalid.rows[3].errorCode,'E47C_WORKER_ACK_MATCH_COUNT_INVALID');
+});
+
+test('query crossing the drain deadline never certifies a late receipt',async()=>{
+ let clock=0;
+ await assert.rejects(waitForDurableReceiptCount({
+  expectedCount:10,maxWaitMs:1000,pollMs:200,
+  now:()=>clock,wait:async ms=>{clock+=ms;},
+  readCounts:async({remainingMs})=>{
+   assert.equal(remainingMs,1000);
+   clock=5000;
+   return {receipts:10,uniqueWakes:10,uniqueReceipts:10,delivered:10};
+  }
+ }),/E47C_DURABLE_DRAIN_TIMEOUT/);
 });
