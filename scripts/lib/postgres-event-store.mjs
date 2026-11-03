@@ -3784,8 +3784,10 @@ export class PostgresEventStore {
         ' WHERE scope_id=$1 AND kind=$2 ORDER BY history_id DESC LIMIT 1',
         [this.scopeId, 'audit'],
       );
-      const previous = head.rows[0]?.payload
-        ? parseAuditRecord(head.rows[0].payload) : null;
+      // JSONB NOT NULL still permits JSON null/false/0/empty string.
+      // A physically present malformed row must NEVER restart the chain.
+      const previous = head.rows.length === 0
+        ? null : parseAuditRecord(head.rows[0].payload);
       if (previous) {
         // Detect a changed terminal record before extending its hash chain.
         // Full-genesis verifyAudit/checkpoint remains an explicit operator
