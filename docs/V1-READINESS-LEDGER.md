@@ -54,7 +54,18 @@ subject to human/reviewer verification, and `autoPublish` is always false.
 
 Before changing a row to `verified`, the release owner must attach evidence
 links, named reviewer, date and explicit verification procedure; PR review
-must verify both completeness and truth of those artifacts. A green
+must verify both completeness and truth of those artifacts. For stable v1, a
+verified row must also contain an immutable 40-character
+`verification.sourceCommitSha` pointing to a **previously reviewed, frozen
+main-branch source commit**. The strict publish/release check verifies that
+this commit is an ancestor of the actual release HEAD and that the entire
+repo, except this readiness ledger, has no changes since the reviewed source.
+It is impossible for a committed file to contain its own commit hash; do not
+ask the ledger to sign itself. `--strict` also requires
+`EI_RELEASE_SOURCE_SHA` set to the actual checked-out HEAD and is blocked
+until package identity is exactly `1.0.0`. Workflow runs derive this from
+GitHub and recheck the Git commit; neither `--report` nor a user-written
+reviewer string is independent evidence. A green
 `eligible-for-manual-review` means only all checked-in prerequisites are
 declared, not that an npm publish is safe or authorized. Existing exact
 Muffin/Artemis dependency pins are never touched by this workflow.
