@@ -201,3 +201,19 @@ test('1k durable receipt polling requires explicit maxExpectedCount and 1000 uni
   expectedCount:1000,maxExpectedCount:1001,readCounts
  }),/E47C_DURABLE_DRAIN_CONFIG_INVALID/);
 });
+
+test('20-worker concurrency uses an explicit increased cap; default still rejects',async()=>{
+ let clock=0;
+ const settings={count:10,rate:5,maxInflight:20,workerIds:['ei-a','ei-b'],
+  now:()=>clock,wait:async ms=>{clock+=ms;},
+  send:async i=>receipt(i,i%2?'ei-b':'ei-a')};
+ await assert.rejects(scheduleBoundedWorkerIngress(settings),
+  /E47C_BAD_OPEN_LOOP_CONFIGURATION/);
+ const run=await scheduleBoundedWorkerIngress({...settings,maxInflightLimit:20});
+ assert.equal(run.allAccepted,true);
+ assert.equal(run.accepted,10);
+ assert.equal(run.rejected,0);
+ await assert.rejects(scheduleBoundedWorkerIngress({
+  ...settings,maxInflight:21,maxInflightLimit:20
+ }),/E47C_BAD_OPEN_LOOP_CONFIGURATION/);
+});

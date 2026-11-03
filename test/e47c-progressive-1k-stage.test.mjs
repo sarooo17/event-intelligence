@@ -126,3 +126,16 @@ test('pre-write read-only worker readiness proves two independently identified p
  await assert.rejects(preflightLargeWorkers({workerA:'https://example.com',
   workerB:b,request}));
 });
+
+test('worker cap 20 is accepted only by explicit 1k-event staging',()=>{
+ const large={...env,
+  EI_E47C_STAGE_CONFIRM:'RUN_1000_EVENTS_FIRST_PARTY_STAGING',
+  EI_E47C_STAGE_EVENTS:'1000',EI_E47C_STAGE_RATE:'5',
+  EI_E47C_DELIVERY_MODE:'eventual',EI_E47C_WORKER_MAX_INFLIGHT:'20'};
+ assert.equal(progressiveConfig(large).workerInflight,20);
+ for(const cap of ['0','21','100','abc'])
+  assert.throws(()=>progressiveConfig({...large,
+   EI_E47C_WORKER_MAX_INFLIGHT:cap}),/E47C_PILOT_LIMIT_EXCEEDED/);
+ assert.throws(()=>progressiveConfig({...env,
+  EI_E47C_WORKER_MAX_INFLIGHT:'20'}),/E47C_PILOT_LIMIT_EXCEEDED/);
+});

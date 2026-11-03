@@ -18,7 +18,7 @@ EI_E47C_STAGE_RATE=5
 EI_E47C_DELIVERY_MODE=eventual
 EI_E47C_DURABLE_DRAIN_MS=30000
 EI_E47C_MAX_INFLIGHT=4
-EI_E47C_WORKER_MAX_INFLIGHT=8
+EI_E47C_WORKER_MAX_INFLIGHT=20
 EI_E47C_SOURCE_SHA=<exact independently reviewed and merged main commit>
 EI_E47C_ARTIFACT_DIR=/evidence
 ```
@@ -39,7 +39,9 @@ offers before verification. Real completion time may be longer.
 - Existing authenticated first-party source archive strictly below 14 MiB
   of its fixed 16 MiB process/log limit, leaving at least 2 MiB reserve
 - Fixed 1k trigger count, two worker identities, distinct source/host
-  endpoints, PG16, hard source/worker in-flight caps (1–8)
+  endpoints and PG16; source append cap stays 1–8, while the **explicit**
+  1k worker ingress cap is separately bounded to 1–20 (legacy 250-event
+  mode and scheduler defaults remain limited to 1–8)
 - All 1k source offers, source ACKs, EI ingress ACKs and durable
   host settlements must be accounted for. Over-capacity offers explicitly
   fail; no adaptive rate, retries or discarded event IDs are hidden
@@ -72,3 +74,34 @@ archive are **not** established here. A passed first-party v3 is not E47-C
 acceptance and cannot check any of E47-A/B/C or E317. All reports must
 retain `productionSloCertified:false` and
 `acceptanceE47CVerified:false`.
+
+## Measured first 1k cohort failure and next capacity experiment
+
+The first actual first-party Railway 1k-trigger/1k-event **5/s** campaign
+(`c1bc064d-ab3b-4747-85a9-33b3043c5d8a`, scope run
+`8e1522eb-1d3b-4620-88f1-d56f309b36e6`) correctly **FAILED**
+with a hard worker in-flight cap of **8**. All 1k source events were
+durably appended but **760/1,000** were accepted by EI, with **240
+explicit runner backpressure refusals**, 0 worker request failures. A
+separate exact-scope read-only PG16 query confirmed 760 distinct
+matches, wakes and durable host effects (no duplicate accepted effects).
+Original failed partial artifacts remain privately retained, not
+externally signed or independently immutable.
+
+Request durations from the 760 accepted workers (thus excluding refusal
+latency) were p50 1,554.605 ms / p95 3,025.038 ms / p99 3,338.991 ms.
+The refusal count increased at larger source-order indices.
+With 5 requests/s offered, a fixed cap of 8 admits at most 1.6 seconds
+of steady in-flight residence. **A second fresh, explicitly opted-in
+cap-20 cohort** probes whether bounded overlap addresses observed
+backpressure without altering the source rate or hiding refusals.
+It is a *new test*, not retrospective reinterpretation of the first
+failed 1k campaign; if any request is refused or not reconciled, the
+campaign must again fail.
+
+`scripts/validation/e47c-partial-ingress-diagnose.mjs` supports an
+exactly-1k failed cohort only with explicit first-party/eventual/source
+evidence flags and 1k accepted source offers. It reads bounded raw files
+from the existing private volume and emits only safe aggregate worker
+aliases/reason categories; it **cannot** certify the mutable original
+volume or reconstruct signed provider truth after a failed partial run.

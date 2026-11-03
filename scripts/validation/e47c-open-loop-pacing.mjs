@@ -11,14 +11,16 @@ export function rateFromTimeline(rows,field){
  return round((rows.length-1)*1000/(last-first));
 }
 export async function scheduleBoundedSourceOffers({
- count,rate,maxInflight=4,send,maxCount=250,
+ count,rate,maxInflight=4,send,maxCount=250,maxInflightLimit=8,
  now=()=>performance.now(),
  wait=ms=>new Promise(resolve=>setTimeout(resolve,ms)),
 }={}){
  if(!Number.isSafeInteger(maxCount)||maxCount<2||maxCount>1000||
+    !Number.isSafeInteger(maxInflightLimit)||maxInflightLimit<1||
+    maxInflightLimit>20||
     !Number.isSafeInteger(count)||count<2||count>maxCount||
     ![1,5].includes(rate)||!Number.isSafeInteger(maxInflight)||
-    maxInflight<1||maxInflight>8||typeof send!=='function'||
+    maxInflight<1||maxInflight>maxInflightLimit||typeof send!=='function'||
     typeof now!=='function'||typeof wait!=='function')
   throw Error('E47C_BAD_OPEN_LOOP_CONFIGURATION');
  const start=now();
