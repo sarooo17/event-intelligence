@@ -105,3 +105,13 @@ test('1000-event v3 rejects truncated/raw-false/duplicate/backpressure evidence'
   assert.throws(()=>assessProgressiveE47CStage(f));
  }
 });
+
+test('v3 independent validator accepts bounded max 20 and rejects 21',()=>{
+ const f=largeFixture();
+ f.manifest.stage.workerIngressMaxInflight=20;
+ const accepted=assessProgressiveE47CStage(f);
+ assert.equal(accepted.eventCount,1000);
+ assert.equal(accepted.productionSloCertified,false);
+ f.manifest.stage.workerIngressMaxInflight=21;
+ assert.throws(()=>assessProgressiveE47CStage(f));
+});
