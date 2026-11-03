@@ -213,6 +213,8 @@ test('independent recheck records deferred samples as censored, not invented p99
 test('eventual verifier rejects fake settlement, forged sample, missing response and misattribution',()=>{
  for(const change of [
   f=>{f.manifest.stage.durableDrain.settledCount=49;},
+  f=>{f.manifest.stage.durableDrain.durableDelivered=49;},
+  f=>{f.manifest.workerIngressPacingIndependentOfAck=false;f.ingest=undefined;},
   f=>{f.manifest.stage.durableDrain.requirePerEventLineage=false;},
   f=>{f.manifest.stage.durableDrain.productionSloCertified=true;},
   f=>{f.manifest.stage.deferredImmediateResponses=0;},
