@@ -68,6 +68,21 @@ integration('concurrent PG16 audit head append preserves canonical chain, scope 
    await poolA.query('UPDATE '+table+' SET payload=$1::jsonb WHERE history_id=$2',
     [JSON.stringify(tail.payload),tail.history_id]);
   }
+  // PostgreSQL JSONB NOT NULL still permits JSON null, booleans, numbers
+  // and strings. None may be misinterpreted as an absent audit predecessor.
+  for(const invalid of [null,false,0,'']){
+   try{
+    await poolA.query('UPDATE '+table+' SET payload=$1::jsonb WHERE history_id=$2',
+     [JSON.stringify(invalid),tail.history_id]);
+    await assert.rejects(b.appendAudit(record(61)));
+    const remaining=(await poolA.query('SELECT count(*)::integer AS n FROM '+
+     table+' WHERE scope_id=$1 AND kind=$2',['audit-head-A','audit'])).rows[0].n;
+    assert.equal(remaining,60);
+   }finally{
+    await poolA.query('UPDATE '+table+' SET payload=$1::jsonb WHERE history_id=$2',
+     [JSON.stringify(tail.payload),tail.history_id]);
+   }
+  }
   // A regression to full-history scan would fail this test even on a tiny
   // fixture; the production fast path must use only the index-backed tail.
   const originalHistoryList=a.historyList.bind(a);
