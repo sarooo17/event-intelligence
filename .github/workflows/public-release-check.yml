@@ -148,12 +148,15 @@ jobs:
           npm ci --ignore-scripts --no-audit --no-fund
           npm install --no-save --ignore-scripts --no-audit --no-fund pg@8
           npm run build
-      - name: PostgreSQL dump and restore CLI for independent provenance proof
+      - name: Pin PostgreSQL 16 dump and restore CLI for matching PG16 server
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y postgresql-client
-          pg_dump --version
-          pg_restore --version
+          sudo apt-get install -y postgresql-client-16
+          test -x /usr/lib/postgresql/16/bin/pg_dump
+          test -x /usr/lib/postgresql/16/bin/pg_restore
+          /usr/lib/postgresql/16/bin/pg_dump --version
+          /usr/lib/postgresql/16/bin/pg_restore --version
+          echo '/usr/lib/postgresql/16/bin' >> "$GITHUB_PATH"
       - name: P0 real PostgreSQL security boundaries (never skip)
         run: |
           set -eu
