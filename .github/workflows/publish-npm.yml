@@ -63,19 +63,14 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="$(node -p "require('./package.json').version")"
-          if [[ "$VERSION" != *-* ]]; then
-            # Do not treat build metadata or malformed non-prerelease tags
-            # as an unguarded stable release channel.
-            if [[ ! "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
-              echo "::error::Unsupported stable semver syntax"
-              exit 1
-            fi
-          fi
-          if [[ "$VERSION" =~ ^[1-9][0-9]*\.[0-9]+\.[0-9]+$ ]]; then
+          # Classify the ENTIRE canonical version before any dist-tag or
+          # registry operation; npm strips SemVer build metadata and may
+          # otherwise normalize a deceptive version into stable 1.0.0.
+          node scripts/evidence/safe-release-channel.mjs "$VERSION"
+          if [ "$VERSION" = "1.0.0" ]; then
             test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_SHA"
             EI_RELEASE_SOURCE_SHA="$EXPECTED_SOURCE_SHA" node scripts/evidence/v1-release-readiness.mjs --strict
           fi
-
       - name: Use npm with Trusted Publishing support
         run: npm install --global "npm@^11.15.0"
 
@@ -106,7 +101,7 @@ jobs:
           if npm view "mcp-event-intelligence@$VERSION" version >/dev/null 2>&1; then
             # A successful stable Publish npm workflow must correspond to a
             # new publication: do not trigger Release from a stable no-op.
-            if [[ "$VERSION" != *-* ]]; then
+            if [ "$(node scripts/evidence/safe-release-channel.mjs "$VERSION")" = "latest" ]; then
               echo "::error::Stable npm version already exists; refusing no-op publish"
               exit 1
             fi
@@ -124,9 +119,5 @@ jobs:
           # Never make a prerelease the default npm install/latest version.
           # Stable semver versions are published under latest, only after
           # the explicit manual main-branch confirmation at job startup.
-          if [[ "$VERSION" == *-* ]]; then
-            TAG=next
-          else
-            TAG=latest
-          fi
+          TAG="$(node scripts/evidence/safe-release-channel.mjs "$VERSION")"
           npm publish --access public --tag "$TAG"
