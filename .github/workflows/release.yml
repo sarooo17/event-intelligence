@@ -45,7 +45,8 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="$(node -p "require('./package.json').version")"
-          if [[ "$VERSION" == *-* ]]; then
+          CHANNEL="$(node scripts/evidence/safe-release-channel.mjs "$VERSION")"
+          if [ "$CHANNEL" = "next" ]; then
             echo "mcp_release=false" >> "$GITHUB_OUTPUT"
             echo "::notice::npm candidate only; no MCP Registry / stable GitHub release"
           else
@@ -60,19 +61,14 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="$(node -p "require('./package.json').version")"
-          if [[ "$VERSION" != *-* ]]; then
-            # Do not treat build metadata or malformed non-prerelease tags
-            # as an unguarded stable release channel.
-            if [[ ! "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
-              echo "::error::Unsupported stable semver syntax"
-              exit 1
-            fi
-          fi
-          if [[ "$VERSION" =~ ^[1-9][0-9]*\.[0-9]+\.[0-9]+$ ]]; then
+          # The channel was already validated from canonical SemVer.
+          # Only 1.0.0 is eligible for the current nine-row signoff.
+          # A future stable version fails in safe-release-channel until
+          # a NEW reviewed policy is introduced.
+          if [ "$VERSION" = "1.0.0" ]; then
             test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_SHA"
             EI_RELEASE_SOURCE_SHA="$EXPECTED_SOURCE_SHA" node scripts/evidence/v1-release-readiness.mjs --strict
           fi
-
       - name: Resolve and verify version
         if: ${{ steps.channel.outputs.mcp_release == 'true' }}
         id: version
