@@ -83,6 +83,32 @@ async function call(base,path,body,token,expectedStatus=200){
  if(response.status!==expectedStatus)throw Error('E47C_REQUEST_FAILED_'+path.replace(/\W/g,'_')+'_'+response.status);
  return parsed;
 }
+// Check separate real EI worker identities via read-only, private-network
+// readiness endpoints BEFORE inserting any 1k trigger or source event.
+export async function preflightLargeWorkers({workerA,workerB,request=fetch}={}){
+ if(typeof request!=='function')
+  throw Error('E47C_LARGE_WORKER_PREFLIGHT_CONFIG_INVALID');
+ const urls=[
+  parsePrivateServiceUrl(workerA,'EI_LIVE_WORKER_A_URL'),
+  parsePrivateServiceUrl(workerB,'EI_LIVE_WORKER_B_URL')
+ ];
+ if(urls[0]===urls[1])throw Error('E47C_LARGE_WORKER_ENDPOINT_DUPLICATE');
+ const identities=await Promise.all(urls.map(async base=>{
+  const response=await request(base+'/readyz',{
+   method:'GET',signal:AbortSignal.timeout(5000)
+  });
+  if(response?.status!==200)throw Error('E47C_LARGE_WORKER_NOT_READY');
+  const body=await response.json().catch(()=>({}));
+  if(body?.status!=='ready'||typeof body.workerId!=='string'||
+     !/^[a-zA-Z0-9_-]{1,128}$/.test(body.workerId))
+   throw Error('E47C_LARGE_WORKER_ID_INVALID');
+  return body.workerId;
+ }));
+ if(identities[0]===identities[1])
+  throw Error('E47C_LARGE_WORKER_IDENTITY_DUPLICATE');
+ return Object.freeze([...identities]);
+}
+
 async function saveRaw(dir,name,bytes){
  const path=join(dir,name);
  const fd=await open(path,'wx',0o600);
@@ -101,6 +127,7 @@ async function main(env=process.env){
  const pool=new pg.Pool({connectionString:c.databaseUrl,max:3,
   connectionTimeoutMillis:5000,statement_timeout:15000});
  const evidenceDir=join(c.dir,prefix);
+ let pinnedLargeWorkerIds=null;
  let inserted=0,appended=0,observed=0,sourceRaw=null;
  const raw={source:[],host:[],ei:[],offer:[],ingest:[]};
  let offerMetrics=null,ingestMetrics=null,durableDrain=null;
@@ -120,6 +147,9 @@ async function main(env=process.env){
       archive.bytes>14*1024*1024||
       typeof archive.sha256!=='string'||!/^([a-f0-9]{64})$/.test(archive.sha256))
     throw Error('E47C_LARGE_SOURCE_ARCHIVE_BUDGET_LOW');
+   pinnedLargeWorkerIds=await preflightLargeWorkers({
+    workerA:c.workerA,workerB:c.workerB
+   });
   }
   await pool.query('SELECT 1');
   const triggers=Array.from({length:c.triggers},(_,i)=>({
@@ -184,6 +214,9 @@ async function main(env=process.env){
   const readyB=await call(c.workerB,'/v1/recover',{scopeId:scope},c.workerToken);
   if(!readyA.workerId||!readyB.workerId||readyA.workerId===readyB.workerId)
    throw Error('E47C_WORKER_PREWARM_IDENTITY_INVALID');
+  if(c.large&&(pinnedLargeWorkerIds?.[0]!==readyA.workerId||
+    pinnedLargeWorkerIds?.[1]!==readyB.workerId))
+   throw Error('E47C_LARGE_WORKER_IDENTITY_DRIFT');
   for(let i=0;i<c.count;i++){
    if(events.get(ids[i])?.data?.slot!==i)
     throw Error('E47C_SOURCE_SLOT_MISMATCH');
