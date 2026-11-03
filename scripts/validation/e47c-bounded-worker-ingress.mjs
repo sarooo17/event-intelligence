@@ -27,7 +27,7 @@ export function validateWorkerIngestReceipt(result,expectedWorkerId){
  return result;
 }
 export async function scheduleBoundedWorkerIngress({
- count,rate,maxInflight=4,workerIds,send,now,wait,
+ count,rate,maxInflight=4,workerIds,send,now,wait,maxCount=250,
  deliveryMode='immediate',
 }={}){
  if(!Array.isArray(workerIds)||workerIds.length!==2||
@@ -36,7 +36,7 @@ export async function scheduleBoundedWorkerIngress({
     !['immediate','eventual'].includes(deliveryMode))
   throw Error('E47C_WORKER_INGRESS_CONFIG_INVALID');
  const job=await scheduleBoundedSourceOffers({
-  count,rate,maxInflight,now,wait,
+  count,rate,maxInflight,now,wait,maxCount,
   send:async i=>deliveryMode==='eventual'?
    validateDeferredWorkerAdmission(await send(i),workerIds[i%2]):
    validateWorkerIngestReceipt(await send(i),workerIds[i%2]),
