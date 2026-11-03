@@ -190,6 +190,8 @@ test('stable-v1 source signoff pins reviewed ancestor rather than self-referenti
   for(const row of signed.criteria){
     if(!row.required)continue;
     row.status='verified';
+    if(!row.evidence.length)
+      row.evidence=['https://github.com/sarooo17/event-intelligence/issues/'+row.issue];
     row.verification={reviewer:'independent-reviewer',date:'2026-11-03',
       procedure:'Inspect code + real PG16 tests before approving candidate',
       sourceCommitSha:reviewed};
@@ -220,6 +222,8 @@ test('strict release evidence rejects stale trees, missing reviewed SHA and chec
   for(const row of signed.criteria){
     if(!row.required)continue;
     row.status='verified';
+    if(!row.evidence.length)
+      row.evidence=['https://github.com/sarooo17/event-intelligence/issues/'+row.issue];
     row.verification={reviewer:'reviewer',date:'2026-11-03',
       procedure:'Reproduce source-pinned evidence',sourceCommitSha:reviewed};
   }
