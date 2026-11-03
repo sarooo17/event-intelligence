@@ -132,7 +132,9 @@ function verifyWorkerIngress({manifest,ingest,ei,sourceById,count,eventual=false
     !Array.isArray(ingest)||ingest.length!==count||
     stage.workerIngressAccepted!==count||stage.workerIngressRejected!==0||
     !Number.isSafeInteger(stage.workerIngressMaxInflight)||
-    stage.workerIngressMaxInflight<1||stage.workerIngressMaxInflight>8||
+    stage.workerIngressMaxInflight<1||
+    stage.workerIngressMaxInflight>(manifest.schema===
+     'ei.e47c.progressive-1k-durable-preflight.v3'?20:8)||
     !Number.isSafeInteger(stage.workerIngressPeakInflight)||
     stage.workerIngressPeakInflight<1||
     stage.workerIngressPeakInflight>stage.workerIngressMaxInflight||
