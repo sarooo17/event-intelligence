@@ -48,6 +48,21 @@ jobs:
           test -n "$OPERATOR_VERSION"
           test "$(node -p "require('./package.json').version")" = "$OPERATOR_VERSION"
 
+      # Stable v1 (and later stable majors) cannot publish from manual intent
+      # alone. Require all nine SDK gates and independent exact-commit signoffs
+      # before any registry write. Prereleases remain on npm next.
+      - name: Enforce stable v1 readiness against exact checked-out commit
+        shell: bash
+        env:
+          EXPECTED_SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./package.json').version")"
+          if [[ "$VERSION" =~ ^[1-9][0-9]*\.[0-9]+\.[0-9]+$ ]]; then
+            test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_SHA"
+            EI_RELEASE_SOURCE_SHA="$EXPECTED_SOURCE_SHA" node scripts/evidence/v1-release-readiness.mjs --strict
+          fi
+
       - name: Use npm with Trusted Publishing support
         run: npm install --global "npm@^11.15.0"
 
@@ -76,6 +91,12 @@ jobs:
         run: |
           VERSION="$(node -p "require('./package.json').version")"
           if npm view "mcp-event-intelligence@$VERSION" version >/dev/null 2>&1; then
+            # A successful stable Publish npm workflow must correspond to a
+            # new publication: do not trigger Release from a stable no-op.
+            if [[ "$VERSION" != *-* ]]; then
+              echo "::error::Stable npm version already exists; refusing no-op publish"
+              exit 1
+            fi
             echo "exists=true" >> "$GITHUB_OUTPUT"
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
