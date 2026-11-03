@@ -11,6 +11,9 @@ export { verifyMcpOccurrenceArchiveWindow } from './mcp-occurrence-archive.mjs';
 export { verifyAuditProofWindow } from './audit-proof-window.mjs';
 import {
   AuditChain,
+  buildAuditRecordAt,
+  canonicalJson,
+  sha256Hex,
   McpEventOccurrenceSchema,
   parseAuditRecord,
   parseCompositeTriggerDefinition,
@@ -3770,11 +3773,34 @@ export class PostgresEventStore {
 
   async appendAudit(input) {
     return this.tx(async (client) => {
+      // Keep the exact scope-local audit advisory transaction lock. A second
+      // worker cannot observe this head until its predecessor commits.
       await this.lock(client, 'audit', 'chain');
-      const previous = (await this.historyList('audit', undefined, client))
-        .map(parseAuditRecord);
-      const chain = new AuditChain(previous);
-      const record = await chain.append(input);
+      // The existing (scope_id,kind,history_id) index supplies the terminal
+      // physical audit record without fetching/parsing the entire
+      // ever-growing audit history on EVERY match/wake append.
+      const head = await client.query(
+        'SELECT payload FROM ' + this.history +
+        ' WHERE scope_id=$1 AND kind=$2 ORDER BY history_id DESC LIMIT 1',
+        [this.scopeId, 'audit'],
+      );
+      const previous = head.rows[0]?.payload
+        ? parseAuditRecord(head.rows[0].payload) : null;
+      if (previous) {
+        // Detect a changed terminal record before extending its hash chain.
+        // Full-genesis verifyAudit/checkpoint remains an explicit operator
+        // integrity test, not an ingest hot-path scan.
+        const { hash, ...unsigned } = previous;
+        if (await sha256Hex(canonicalJson(unsigned)) !== hash) {
+          const error = new Error('Persisted audit predecessor hash mismatch');
+          error.code = 'EVENT_INTELLIGENCE_AUDIT_HEAD_CORRUPTED';
+          throw error;
+        }
+      }
+      const sequence = previous ? previous.sequence + 1 : 0;
+      const record = await buildAuditRecordAt(
+        input, sequence, previous?.hash ?? null,
+      );
       await this.appendHistory('audit', input.auditId, record, client);
       return record;
     });
