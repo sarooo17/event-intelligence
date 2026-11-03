@@ -1,5 +1,31 @@
 # Changelog
 
+## [1.0.0] — UNPUBLISHED source candidate (stable-v1 #41 signoff pending)
+
+- **Not published or promoted to npm `latest` or MCP Registry.**
+  This release entry accompanies a reviewed-source candidate branch only;
+  the nine required manual v1 readiness rows are still `blocked`.
+  Source metadata, package-lock and MCP Registry descriptor are aligned to
+  `1.0.0` so clean-room package/host/type checks can run on the actual
+  candidate before publication.
+- Propose the stable public npm export/typed host-neutral SDK contract,
+  with a version-specific [compatibility and migration matrix](
+  docs/releases/1.0.0-compatibility.md) and [prepared release notes](
+  docs/releases/v1.0.0.md). Removed pre-v1 `authorize()`, implicit wake
+  acknowledgments and stale approvals are not reintroduced as shims.
+- Carry forward bounded Pattern-v2 CEP, strict #48 explainability,
+  optional-at-runtime #49 semantic evaluator with scope-local conservative
+  cost reservations, PG16 durable worker/receipt semantics, and the
+  source/audit/dedup/wake **lossless no-prune** policy.
+- Include reviewed [PR #407](https://github.com/sarooo17/event-intelligence/pull/407)
+  audit-head PostgreSQL performance correction and its real, separately
+  rechecked **first-party** 1k/1k 5/s staging evidence. This is not a
+  complete production 10k/100k multi-rate E47-C or end-to-end SLO claim.
+- **No automatic downstream upgrades**, release tags or deployed-host
+  certification. Stable publishing is blocked by exact-source, reviewed
+  nine-gate attestations, including complete operator backup/restore
+  readiness and a later explicitly approved release workflow.
+
 ## [0.12.0-next.1] — published to npm `next` (npm UI screenshot verified 2026-11-02)
 
 - **Feature-complete generic SDK preview** after #47/#48/#49 closure;
