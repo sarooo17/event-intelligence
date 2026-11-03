@@ -4,6 +4,14 @@ The primary integration is to embed Event Intelligence once at the **harness lev
 
 ## 1. Embed the package and point it at the host registry
 
+> **Source branch `1.0.0` is an UNPUBLISHED release candidate.**
+> The install commands below describe the existing publicly available npm
+> channels, not this branch. To test the `1.0.0` candidate, build/pack
+> the checked-out source into a tarball and install that tarball inside an
+> isolated clean-room host. Never assume `npm install ...@1.0.0` works
+> until all nine #41 release gates and a manual npm publication succeed.
+> See the [1.0.0 candidate compatibility matrix](releases/1.0.0-compatibility.md).
+
 Install the chosen channel deliberately. Unqualified npm installation follows
 `latest` (not `next`); npm versions UI showed `latest` = `0.11.0`
 and `next` = `0.12.0-next.1` in the screenshot checked on 2026-11-02:
