@@ -1,8 +1,8 @@
 # Stable v1.0.0 readiness review dossier (issue #41)
 
 **Status: review worklist, NOT a signoff or permission to publish.**
-The package on main is currently `0.12.0-next.1`, published to the
-npm `next` channel according to the maintained source record.
+This branch prepares the **unpublished** package source identity `1.0.0`; the previously published `0.12.0-next.1` is a separate npm `next` artifact.
+The stable version in source **does not** imply npm `latest` publication or authorization.
 Nine of nine **required** release ledger entries and six of six **optional**
 deployment/enterprise category entries in
 [`v1-readiness.json`](v1-readiness.json) remain `blocked`.
@@ -33,6 +33,8 @@ remains 2/10.
 | `downstream-pin-policy` | [#277](https://github.com/sarooo17/event-intelligence/pull/277), [#280](https://github.com/sarooo17/event-intelligence/pull/280); `docs/EI-RELEASE-COMPATIBILITY.md` | Record explicit owner approval to leave Muffin/Artemis/other downstream pins **unchanged** until their own reviewed integration/CI rollout; no automatic consumer change |
 | `full-explainability` | [#48](https://github.com/sarooo17/event-intelligence/issues/48), [#375](https://github.com/sarooo17/event-intelligence/pull/375), [#390](https://github.com/sarooo17/event-intelligence/pull/390), [#391](https://github.com/sarooo17/event-intelligence/pull/391), E48-A/B in [#376](https://github.com/sarooo17/event-intelligence/issues/376) | Review final candidate's strict fail-closed fidelity, partial/unknown, source frontier, limits/latency; approve the **bounded SDK** guarantee only, not external provider truth |
 | `semantic-triage` | [#49](https://github.com/sarooo17/event-intelligence/issues/49), [#330](https://github.com/sarooo17/event-intelligence/pull/330), [#374](https://github.com/sarooo17/event-intelligence/pull/374) | Review opt-in evaluator, scoped durable reserved token/cost limits, cache identity, timeout/unknown no-refund across two pools; **do not** claim settled OpenAI spend or remote cancellation (#376) |
+
+**Stable source candidate prep:** `package.json`, both root/package-lock identities, `server.json`, Registry docs, `docs/releases/1.0.0-compatibility.md` and `docs/releases/v1.0.0.md` now describe **one unpublished identity**. The version-specific checker and clean-room tests must run on the exact candidate PR. A reviewed PR alone is not a named release-gate attestation; every row remains blocked until the frozen reviewed main ancestor is approved separately.
 
 The **quickest meaningful review** starts with `full-explainability`,
 `semantic-triage` and `downstream-pin-policy`, then

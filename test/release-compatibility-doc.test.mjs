@@ -50,7 +50,7 @@ test('release documentation fails closed if package version, export map, profile
    {...args,doc:args.doc.replace('pattern_v2_candidate_signature','missing-signature-component')},
    {...args,doc:args.doc.replace('EVENT_INTELLIGENCE_POSTGRES_SCHEMA_INCOMPATIBLE','redacted')},
    {...args,doc:args.doc.replace('event-intelligence.host-conformance.v2','conformance-old-unknown')},
-   {...args,serverJson:{...args.serverJson,version:'1.0.0'}},
+   {...args,serverJson:{...args.serverJson,version:'1.0.1'}},
  ]){
    assert.throws(()=>checkReleaseCompatibilityDoc(changed),bad);
  }

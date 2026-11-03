@@ -11,7 +11,7 @@ const ledger=JSON.parse(readFileSync(
   new URL('../docs/releases/v1-readiness.json',import.meta.url)));
 const clone=x=>structuredClone(x);
 
-test('current pre-v1 candidate remains explicitly blocked without fake approval',()=>{
+test('unpublished stable-v1 source candidate remains blocked without nine release approvals',()=>{
   const report=readV1Readiness();
   assert.deepEqual(report.errors,[]);
   assert.equal(report.status,'blocked');
@@ -30,7 +30,11 @@ test('current pre-v1 candidate remains explicitly blocked without fake approval'
   assert.equal(ledger.criteria.find(x=>x.id==='security-independent-review').issue,317);
   assert.ok(report.blocked.includes('pg-retention-audit'));
   assert.equal(report.blocked.includes('pg-chaos-recovery'),true);
-  assert.equal(report.blocked.includes('package-version-not-1.0.0'),true);
+  assert.equal(report.candidateVersion,'1.0.0');
+  assert.equal(report.blocked.includes('package-version-not-1.0.0'),false);
+  assert.equal(report.blocked.length,9);
+  assert.equal(report.status,'blocked');
+  assert.equal(report.autoPublish,false);
 });
 
 test('ledger rejects missing, duplicated and unknown criteria',()=>{

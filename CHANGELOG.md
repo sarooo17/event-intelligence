@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.0.0] — UNPUBLISHED source candidate; approval and npm publish blocked (#41)
+
+- Prepare aligned package/lockfile/MCP Registry source identity `1.0.0`, version-specific compatibility matrix and release notes; **do not publish** until all nine independently reviewed exact-source mandatory release attestations in `docs/releases/v1-readiness.json` are verified.
+- Expose the current runtime-neutral SDK with deliberate pre-v1 API breaks: `control(request)` approval, real durable host receipts, Pattern AST v2, explicit source completeness/unknown and opt-in semantically evaluated events.
+- Conserve tenant-isolated durable PostgreSQL16 audit/wake/source history with operator-owned capacity/backups and safe fail-closed restore. [PR #407](https://github.com/sarooo17/event-intelligence/pull/407) improves audit-head append performance without relaxing hash/lock guarantees.
+- No automatic Muffin/Artemis upgrades or source/host enterprise certification. See [v1 stable candidate notes](docs/releases/v1.0.0.md) and [compatibility matrix](docs/releases/1.0.0-compatibility.md).
+- **Stable npm `latest`/tag/Registry Release not authorized by this source candidate.**
+
+
 ## [0.12.0-next.1] — published to npm `next` (npm UI screenshot verified 2026-11-02)
 
 - **Feature-complete generic SDK preview** after #47/#48/#49 closure;
