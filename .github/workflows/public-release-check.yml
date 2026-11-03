@@ -148,15 +148,24 @@ jobs:
           npm ci --ignore-scripts --no-audit --no-fund
           npm install --no-save --ignore-scripts --no-audit --no-fund pg@8
           npm run build
-      - name: Pin PostgreSQL 16 dump and restore CLI for matching PG16 server
+      - name: Pin PostgreSQL 16 dump/restore CLI to service container major
+        shell: bash
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y postgresql-client-16
-          test -x /usr/lib/postgresql/16/bin/pg_dump
-          test -x /usr/lib/postgresql/16/bin/pg_restore
-          /usr/lib/postgresql/16/bin/pg_dump --version
-          /usr/lib/postgresql/16/bin/pg_restore --version
-          echo '/usr/lib/postgresql/16/bin' >> "$GITHUB_PATH"
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/ei-pg16-cli"
+          for pgtool in pg_dump pg_restore; do
+            cat > "$RUNNER_TEMP/ei-pg16-cli/$pgtool" <<'WRAPPER'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          exec docker run --rm --network host -v /tmp:/tmp \
+            -e PGHOST -e PGPORT -e PGUSER -e PGPASSWORD -e PGDATABASE \
+            postgres:16-alpine "$(basename "$0")" "$@"
+          WRAPPER
+            chmod 700 "$RUNNER_TEMP/ei-pg16-cli/$pgtool"
+          done
+          echo "$RUNNER_TEMP/ei-pg16-cli" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/ei-pg16-cli/pg_dump" --version
+          "$RUNNER_TEMP/ei-pg16-cli/pg_restore" --version
       - name: P0 real PostgreSQL security boundaries (never skip)
         run: |
           set -eu
