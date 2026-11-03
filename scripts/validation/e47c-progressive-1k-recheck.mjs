@@ -204,6 +204,10 @@ export function assessProgressiveE47CStage({manifest,source,host,ei,offers,inges
     manifest?.stage?.sourceOracleVerified!==true||
     manifest?.stage?.hostDbSharedWithEI!==true)
   fail('E47C_NOT_BOUNDED_PILOT');
+ if(eventual&&(manifest.workerIngressPacingIndependentOfAck!==true||
+    manifest.stage?.workerIngestPacedIndependently!==true||
+    !Array.isArray(ingest)))
+  fail('E47C_DURABLE_WORKER_INGRESS_REQUIRED');
  const count=manifest.stage.events;
  if(!Number.isSafeInteger(count)||count<10||count>250||
     manifest.stage.triggers!==1000||
@@ -261,7 +265,8 @@ export function assessProgressiveE47CStage({manifest,source,host,ei,offers,inges
   const drain=manifest.stage.durableDrain;
   if(manifest.stage.deliveryMode!=='eventual'||
      manifest.stage.deferredImmediateResponses!==count-immediateRows.length||
-     drain?.settledCount!==count||drain?.requirePerEventLineage!==true||
+     drain?.settledCount!==count||drain?.durableDelivered!==count||
+     drain?.requirePerEventLineage!==true||
      drain?.productionSloCertified!==false||
      !Number.isSafeInteger(drain.polls)||drain.polls<1||
      !validTiming(drain.drainElapsedMs))
@@ -328,6 +333,9 @@ export async function verifyPersistedProgressiveE47CStage({
  const ei=decodeJsonl(await readBoundedArtifact(folder,manifest.rawManifest?.ei));
  const offers=manifest.ratePacingIsSerialAppend===false?
   decodeJsonl(await readBoundedArtifact(folder,manifest.rawManifest?.offer)):undefined;
+ if(manifest.schema==='ei.e47c.progressive-1k-durable-preflight.v2'&&
+    manifest.workerIngressPacingIndependentOfAck!==true)
+  fail('E47C_DURABLE_WORKER_INGRESS_REQUIRED');
  const ingest=manifest.workerIngressPacingIndependentOfAck===true?
   decodeJsonl(await readBoundedArtifact(folder,manifest.rawManifest?.ingest)):undefined;
  const proof=decodeJson(await readBoundedArtifact(folder,manifest.frontierProof,1024*1024));
