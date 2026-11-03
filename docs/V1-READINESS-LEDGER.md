@@ -30,7 +30,9 @@ confirms `0.12.0-next.1` under `next` and `0.11.0` under `latest`;
 the underlying npm API response and publishing workflow run were not
 separately examined. **This does not authorize stable v1**.
 The [live roadmap](https://github.com/sarooo17/event-intelligence/issues/41)
-supersedes historic implementation checklists.
+supersedes historic implementation checklists. The [v1.0.0 review dossier](releases/v1-review-dossier.md)
+tracks all nine current SDK evidence leads, missing candidate-specific signoffs,
+and the exact-commit approval sequence without upgrading a blocked entry prematurely.
 
 ```sh
 # Report only: validates manifest and emits a machine-readable blocked state.
