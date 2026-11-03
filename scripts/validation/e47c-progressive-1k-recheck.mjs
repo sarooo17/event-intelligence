@@ -206,6 +206,10 @@ export function assessProgressiveE47CStage({manifest,source,host,ei,offers,inges
     manifest?.stage?.sourceOracleVerified!==true||
     manifest?.stage?.hostDbSharedWithEI!==true)
   fail('E47C_NOT_BOUNDED_PILOT');
+ if(large&&(manifest.ratePacingIsSerialAppend!==false||
+    manifest.offeredPacingIndependentOfAck!==true||
+    !Array.isArray(offers)))
+  fail('E47C_LARGE_SOURCE_OFFERS_REQUIRED');
  if(eventual&&(manifest.workerIngressPacingIndependentOfAck!==true||
     manifest.stage?.workerIngestPacedIndependently!==true||
     !Array.isArray(ingest)))
@@ -341,6 +345,10 @@ export async function verifyPersistedProgressiveE47CStage({
  const source=decodeJsonl(await readBoundedArtifact(folder,manifest.rawManifest?.source));
  const host=decodeJsonl(await readBoundedArtifact(folder,manifest.rawManifest?.host));
  const ei=decodeJsonl(await readBoundedArtifact(folder,manifest.rawManifest?.ei));
+ if(manifest.schema==='ei.e47c.progressive-1k-durable-preflight.v3'&&
+    (manifest.ratePacingIsSerialAppend!==false||
+     manifest.offeredPacingIndependentOfAck!==true))
+  fail('E47C_LARGE_SOURCE_OFFERS_REQUIRED');
  const offers=manifest.ratePacingIsSerialAppend===false?
   decodeJsonl(await readBoundedArtifact(folder,manifest.rawManifest?.offer)):undefined;
  if((manifest.schema==='ei.e47c.progressive-1k-durable-preflight.v2'||
