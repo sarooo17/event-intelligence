@@ -21,7 +21,8 @@ export function classifySafeReleaseVersion(version) {
   const prerelease=match[4]??null;
   if(prerelease!==null) {
     const fields=prerelease.split('.');
-    if(fields.some(v=>!v||(/^\d+$/.test(v)&&v.length>1&&v.startsWith('0')))) {
+    if(fields.some(v=>!v||!/[A-Za-z0-9]/.test(v)||
+       (/^\d+$/.test(v)&&v.length>1&&v.startsWith('0')))) {
       const error=new Error('Unsupported noncanonical npm prerelease version');
       error.code='EI_RELEASE_VERSION_NOT_CANONICAL';
       throw error;
