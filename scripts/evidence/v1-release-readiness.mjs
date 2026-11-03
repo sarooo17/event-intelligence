@@ -60,12 +60,20 @@ function validSignoffDate(date) {
  * judgments. A ledger "verified" line must have a concrete evidence URL and
  * reviewer record; the checker never marks anything verified automatically.
  */
-export function evaluateV1Readiness(ledger, packageVersion) {
+export function evaluateV1Readiness(ledger, packageVersion, { expectedSourceSha } = {}) {
   const expected = new Map([
     ...V1_REQUIRED_CRITERIA.map(id=>[id,true]),
     ...V1_OPTIONAL_CRITERIA.map(id=>[id,false]),
   ]);
   const errors=[];
+  // An approved record must refer to the exact source tree being published.
+  // The publish/release workflows derive this SHA from the checked-out Git
+  // commit and do not trust a user-supplied issue or comment as the source.
+  if (expectedSourceSha !== undefined &&
+      (typeof expectedSourceSha !== 'string' ||
+       !/^[0-9a-f]{40}$/.test(expectedSourceSha))) {
+    errors.push('Invalid exact release source SHA');
+  }
   if (ledger?.schema !== 'event-intelligence.v1-readiness.v1' ||
       ledger?.targetVersion !== '1.0.0' ||
       ledger?.policy !== 'fail-closed-no-automatic-merge-or-publish' ||
@@ -101,6 +109,10 @@ export function evaluateV1Readiness(ledger, packageVersion) {
          !validSignoffDate(row.verification.date)) {
         errors.push('Verified criterion lacks independent/manual audit evidence: '+row.id);
       }
+      if (expectedSourceSha !== undefined &&
+          row.verification?.sourceCommitSha !== expectedSourceSha) {
+        errors.push('Verified criterion is not pinned to exact source SHA: '+row.id);
+      }
     }
   }
   for(const id of expected.keys()) if(!seen.has(id))errors.push('Missing criterion: '+id);
@@ -126,11 +138,11 @@ export function evaluateV1Readiness(ledger, packageVersion) {
   });
 }
 
-export function readV1Readiness(cwd = new URL('../../',import.meta.url)) {
+export function readV1Readiness(cwd = new URL('../../',import.meta.url), options = {}) {
   const root=typeof cwd==='string'?new URL('file://'+resolve(cwd)+'/'):cwd;
   const ledger=JSON.parse(readFileSync(new URL('docs/releases/v1-readiness.json',root)));
   const pkg=JSON.parse(readFileSync(new URL('package.json',root)));
-  return evaluateV1Readiness(ledger,pkg.version);
+  return evaluateV1Readiness(ledger,pkg.version,options);
 }
 
 if(process.argv[1] && resolve(process.argv[1])===fileURLToPath(import.meta.url)) {
@@ -139,7 +151,8 @@ if(process.argv[1] && resolve(process.argv[1])===fileURLToPath(import.meta.url))
     console.error('Usage: node scripts/evidence/v1-release-readiness.mjs [--report|--strict]');
     process.exitCode=2;
   } else {
-    const report=readV1Readiness();
+    const report=readV1Readiness(new URL('../../',import.meta.url),
+      mode==='--strict' ? {expectedSourceSha:process.env.EI_RELEASE_SOURCE_SHA??''} : {});
     console.log(JSON.stringify(report,null,2));
     if(report.errors.length || mode==='--strict' && report.status!=='eligible-for-manual-review'){
       process.exitCode=1;
