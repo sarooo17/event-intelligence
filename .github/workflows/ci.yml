@@ -65,12 +65,24 @@ jobs:
           node-version: 22
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm install --no-save --ignore-scripts --no-audit --no-fund pg@8
-      - name: Install PostgreSQL client backup tools
+      - name: Use PG16 dump/restore CLI matching the PostgreSQL service
+        shell: bash
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y postgresql-client
-          pg_dump --version
-          pg_restore --version
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/ei-pg16-cli"
+          for pgtool in pg_dump pg_restore; do
+            cat > "$RUNNER_TEMP/ei-pg16-cli/$pgtool" <<'WRAPPER'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          exec docker run --rm --network host -v /tmp:/tmp \
+            -e PGHOST -e PGPORT -e PGUSER -e PGPASSWORD -e PGDATABASE \
+            postgres:16-alpine "$(basename "$0")" "$@"
+          WRAPPER
+            chmod 700 "$RUNNER_TEMP/ei-pg16-cli/$pgtool"
+          done
+          echo "$RUNNER_TEMP/ei-pg16-cli" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/ei-pg16-cli/pg_dump" --version
+          "$RUNNER_TEMP/ei-pg16-cli/pg_restore" --version
       - run: npm run test:postgres
       - name: PostgreSQL scale harness smoke (isolated 16 triggers)
         env:
