@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {performance} from 'node:perf_hooks';
+import {validateDeferredWorkerAdmission,waitForDurableReceiptCount} from
+ '../scripts/validation/e47c-durable-ack-drain.mjs';
 import {scheduleBoundedWorkerIngress,validateWorkerIngestReceipt} from
  '../scripts/validation/e47c-bounded-worker-ingress.mjs';
 
@@ -76,4 +78,93 @@ test('worker schedule refuses spoofed identities and unsafe caps',async()=>{
   count:10,rate:5,maxInflight:100,
   workerIds:['a','b'],send:async()=>receipt(1,'a'),
  }),/E47C_BAD_OPEN_LOOP_CONFIGURATION/);
+});
+
+test('deferred worker admission accepts exactly one persisted match without forcing immediate host delivery',()=>{
+ const fromWorker={accepted:true,workerId:'worker-a',matched:1,
+  persistedDeliveredWakes:0,
+  timings:{ingestToMatchMs:13,matchToWakeSamplesMs:[]}};
+ assert.equal(validateDeferredWorkerAdmission(fromWorker,'worker-a'),fromWorker);
+ const forbidden=[
+  [x=>{x.matched=0;},'E47C_WORKER_ACK_MATCH_COUNT_INVALID'],
+  [x=>{x.persistedDeliveredWakes=2;},'E47C_WORKER_ACK_DELIVERY_COUNT_INVALID'],
+  [x=>{x.timings.matchToWakeSamplesMs=[2];},'E47C_WORKER_ACK_WAKE_TIMING_INVALID'],
+  [x=>{x.workerId='wrong-worker';},'E47C_WORKER_ACK_IDENTITY_MISMATCH'],
+ ];
+ for(const [mutate,code] of forbidden){
+  const row=structuredClone(fromWorker);mutate(row);
+  assert.throws(()=>validateDeferredWorkerAdmission(row,'worker-a'),
+   e=>e.code===code);
+ }
+});
+test('bounded receipt drain waits for late durable host effects; exact lineage is still required',async()=>{
+ let clock=0,n=0;
+ const receipts=[0,7,10,10],delivered=[0,5,9,10];
+ const r=await waitForDurableReceiptCount({
+  expectedCount:10,maxWaitMs:3000,pollMs:200,
+  now:()=>clock,wait:async ms=>{clock+=ms;},
+  readCounts:async()=>{
+   const index=Math.min(n++,receipts.length-1),count=receipts[index];
+   return {receipts:count,uniqueWakes:count,uniqueReceipts:count,
+    delivered:delivered[index]};
+  }
+ });
+ assert.equal(r.settledCount,10);
+ assert.equal(r.durableDelivered,10);
+ assert.equal(r.polls,4);
+ assert.equal(r.drainElapsedMs,600);
+ assert.equal(r.requirePerEventLineage,true);
+ assert.equal(r.productionSloCertified,false);
+});
+test('bounded receipt drain rejects missing, duplicated, over-counted or timed-out outcomes',async()=>{
+ const base={expectedCount:10,maxWaitMs:1000,pollMs:250};
+ for(const response of [
+  {receipts:10,uniqueWakes:9,uniqueReceipts:10,delivered:10},
+  {receipts:11,uniqueWakes:11,uniqueReceipts:11,delivered:11},
+  {receipts:10,uniqueWakes:10,uniqueReceipts:9,delivered:10},
+  {receipts:10,uniqueWakes:10,uniqueReceipts:'10',delivered:10}
+ ]){
+  await assert.rejects(waitForDurableReceiptCount({
+   ...base,readCounts:async()=>response
+  }),/E47C_DURABLE_DRAIN_COUNT_MISMATCH/);
+ }
+ let clock=0;
+ await assert.rejects(waitForDurableReceiptCount({...base,now:()=>clock,
+  wait:async ms=>{clock+=ms;},
+  readCounts:async()=>({receipts:9,uniqueWakes:9,uniqueReceipts:9,delivered:9})
+ }),/E47C_DURABLE_DRAIN_TIMEOUT/);
+ await assert.rejects(waitForDurableReceiptCount({
+  expectedCount:10,maxWaitMs:0,pollMs:100,readCounts:async()=>({})
+ }),/E47C_DURABLE_DRAIN_CONFIG_INVALID/);
+});
+
+test('eventual ACK mode counts admitted-but-not-yet-delivered responses, never runner refusals',async()=>{
+ const deferred=(i,id)=>({accepted:true,workerId:id,matched:1,
+  persistedDeliveredWakes:0,
+  timings:{ingestToMatchMs:3+i,matchToWakeSamplesMs:[]}});
+ const job=await scheduleBoundedWorkerIngress({count:10,rate:5,maxInflight:4,
+  deliveryMode:'eventual',workerIds:['ei-a','ei-b'],
+  send:async i=>i===3?deferred(i,'ei-b'):receipt(i,i%2?'ei-b':'ei-a')});
+ assert.equal(job.allAccepted,true);
+ assert.equal(job.rejected,0);
+ assert.equal(job.responses[3].persistedDeliveredWakes,0);
+ const invalid=await scheduleBoundedWorkerIngress({count:10,rate:5,maxInflight:4,
+  deliveryMode:'eventual',workerIds:['ei-a','ei-b'],
+  send:async i=>i===3?{...deferred(i,'ei-b'),matched:0}:
+   receipt(i,i%2?'ei-b':'ei-a')});
+ assert.equal(invalid.allAccepted,false);
+ assert.equal(invalid.rows[3].errorCode,'E47C_WORKER_ACK_MATCH_COUNT_INVALID');
+});
+
+test('query crossing the drain deadline never certifies a late receipt',async()=>{
+ let clock=0;
+ await assert.rejects(waitForDurableReceiptCount({
+  expectedCount:10,maxWaitMs:1000,pollMs:200,
+  now:()=>clock,wait:async ms=>{clock+=ms;},
+  readCounts:async({remainingMs})=>{
+   assert.equal(remainingMs,1000);
+   clock=5000;
+   return {receipts:10,uniqueWakes:10,uniqueReceipts:10,delivered:10};
+  }
+ }),/E47C_DURABLE_DRAIN_TIMEOUT/);
 });

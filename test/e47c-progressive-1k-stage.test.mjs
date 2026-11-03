@@ -57,6 +57,18 @@ test('worker ingress concurrency limit refuses zero, negative and unbounded valu
   assert.equal(progressiveConfig({...env,EI_E47C_WORKER_MAX_INFLIGHT:n}).workerInflight,Number(n));
  }
 });
+test('opt-in durable settlement has bounded timeout and preserves strict default',()=>{
+ assert.equal(progressiveConfig({...env}).deliveryMode,'immediate');
+ const cfg=progressiveConfig({...env,EI_E47C_DELIVERY_MODE:'eventual',
+  EI_E47C_DURABLE_DRAIN_MS:'20000'});
+ assert.equal(cfg.deliveryMode,'eventual');
+ assert.equal(cfg.drainTimeoutMs,20000);
+ for(const value of ['0','999','120001','abc'])
+  assert.throws(()=>progressiveConfig({...env,
+   EI_E47C_DURABLE_DRAIN_MS:value}),/E47C_PILOT_LIMIT_EXCEEDED/);
+ assert.throws(()=>progressiveConfig({...env,EI_E47C_DELIVERY_MODE:'skip'}),
+  /E47C_PILOT_LIMIT_EXCEEDED/);
+});
 test('stage refuses public URLs, unpinned sources and ephemeral archives',()=>{
  assert.throws(()=>progressiveConfig({...env,EI_LIVE_SOURCE_URL:'https://example.com'}));
  assert.throws(()=>progressiveConfig({...env,EI_E47C_SOURCE_SHA:'main'}),/E47C_SOURCE_SHA_REQUIRED/);

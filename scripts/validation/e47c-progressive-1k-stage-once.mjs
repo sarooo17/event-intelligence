@@ -12,6 +12,7 @@ import {verifyStandaloneOracle} from './standalone-mcp-source-oracle.mjs';
 import {verifyLiveFiredSourceLineage} from './verify-live-source-lineage.mjs';
 import {scheduleBoundedSourceOffers} from './e47c-open-loop-pacing.mjs';
 import {scheduleBoundedWorkerIngress} from './e47c-bounded-worker-ingress.mjs';
+import {waitForDurableReceiptCount} from './e47c-durable-ack-drain.mjs';
 
 const sha=b=>createHash('sha256').update(b).digest('hex');
 const required=(env,k)=>{if(!env[k])throw Error('E47C_MISSING_'+k);return env[k];};
@@ -25,11 +26,16 @@ export function progressiveConfig(env){
  const delayMs=1000/rate;
  const maxInflight=Number(env.EI_E47C_MAX_INFLIGHT??4);
  const workerInflight=Number(env.EI_E47C_WORKER_MAX_INFLIGHT??4);
+ const deliveryMode=env.EI_E47C_DELIVERY_MODE??'immediate';
+ const drainTimeoutMs=Number(env.EI_E47C_DURABLE_DRAIN_MS??30000);
  if(!Number.isSafeInteger(count)||count<10||count>250||
     !Number.isSafeInteger(triggers)||triggers<count||triggers>1000||
     !Number.isSafeInteger(delayMs)||delayMs<0||delayMs>5000||
     !Number.isSafeInteger(maxInflight)||maxInflight<1||maxInflight>8||
-    !Number.isSafeInteger(workerInflight)||workerInflight<1||workerInflight>8)
+    !Number.isSafeInteger(workerInflight)||workerInflight<1||workerInflight>8||
+    !['immediate','eventual'].includes(deliveryMode)||
+    !Number.isSafeInteger(drainTimeoutMs)||drainTimeoutMs<1000||
+    drainTimeoutMs>120000)
   throw Error('E47C_PILOT_LIMIT_EXCEEDED');
  const dir=required(env,'EI_E47C_ARTIFACT_DIR');
  if(!isAbsolute(dir)||dir==='/'||dir.startsWith('/tmp'))
@@ -37,7 +43,8 @@ export function progressiveConfig(env){
  const sourceSha=required(env,'EI_E47C_SOURCE_SHA');
  if(!/^[0-9a-f]{40}$/.test(sourceSha))throw Error('E47C_SOURCE_SHA_REQUIRED');
  return {
-  count,triggers,delayMs,rate,maxInflight,workerInflight,dir,sourceSha,
+  count,triggers,delayMs,rate,maxInflight,workerInflight,deliveryMode,
+  drainTimeoutMs,dir,sourceSha,
   source:parsePrivateServiceUrl(required(env,'EI_LIVE_SOURCE_URL'),'EI_LIVE_SOURCE_URL'),
   token:required(env,'EI_LIVE_SOURCE_TOKEN'),
   workerA:parsePrivateServiceUrl(required(env,'EI_LIVE_WORKER_A_URL'),'EI_LIVE_WORKER_A_URL'),
@@ -83,6 +90,8 @@ async function main(env=process.env){
  const c=progressiveConfig(env);
  if(c.workerA===c.workerB||sha(c.signer)!==c.signerSha)
   throw Error('E47C_WORKERS_OR_SIGNER_PIN_INVALID');
+ if(!/^[a-z][a-z0-9_]{0,40}$/.test(c.tablePrefix))
+  throw Error('E47C_UNSAFE_TABLE_PREFIX');
  const runId=randomUUID();
  const scope=c.scopeBase+':'+runId;
  const prefix='ei-e47c-progressive-1k-r'+c.rate+'-'+runId;
@@ -91,7 +100,7 @@ async function main(env=process.env){
  const evidenceDir=join(c.dir,prefix);
  let inserted=0,appended=0,observed=0,sourceRaw=null;
  const raw={source:[],host:[],ei:[],offer:[],ingest:[]};
- let offerMetrics=null,ingestMetrics=null;
+ let offerMetrics=null,ingestMetrics=null,durableDrain=null;
  const acknowledgements=new Map();
  const validTiming=x=>typeof x==='number'&&Number.isFinite(x)&&x>=0;
  const elapsed=[];
@@ -166,6 +175,7 @@ async function main(env=process.env){
   const ingested=await scheduleBoundedWorkerIngress({
    count:c.count,rate:c.rate,maxInflight:c.workerInflight,
    workerIds:[readyA.workerId,readyB.workerId],
+   deliveryMode:c.deliveryMode,
    send:i=>call(i%2?c.workerB:c.workerA,'/v1/events',{
     scopeId:scope,traceId:'trace-'+ids[i],serverId:c.sourceServerId,
     event:events.get(ids[i])
@@ -187,8 +197,13 @@ async function main(env=process.env){
    if(!validTiming(duration))throw Error('E47C_WORKER_DURATION_INVALID');
    raw.ei[i]={eventId:ids[i],workerId:result.workerId,
     ingestToMatchMs:result.timings.ingestToMatchMs,
-    matchToWakeMs:result.timings.matchToWakeSamplesMs[0],
-    workerRequestToHostReceiptMs:Math.round(duration*1000)/1000};
+    matchToWakeMs:result.persistedDeliveredWakes===1?
+     result.timings.matchToWakeSamplesMs[0]:null,
+    immediateDelivered:result.persistedDeliveredWakes===1,
+    workerRequestCompletionMs:Math.round(duration*1000)/1000,
+    ...(c.deliveryMode==='immediate'?{
+     workerRequestToHostReceiptMs:Math.round(duration*1000)/1000}:{}),
+   };
    elapsed.push(duration);
    observed++;
   }
@@ -198,6 +213,28 @@ async function main(env=process.env){
   const store=new PostgresEventStore({pool,dispatchPoolIdentity:pool,
     tablePrefix:c.tablePrefix,scopeId:scope});
   await store.init();
+  if(c.deliveryMode==='eventual'){
+   durableDrain=await waitForDurableReceiptCount({
+    expectedCount:c.count,maxWaitMs:c.drainTimeoutMs,
+    readCounts:async ({remainingMs})=>{
+     // Host receipt COMMIT precedes EI's own completed delivery UPDATE.
+     // Read both persisted states, without inferring delivery from ACK.
+     const snapshot=await pool.query({
+      text:'SELECT count(*)::integer AS receipts, '+
+       'count(DISTINCT wake_id)::integer AS unique_wakes, '+
+       'count(DISTINCT receipt_id)::integer AS unique_receipts, '+
+       '(SELECT count(*)::integer FROM '+c.tablePrefix+'_records '+
+       "WHERE scope_id=$1 AND kind='wake_delivery' AND "+
+       "payload->>'status'='delivered') AS delivered "+
+       'FROM ei_validation_host_receipts WHERE scope_id=$1',
+      values:[scope],query_timeout:remainingMs
+     });
+     const row=snapshot.rows[0];
+     return {receipts:row.receipts,uniqueWakes:row.unique_wakes,
+      uniqueReceipts:row.unique_receipts,delivered:row.delivered};
+    }
+   });
+  }
   const receipts=await pool.query(
    'SELECT wake_id,receipt_id,attempt_count FROM ei_validation_host_receipts WHERE scope_id=$1',
    [scope]);
@@ -257,7 +294,9 @@ async function main(env=process.env){
    const bytes=Buffer.from(rows.map(v=>JSON.stringify(v)).join('\n')+'\n');
    manifests[kind]=await saveRaw(evidenceDir,kind+'.jsonl',bytes);
   }
-  const report={schema:'ei.e47c.progressive-1k-preflight.v1',
+  const report={schema:c.deliveryMode==='eventual'?
+   'ei.e47c.progressive-1k-durable-preflight.v2':
+   'ei.e47c.progressive-1k-preflight.v1',
    sourceCommitSha:c.sourceSha,runId,scopeDigest:sha(scope),
    stage:{triggers:inserted,requestedRatePerSecond:c.rate,
     offeredEventRateMeasuredPerSecond:offerMetrics.offeredRate,
@@ -279,13 +318,19 @@ async function main(env=process.env){
     workerIngressWorkerIds:ingestMetrics.workerIds,
     durationSeconds:Math.round((performance.now()-stageStart)/10)/100,
     events:appended,observed,
+    ...(c.deliveryMode==='eventual'?{
+     deliveryMode:'eventual',durableDrain,
+     deferredImmediateResponses:raw.ei.filter(x=>!x.immediateDelivered).length,
+     workerRequestCompletionMs:{p50:nearestRank(elapsed,.5),
+      p95:nearestRank(elapsed,.95),p99:nearestRank(elapsed,.99)}
+    }:{}),
     independentEIPools:2,sourceFirstPartySeparateService:true,
     hostFirstPartySeparateService:true,hostDbSharedWithEI:true,
     sourceEventLogSha256:fileArchive.sha256,sourceOracleVerified:true,
     hostWakeReceipts:receipts.rows.length,duplicateHostEffects:0,
-    workerRequestToHostReceiptMs:{
+    ...(c.deliveryMode==='immediate'?{workerRequestToHostReceiptMs:{
      p50:nearestRank(elapsed,.5),p95:nearestRank(elapsed,.95),
-     p99:nearestRank(elapsed,.99)}},
+     p99:nearestRank(elapsed,.99)}}:{})},
    rawManifest:manifests,frontierProof:savedProof,
    acceptanceE47CVerified:false,productionSloCertified:false,
    ratePacingIsSerialAppend:false,sourceAndHostAreFirstParty:true,
@@ -313,6 +358,7 @@ async function main(env=process.env){
    const partial={schema:'ei.e47c.live-pilot-partial.v1',
     sourceCommitSha:c.sourceSha,runId,scopeDigest:sha(scope),
     inserted,appended,observed,offerMetrics,ingestMetrics,
+    deliveryMode:c.deliveryMode,durableDrain,
     acceptanceE47CVerified:false,productionSloCertified:false,
    ratePacingIsSerialAppend:false,sourceAndHostAreFirstParty:true,
     status:'failed',errorCode:String(e?.message??'UNKNOWN').slice(0,110)};

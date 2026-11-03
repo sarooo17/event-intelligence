@@ -125,7 +125,7 @@ function verifySourceOpenLoop({manifest,offers,sourceById,count}){
   peakInflight:manifest.stage.maxObservedSourceAppendInflight};
 }
 
-function verifyWorkerIngress({manifest,ingest,ei,sourceById,count}){
+function verifyWorkerIngress({manifest,ingest,ei,sourceById,count,eventual=false}){
  const stage=manifest.stage;
  if(manifest.workerIngressPacingIndependentOfAck!==true||
     stage.workerIngestPacedIndependently!==true||
@@ -160,7 +160,8 @@ function verifyWorkerIngress({manifest,ingest,ei,sourceById,count}){
       item.offerLatenessMs)>0.003||
      item.completedAtMs<item.offeredAtMs||
      Math.abs((item.completedAtMs-item.offeredAtMs)-
-      ei[i].workerRequestToHostReceiptMs)>0.003)
+      ei[i][eventual?'workerRequestCompletionMs':
+       'workerRequestToHostReceiptMs'])>0.003)
    fail('E47C_WORKER_INGRESS_LINEAGE_OR_TIME_INVALID');
   seen.add(item.eventId);
   activeTransitions.push({order:item.offerOrder,time:item.offeredAtMs,delta:1},
@@ -196,12 +197,17 @@ function verifyWorkerIngress({manifest,ingest,ei,sourceById,count}){
 }
 
 export function assessProgressiveE47CStage({manifest,source,host,ei,offers,ingest,originalEvents,originalSequenceById}={}){
- if(manifest?.schema!=='ei.e47c.progressive-1k-preflight.v1'||
+ const eventual=manifest?.schema==='ei.e47c.progressive-1k-durable-preflight.v2';
+ if(!eventual&&manifest?.schema!=='ei.e47c.progressive-1k-preflight.v1'||
     manifest?.acceptanceE47CVerified!==false||
     manifest?.productionSloCertified!==false||
     manifest?.stage?.sourceOracleVerified!==true||
     manifest?.stage?.hostDbSharedWithEI!==true)
   fail('E47C_NOT_BOUNDED_PILOT');
+ if(eventual&&(manifest.workerIngressPacingIndependentOfAck!==true||
+    manifest.stage?.workerIngestPacedIndependently!==true||
+    !Array.isArray(ingest)))
+  fail('E47C_DURABLE_WORKER_INGRESS_REQUIRED');
  const count=manifest.stage.events;
  if(!Number.isSafeInteger(count)||count<10||count>250||
     manifest.stage.triggers!==1000||
@@ -227,8 +233,13 @@ export function assessProgressiveE47CStage({manifest,source,host,ei,offers,inges
      !exactId(row.wakeId)||wakeIds.has(row.wakeId)||
      !exactId(row.runtimeReceiptId)||receipts.has(row.runtimeReceiptId)||
      !exactId(row.workerId)||
-     !validTiming(row.ingestToMatchMs)||!validTiming(row.matchToWakeMs)||
-     !validTiming(row.workerRequestToHostReceiptMs))
+     !validTiming(row.ingestToMatchMs)||
+     (eventual?(typeof row.immediateDelivered!=='boolean'||
+      !validTiming(row.workerRequestCompletionMs)||
+      (row.immediateDelivered?!validTiming(row.matchToWakeMs):
+       row.matchToWakeMs!==null)):
+      (!validTiming(row.matchToWakeMs)||
+       !validTiming(row.workerRequestToHostReceiptMs))))
    fail('E47C_INVALID_OR_DUPLICATE_EI_ROW');
   const s=sourceById.get(row.eventId),h=hostById.get(row.eventId);
   const original=originalMap.get(row.eventId);
@@ -248,11 +259,26 @@ export function assessProgressiveE47CStage({manifest,source,host,ei,offers,inges
  const openLoop=manifest.ratePacingIsSerialAppend===false?
   verifySourceOpenLoop({manifest,offers,sourceById,count}):null;
  const workerIngress=manifest.workerIngressPacingIndependentOfAck===true?
-  verifyWorkerIngress({manifest,ingest,ei,sourceById,count}):null;
- const observedLatency=stats(ei,'workerRequestToHostReceiptMs');
+  verifyWorkerIngress({manifest,ingest,ei,sourceById,count,eventual}):null;
+ const immediateRows=eventual?ei.filter(r=>r.immediateDelivered):ei;
+ if(eventual){
+  const drain=manifest.stage.durableDrain;
+  if(manifest.stage.deliveryMode!=='eventual'||
+     manifest.stage.deferredImmediateResponses!==count-immediateRows.length||
+     drain?.settledCount!==count||drain?.durableDelivered!==count||
+     drain?.requirePerEventLineage!==true||
+     drain?.productionSloCertified!==false||
+     !Number.isSafeInteger(drain.polls)||drain.polls<1||
+     !validTiming(drain.drainElapsedMs))
+   fail('E47C_DURABLE_SETTLEMENT_EVIDENCE_INVALID');
+ }
+ const workerDurationKey=eventual?'workerRequestCompletionMs':
+  'workerRequestToHostReceiptMs';
+ const observedLatency=stats(ei,workerDurationKey);
+ const manifestLatency=manifest.stage[workerDurationKey];
  for(const k of ['p50','p95','p99']){
-  if(!validTiming(manifest.stage.workerRequestToHostReceiptMs?.[k])||
-    Math.abs(observedLatency[k]-manifest.stage.workerRequestToHostReceiptMs[k])>0.001)
+  if(!validTiming(manifestLatency?.[k])||
+    Math.abs(observedLatency[k]-manifestLatency[k])>0.001)
    fail('E47C_PILOT_QUANTILE_MISMATCH_'+k);
  }
  if(!hex64(manifest.stage.sourceEventLogSha256))
@@ -273,8 +299,11 @@ export function assessProgressiveE47CStage({manifest,source,host,ei,offers,inges
   distinctEIWorkers:workers.size,
   latency:{
    ingestToMatch:stats(ei,'ingestToMatchMs'),
-   matchToWake:stats(ei,'matchToWakeMs'),
-   workerRequestToHostReceipt:observedLatency,
+   matchToWake:immediateRows.length>0?stats(immediateRows,'matchToWakeMs'):null,
+   matchToWakeObservedSamples:immediateRows.length,
+   matchToWakeCensoredSamples:count-immediateRows.length,
+   workerRequestToHostReceipt:eventual?null:observedLatency,
+   workerRequestCompletion:eventual?observedLatency:null,
   },
  });
 }
@@ -304,6 +333,9 @@ export async function verifyPersistedProgressiveE47CStage({
  const ei=decodeJsonl(await readBoundedArtifact(folder,manifest.rawManifest?.ei));
  const offers=manifest.ratePacingIsSerialAppend===false?
   decodeJsonl(await readBoundedArtifact(folder,manifest.rawManifest?.offer)):undefined;
+ if(manifest.schema==='ei.e47c.progressive-1k-durable-preflight.v2'&&
+    manifest.workerIngressPacingIndependentOfAck!==true)
+  fail('E47C_DURABLE_WORKER_INGRESS_REQUIRED');
  const ingest=manifest.workerIngressPacingIndependentOfAck===true?
   decodeJsonl(await readBoundedArtifact(folder,manifest.rawManifest?.ingest)):undefined;
  const proof=decodeJson(await readBoundedArtifact(folder,manifest.frontierProof,1024*1024));
