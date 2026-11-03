@@ -35,7 +35,8 @@ export function progressiveConfig(env){
     !Number.isSafeInteger(triggers)||triggers<count||triggers>1000||
     !Number.isSafeInteger(delayMs)||delayMs<0||delayMs>5000||
     !Number.isSafeInteger(maxInflight)||maxInflight<1||maxInflight>8||
-    !Number.isSafeInteger(workerInflight)||workerInflight<1||workerInflight>8||
+    !Number.isSafeInteger(workerInflight)||workerInflight<1||
+    workerInflight>(large?20:8)||
     !['immediate','eventual'].includes(deliveryMode)||
     !Number.isSafeInteger(drainTimeoutMs)||drainTimeoutMs<1000||
     drainTimeoutMs>120000)
@@ -223,7 +224,7 @@ async function main(env=process.env){
   }
   const ingested=await scheduleBoundedWorkerIngress({
    count:c.count,rate:c.rate,maxInflight:c.workerInflight,
-   maxCount:c.large?1000:250,
+   maxCount:c.large?1000:250,maxInflightLimit:c.large?20:8,
    workerIds:[readyA.workerId,readyB.workerId],
    deliveryMode:c.deliveryMode,
    send:i=>call(i%2?c.workerB:c.workerA,'/v1/events',{
