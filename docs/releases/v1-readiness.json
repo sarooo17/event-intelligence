@@ -65,9 +65,10 @@
         "https://github.com/sarooo17/event-intelligence/pull/256",
         "https://github.com/sarooo17/event-intelligence/pull/257",
         "https://github.com/sarooo17/event-intelligence/pull/258",
-        "https://github.com/sarooo17/event-intelligence/pull/378"
+        "https://github.com/sarooo17/event-intelligence/pull/378",
+        "https://github.com/sarooo17/event-intelligence/pull/407"
       ],
-      "note": "MANDATORY SDK source/event/match/audit/wake-receipt retention implementation is CLOSED 6/6 in #47, with independently reviewed/merged #378 and actual PG16 cross-pool, corrupted-state, restart and lock/timeout negatives. The accepted conservative policy is LOSSLESS NO-PRUNE for source/audit/dedup, except proven safe terminal-duplicate history compaction; storage may grow indefinitely. Still BLOCKED for stable-v1 exact-artifact evidence review, owner/date/procedure signoff, and explicit capacity/backup limitations. WORM/off-host archive, physical TTL and production HA/RPO/RTO remain OPTIONAL in #376, not missing SDK core implementation."
+      "note": "MANDATORY SDK source/event/match/audit/wake-receipt retention implementation is CLOSED 6/6 in #47, with independently reviewed/merged #378 and actual PG16 cross-pool, corrupted-state, restart and lock/timeout negatives. The accepted conservative policy is LOSSLESS NO-PRUNE for source/audit/dedup, except proven safe terminal-duplicate history compaction; storage may grow indefinitely. Still BLOCKED for stable-v1 exact-artifact evidence review, owner/date/procedure signoff, and explicit capacity/backup limitations. WORM/off-host archive, physical TTL and production HA/RPO/RTO remain OPTIONAL in #376, not missing SDK core implementation. Source-pinned PR #407 (12/12 reviewed CI) replaced per-append full-history reload with indexed audit-head validation, retaining exact canonical hash/restart/corrupt-tail semantics; not an immutable external WORM archive and not yet a stable-v1 candidate signoff."
     },
     {
       "id": "pg-chaos-recovery",
@@ -79,9 +80,10 @@
         "https://github.com/sarooo17/event-intelligence/actions/runs/39568691478",
         "https://github.com/sarooo17/event-intelligence/issues/47",
         "https://github.com/sarooo17/event-intelligence/pull/263",
-        "https://github.com/sarooo17/event-intelligence/pull/378"
+        "https://github.com/sarooo17/event-intelligence/pull/378",
+        "https://github.com/sarooo17/event-intelligence/pull/407"
       ],
-      "note": "BLOCKED pending reviewer signoff on mandatory SDK worker crash/recovery correctness across actual PG16 independent OS workers (e.g. #253/#263); EI-authored fixtures are valid core correctness evidence. Separately operated provider/host and primary PG failover RPO/RTO are OPTIONAL production certification #376."
+      "note": "BLOCKED pending reviewer signoff on mandatory SDK worker crash/recovery correctness across actual PG16 independent OS workers (e.g. #253/#263); EI-authored fixtures are valid core correctness evidence. Separately operated provider/host and primary PG failover RPO/RTO are OPTIONAL production certification #376. PR #407 real PG16 post-host-effect SIGKILL, crash-recovery soak and audit-head tamper regression all passed on its exact HEAD; candidate-specific signoff and complete upgrade/recovery procedure remain pending."
     },
     {
       "id": "pg-scale-measured",
@@ -94,9 +96,9 @@
         "https://github.com/sarooo17/event-intelligence/actions/runs/39603115535",
         "https://github.com/sarooo17/event-intelligence/issues/47",
         "https://github.com/sarooo17/event-intelligence/pull/259",
-        "https://github.com/sarooo17/event-intelligence/pull/259"
+        "https://github.com/sarooo17/event-intelligence/pull/407"
       ],
-      "note": "OPTIONAL production/enterprise deployment capacity certification (#376): independent external provider/host, high-cardinality sustained 1k/10k/100k p95/p99 under real multi-rate load and DB CPU attribution. Already executed PG16 reproducible 1k/10k/100k synthetic benchmarks (#47/#229) remain valid SDK evidence, not production SLA."
+      "note": "OPTIONAL production/enterprise deployment capacity certification (#376): independent external provider/host, high-cardinality sustained 1k/10k/100k p95/p99 under real multi-rate load and DB CPU attribution. Already executed PG16 reproducible 1k/10k/100k synthetic benchmarks (#47/#229) remain valid SDK evidence, not production SLA. PR #407 and independently rechecked first-party Railway isolated 1k/1k at 5/s improved worker completion p99 to ~1.15s and achieved 1,000/1,000 durable host receipts; E47-C remains incomplete (10k/100k, second rate, independent provider/host, production resource/SLO)."
     },
     {
       "id": "stored-state-upgrade",
