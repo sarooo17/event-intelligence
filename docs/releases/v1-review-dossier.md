@@ -64,7 +64,12 @@ adding a SHA to the ledger would change that SHA. Instead use the
    packaging, workflow or documentation changes invalidate the
    corresponding approval and require re-review. A regular CI green
    status or a URL listed under `evidence` never counts as signoff.
-5. Only then can the manual `Publish npm` workflow consider
+5. A version with build metadata is rejected **before** npm can strip or
+   normalize it (for example `1.0.0+build-foo` must never behave as a
+   prerelease bypass). This dossier authorizes **only the first `1.0.0`**;
+   future stable releases must explicitly update the release policy rather
+   than silently reuse an old 1.0 signoff.
+6. Only then can the manual `Publish npm` workflow consider
    `1.0.0` on `main`, with `confirm=publish` and
    `expected_version=1.0.0`. The job independently runs the strict
    gate **before** any npm publish. Successful npm publication is
