@@ -11,11 +11,12 @@ export function rateFromTimeline(rows,field){
  return round((rows.length-1)*1000/(last-first));
 }
 export async function scheduleBoundedSourceOffers({
- count,rate,maxInflight=4,send,
+ count,rate,maxInflight=4,send,maxCount=250,
  now=()=>performance.now(),
  wait=ms=>new Promise(resolve=>setTimeout(resolve,ms)),
 }={}){
- if(!Number.isSafeInteger(count)||count<2||count>250||
+ if(!Number.isSafeInteger(maxCount)||maxCount<2||maxCount>1000||
+    !Number.isSafeInteger(count)||count<2||count>maxCount||
     ![1,5].includes(rate)||!Number.isSafeInteger(maxInflight)||
     maxInflight<1||maxInflight>8||typeof send!=='function'||
     typeof now!=='function'||typeof wait!=='function')

@@ -168,3 +168,36 @@ test('query crossing the drain deadline never certifies a late receipt',async()=
   }
  }),/E47C_DURABLE_DRAIN_TIMEOUT/);
 });
+
+test('1k open-loop worker offers require explicit count budget and preserve 5/s schedule',async()=>{
+ let clock=0;
+ const send=async i=>receipt(i,i%2?'ei-b':'ei-a');
+ const settings={count:1000,rate:5,maxInflight:8,
+  workerIds:['ei-a','ei-b'],send,now:()=>clock,
+  wait:async ms=>{clock+=ms;}};
+ await assert.rejects(scheduleBoundedWorkerIngress(settings),
+  /E47C_BAD_OPEN_LOOP_CONFIGURATION/);
+ const run=await scheduleBoundedWorkerIngress({...settings,maxCount:1000});
+ assert.equal(run.rows.length,1000);
+ assert.equal(run.accepted,1000);
+ assert.equal(run.rejected,0);
+ assert.equal(run.allAccepted,true);
+ assert.equal(run.offeredRate,5);
+ assert.equal(run.rows[999].scheduledAtMs,199800);
+ assert.ok(run.peakInflight<=8);
+});
+
+test('1k durable receipt polling requires explicit maxExpectedCount and 1000 unique delivered',async()=>{
+ const readCounts=async()=>({receipts:1000,uniqueWakes:1000,
+  uniqueReceipts:1000,delivered:1000});
+ await assert.rejects(waitForDurableReceiptCount({
+  expectedCount:1000,readCounts}),/E47C_DURABLE_DRAIN_CONFIG_INVALID/);
+ const accepted=await waitForDurableReceiptCount({
+  expectedCount:1000,maxExpectedCount:1000,readCounts});
+ assert.equal(accepted.settledCount,1000);
+ assert.equal(accepted.durableDelivered,1000);
+ assert.equal(accepted.productionSloCertified,false);
+ await assert.rejects(waitForDurableReceiptCount({
+  expectedCount:1000,maxExpectedCount:1001,readCounts
+ }),/E47C_DURABLE_DRAIN_CONFIG_INVALID/);
+});

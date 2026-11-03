@@ -1,7 +1,7 @@
 // E47-C live private MCP source -> 2 EI workers -> separately deployed host
 // PROGRESSIVE STAGE ONLY: 1,000 durable triggers x 1 or 5 offered-event/s; not full E47-C.
 import {createHash,randomUUID} from 'node:crypto';
-import {mkdir,open} from 'node:fs/promises';
+import {mkdir,open,statfs} from 'node:fs/promises';
 import {join,isAbsolute,resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import pg from 'pg';
@@ -17,7 +17,8 @@ import {waitForDurableReceiptCount} from './e47c-durable-ack-drain.mjs';
 const sha=b=>createHash('sha256').update(b).digest('hex');
 const required=(env,k)=>{if(!env[k])throw Error('E47C_MISSING_'+k);return env[k];};
 export function progressiveConfig(env){
- if(env.EI_E47C_STAGE_CONFIRM!=='RUN_1000_FIRST_PARTY_STAGING')
+ const large=env.EI_E47C_STAGE_CONFIRM==='RUN_1000_EVENTS_FIRST_PARTY_STAGING';
+ if(!large&&env.EI_E47C_STAGE_CONFIRM!=='RUN_1000_FIRST_PARTY_STAGING')
   throw Error('E47C_STAGE_EXPLICIT_OPT_IN_REQUIRED');
  const rate=Number(env.EI_E47C_STAGE_RATE);
  if(![1,5].includes(rate))throw Error('E47C_UNSUPPORTED_STAGE_RATE');
@@ -28,7 +29,9 @@ export function progressiveConfig(env){
  const workerInflight=Number(env.EI_E47C_WORKER_MAX_INFLIGHT??4);
  const deliveryMode=env.EI_E47C_DELIVERY_MODE??'immediate';
  const drainTimeoutMs=Number(env.EI_E47C_DURABLE_DRAIN_MS??30000);
- if(!Number.isSafeInteger(count)||count<10||count>250||
+ if(!Number.isSafeInteger(count)||count<10||
+    (large?count!==1000:count>250)||
+    (large&&deliveryMode!=='eventual')||
     !Number.isSafeInteger(triggers)||triggers<count||triggers>1000||
     !Number.isSafeInteger(delayMs)||delayMs<0||delayMs>5000||
     !Number.isSafeInteger(maxInflight)||maxInflight<1||maxInflight>8||
@@ -43,7 +46,7 @@ export function progressiveConfig(env){
  const sourceSha=required(env,'EI_E47C_SOURCE_SHA');
  if(!/^[0-9a-f]{40}$/.test(sourceSha))throw Error('E47C_SOURCE_SHA_REQUIRED');
  return {
-  count,triggers,delayMs,rate,maxInflight,workerInflight,deliveryMode,
+  count,triggers,delayMs,rate,maxInflight,workerInflight,deliveryMode,large,
   drainTimeoutMs,dir,sourceSha,
   source:parsePrivateServiceUrl(required(env,'EI_LIVE_SOURCE_URL'),'EI_LIVE_SOURCE_URL'),
   token:required(env,'EI_LIVE_SOURCE_TOKEN'),
@@ -80,6 +83,32 @@ async function call(base,path,body,token,expectedStatus=200){
  if(response.status!==expectedStatus)throw Error('E47C_REQUEST_FAILED_'+path.replace(/\W/g,'_')+'_'+response.status);
  return parsed;
 }
+// Check separate real EI worker identities via read-only, private-network
+// readiness endpoints BEFORE inserting any 1k trigger or source event.
+export async function preflightLargeWorkers({workerA,workerB,request=fetch}={}){
+ if(typeof request!=='function')
+  throw Error('E47C_LARGE_WORKER_PREFLIGHT_CONFIG_INVALID');
+ const urls=[
+  parsePrivateServiceUrl(workerA,'EI_LIVE_WORKER_A_URL'),
+  parsePrivateServiceUrl(workerB,'EI_LIVE_WORKER_B_URL')
+ ];
+ if(urls[0]===urls[1])throw Error('E47C_LARGE_WORKER_ENDPOINT_DUPLICATE');
+ const identities=await Promise.all(urls.map(async base=>{
+  const response=await request(base+'/readyz',{
+   method:'GET',signal:AbortSignal.timeout(5000)
+  });
+  if(response?.status!==200)throw Error('E47C_LARGE_WORKER_NOT_READY');
+  const body=await response.json().catch(()=>({}));
+  if(body?.status!=='ready'||typeof body.workerId!=='string'||
+     !/^[a-zA-Z0-9_-]{1,128}$/.test(body.workerId))
+   throw Error('E47C_LARGE_WORKER_ID_INVALID');
+  return body.workerId;
+ }));
+ if(identities[0]===identities[1])
+  throw Error('E47C_LARGE_WORKER_IDENTITY_DUPLICATE');
+ return Object.freeze([...identities]);
+}
+
 async function saveRaw(dir,name,bytes){
  const path=join(dir,name);
  const fd=await open(path,'wx',0o600);
@@ -98,6 +127,7 @@ async function main(env=process.env){
  const pool=new pg.Pool({connectionString:c.databaseUrl,max:3,
   connectionTimeoutMillis:5000,statement_timeout:15000});
  const evidenceDir=join(c.dir,prefix);
+ let pinnedLargeWorkerIds=null;
  let inserted=0,appended=0,observed=0,sourceRaw=null;
  const raw={source:[],host:[],ei:[],offer:[],ingest:[]};
  let offerMetrics=null,ingestMetrics=null,durableDrain=null;
@@ -106,6 +136,21 @@ async function main(env=process.env){
  const elapsed=[];
  try{
   await mkdir(evidenceDir,{recursive:false,mode:0o700});
+  if(c.large){
+   // No 1k write begins without a private durable evidence-volume reserve
+   // and an independently read-only source log capacity check.
+   const fs=await statfs(evidenceDir);
+   if(fs.bavail*fs.bsize<32*1024*1024)
+    throw Error('E47C_LARGE_EVIDENCE_VOLUME_BUDGET_LOW');
+   const archive=await call(c.source,'/control/operator-archive',{},c.token);
+   if(!Number.isSafeInteger(archive.bytes)||archive.bytes<1||
+      archive.bytes>14*1024*1024||
+      typeof archive.sha256!=='string'||!/^([a-f0-9]{64})$/.test(archive.sha256))
+    throw Error('E47C_LARGE_SOURCE_ARCHIVE_BUDGET_LOW');
+   pinnedLargeWorkerIds=await preflightLargeWorkers({
+    workerA:c.workerA,workerB:c.workerB
+   });
+  }
   await pool.query('SELECT 1');
   const triggers=Array.from({length:c.triggers},(_,i)=>({
    triggerId:prefix+'-'+i,version:'1',
@@ -129,6 +174,7 @@ async function main(env=process.env){
   // hidden queue/dropped sample or lower "successful" rate.
   const offers=await scheduleBoundedSourceOffers({
    count:c.count,rate:c.rate,maxInflight:c.maxInflight,
+   maxCount:c.large?1000:250,
    send:i=>call(c.source,'/control/append',
     {eventId:ids[i],data:{slot:i,pilotRun:runId}},c.token)
   });
@@ -168,12 +214,16 @@ async function main(env=process.env){
   const readyB=await call(c.workerB,'/v1/recover',{scopeId:scope},c.workerToken);
   if(!readyA.workerId||!readyB.workerId||readyA.workerId===readyB.workerId)
    throw Error('E47C_WORKER_PREWARM_IDENTITY_INVALID');
+  if(c.large&&(pinnedLargeWorkerIds?.[0]!==readyA.workerId||
+    pinnedLargeWorkerIds?.[1]!==readyB.workerId))
+   throw Error('E47C_LARGE_WORKER_IDENTITY_DRIFT');
   for(let i=0;i<c.count;i++){
    if(events.get(ids[i])?.data?.slot!==i)
     throw Error('E47C_SOURCE_SLOT_MISMATCH');
   }
   const ingested=await scheduleBoundedWorkerIngress({
    count:c.count,rate:c.rate,maxInflight:c.workerInflight,
+   maxCount:c.large?1000:250,
    workerIds:[readyA.workerId,readyB.workerId],
    deliveryMode:c.deliveryMode,
    send:i=>call(i%2?c.workerB:c.workerA,'/v1/events',{
@@ -215,7 +265,8 @@ async function main(env=process.env){
   await store.init();
   if(c.deliveryMode==='eventual'){
    durableDrain=await waitForDurableReceiptCount({
-    expectedCount:c.count,maxWaitMs:c.drainTimeoutMs,
+    expectedCount:c.count,maxExpectedCount:c.large?1000:250,
+    maxWaitMs:c.drainTimeoutMs,
     readCounts:async ({remainingMs})=>{
      // Host receipt COMMIT precedes EI's own completed delivery UPDATE.
      // Read both persisted states, without inferring delivery from ACK.
@@ -294,7 +345,9 @@ async function main(env=process.env){
    const bytes=Buffer.from(rows.map(v=>JSON.stringify(v)).join('\n')+'\n');
    manifests[kind]=await saveRaw(evidenceDir,kind+'.jsonl',bytes);
   }
-  const report={schema:c.deliveryMode==='eventual'?
+  const report={schema:c.large?
+   'ei.e47c.progressive-1k-durable-preflight.v3':
+   c.deliveryMode==='eventual'?
    'ei.e47c.progressive-1k-durable-preflight.v2':
    'ei.e47c.progressive-1k-preflight.v1',
    sourceCommitSha:c.sourceSha,runId,scopeDigest:sha(scope),
@@ -318,6 +371,7 @@ async function main(env=process.env){
     workerIngressWorkerIds:ingestMetrics.workerIds,
     durationSeconds:Math.round((performance.now()-stageStart)/10)/100,
     events:appended,observed,
+    ...(c.large?{largeEventOptIn:true,requestedEventBudget:1000}:{}),
     ...(c.deliveryMode==='eventual'?{
      deliveryMode:'eventual',durableDrain,
      deferredImmediateResponses:raw.ei.filter(x=>!x.immediateDelivered).length,
@@ -336,7 +390,8 @@ async function main(env=process.env){
    ratePacingIsSerialAppend:false,sourceAndHostAreFirstParty:true,
    offeredPacingIndependentOfAck:true,
    workerIngressPacingIndependentOfAck:true,
-   limitations:['stage-event-count-below-1000','one-cardinality-per-run',
+   limitations:[...(c.large?[]:['stage-event-count-below-1000']),
+    'one-cardinality-per-run',
     'source-append-and-worker-ingest-two-separate-phases-not-live-overlapped',
     'two-rate-completion-requires-distinct-runs','shared-host-ei-postgres',
     'no-independent-enterprise-security-or-physical-db-io-signoff']};
