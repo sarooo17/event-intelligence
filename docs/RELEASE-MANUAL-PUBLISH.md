@@ -24,6 +24,37 @@ This is a *control-plane gate*, not automatic validation of semver intent,
 source-to-tag compatibility or production readiness; owners must review
 those separately. Never publish a version merely to make a fork's CI green.
 
+## Stable v1.0.0 manual evidence fence (#41)
+
+For any stable major version >=1, the manually dispatched `Publish npm`
+workflow fails closed **before any npm publication** unless the nine required
+SDK gates in `docs/releases/v1-readiness.json` satisfy the strict exact-source
+review check. The checker receives the real checked-out commit, requires every
+approved gate to pin its earlier reviewed source commit, verifies Git ancestry
+and refuses **any changed file outside the readiness ledger** since approval.
+The source already reviewed must include exact package/lock/Registry identity,
+compatibility notes, frozen release workflows, tests and ABI. After that,
+only a ledger-only signoff PR may be merged without invalidating approvals.
+
+The canonical npm version is parsed **before channel selection**, rejecting
+SemVer build metadata (including deceptive `1.0.0+build-foo`), malformed
+aliases and leading-zero versions. The present nine-gate dossier only
+covers the initial **exact `1.0.0`** stable publication: future stable
+`1.0.1`/`1.1.0`/`2.0.0` are explicitly blocked until a separate revised
+release-readiness policy is reviewed, rather than inheriting v1.0 approval.
+
+The separate `Release` workflow now starts exclusively after a successful
+`Publish npm` workflow on `main` (no push-based release of workflow edits).
+It repeats the strict source gate before creating any stable MCP Registry
+entry, tag or GitHub Release. A manual stable publish that finds an existing
+version fails rather than reporting a successful no-op that could trigger a
+secondary release workflow. Prereleases remain on `next` and do not meet
+this stable requirement. Current `0.12.0-next.1` remains unchanged.
+
+The [nine-gate review dossier](releases/v1-review-dossier.md) lists reusable
+implementation evidence and missing exact-v1 approvals. Neither the dossier,
+a green unit test, nor the presence of evidence URLs authorizes publication.
+
 ## Safe npm tags
 
 The manually confirmed publish job selects `--tag next` whenever the

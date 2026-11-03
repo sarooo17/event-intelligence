@@ -1,10 +1,9 @@
 name: Release
 
+# Never publish an MCP Registry entry/GitHub stable release merely because
+# someone changed this workflow file. Source must come from successful npm
+# publication on main, then pass the stable readiness check again.
 on:
-  push:
-    branches: [main]
-    paths:
-      - ".github/workflows/release.yml"
   workflow_run:
     workflows: ["Publish npm"]
     types: [completed]
@@ -19,7 +18,7 @@ concurrency:
 
 jobs:
   release:
-    if: ${{ github.event_name == 'push' || github.event.workflow_run.conclusion == 'success' }}
+    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -29,6 +28,15 @@ jobs:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
           fetch-depth: 0
 
+      - name: Verify release source matches successful npm publish workflow
+        env:
+          PUBLISHED_SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$PUBLISHED_SOURCE_SHA"
+          test "$(git rev-parse HEAD)" = "$PUBLISHED_SOURCE_SHA"
+
       # npm prereleases stay on the next dist-tag and must never appear as a
       # registered MCP Registry version or stable GitHub release.
       - name: Classify release channel
@@ -37,13 +45,30 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="$(node -p "require('./package.json').version")"
-          if [[ "$VERSION" == *-* ]]; then
+          CHANNEL="$(node scripts/evidence/safe-release-channel.mjs "$VERSION")"
+          if [ "$CHANNEL" = "next" ]; then
             echo "mcp_release=false" >> "$GITHUB_OUTPUT"
             echo "::notice::npm candidate only; no MCP Registry / stable GitHub release"
           else
             echo "mcp_release=true" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Enforce stable v1 source-pinned readiness before Registry or tag
+        if: ${{ steps.channel.outputs.mcp_release == 'true' }}
+        shell: bash
+        env:
+          EXPECTED_SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./package.json').version")"
+          # The channel was already validated from canonical SemVer.
+          # Only 1.0.0 is eligible for the current nine-row signoff.
+          # A future stable version fails in safe-release-channel until
+          # a NEW reviewed policy is introduced.
+          if [ "$VERSION" = "1.0.0" ]; then
+            test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_SHA"
+            EI_RELEASE_SOURCE_SHA="$EXPECTED_SOURCE_SHA" node scripts/evidence/v1-release-readiness.mjs --strict
+          fi
       - name: Resolve and verify version
         if: ${{ steps.channel.outputs.mcp_release == 'true' }}
         id: version

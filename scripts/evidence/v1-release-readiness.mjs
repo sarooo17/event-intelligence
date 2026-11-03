@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
+import { execFileSync } from 'node:child_process';
 
 export const V1_REQUIRED_CRITERIA = Object.freeze([
   'host-contract-and-package',
@@ -60,12 +61,20 @@ function validSignoffDate(date) {
  * judgments. A ledger "verified" line must have a concrete evidence URL and
  * reviewer record; the checker never marks anything verified automatically.
  */
-export function evaluateV1Readiness(ledger, packageVersion) {
+export function evaluateV1Readiness(ledger, packageVersion, { expectedSourceSha } = {}) {
   const expected = new Map([
     ...V1_REQUIRED_CRITERIA.map(id=>[id,true]),
     ...V1_OPTIONAL_CRITERIA.map(id=>[id,false]),
   ]);
   const errors=[];
+  // An approved record must refer to the exact source tree being published.
+  // The publish/release workflows derive this SHA from the checked-out Git
+  // commit and do not trust a user-supplied issue or comment as the source.
+  if (expectedSourceSha !== undefined &&
+      (typeof expectedSourceSha !== 'string' ||
+       !/^[0-9a-f]{40}$/.test(expectedSourceSha))) {
+    errors.push('Invalid exact release source SHA');
+  }
   if (ledger?.schema !== 'event-intelligence.v1-readiness.v1' ||
       ledger?.targetVersion !== '1.0.0' ||
       ledger?.policy !== 'fail-closed-no-automatic-merge-or-publish' ||
@@ -101,6 +110,10 @@ export function evaluateV1Readiness(ledger, packageVersion) {
          !validSignoffDate(row.verification.date)) {
         errors.push('Verified criterion lacks independent/manual audit evidence: '+row.id);
       }
+      if (expectedSourceSha !== undefined &&
+          !/^[0-9a-f]{40}$/.test(row.verification?.sourceCommitSha??'')) {
+        errors.push('Verified criterion lacks reviewed immutable source SHA: '+row.id);
+      }
     }
   }
   for(const id of expected.keys()) if(!seen.has(id))errors.push('Missing criterion: '+id);
@@ -126,11 +139,63 @@ export function evaluateV1Readiness(ledger, packageVersion) {
   });
 }
 
-export function readV1Readiness(cwd = new URL('../../',import.meta.url)) {
+/**
+ * Ledger signoff changes must NOT require their own not-yet-existing commit
+ * hash (a cryptographic fixed point). Each reviewer pins a *prior, reviewed*
+ * source commit, and strict release checks that it is an ancestor of HEAD
+ * with ZERO differences in the entire release tree except this ledger.
+ * Therefore all runtime code, package identity, release notes, CI gates and
+ * published files must already be frozen BEFORE signoff is recorded.
+ *
+ * runGit is injectable to test the guard without a local Git repository.
+ * No untrusted shell interpolation, network access, source modification,
+ * tag creation or package publication occurs.
+ */
+export function verifyV1ReviewedSource(ledger, headSha, runGit = args =>
+  execFileSync('git',args,{encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim()) {
+  const errors=[];
+  if (!/^[0-9a-f]{40}$/.test(headSha??'')) {
+    return ['Invalid checked-out release source SHA'];
+  }
+  try {
+    if (runGit(['rev-parse','HEAD'])!==headSha) {
+      errors.push('Checked-out HEAD does not match immutable workflow source SHA');
+      return errors;
+    }
+  } catch {
+    return ['Cannot verify checked-out release Git HEAD'];
+  }
+  const verifiedRequired=(ledger?.criteria??[]).filter(row=>
+    row?.required===true && row?.status==='verified');
+  for(const reviewedSha of new Set(verifiedRequired.map(row=>
+    row.verification?.sourceCommitSha))) {
+    if(!/^[0-9a-f]{40}$/.test(reviewedSha??'')){
+      errors.push('Verified release row lacks immutable source SHA');
+      continue;
+    }
+    try {
+      runGit(['merge-base','--is-ancestor',reviewedSha,headSha]);
+    } catch {
+      errors.push('Reviewed release source is not an ancestor of HEAD: '+reviewedSha);
+      continue;
+    }
+    try {
+      // Only the attestations in THIS ledger can differ. Release notes and
+      // every other path must exactly match the source actually reviewed.
+      runGit(['diff','--quiet',reviewedSha,headSha,'--','.',
+        ':(exclude)docs/releases/v1-readiness.json']);
+    } catch {
+      errors.push('Release source differs from reviewed source outside readiness ledger: '+reviewedSha);
+    }
+  }
+  return errors;
+}
+
+export function readV1Readiness(cwd = new URL('../../',import.meta.url), options = {}) {
   const root=typeof cwd==='string'?new URL('file://'+resolve(cwd)+'/'):cwd;
   const ledger=JSON.parse(readFileSync(new URL('docs/releases/v1-readiness.json',root)));
   const pkg=JSON.parse(readFileSync(new URL('package.json',root)));
-  return evaluateV1Readiness(ledger,pkg.version);
+  return evaluateV1Readiness(ledger,pkg.version,options);
 }
 
 if(process.argv[1] && resolve(process.argv[1])===fileURLToPath(import.meta.url)) {
@@ -139,9 +204,23 @@ if(process.argv[1] && resolve(process.argv[1])===fileURLToPath(import.meta.url))
     console.error('Usage: node scripts/evidence/v1-release-readiness.mjs [--report|--strict]');
     process.exitCode=2;
   } else {
-    const report=readV1Readiness();
-    console.log(JSON.stringify(report,null,2));
-    if(report.errors.length || mode==='--strict' && report.status!=='eligible-for-manual-review'){
+    const report=readV1Readiness(new URL('../../',import.meta.url),
+      mode==='--strict' ? {expectedSourceSha:process.env.EI_RELEASE_SOURCE_SHA??''} : {});
+    let released=report;
+    if(mode==='--strict' && report.status==='eligible-for-manual-review'){
+      const ledger=JSON.parse(readFileSync(new URL(
+        '../../docs/releases/v1-readiness.json',import.meta.url)));
+      const provenanceErrors=verifyV1ReviewedSource(
+        ledger,process.env.EI_RELEASE_SOURCE_SHA??'');
+      if(provenanceErrors.length) {
+        released={...report,status:'blocked',autoPublish:false,
+          blocked:[...report.blocked,'reviewed-source-code-drift'],
+          errors:[...report.errors,...provenanceErrors]};
+      }
+    }
+    console.log(JSON.stringify(released,null,2));
+    if(released.errors.length ||
+       (mode==='--strict' && released.status!=='eligible-for-manual-review')){
       process.exitCode=1;
     }
   }

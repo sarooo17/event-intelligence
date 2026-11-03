@@ -31,10 +31,12 @@ test('release packaging verification remains mandatory before npm publish',()=>{
   ])assert.ok(file.includes(step),step);
 });
 
-test('every prerelease is explicitly published to npm next, never latest',()=>{
-  assert.match(file,/if \[\[ "\$VERSION" == \*-\* \]\]; then/);
-  assert.match(file,/TAG=next/);
-  assert.match(file,/TAG=latest/);
+test('every canonical prerelease is published to next and stable v1 is source-gated',()=>{
+  assert.ok(file.includes(
+    'TAG="$(node scripts/evidence/safe-release-channel.mjs "$VERSION")"'));
+  assert.ok(file.includes('node scripts/evidence/safe-release-channel.mjs "$VERSION"'));
+  assert.ok(file.includes('if [ "$VERSION" = "1.0.0" ]; then'));
+  assert.ok(file.includes('EI_RELEASE_SOURCE_SHA="$EXPECTED_SOURCE_SHA" node scripts/evidence/v1-release-readiness.mjs --strict'));
   assert.match(file,/npm publish --access public --tag "\$TAG"/);
 });
 

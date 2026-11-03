@@ -30,7 +30,9 @@ confirms `0.12.0-next.1` under `next` and `0.11.0` under `latest`;
 the underlying npm API response and publishing workflow run were not
 separately examined. **This does not authorize stable v1**.
 The [live roadmap](https://github.com/sarooo17/event-intelligence/issues/41)
-supersedes historic implementation checklists.
+supersedes historic implementation checklists. The [v1.0.0 review dossier](releases/v1-review-dossier.md)
+tracks all nine current SDK evidence leads, missing candidate-specific signoffs,
+and the exact-commit approval sequence without upgrading a blocked entry prematurely.
 
 ```sh
 # Report only: validates manifest and emits a machine-readable blocked state.
@@ -52,7 +54,18 @@ subject to human/reviewer verification, and `autoPublish` is always false.
 
 Before changing a row to `verified`, the release owner must attach evidence
 links, named reviewer, date and explicit verification procedure; PR review
-must verify both completeness and truth of those artifacts. A green
+must verify both completeness and truth of those artifacts. For stable v1, a
+verified row must also contain an immutable 40-character
+`verification.sourceCommitSha` pointing to a **previously reviewed, frozen
+main-branch source commit**. The strict publish/release check verifies that
+this commit is an ancestor of the actual release HEAD and that the entire
+repo, except this readiness ledger, has no changes since the reviewed source.
+It is impossible for a committed file to contain its own commit hash; do not
+ask the ledger to sign itself. `--strict` also requires
+`EI_RELEASE_SOURCE_SHA` set to the actual checked-out HEAD and is blocked
+until package identity is exactly `1.0.0`. Workflow runs derive this from
+GitHub and recheck the Git commit; neither `--report` nor a user-written
+reviewer string is independent evidence. A green
 `eligible-for-manual-review` means only all checked-in prerequisites are
 declared, not that an npm publish is safe or authorized. Existing exact
 Muffin/Artemis dependency pins are never touched by this workflow.
