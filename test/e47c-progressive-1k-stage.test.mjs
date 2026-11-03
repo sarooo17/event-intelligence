@@ -74,3 +74,25 @@ test('stage refuses public URLs, unpinned sources and ephemeral archives',()=>{
  assert.throws(()=>progressiveConfig({...env,EI_E47C_SOURCE_SHA:'main'}),/E47C_SOURCE_SHA_REQUIRED/);
  assert.throws(()=>progressiveConfig({...env,EI_E47C_ARTIFACT_DIR:'./tmp'}));
 });
+
+test('1k real events require separate deliberate opt-in and eventual durable mode',()=>{
+ const large={...env,EI_E47C_STAGE_CONFIRM:'RUN_1000_EVENTS_FIRST_PARTY_STAGING',
+  EI_E47C_STAGE_EVENTS:'1000',EI_E47C_STAGE_RATE:'5',
+  EI_E47C_DELIVERY_MODE:'eventual'};
+ const c=progressiveConfig(large);
+ assert.equal(c.large,true);
+ assert.equal(c.count,1000);
+ assert.equal(c.triggers,1000);
+ assert.equal(c.rate,5);
+ for(const invalid of [
+  {...large,EI_E47C_STAGE_CONFIRM:'RUN_1000_FIRST_PARTY_STAGING'},
+  {...large,EI_E47C_STAGE_EVENTS:'999'},
+  {...large,EI_E47C_STAGE_EVENTS:'250'},
+  {...large,EI_E47C_STAGE_EVENTS:'1001'},
+  {...large,EI_E47C_DELIVERY_MODE:'immediate'},
+  {...large,EI_E47C_DELIVERY_MODE:undefined},
+ ]){
+  assert.throws(()=>progressiveConfig(invalid),/E47C_PILOT_LIMIT_EXCEEDED/);
+ }
+ assert.equal(progressiveConfig({...env}).large,false);
+});
