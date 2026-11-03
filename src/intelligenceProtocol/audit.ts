@@ -18,6 +18,48 @@ export interface AppendAuditInput {
   details?: Record<string, unknown>;
 }
 
+/**
+ * Build one canonical audit record at a caller-proven sequence/head.
+ * The PostgreSQL adapter obtains the predecessor under its scope-local
+ * advisory transaction lock, never from a client-controlled argument.
+ * Full-history verification remains an explicit audit/checkpoint operation.
+ */
+export async function buildAuditRecordAt(
+  input: AppendAuditInput,
+  sequence: number,
+  previousHash: string | null,
+): Promise<AuditRecord> {
+  if (
+    !Number.isSafeInteger(sequence) ||
+    sequence < 0 ||
+    (sequence === 0) !== (previousHash === null) ||
+    (previousHash !== null && !/^[a-f0-9]{64}$/.test(previousHash))
+  ) {
+    throw new TypeError('Invalid audit sequence/predecessor pair');
+  }
+  if (input.fromState && input.toState) {
+    assertTransition(input.fromState, input.toState);
+  }
+
+  // Preserve the original AuditChain hash input, including insertion order,
+  // optional fields and default details, byte-for-byte.
+  const unsigned = {
+    auditId: input.auditId,
+    sequence,
+    traceId: input.traceId,
+    timestamp: input.timestamp,
+    kind: input.kind,
+    entityType: input.entityType,
+    entityId: input.entityId,
+    ...(input.fromState !== undefined ? { fromState: input.fromState } : {}),
+    ...(input.toState !== undefined ? { toState: input.toState } : {}),
+    details: input.details ?? {},
+    previousHash,
+  };
+  const hash = await sha256Hex(canonicalJson(unsigned));
+  return AuditRecordSchema.parse({ ...unsigned, hash });
+}
+
 export class AuditChain {
   private readonly records: AuditRecord[];
 
@@ -26,31 +68,11 @@ export class AuditChain {
   }
 
   async append(input: AppendAuditInput): Promise<AuditRecord> {
-    if (input.fromState && input.toState) {
-      assertTransition(input.fromState, input.toState);
-    }
-
-    const previousHash =
-      this.records.length === 0
-        ? null
-        : this.records[this.records.length - 1]!.hash;
-
-    const unsigned = {
-      auditId: input.auditId,
-      sequence: this.records.length,
-      traceId: input.traceId,
-      timestamp: input.timestamp,
-      kind: input.kind,
-      entityType: input.entityType,
-      entityId: input.entityId,
-      ...(input.fromState !== undefined ? { fromState: input.fromState } : {}),
-      ...(input.toState !== undefined ? { toState: input.toState } : {}),
-      details: input.details ?? {},
-      previousHash,
-    };
-
-    const hash = await sha256Hex(canonicalJson(unsigned));
-    const record = AuditRecordSchema.parse({ ...unsigned, hash });
+    const record = await buildAuditRecordAt(
+      input,
+      this.records.length,
+      this.records.length === 0 ? null : this.records[this.records.length - 1]!.hash,
+    );
     this.records.push(record);
     return record;
   }
