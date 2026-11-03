@@ -197,7 +197,9 @@ function verifyWorkerIngress({manifest,ingest,ei,sourceById,count,eventual=false
 }
 
 export function assessProgressiveE47CStage({manifest,source,host,ei,offers,ingest,originalEvents,originalSequenceById}={}){
- const eventual=manifest?.schema==='ei.e47c.progressive-1k-durable-preflight.v2';
+ const large=manifest?.schema==='ei.e47c.progressive-1k-durable-preflight.v3';
+ const eventual=large||
+  manifest?.schema==='ei.e47c.progressive-1k-durable-preflight.v2';
  if(!eventual&&manifest?.schema!=='ei.e47c.progressive-1k-preflight.v1'||
     manifest?.acceptanceE47CVerified!==false||
     manifest?.productionSloCertified!==false||
@@ -209,7 +211,14 @@ export function assessProgressiveE47CStage({manifest,source,host,ei,offers,inges
     !Array.isArray(ingest)))
   fail('E47C_DURABLE_WORKER_INGRESS_REQUIRED');
  const count=manifest.stage.events;
- if(!Number.isSafeInteger(count)||count<10||count>250||
+ if(!Number.isSafeInteger(count)||(large?count!==1000:
+    count<10||count>250)||
+    (large&&(manifest.stage.largeEventOptIn!==true||
+      manifest.stage.requestedEventBudget!==1000||
+      manifest.sourceAndHostAreFirstParty!==true||
+      manifest.stage.independentEIPools!==2||
+      manifest.stage.sourceFirstPartySeparateService!==true||
+      manifest.stage.hostFirstPartySeparateService!==true))||
     manifest.stage.triggers!==1000||
     ![1,5].includes(manifest.stage.requestedRatePerSecond)||
     !validTiming(manifest.stage.offeredEventRateMeasuredPerSecond)||
@@ -285,6 +294,7 @@ export function assessProgressiveE47CStage({manifest,source,host,ei,offers,inges
   fail('E47C_MISSING_ORIGINAL_SOURCE_SHA');
  return Object.freeze({
   schema:'ei.e47c.offline-progressive-1k-reaudit.v1',
+  stageSchema:manifest.schema,
   status:'raw-consistent-first-party-staging-only',
   triggerCount:1000,
   requestedRatePerSecond:manifest.stage.requestedRatePerSecond,
@@ -333,7 +343,8 @@ export async function verifyPersistedProgressiveE47CStage({
  const ei=decodeJsonl(await readBoundedArtifact(folder,manifest.rawManifest?.ei));
  const offers=manifest.ratePacingIsSerialAppend===false?
   decodeJsonl(await readBoundedArtifact(folder,manifest.rawManifest?.offer)):undefined;
- if(manifest.schema==='ei.e47c.progressive-1k-durable-preflight.v2'&&
+ if((manifest.schema==='ei.e47c.progressive-1k-durable-preflight.v2'||
+     manifest.schema==='ei.e47c.progressive-1k-durable-preflight.v3')&&
     manifest.workerIngressPacingIndependentOfAck!==true)
   fail('E47C_DURABLE_WORKER_INGRESS_REQUIRED');
  const ingest=manifest.workerIngressPacingIndependentOfAck===true?
