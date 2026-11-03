@@ -33,6 +33,11 @@ jobs:
           test "$RELEASE_CONFIRM" = "publish"
 
       - uses: actions/checkout@v4
+        with:
+          # Strict v1 signoff verifies the reviewed ancestor and rejects any
+          # non-ledger drift, so a shallow checkout cannot establish proof.
+          fetch-depth: 0
+          persist-credentials: false
 
       - uses: actions/setup-node@v4
         with:
