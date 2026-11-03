@@ -33,11 +33,13 @@ export function validateDeferredWorkerAdmission(result,expectedWorkerId){
 // must STILL be verified by the separate code path before reporting a pass.
 // Host receipt counts are not equivalent to one-to-one event correctness.
 export async function waitForDurableReceiptCount({
- expectedCount,maxWaitMs=30000,pollMs=500,readCounts,
+ expectedCount,maxExpectedCount=250,maxWaitMs=30000,pollMs=500,readCounts,
  now=()=>performance.now(),
  wait=ms=>new Promise(resolve=>setTimeout(resolve,ms))
 }={}){
- if(!Number.isSafeInteger(expectedCount)||expectedCount<10||expectedCount>250||
+ if(!Number.isSafeInteger(maxExpectedCount)||maxExpectedCount<10||
+    maxExpectedCount>1000||!Number.isSafeInteger(expectedCount)||
+    expectedCount<10||expectedCount>maxExpectedCount||
     !Number.isSafeInteger(maxWaitMs)||maxWaitMs<1000||maxWaitMs>120000||
     !Number.isSafeInteger(pollMs)||pollMs<100||pollMs>5000||
     typeof readCounts!=='function'||typeof now!=='function'||
