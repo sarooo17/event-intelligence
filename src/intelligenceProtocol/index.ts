@@ -93,6 +93,7 @@ export {
 
 export {
   AuditChain,
+  buildAuditRecordAt,
 } from './audit.js';
 
 export type {
