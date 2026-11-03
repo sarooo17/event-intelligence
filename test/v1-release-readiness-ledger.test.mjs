@@ -3,7 +3,7 @@ import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import {
   evaluateV1Readiness, readV1Readiness,
-  V1_REQUIRED_CRITERIA,V1_OPTIONAL_CRITERIA,
+  V1_REQUIRED_CRITERIA,V1_OPTIONAL_CRITERIA,verifyV1ReviewedSource,
 } from '../scripts/evidence/v1-release-readiness.mjs';
 
 const ledger=JSON.parse(readFileSync(
@@ -182,4 +182,90 @@ test('2026-10-31 owner scope splits SDK correctness from optional production att
     'full-explainability','semantic-triage'])assert.ok(r.blocked.includes(id));
   assert.equal(r.blocked.includes('production-host-ha-slo'),false);
   assert.equal(r.autoPublish,false);
+});
+
+test('stable-v1 source signoff pins reviewed ancestor rather than self-referential HEAD',()=>{
+  const reviewed='a'.repeat(40),head='b'.repeat(40);
+  const signed=clone(ledger);
+  for(const row of signed.criteria){
+    if(!row.required)continue;
+    row.status='verified';
+    row.verification={reviewer:'independent-reviewer',date:'2026-11-03',
+      procedure:'Inspect code + real PG16 tests before approving candidate',
+      sourceCommitSha:reviewed};
+  }
+  const ready=evaluateV1Readiness(signed,'1.0.0',{expectedSourceSha:head});
+  assert.deepEqual(ready.errors,[]);
+  assert.equal(ready.status,'eligible-for-manual-review');
+  const called=[];
+  const git=args=>{
+    called.push(args);
+    if(args[0]==='rev-parse')return head;
+    if(args[0]==='merge-base'||args[0]==='diff')return '';
+    throw Error('Unexpected command');
+  };
+  assert.deepEqual(verifyV1ReviewedSource(signed,head,git),[]);
+  assert.deepEqual(called,[
+    ['rev-parse','HEAD'],
+    ['merge-base','--is-ancestor',reviewed,head],
+    ['diff','--quiet',reviewed,head,'--','.',
+      ':(exclude)docs/releases/v1-readiness.json'],
+  ]);
+  assert.equal(ready.autoPublish,false);
+});
+
+test('strict release evidence rejects stale trees, missing reviewed SHA and checkout drift',()=>{
+  const reviewed='a'.repeat(40),head='b'.repeat(40);
+  const signed=clone(ledger);
+  for(const row of signed.criteria){
+    if(!row.required)continue;
+    row.status='verified';
+    row.verification={reviewer:'reviewer',date:'2026-11-03',
+      procedure:'Reproduce source-pinned evidence',sourceCommitSha:reviewed};
+  }
+  const missing=clone(signed);
+  delete missing.criteria.find(x=>x.id==='full-explainability')
+    .verification.sourceCommitSha;
+  assert.ok(evaluateV1Readiness(missing,'1.0.0',
+    {expectedSourceSha:head}).errors.some(x=>x.includes('full-explainability')));
+  assert.ok(evaluateV1Readiness(signed,'1.0.0',
+    {expectedSourceSha:'invalid'}).errors.some(x=>x.includes('source SHA')));
+
+  assert.deepEqual(verifyV1ReviewedSource(signed,head,args=>{
+    if(args[0]==='rev-parse')return reviewed;
+    throw Error('Should stop on HEAD mismatch');
+  }),['Checked-out HEAD does not match immutable workflow source SHA']);
+  const ancestorFailed=verifyV1ReviewedSource(signed,head,args=>{
+    if(args[0]==='rev-parse')return head;
+    if(args[0]==='merge-base')throw Error('not ancestor');
+    return '';
+  });
+  assert.ok(ancestorFailed.some(x=>x.includes('not an ancestor')));
+  const drift=verifyV1ReviewedSource(signed,head,args=>{
+    if(args[0]==='rev-parse')return head;
+    if(args[0]==='diff')throw Error('changed runtime code or release notes');
+    return '';
+  });
+  assert.ok(drift.some(x=>x.includes('outside readiness ledger')));
+});
+
+test('npm and MCP stable release workflows fail closed on unsigned 1.0 readiness',()=>{
+  const publish=readFileSync(
+    new URL('../.github/workflows/publish-npm.yml',import.meta.url),'utf8');
+  const release=readFileSync(
+    new URL('../.github/workflows/release.yml',import.meta.url),'utf8');
+  for(const [workflow,text,finalAction] of [
+    ['npm',publish,'npm publish --access public'],
+    ['MCP Registry',release,'./mcp-publisher publish server.json'],
+  ]){
+    assert.ok(text.includes('EI_RELEASE_SOURCE_SHA="$EXPECTED_SOURCE_SHA" node scripts/evidence/v1-release-readiness.mjs --strict'),workflow);
+    assert.ok(text.indexOf('v1-release-readiness.mjs --strict') <
+      text.indexOf(finalAction),workflow);
+    assert.ok(text.includes('test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_SHA"'),workflow);
+    assert.match(text,/\^\[1-9\]\[0-9\]\*\\\.\[0-9\]\+\\\.\[0-9\]\+\$/);
+  }
+  assert.ok(publish.includes('fetch-depth: 0'));
+  assert.ok(publish.includes('Stable npm version already exists; refusing no-op publish'));
+  assert.ok(release.includes('head_branch == \'main\''));
+  assert.ok(!/^  push:/m.test(release),'Release must not mint stable tags on code pushes');
 });
