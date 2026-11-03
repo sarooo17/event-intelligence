@@ -186,3 +186,18 @@ test('1k open-loop worker offers require explicit count budget and preserve 5/s 
  assert.equal(run.rows[999].scheduledAtMs,199800);
  assert.ok(run.peakInflight<=8);
 });
+
+test('1k durable receipt polling requires explicit maxExpectedCount and 1000 unique delivered',async()=>{
+ const readCounts=async()=>({receipts:1000,uniqueWakes:1000,
+  uniqueReceipts:1000,delivered:1000});
+ await assert.rejects(waitForDurableReceiptCount({
+  expectedCount:1000,readCounts}),/E47C_DURABLE_DRAIN_CONFIG_INVALID/);
+ const accepted=await waitForDurableReceiptCount({
+  expectedCount:1000,maxExpectedCount:1000,readCounts});
+ assert.equal(accepted.settledCount,1000);
+ assert.equal(accepted.durableDelivered,1000);
+ assert.equal(accepted.productionSloCertified,false);
+ await assert.rejects(waitForDurableReceiptCount({
+  expectedCount:1000,maxExpectedCount:1001,readCounts
+ }),/E47C_DURABLE_DRAIN_CONFIG_INVALID/);
+});
