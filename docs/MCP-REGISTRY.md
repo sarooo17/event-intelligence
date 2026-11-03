@@ -46,7 +46,7 @@ The npm package declares the same identity through `package.json#mcpName`.
 
 `server.json` declares:
 
-- npm package: `mcp-event-intelligence@0.12.0-next.1`;
+- npm package: `mcp-event-intelligence@1.0.0`;
 - transport: `stdio`;
 - positional package argument: `mcp`;
 - only Event Intelligence control-plane/runtime settings, including optional Jev semantic-evaluator configuration.
@@ -55,7 +55,7 @@ It intentionally does **not** declare provider MCP connection configuration.
 
 ## Validation
 
-CI validates `server.json` with the official MCP publisher tooling. **Prereleases are npm-only under the `next` dist-tag**, and are not registered as a new MCP Registry version or stable GitHub Release. Stable releases use the separately gated MCP Registry and GitHub Release automation. The metadata version here describes the checked-out package candidate. A screenshot of the npm versions UI checked on 2026-11-02 confirms `0.12.0-next.1` on npm `next` and `0.11.0` on `latest`; the underlying npm API response and exact manual workflow run have not been separately examined, and no prerelease MCP Registry listing is implied.
+CI validates `server.json` with the official MCP publisher tooling. **Prereleases are npm-only under the `next` dist-tag**, and are not registered as a new MCP Registry version or stable GitHub Release. Stable releases use the separately gated MCP Registry and GitHub Release automation. The metadata version here describes the checked-out package candidate. The checked-out `1.0.0` identity is a **source-only, unpublished stable candidate**. The previously published `0.12.0-next.1` remains under npm `next` as observed on 2026-11-02; `latest` remains `0.11.0` until a separately approved, manually executed v1 publish. Metadata in this document is NOT evidence of publication or Registry listing.
 
 The Registry is a discovery/distribution channel for the optional control plane, not an integration hub for the host's other MCP servers.
 
