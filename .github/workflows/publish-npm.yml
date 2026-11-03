@@ -63,6 +63,14 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="$(node -p "require('./package.json').version")"
+          if [[ "$VERSION" != *-* ]]; then
+            # Do not treat build metadata or malformed non-prerelease tags
+            # as an unguarded stable release channel.
+            if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "::error::Unsupported stable semver syntax"
+              exit 1
+            fi
+          fi
           if [[ "$VERSION" =~ ^[1-9][0-9]*\.[0-9]+\.[0-9]+$ ]]; then
             test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_SHA"
             EI_RELEASE_SOURCE_SHA="$EXPECTED_SOURCE_SHA" node scripts/evidence/v1-release-readiness.mjs --strict
