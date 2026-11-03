@@ -262,7 +262,7 @@ test('npm and MCP stable release workflows fail closed on unsigned 1.0 readiness
     assert.ok(text.indexOf('v1-release-readiness.mjs --strict') <
       text.indexOf(finalAction),workflow);
     assert.ok(text.includes('test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_SHA"'),workflow);
-    assert.match(text,/\^\[1-9\]\[0-9\]\*\\\.\[0-9\]\+\\\.\[0-9\]\+\$/);
+    assert.ok(text.includes('if [[ "$VERSION" =~ ^[1-9][0-9]*\\.[0-9]+\\.[0-9]+$ ]]; then'),workflow);
   }
   assert.ok(publish.includes('fetch-depth: 0'));
   assert.ok(publish.includes('Stable npm version already exists; refusing no-op publish'));
