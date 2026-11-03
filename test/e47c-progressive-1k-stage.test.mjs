@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {progressiveConfig} from '../scripts/validation/e47c-progressive-1k-stage-once.mjs';
+import {progressiveConfig,preflightLargeWorkers} from '../scripts/validation/e47c-progressive-1k-stage-once.mjs';
 
 const env={
  EI_E47C_STAGE_CONFIRM:'RUN_1000_FIRST_PARTY_STAGING',
@@ -95,4 +95,34 @@ test('1k real events require separate deliberate opt-in and eventual durable mod
   assert.throws(()=>progressiveConfig(invalid),/E47C_PILOT_LIMIT_EXCEEDED/);
  }
  assert.equal(progressiveConfig({...env}).large,false);
+});
+
+test('pre-write read-only worker readiness proves two independently identified processes',async()=>{
+ const a='http://ei-a.railway.internal:3000',b='http://ei-b.railway.internal:3000';
+ const calls=[];
+ const request=async(url,opts)=>{
+  calls.push({url,method:opts.method});
+  return {status:200,json:async()=>({
+   status:'ready',workerId:url.includes('ei-a')?'ei-a':'ei-b'
+  })};
+ };
+ const ids=await preflightLargeWorkers({workerA:a,workerB:b,request});
+ assert.deepEqual(ids,['ei-a','ei-b']);
+ assert.equal(calls.length,2);
+ assert.ok(calls.every(x=>x.url.endsWith('/readyz')&&x.method==='GET'));
+ await assert.rejects(preflightLargeWorkers({workerA:a,workerB:b,
+  request:async()=>({status:200,json:async()=>({
+   status:'ready',workerId:'same-worker'})})
+ }),/E47C_LARGE_WORKER_IDENTITY_DUPLICATE/);
+ await assert.rejects(preflightLargeWorkers({workerA:a,workerB:b,
+  request:async()=>({status:503,json:async()=>({})})
+ }),/E47C_LARGE_WORKER_NOT_READY/);
+ await assert.rejects(preflightLargeWorkers({workerA:a,workerB:b,
+  request:async()=>({status:200,json:async()=>({
+   status:'ready',workerId:'unsafe/id'})})
+ }),/E47C_LARGE_WORKER_ID_INVALID/);
+ await assert.rejects(preflightLargeWorkers({workerA:a,workerB:a,request}),
+  /E47C_LARGE_WORKER_ENDPOINT_DUPLICATE/);
+ await assert.rejects(preflightLargeWorkers({workerA:'https://example.com',
+  workerB:b,request}));
 });
