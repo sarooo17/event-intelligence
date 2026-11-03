@@ -90,6 +90,8 @@ async function main(env=process.env){
  const c=progressiveConfig(env);
  if(c.workerA===c.workerB||sha(c.signer)!==c.signerSha)
   throw Error('E47C_WORKERS_OR_SIGNER_PIN_INVALID');
+ if(!/^[a-z][a-z0-9_]{0,40}$/.test(c.tablePrefix))
+  throw Error('E47C_UNSAFE_TABLE_PREFIX');
  const runId=randomUUID();
  const scope=c.scopeBase+':'+runId;
  const prefix='ei-e47c-progressive-1k-r'+c.rate+'-'+runId;
@@ -214,15 +216,22 @@ async function main(env=process.env){
   if(c.deliveryMode==='eventual'){
    durableDrain=await waitForDurableReceiptCount({
     expectedCount:c.count,maxWaitMs:c.drainTimeoutMs,
-    readCounts:async()=>{
-     const snapshot=await pool.query(
-      'SELECT count(*)::integer AS receipts, '+
-      'count(DISTINCT wake_id)::integer AS unique_wakes, '+
-      'count(DISTINCT receipt_id)::integer AS unique_receipts '+
-      'FROM ei_validation_host_receipts WHERE scope_id=$1',[scope]);
+    readCounts:async ({remainingMs})=>{
+     // Host receipt COMMIT precedes EI's own completed delivery UPDATE.
+     // Read both persisted states, without inferring delivery from ACK.
+     const snapshot=await pool.query({
+      text:'SELECT count(*)::integer AS receipts, '+
+       'count(DISTINCT wake_id)::integer AS unique_wakes, '+
+       'count(DISTINCT receipt_id)::integer AS unique_receipts, '+
+       '(SELECT count(*)::integer FROM '+c.tablePrefix+'_records '+
+       "WHERE scope_id=$1 AND kind='wake_delivery' AND "+
+       "payload->>'status'='delivered') AS delivered "+
+       'FROM ei_validation_host_receipts WHERE scope_id=$1',
+      values:[scope],query_timeout:remainingMs
+     });
      const row=snapshot.rows[0];
      return {receipts:row.receipts,uniqueWakes:row.unique_wakes,
-      uniqueReceipts:row.unique_receipts};
+      uniqueReceipts:row.unique_receipts,delivered:row.delivered};
     }
    });
   }
