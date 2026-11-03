@@ -186,7 +186,7 @@ function withEventualDurability(){
  const f=withParallelIngress();
  f.manifest.schema='ei.e47c.progressive-1k-durable-preflight.v2';
  f.manifest.stage.deliveryMode='eventual';
- f.manifest.stage.durableDrain={settledCount:50,polls:3,
+ f.manifest.stage.durableDrain={settledCount:50,durableDelivered:50,polls:3,
   drainElapsedMs:850,requirePerEventLineage:true,
   productionSloCertified:false};
  f.manifest.stage.deferredImmediateResponses=2;
