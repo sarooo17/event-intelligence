@@ -11,15 +11,18 @@ const ledger=JSON.parse(readFileSync(
   new URL('../docs/releases/v1-readiness.json',import.meta.url)));
 const clone=x=>structuredClone(x);
 
-test('unpublished stable-v1 source candidate remains blocked without nine release approvals',()=>{
+test('stable-v1 candidate reports exactly the release rows still unsigned, with no auto-publish',()=>{
   const report=readV1Readiness();
+  const outstanding=V1_REQUIRED_CRITERIA.filter(id=>
+    ledger.criteria.find(row=>row.id===id)?.status!=='verified');
   assert.deepEqual(report.errors,[]);
-  assert.equal(report.status,'blocked');
+  assert.equal(report.status,outstanding.length?'blocked':'eligible-for-manual-review');
+  assert.deepEqual(report.blocked,outstanding);
   assert.equal(report.autoPublish,false);
   assert.equal(report.requiredCount,9);
   assert.equal(report.optionalCount,6);
-  assert.ok(report.blocked.includes('full-explainability'));
-  assert.ok(report.blocked.includes('semantic-triage'));
+  assert.equal(V1_REQUIRED_CRITERIA.includes('full-explainability'),true);
+  assert.equal(V1_REQUIRED_CRITERIA.includes('semantic-triage'),true);
   assert.equal(ledger.criteria.find(x=>x.id==='full-explainability').required,true);
   assert.equal(ledger.criteria.find(x=>x.id==='semantic-triage').required,true);
   assert.equal(report.blocked.includes('embedded-host-independent'),false);
@@ -28,12 +31,11 @@ test('unpublished stable-v1 source candidate remains blocked without nine releas
   assert.equal(report.blocked.includes('security-independent-review'),false);
   assert.equal(report.blocked.includes('pg-scale-measured'),false);
   assert.equal(ledger.criteria.find(x=>x.id==='security-independent-review').issue,317);
-  assert.ok(report.blocked.includes('pg-retention-audit'));
-  assert.equal(report.blocked.includes('pg-chaos-recovery'),true);
+  assert.equal(V1_REQUIRED_CRITERIA.includes('pg-retention-audit'),true);
+  assert.equal(V1_REQUIRED_CRITERIA.includes('pg-chaos-recovery'),true);
   assert.equal(report.candidateVersion,'1.0.0');
   assert.equal(report.blocked.includes('package-version-not-1.0.0'),false);
-  assert.equal(report.blocked.length,9);
-  assert.equal(report.status,'blocked');
+  assert.equal(report.blocked.length,outstanding.length);
   assert.equal(report.autoPublish,false);
 });
 
@@ -81,7 +83,9 @@ test('documented verification structure alone never bypasses other blockers',()=
   const report=evaluateV1Readiness(isolated,'1.0.0');
   assert.deepEqual(report.errors,[]);
   assert.equal(report.status,'blocked');
-  assert.ok(report.blocked.includes('pg-retention-audit'));
+  assert.deepEqual(report.blocked,
+    V1_REQUIRED_CRITERIA.filter(id=>
+      isolated.criteria.find(r=>r.id===id)?.status!=='verified'));
   assert.equal(report.autoPublish,false);
 });
 
@@ -121,12 +125,16 @@ test('owner-waived independent authoring is optional but cannot bypass v1 P0 rel
   const row=waived.criteria.find(x=>x.id==='embedded-host-independent');
   assert.equal(row.required,false);
   assert.equal(row.status,'blocked');
-  assert.equal(evaluateV1Readiness(waived,'1.0.0').status,'blocked');
+  assert.equal(evaluateV1Readiness(waived,'1.0.0').status,
+    evaluateV1Readiness(ledger,'1.0.0').status);
   const malicious=clone(ledger);
   malicious.criteria.find(x=>x.id==='embedded-host-independent').required=true;
   assert.ok(evaluateV1Readiness(malicious,'1.0.0').errors.some(x=>x.includes('embedded-host-independent')));
   const bypass=clone(ledger);
-  for(const r of bypass.criteria)if(r.required)r.status='verified';
+  for(const r of bypass.criteria)if(r.required){
+    r.status='verified';
+    delete r.verification;
+  }
   assert.ok(evaluateV1Readiness(bypass,'1.0.0').errors.length>=9,
     'independent/manual reviewer and specific evidence mandatory for all nine SDK gates');
 });
@@ -143,7 +151,12 @@ test('2026-10-31 owner SDK scope decision cannot be bypassed by optionalizing #4
   // unresolved product-owner-required workstreams must independently block.
   const priorGatesVerified=clone(ledger);
   for(const row of priorGatesVerified.criteria){
-    if(!row.required||['full-explainability','semantic-triage'].includes(row.id))continue;
+    if(!row.required)continue;
+    if(['full-explainability','semantic-triage'].includes(row.id)){
+      row.status='blocked';
+      delete row.verification;
+      continue;
+    }
     row.status='verified';
     row.evidence=['https://github.com/sarooo17/event-intelligence/issues/'+row.issue];
     row.verification={reviewer:'independent-auditor',procedure:'Independent manual acceptance review',date:'2026-10-30'};
@@ -170,8 +183,16 @@ test('2026-10-31 owner scope splits SDK correctness from optional production att
     wrong.criteria.find(x=>x.id===id).required=true;
     assert.ok(evaluateV1Readiness(wrong,'1.0.0').errors.some(e=>e.includes(id)),id);
   }
-  // External production signoff cannot bypass SDK retention and security.
+  // External production signoff cannot bypass unsigned SDK core rows.
+  // Force the mandatory control rows to blocked even after incremental
+  // audited release signoffs begin landing in the real manifest.
   const allExternalApproved=clone(ledger);
+  for(const id of ['pg-retention-audit','security-revocation-and-tenant',
+    'full-explainability','semantic-triage']){
+    const row=allExternalApproved.criteria.find(r=>r.id===id);
+    row.status='blocked';
+    delete row.verification;
+  }
   for(const row of allExternalApproved.criteria){
     if(row.required)continue;
     row.status='verified';
@@ -187,6 +208,36 @@ test('2026-10-31 owner scope splits SDK correctness from optional production att
     'full-explainability','semantic-triage'])assert.ok(r.blocked.includes(id));
   assert.equal(r.blocked.includes('production-host-ha-slo'),false);
   assert.equal(r.autoPublish,false);
+});
+
+test('five source-pinned partial gate signoffs remain BLOCKED until ALL nine pass',()=>{
+  const partial=clone(ledger);
+  for(const row of partial.criteria)if(row.required){
+    row.status='blocked';
+    delete row.verification;
+  }
+  const chosen=['host-contract-and-package','full-explainability',
+    'semantic-triage','downstream-pin-policy','pg-chaos-recovery'];
+  for(const id of chosen){
+    const row=partial.criteria.find(r=>r.id===id);
+    row.status='verified';
+    row.evidence=['https://github.com/sarooo17/event-intelligence/pull/410'];
+    row.verification={reviewer:'reviewer-with-explicit-attribution',
+      date:'2026-11-04',procedure:'Review immutable candidate and scoped CI proof',
+      sourceCommitSha:'a'.repeat(40)};
+  }
+  const report=evaluateV1Readiness(partial,'1.0.0',
+    {expectedSourceSha:'b'.repeat(40)});
+  assert.deepEqual(report.errors,[]);
+  assert.deepEqual(report.blocked,V1_REQUIRED_CRITERIA.filter(id=>!chosen.includes(id)));
+  assert.equal(report.status,'blocked');
+  assert.equal(report.autoPublish,false);
+  for(const id of chosen){
+    const missing=clone(partial);
+    delete missing.criteria.find(r=>r.id===id).verification.sourceCommitSha;
+    assert.ok(evaluateV1Readiness(missing,'1.0.0',
+      {expectedSourceSha:'b'.repeat(40)}).errors.some(x=>x.includes(id)));
+  }
 });
 
 test('stable-v1 source signoff pins reviewed ancestor rather than self-referential HEAD',()=>{
@@ -249,13 +300,102 @@ test('strict release evidence rejects stale trees, missing reviewed SHA and chec
     if(args[0]==='merge-base')throw Error('not ancestor');
     return '';
   });
-  assert.ok(ancestorFailed.some(x=>x.includes('not an ancestor')));
+  assert.ok(ancestorFailed.some(x=>x.includes('not on trusted main baseline')));
   const drift=verifyV1ReviewedSource(signed,head,args=>{
     if(args[0]==='rev-parse')return head;
     if(args[0]==='diff')throw Error('changed runtime code or release notes');
     return '';
   });
   assert.ok(drift.some(x=>x.includes('outside readiness ledger')));
+});
+
+test('unmerged branch-only source cannot be attested as if already reviewed on main',()=>{
+  const main='b'.repeat(40),unmerged='c'.repeat(40),prHead='d'.repeat(40);
+  const staged=clone(ledger);
+  for(const row of staged.criteria)if(row.required){
+    row.status='blocked';
+    delete row.verification;
+  }
+  const row=staged.criteria.find(r=>r.id==='full-explainability');
+  row.status='verified';
+  row.verification={reviewer:'bounded AI source audit',date:'2026-11-04',
+    procedure:'Review scoped PG16 inspector evidence',
+    sourceCommitSha:unmerged};
+  const seen=[];
+  const git=args=>{
+    seen.push(args);
+    if(args[0]==='rev-parse')return prHead;
+    if(args[0]==='merge-base' &&
+       args[2]===main && args[3]===prHead)return '';
+    if(args[0]==='merge-base' &&
+       args[2]===unmerged && args[3]===main)
+      throw Error('reviewed code exists only in PR branch');
+    throw Error('untrusted source check: '+args.join(' '));
+  };
+  const errors=verifyV1ReviewedSource(staged,prHead,git,main);
+  assert.ok(errors.some(x=>x.includes('not on trusted main baseline')));
+  assert.deepEqual(seen,[
+    ['rev-parse','HEAD'],
+    ['merge-base','--is-ancestor',unmerged,main],
+  ]);
+  for(const absent of [null,'invalid']){
+    assert.deepEqual(verifyV1ReviewedSource(staged,prHead,git,absent),
+      ['Invalid trusted main source SHA']);
+  }
+  assert.equal(evaluateV1Readiness(staged,'1.0.0').status,'blocked');
+});
+
+test('unsigned PR is not blocked merely because trusted main moved ahead',()=>{
+  const unsigned=clone(ledger),main='b'.repeat(40),prHead='d'.repeat(40);
+  for(const row of unsigned.criteria)if(row.required){
+    row.status='blocked';
+    delete row.verification;
+  }
+  const seen=[];
+  const check=args=>{
+    seen.push(args);
+    if(args[0]==='rev-parse')return prHead;
+    throw Error('must NOT check main ancestry without a signed gate');
+  };
+  assert.deepEqual(verifyV1ReviewedSource(unsigned,prHead,check,main),[]);
+  assert.deepEqual(seen,[['rev-parse','HEAD']]);
+});
+
+test('signed gate requires common reviewed main ancestor and exact code identity on BOTH refs',()=>{
+  const approved='a'.repeat(40),main='b'.repeat(40),prHead='c'.repeat(40);
+  const signed=clone(ledger);
+  for(const row of signed.criteria)if(row.required){
+    row.status='blocked';
+    delete row.verification;
+  }
+  const row=signed.criteria.find(r=>r.id==='semantic-triage');
+  row.status='verified';
+  row.verification={reviewer:'independently-attributed reviewer',
+    sourceCommitSha:approved,date:'2026-11-04',
+    procedure:'Verify bounded semantic contracts under PG16 multiworker'};
+  const seen=[];
+  const good=args=>{seen.push(args);
+    if(args[0]==='rev-parse')return prHead;
+    if(args[0]==='merge-base'||args[0]==='diff')return '';
+    throw Error('unexpected Git command');
+  };
+  assert.deepEqual(verifyV1ReviewedSource(signed,prHead,good,main),[]);
+  assert.deepEqual(seen,[
+    ['rev-parse','HEAD'],
+    ['merge-base','--is-ancestor',approved,main],
+    ['merge-base','--is-ancestor',approved,prHead],
+    ['diff','--quiet',approved,prHead,'--','.',
+      ':(exclude)docs/releases/v1-readiness.json'],
+    ['diff','--quiet',approved,main,'--','.',
+      ':(exclude)docs/releases/v1-readiness.json'],
+  ]);
+  const stale=verifyV1ReviewedSource(signed,prHead,args=>{
+    if(args[0]==='rev-parse')return prHead;
+    if(args[0]==='diff'&&args[3]===main)throw Error('main code changed');
+    if(args[0]==='merge-base'||args[0]==='diff')return '';
+    throw Error('unexpected Git command');
+  },main);
+  assert.ok(stale.some(x=>x.includes('differs from reviewed source')));
 });
 
 test('npm and MCP stable release workflows fail closed on unsigned 1.0 readiness',()=>{
@@ -278,6 +418,13 @@ test('npm and MCP stable release workflows fail closed on unsigned 1.0 readiness
   assert.ok(publish.includes('Stable npm version already exists; refusing no-op publish'));
   assert.ok(release.includes('head_branch == \'main\''));
   assert.ok(!/^  push:/m.test(release),'Release must not mint stable tags on code pushes');
+  const publicCheck=readFileSync(new URL(
+    '../.github/workflows/public-release-check.yml',import.meta.url),'utf8');
+  assert.ok(publicCheck.includes('git rev-parse --verify refs/remotes/origin/main'));
+  assert.ok(publicCheck.includes('EI_RELEASE_REVIEWED_MAIN_SHA="$MAIN_REF"'));
+  assert.ok(publicCheck.includes('node scripts/evidence/v1-release-readiness.mjs --review-attestations'));
+  assert.ok(publicCheck.includes('fetch-depth: 0'));
+
 });
 
 test('canonical npm release classifier blocks build-metadata downgrade and unreviewed future stable',()=>{

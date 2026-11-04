@@ -152,7 +152,8 @@ export function evaluateV1Readiness(ledger, packageVersion, { expectedSourceSha 
  * tag creation or package publication occurs.
  */
 export function verifyV1ReviewedSource(ledger, headSha, runGit = args =>
-  execFileSync('git',args,{encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim()) {
+  execFileSync('git',args,{encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim(),
+  trustedMainSha = headSha) {
   const errors=[];
   if (!/^[0-9a-f]{40}$/.test(headSha??'')) {
     return ['Invalid checked-out release source SHA'];
@@ -165,6 +166,14 @@ export function verifyV1ReviewedSource(ledger, headSha, runGit = args =>
   } catch {
     return ['Cannot verify checked-out release Git HEAD'];
   }
+  if(!/^[0-9a-f]{40}$/.test(trustedMainSha??'')){
+    return ['Invalid trusted main source SHA'];
+  }
+  // A PR can add source commit C and attest it at D without ever
+  // merging C to protected main. Validate each *signed* source against
+  // the real checked-out origin/main. We intentionally do not require
+  // current main to be an ancestor of a pending PR: main can legitimately
+  // advance after the PR was branched, and unsigned PRs must not fail.
   const verifiedRequired=(ledger?.criteria??[]).filter(row=>
     row?.required===true && row?.status==='verified');
   for(const reviewedSha of new Set(verifiedRequired.map(row=>
@@ -174,18 +183,30 @@ export function verifyV1ReviewedSource(ledger, headSha, runGit = args =>
       continue;
     }
     try {
-      runGit(['merge-base','--is-ancestor',reviewedSha,headSha]);
+      runGit(['merge-base','--is-ancestor',reviewedSha,trustedMainSha]);
     } catch {
-      errors.push('Reviewed release source is not an ancestor of HEAD: '+reviewedSha);
+      errors.push('Reviewed release source is not on trusted main baseline: '+reviewedSha);
       continue;
     }
-    try {
-      // Only the attestations in THIS ledger can differ. Release notes and
-      // every other path must exactly match the source actually reviewed.
-      runGit(['diff','--quiet',reviewedSha,headSha,'--','.',
-        ':(exclude)docs/releases/v1-readiness.json']);
-    } catch {
-      errors.push('Release source differs from reviewed source outside readiness ledger: '+reviewedSha);
+    if(trustedMainSha!==headSha){
+      try {
+        runGit(['merge-base','--is-ancestor',reviewedSha,headSha]);
+      } catch {
+        errors.push('Reviewed release source is not an ancestor of PR HEAD: '+reviewedSha);
+        continue;
+      }
+    }
+    // Only this ledger can differ from the reviewed source. Check both
+    // PR HEAD and trusted *current* main: if main advanced with new code
+    // after review, fail now rather than minting a stale approval on merge.
+    for(const target of new Set([headSha,trustedMainSha])){
+      try {
+        runGit(['diff','--quiet',reviewedSha,target,'--','.',
+          ':(exclude)docs/releases/v1-readiness.json']);
+      } catch {
+        errors.push('Release source differs from reviewed source outside readiness ledger: '+reviewedSha);
+        break;
+      }
     }
   }
   return errors;
@@ -200,19 +221,33 @@ export function readV1Readiness(cwd = new URL('../../',import.meta.url), options
 
 if(process.argv[1] && resolve(process.argv[1])===fileURLToPath(import.meta.url)) {
   const mode=process.argv[2]??'--report';
-  if(!['--report','--strict'].includes(mode) || process.argv.length>3) {
-    console.error('Usage: node scripts/evidence/v1-release-readiness.mjs [--report|--strict]');
+  if(!['--report','--strict','--review-attestations'].includes(mode) ||
+      process.argv.length>3) {
+    console.error('Usage: node scripts/evidence/v1-release-readiness.mjs [--report|--strict|--review-attestations]');
     process.exitCode=2;
   } else {
+    // --review-attestations is a source-provenance-only preflight for an
+    // incremental ledger (e.g. 5/9 gates). It NEVER converts a blocked
+    // release into an eligible one. --strict additionally requires 9/9.
+    const reviewSource=mode!=='--report';
+    const expectedSha=process.env.EI_RELEASE_SOURCE_SHA??'';
     const report=readV1Readiness(new URL('../../',import.meta.url),
-      mode==='--strict' ? {expectedSourceSha:process.env.EI_RELEASE_SOURCE_SHA??''} : {});
+      reviewSource ? {expectedSourceSha:expectedSha} : {});
     let released=report;
-    if(mode==='--strict' && report.status==='eligible-for-manual-review'){
+    if(reviewSource && !report.errors.length &&
+       (mode==='--review-attestations' ||
+        report.status==='eligible-for-manual-review')){
       const ledger=JSON.parse(readFileSync(new URL(
         '../../docs/releases/v1-readiness.json',import.meta.url)));
+      // On PRs GitHub supplies a trusted BASE SHA; this value is not
+      // derived from the untrusted PR or ledger contents.
+      // --strict runs on source-frozen main; its trusted baseline is HEAD.
+      const trustedMain=mode==='--review-attestations'
+        ? (process.env.EI_RELEASE_REVIEWED_MAIN_SHA??null)
+        : expectedSha;
       const provenanceErrors=verifyV1ReviewedSource(
-        ledger,process.env.EI_RELEASE_SOURCE_SHA??'');
-      if(provenanceErrors.length) {
+        ledger,expectedSha,undefined,trustedMain);
+      if(provenanceErrors.length){
         released={...report,status:'blocked',autoPublish:false,
           blocked:[...report.blocked,'reviewed-source-code-drift'],
           errors:[...report.errors,...provenanceErrors]};

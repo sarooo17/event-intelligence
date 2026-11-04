@@ -25,6 +25,7 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+          fetch-depth: 0
       - name: Verify exact evidence source SHA
         env:
           EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -96,6 +97,22 @@ jobs:
       - name: Capture v1 release prerequisite ledger (report-only before 1.0)
         shell: bash
         run: node scripts/evidence/v1-release-readiness.mjs --report > v1-release-readiness.json
+
+      # Source ancestry must be checked even for partially approved gate
+      # ledgers (e.g. 5/9); 5/9 is still BLOCKED for stable publication.
+      - name: Audit each partially verified v1 gate against frozen source
+        env:
+          EI_RELEASE_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Check the repository's actual protected main, not PR HEAD or
+          # github.sha on a push to release/**. Full-depth checkout above
+          # fetches origin/main; a missing main ref fails closed.
+          MAIN_REF="$(git rev-parse --verify refs/remotes/origin/main)"
+          test -n "$MAIN_REF"
+          EI_RELEASE_REVIEWED_MAIN_SHA="$MAIN_REF" \
+            node scripts/evidence/v1-release-readiness.mjs --review-attestations
 
       - name: Retain v1 prerequisite evidence ledger
         uses: actions/upload-artifact@v4

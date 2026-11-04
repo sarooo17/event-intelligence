@@ -4,9 +4,7 @@
 `main` contains the **unpublished** package source identity `1.0.0`, prepared by [#410](https://github.com/sarooo17/event-intelligence/pull/410); the previously published `0.12.0-next.1` is a separate npm `next` artifact.
 The [source-pinned 2026-11-04 gate evidence packet](v1-gate-evidence-packet-2026-11-04.md) consolidates exact PR-head CI/PG16/clean-room runs and the four fastest reviewer checks; **all ledger statuses remain blocked pending actual manual approvals**.
 The stable version in source **does not** imply npm `latest` publication or authorization.
-Nine of nine **required** release ledger entries and six of six **optional**
-deployment/enterprise category entries in
-[`v1-readiness.json`](v1-readiness.json) remain `blocked`.
+The **live** required/optional statuses are defined by [`v1-readiness.json`](v1-readiness.json), not a historical snapshot. All nine required and six optional criteria were initially blocked; after source-freeze, a separate ledger-only PR may attest individual rows without changing this dossier. A partially attested ledger still does not authorize npm stable publication.
 The implementation issues #42–#50 being closed does not change those
 release-specific attestations. #317/#376 are independently tracked,
 **optional for the generic SDK**, not silently certified.
