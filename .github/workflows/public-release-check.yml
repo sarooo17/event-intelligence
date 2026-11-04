@@ -103,6 +103,8 @@ jobs:
       - name: Audit each partially verified v1 gate against frozen source
         env:
           EI_RELEASE_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          # PR base is derived from trusted protected main; never accept a PR-provided reviewed SHA.
+          EI_RELEASE_REVIEWED_MAIN_SHA: ${{ github.event.pull_request.base.sha || github.sha }}
         run: node scripts/evidence/v1-release-readiness.mjs --review-attestations
 
       - name: Retain v1 prerequisite evidence ledger
