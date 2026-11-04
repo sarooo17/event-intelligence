@@ -110,8 +110,8 @@ async function assertRestored(pool, expectedGap, expectedCheckpoint) {
   assert.equal(gap.gapUnresolved, true);
   assert.equal((await a.getMcpOccurrenceArchiveCheckpoint()).endSequence,
     expectedCheckpoint.endSequence);
-  assert.equal((await a.getMcpOccurrenceArchiveCheckpoint()).endHash,
-    expectedCheckpoint.endHash);
+  assert.equal((await a.getMcpOccurrenceArchiveCheckpoint()).headHash,
+    expectedCheckpoint.headHash);
   assert.equal(await a.verifyAudit(), true);
   assert.equal(await b.verifyAudit(), true);
   await assert.rejects(a.beginMcpConnectionAuthority({ connectionId, epoch }),
