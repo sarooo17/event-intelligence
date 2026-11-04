@@ -336,7 +336,6 @@ test('unmerged branch-only source cannot be attested as if already reviewed on m
   assert.ok(errors.some(x=>x.includes('not on trusted main baseline')));
   assert.deepEqual(seen,[
     ['rev-parse','HEAD'],
-    ['merge-base','--is-ancestor',main,prHead],
     ['merge-base','--is-ancestor',unmerged,main],
   ]);
   for(const absent of [null,'invalid']){
@@ -344,6 +343,59 @@ test('unmerged branch-only source cannot be attested as if already reviewed on m
       ['Invalid trusted main source SHA']);
   }
   assert.equal(evaluateV1Readiness(staged,'1.0.0').status,'blocked');
+});
+
+test('unsigned PR is not blocked merely because trusted main moved ahead',()=>{
+  const unsigned=clone(ledger),main='b'.repeat(40),prHead='d'.repeat(40);
+  for(const row of unsigned.criteria)if(row.required){
+    row.status='blocked';
+    delete row.verification;
+  }
+  const seen=[];
+  const check=args=>{
+    seen.push(args);
+    if(args[0]==='rev-parse')return prHead;
+    throw Error('must NOT check main ancestry without a signed gate');
+  };
+  assert.deepEqual(verifyV1ReviewedSource(unsigned,prHead,check,main),[]);
+  assert.deepEqual(seen,[['rev-parse','HEAD']]);
+});
+
+test('signed gate requires common reviewed main ancestor and exact code identity on BOTH refs',()=>{
+  const approved='a'.repeat(40),main='b'.repeat(40),prHead='c'.repeat(40);
+  const signed=clone(ledger);
+  for(const row of signed.criteria)if(row.required){
+    row.status='blocked';
+    delete row.verification;
+  }
+  const row=signed.criteria.find(r=>r.id==='semantic-triage');
+  row.status='verified';
+  row.verification={reviewer:'independently-attributed reviewer',
+    sourceCommitSha:approved,date:'2026-11-04',
+    procedure:'Verify bounded semantic contracts under PG16 multiworker'};
+  const seen=[];
+  const good=args=>{seen.push(args);
+    if(args[0]==='rev-parse')return prHead;
+    if(args[0]==='merge-base'||args[0]==='diff')return '';
+    throw Error('unexpected Git command');
+  };
+  assert.deepEqual(verifyV1ReviewedSource(signed,prHead,good,main),[]);
+  assert.deepEqual(seen,[
+    ['rev-parse','HEAD'],
+    ['merge-base','--is-ancestor',approved,main],
+    ['merge-base','--is-ancestor',approved,prHead],
+    ['diff','--quiet',approved,prHead,'--','.',
+      ':(exclude)docs/releases/v1-readiness.json'],
+    ['diff','--quiet',approved,main,'--','.',
+      ':(exclude)docs/releases/v1-readiness.json'],
+  ]);
+  const stale=verifyV1ReviewedSource(signed,prHead,args=>{
+    if(args[0]==='rev-parse')return prHead;
+    if(args[0]==='diff'&&args[2]===main)throw Error('main code changed');
+    if(args[0]==='merge-base'||args[0]==='diff')return '';
+    throw Error('unexpected Git command');
+  },main);
+  assert.ok(stale.some(x=>x.includes('differs from reviewed source')));
 });
 
 test('npm and MCP stable release workflows fail closed on unsigned 1.0 readiness',()=>{
