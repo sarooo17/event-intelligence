@@ -169,18 +169,11 @@ export function verifyV1ReviewedSource(ledger, headSha, runGit = args =>
   if(!/^[0-9a-f]{40}$/.test(trustedMainSha??'')){
     return ['Invalid trusted main source SHA'];
   }
-  // A PR can create an unmerged source commit C and then add a ledger
-  // attestation at D. C is an ancestor of D but was NEVER approved on main.
-  // The protected-main baseline comes from GitHub's trusted PR event, not
-  // from this PR's branch or a user-authored ledger field.
-  if(trustedMainSha!==headSha){
-    try {
-      runGit(['merge-base','--is-ancestor',trustedMainSha,headSha]);
-    } catch {
-      errors.push('Trusted main source is not an ancestor of checked-out HEAD');
-      return errors;
-    }
-  }
+  // A PR can add source commit C and attest it at D without ever
+  // merging C to protected main. Validate each *signed* source against
+  // the real checked-out origin/main. We intentionally do not require
+  // current main to be an ancestor of a pending PR: main can legitimately
+  // advance after the PR was branched, and unsigned PRs must not fail.
   const verifiedRequired=(ledger?.criteria??[]).filter(row=>
     row?.required===true && row?.status==='verified');
   for(const reviewedSha of new Set(verifiedRequired.map(row=>
@@ -195,13 +188,25 @@ export function verifyV1ReviewedSource(ledger, headSha, runGit = args =>
       errors.push('Reviewed release source is not on trusted main baseline: '+reviewedSha);
       continue;
     }
-    try {
-      // Only the attestations in THIS ledger can differ. Release notes and
-      // every other path must exactly match the source actually reviewed.
-      runGit(['diff','--quiet',reviewedSha,headSha,'--','.',
-        ':(exclude)docs/releases/v1-readiness.json']);
-    } catch {
-      errors.push('Release source differs from reviewed source outside readiness ledger: '+reviewedSha);
+    if(trustedMainSha!==headSha){
+      try {
+        runGit(['merge-base','--is-ancestor',reviewedSha,headSha]);
+      } catch {
+        errors.push('Reviewed release source is not an ancestor of PR HEAD: '+reviewedSha);
+        continue;
+      }
+    }
+    // Only this ledger can differ from the reviewed source. Check both
+    // PR HEAD and trusted *current* main: if main advanced with new code
+    // after review, fail now rather than minting a stale approval on merge.
+    for(const target of new Set([headSha,trustedMainSha])){
+      try {
+        runGit(['diff','--quiet',reviewedSha,target,'--','.',
+          ':(exclude)docs/releases/v1-readiness.json']);
+      } catch {
+        errors.push('Release source differs from reviewed source outside readiness ledger: '+reviewedSha);
+        break;
+      }
     }
   }
   return errors;
