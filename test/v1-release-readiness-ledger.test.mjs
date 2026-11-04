@@ -366,7 +366,8 @@ test('npm and MCP stable release workflows fail closed on unsigned 1.0 readiness
   assert.ok(!/^  push:/m.test(release),'Release must not mint stable tags on code pushes');
   const publicCheck=readFileSync(new URL(
     '../.github/workflows/public-release-check.yml',import.meta.url),'utf8');
-  assert.ok(publicCheck.includes('EI_RELEASE_REVIEWED_MAIN_SHA: ${{ github.event.pull_request.base.sha || github.sha }}'));
+  assert.ok(publicCheck.includes('git rev-parse --verify refs/remotes/origin/main'));
+  assert.ok(publicCheck.includes('EI_RELEASE_REVIEWED_MAIN_SHA="$MAIN_REF"'));
   assert.ok(publicCheck.includes('node scripts/evidence/v1-release-readiness.mjs --review-attestations'));
   assert.ok(publicCheck.includes('fetch-depth: 0'));
 
