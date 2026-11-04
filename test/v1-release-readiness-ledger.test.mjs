@@ -300,13 +300,48 @@ test('strict release evidence rejects stale trees, missing reviewed SHA and chec
     if(args[0]==='merge-base')throw Error('not ancestor');
     return '';
   });
-  assert.ok(ancestorFailed.some(x=>x.includes('not an ancestor')));
+  assert.ok(ancestorFailed.some(x=>x.includes('not on trusted main baseline')));
   const drift=verifyV1ReviewedSource(signed,head,args=>{
     if(args[0]==='rev-parse')return head;
     if(args[0]==='diff')throw Error('changed runtime code or release notes');
     return '';
   });
   assert.ok(drift.some(x=>x.includes('outside readiness ledger')));
+});
+
+test('unmerged branch-only source cannot be attested as if already reviewed on main',()=>{
+  const main='b'.repeat(40),unmerged='c'.repeat(40),prHead='d'.repeat(40);
+  const staged=clone(ledger);
+  for(const row of staged.criteria)if(row.required){
+    row.status='blocked';
+    delete row.verification;
+  }
+  const row=staged.criteria.find(r=>r.id==='full-explainability');
+  row.status='verified';
+  row.verification={reviewer:'bounded AI source audit',date:'2026-11-04',
+    procedure:'Review scoped PG16 inspector evidence',
+    sourceCommitSha:unmerged};
+  const seen=[];
+  const git=args=>{
+    seen.push(args);
+    if(args[0]==='rev-parse')return prHead;
+    if(args[0]==='merge-base' &&
+       args[2]===main && args[3]===prHead)return '';
+    if(args[0]==='merge-base' &&
+       args[2]===unmerged && args[3]===main)
+      throw Error('reviewed code exists only in PR branch');
+    throw Error('untrusted source check: '+args.join(' '));
+  };
+  const errors=verifyV1ReviewedSource(staged,prHead,git,main);
+  assert.ok(errors.some(x=>x.includes('not on trusted main baseline')));
+  assert.deepEqual(seen,[
+    ['rev-parse','HEAD'],
+    ['merge-base','--is-ancestor',main,prHead],
+    ['merge-base','--is-ancestor',unmerged,main],
+  ]);
+  assert.deepEqual(verifyV1ReviewedSource(staged,prHead,git,'invalid'),
+    ['Invalid trusted main source SHA']);
+  assert.equal(evaluateV1Readiness(staged,'1.0.0').status,'blocked');
 });
 
 test('npm and MCP stable release workflows fail closed on unsigned 1.0 readiness',()=>{
@@ -329,6 +364,12 @@ test('npm and MCP stable release workflows fail closed on unsigned 1.0 readiness
   assert.ok(publish.includes('Stable npm version already exists; refusing no-op publish'));
   assert.ok(release.includes('head_branch == \'main\''));
   assert.ok(!/^  push:/m.test(release),'Release must not mint stable tags on code pushes');
+  const publicCheck=readFileSync(new URL(
+    '../.github/workflows/public-release-check.yml',import.meta.url),'utf8');
+  assert.ok(publicCheck.includes('EI_RELEASE_REVIEWED_MAIN_SHA: ${{ github.event.pull_request.base.sha || github.sha }}'));
+  assert.ok(publicCheck.includes('node scripts/evidence/v1-release-readiness.mjs --review-attestations'));
+  assert.ok(publicCheck.includes('fetch-depth: 0'));
+
 });
 
 test('canonical npm release classifier blocks build-metadata downgrade and unreviewed future stable',()=>{
