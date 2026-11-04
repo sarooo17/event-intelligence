@@ -238,7 +238,7 @@ if(process.argv[1] && resolve(process.argv[1])===fileURLToPath(import.meta.url))
       // derived from the untrusted PR or ledger contents.
       // --strict runs on source-frozen main; its trusted baseline is HEAD.
       const trustedMain=mode==='--review-attestations'
-        ? process.env.EI_RELEASE_REVIEWED_MAIN_SHA
+        ? (process.env.EI_RELEASE_REVIEWED_MAIN_SHA??null)
         : expectedSha;
       const provenanceErrors=verifyV1ReviewedSource(
         ledger,expectedSha,undefined,trustedMain);
