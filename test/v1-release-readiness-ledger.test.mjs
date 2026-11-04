@@ -339,8 +339,10 @@ test('unmerged branch-only source cannot be attested as if already reviewed on m
     ['merge-base','--is-ancestor',main,prHead],
     ['merge-base','--is-ancestor',unmerged,main],
   ]);
-  assert.deepEqual(verifyV1ReviewedSource(staged,prHead,git,'invalid'),
-    ['Invalid trusted main source SHA']);
+  for(const absent of [null,'invalid']){
+    assert.deepEqual(verifyV1ReviewedSource(staged,prHead,git,absent),
+      ['Invalid trusted main source SHA']);
+  }
   assert.equal(evaluateV1Readiness(staged,'1.0.0').status,'blocked');
 });
 
