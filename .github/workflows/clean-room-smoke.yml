@@ -13,6 +13,7 @@ on:
       - "docs/SIMPLE-TRIGGER-AUTHORING.md"
       - "docs/QUICKSTART.md"
       - "docs/releases/**"
+      - "test/**" # Required packed-package status must run on test-only PRs
       - "package.json"
       - "package-lock.json"
       - "server.json"
