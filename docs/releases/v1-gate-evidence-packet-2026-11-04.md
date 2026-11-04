@@ -13,8 +13,10 @@ certificate or independent human signoff is performed here.
   corresponding **main merge commit**:
   `4b6200c15e91af8efcb62020f329364d8a49ea78`.
   The source version at this baseline is `mcp-event-intelligence@1.0.0`,
-  **UNPUBLISHED**. This packet is a subsequent docs-only change; the eventual
-  signed `sourceCommitSha` must be the **actual final merged/reviewed main
+  **UNPUBLISHED**. This packet PR changes docs and the Clean-room Smoke
+  pull-request path filter; Quickstart/release-doc changes now run packed
+  consumer checks. There is no runtime or package behavior change.
+  The signed `sourceCommitSha` must be the **actual final merged/reviewed main
   ancestor after all source changes are frozen**, not the stale #410 SHA.
 - Independent automated Codex review on the **exact PR HEAD** found no
   remaining major issues and zero unresolved threads. **This is not a
