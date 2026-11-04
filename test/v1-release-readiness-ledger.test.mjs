@@ -391,7 +391,7 @@ test('signed gate requires common reviewed main ancestor and exact code identity
   ]);
   const stale=verifyV1ReviewedSource(signed,prHead,args=>{
     if(args[0]==='rev-parse')return prHead;
-    if(args[0]==='diff'&&args[2]===main)throw Error('main code changed');
+    if(args[0]==='diff'&&args[3]===main)throw Error('main code changed');
     if(args[0]==='merge-base'||args[0]==='diff')return '';
     throw Error('unexpected Git command');
   },main);
