@@ -25,9 +25,13 @@
         "https://github.com/sarooo17/event-intelligence/pull/189",
         "https://github.com/sarooo17/event-intelligence/pull/278",
         "https://github.com/sarooo17/event-intelligence/pull/282",
-        "https://github.com/sarooo17/event-intelligence/actions/runs/40554825385"
+        "https://github.com/sarooo17/event-intelligence/actions/runs/40554825385",
+        "https://github.com/sarooo17/event-intelligence/pull/410",
+        "https://github.com/sarooo17/event-intelligence/actions/runs/41737399153",
+        "https://github.com/sarooo17/event-intelligence/actions/runs/41737399176",
+        "https://github.com/sarooo17/event-intelligence/blob/e3263e233667046d198e3831cf0c10e3177f66be/docs/releases/v1-gate-evidence-packet-2026-11-04.md"
       ],
-      "note": "Reviewed SDK host-contract/package conformance and packed-preview evidence exist; prerelease 0.12.0-next.0 was historically published and 0.12.0-next.1 publication under npm `next` and unchanged `latest` = 0.11.0 were confirmed in the npm versions UI screenshot checked on 2026-11-02; the npm API response, publishing workflow run and tarball integrity were not separately audited. BLOCKED solely for release-specific review and actual stable 1.0.0 package/source/declarations, exact-head tests and signoff. Do not infer stable or production-readiness from preview publication."
+      "note": "Reviewed SDK host-contract/package conformance and packed-preview evidence exist; prerelease 0.12.0-next.0 was historically published and 0.12.0-next.1 publication under npm `next` and unchanged `latest` = 0.11.0 were confirmed in the npm versions UI screenshot checked on 2026-11-02; the npm API response, publishing workflow run and tarball integrity were not separately audited. BLOCKED solely for release-specific review and actual stable 1.0.0 package/source/declarations, exact-head tests and signoff. Do not infer stable or production-readiness from preview publication. SOURCE-PINNED REVIEW LEADS 2026-11-04 at main e3263e233667046d198e3831cf0c10e3177f66be: Exact 1.0.0 packed 12-export/typed host clean-room and public-release checks observed at reviewed PR #410 head; manual SDK host contract and exact frozen source release approval still required. Criterion remains BLOCKED until independently documented manual release signoff; evidence links and Codex review alone do not authorize verification."
     },
     {
       "id": "security-independent-review",
@@ -47,9 +51,12 @@
         "https://github.com/sarooo17/event-intelligence/pull/309",
         "https://github.com/sarooo17/event-intelligence/pull/311",
         "https://github.com/sarooo17/event-intelligence/pull/314",
-        "https://github.com/sarooo17/event-intelligence/pull/315"
+        "https://github.com/sarooo17/event-intelligence/pull/315",
+        "https://github.com/sarooo17/event-intelligence/actions/runs/41737399685",
+        "https://github.com/sarooo17/event-intelligence/actions/runs/41737399386",
+        "https://github.com/sarooo17/event-intelligence/blob/e3263e233667046d198e3831cf0c10e3177f66be/docs/releases/v1-gate-evidence-packet-2026-11-04.md"
       ],
-      "note": "MANDATORY SDK #45 closed 5/5 with adversarial tenant/owner, strict session authority epoch revocation, PG16 shared-worker fencing and host-owned effects/receipts reference evidence; reviewed PRs #309/#311/#314/#315. Still BLOCKED for release-specific review/attestation at the exact stable-v1 commit. EI does not certify external host OAuth, deployed-host final authorization or a third-party security assessment; optional #317/#376 remain unverified."
+      "note": "MANDATORY SDK #45 closed 5/5 with adversarial tenant/owner, strict session authority epoch revocation, PG16 shared-worker fencing and host-owned effects/receipts reference evidence; reviewed PRs #309/#311/#314/#315. Still BLOCKED for release-specific review/attestation at the exact stable-v1 commit. EI does not certify external host OAuth, deployed-host final authorization or a third-party security assessment; optional #317/#376 remain unverified. SOURCE-PINNED REVIEW LEADS 2026-11-04 at main e3263e233667046d198e3831cf0c10e3177f66be: Real PG16 and security scan evidence attached for candidate; final threat-model/revocation/host-owned authority boundary review and signed release approval still required. Criterion remains BLOCKED until independently documented manual release signoff; evidence links and Codex review alone do not authorize verification."
     },
     {
       "id": "pg-retention-audit",
@@ -66,9 +73,11 @@
         "https://github.com/sarooo17/event-intelligence/pull/257",
         "https://github.com/sarooo17/event-intelligence/pull/258",
         "https://github.com/sarooo17/event-intelligence/pull/378",
-        "https://github.com/sarooo17/event-intelligence/pull/407"
+        "https://github.com/sarooo17/event-intelligence/pull/407",
+        "https://github.com/sarooo17/event-intelligence/actions/runs/41737399386",
+        "https://github.com/sarooo17/event-intelligence/blob/e3263e233667046d198e3831cf0c10e3177f66be/docs/releases/v1-gate-evidence-packet-2026-11-04.md"
       ],
-      "note": "MANDATORY SDK source/event/match/audit/wake-receipt retention implementation is CLOSED 6/6 in #47, with independently reviewed/merged #378 and actual PG16 cross-pool, corrupted-state, restart and lock/timeout negatives. The accepted conservative policy is LOSSLESS NO-PRUNE for source/audit/dedup, except proven safe terminal-duplicate history compaction; storage may grow indefinitely. Still BLOCKED for stable-v1 exact-artifact evidence review, owner/date/procedure signoff, and explicit capacity/backup limitations. WORM/off-host archive, physical TTL and production HA/RPO/RTO remain OPTIONAL in #376, not missing SDK core implementation. Source-pinned PR #407 (12/12 reviewed CI) replaced per-append full-history reload with indexed audit-head validation, retaining exact canonical hash/restart/corrupt-tail semantics; not an immutable external WORM archive and not yet a stable-v1 candidate signoff."
+      "note": "MANDATORY SDK source/event/match/audit/wake-receipt retention implementation is CLOSED 6/6 in #47, with independently reviewed/merged #378 and actual PG16 cross-pool, corrupted-state, restart and lock/timeout negatives. The accepted conservative policy is LOSSLESS NO-PRUNE for source/audit/dedup, except proven safe terminal-duplicate history compaction; storage may grow indefinitely. Still BLOCKED for stable-v1 exact-artifact evidence review, owner/date/procedure signoff, and explicit capacity/backup limitations. WORM/off-host archive, physical TTL and production HA/RPO/RTO remain OPTIONAL in #376, not missing SDK core implementation. Source-pinned PR #407 (12/12 reviewed CI) replaced per-append full-history reload with indexed audit-head validation, retaining exact canonical hash/restart/corrupt-tail semantics; not an immutable external WORM archive and not yet a stable-v1 candidate signoff. SOURCE-PINNED REVIEW LEADS 2026-11-04 at main e3263e233667046d198e3831cf0c10e3177f66be: Real PG16 no-prune, audit chain and corrupt-tail tests with explicit unlimited growth; manual capacity/backup limitation and release-specific audit integrity signoff required. No off-host WORM certified. Criterion remains BLOCKED until independently documented manual release signoff; evidence links and Codex review alone do not authorize verification."
     },
     {
       "id": "pg-chaos-recovery",
@@ -81,9 +90,12 @@
         "https://github.com/sarooo17/event-intelligence/issues/47",
         "https://github.com/sarooo17/event-intelligence/pull/263",
         "https://github.com/sarooo17/event-intelligence/pull/378",
-        "https://github.com/sarooo17/event-intelligence/pull/407"
+        "https://github.com/sarooo17/event-intelligence/pull/407",
+        "https://github.com/sarooo17/event-intelligence/actions/runs/41737399551",
+        "https://github.com/sarooo17/event-intelligence/actions/runs/41737399361",
+        "https://github.com/sarooo17/event-intelligence/blob/e3263e233667046d198e3831cf0c10e3177f66be/docs/releases/v1-gate-evidence-packet-2026-11-04.md"
       ],
-      "note": "BLOCKED pending reviewer signoff on mandatory SDK worker crash/recovery correctness across actual PG16 independent OS workers (e.g. #253/#263); EI-authored fixtures are valid core correctness evidence. Separately operated provider/host and primary PG failover RPO/RTO are OPTIONAL production certification #376. PR #407 real PG16 post-host-effect SIGKILL, crash-recovery soak and audit-head tamper regression all passed on its exact HEAD; candidate-specific signoff and complete upgrade/recovery procedure remain pending."
+      "note": "BLOCKED pending reviewer signoff on mandatory SDK worker crash/recovery correctness across actual PG16 independent OS workers (e.g. #253/#263); EI-authored fixtures are valid core correctness evidence. Separately operated provider/host and primary PG failover RPO/RTO are OPTIONAL production certification #376. PR #407 real PG16 post-host-effect SIGKILL, crash-recovery soak and audit-head tamper regression all passed on its exact HEAD; candidate-specific signoff and complete upgrade/recovery procedure remain pending. SOURCE-PINNED REVIEW LEADS 2026-11-04 at main e3263e233667046d198e3831cf0c10e3177f66be: OS SIGKILL, crash recovery and PG16 smoke on exact reviewed candidate passed; manual reviewer must check receipt-to-effect uncertainty and source-specific recovery proof. No production PG primary failover certification. Criterion remains BLOCKED until independently documented manual release signoff; evidence links and Codex review alone do not authorize verification."
     },
     {
       "id": "pg-scale-measured",
@@ -108,17 +120,27 @@
       "evidence": [
         "https://github.com/sarooo17/event-intelligence/issues/47",
         "https://github.com/sarooo17/event-intelligence/pull/258",
-        "https://github.com/sarooo17/event-intelligence/pull/378"
+        "https://github.com/sarooo17/event-intelligence/pull/378",
+        "https://github.com/sarooo17/event-intelligence/actions/runs/41737399386",
+        "https://github.com/sarooo17/event-intelligence/blob/e3263e233667046d198e3831cf0c10e3177f66be/docs/releases/1.0.0-compatibility.md",
+        "https://github.com/sarooo17/event-intelligence/blob/e3263e233667046d198e3831cf0c10e3177f66be/docs/releases/v1-gate-evidence-packet-2026-11-04.md"
       ],
-      "note": "BLOCKED pending reviewed v1 SDK fail-closed version/backup/reset/recovery contract and docs (#47/#50). Production PostgreSQL primary failover and off-host operator RPO/RTO certification optional #376."
+      "note": "BLOCKED pending reviewed v1 SDK fail-closed version/backup/reset/recovery contract and docs (#47/#50). Production PostgreSQL primary failover and off-host operator RPO/RTO certification optional #376. SOURCE-PINNED REVIEW LEADS 2026-11-04 at main e3263e233667046d198e3831cf0c10e3177f66be: PostgreSQL16 isolated restore/corruption/refusal tests passed, but full-store operator backup/clone/restore/replay procedure still requires release-owner review; source-only archive is NOT a full-store restore. Criterion remains BLOCKED until independently documented manual release signoff; evidence links and Codex review alone do not authorize verification."
     },
     {
       "id": "packed-v1-and-breaking-notes",
       "issue": 50,
       "required": true,
       "status": "blocked",
-      "evidence": [],
-      "note": "v1 types/API, clean-room independent consumer, release notes, and incompatibility matrix not finalized."
+      "evidence": [
+        "https://github.com/sarooo17/event-intelligence/pull/410",
+        "https://github.com/sarooo17/event-intelligence/actions/runs/41737399153",
+        "https://github.com/sarooo17/event-intelligence/actions/runs/41737399176",
+        "https://github.com/sarooo17/event-intelligence/blob/e3263e233667046d198e3831cf0c10e3177f66be/docs/releases/v1.0.0.md",
+        "https://github.com/sarooo17/event-intelligence/blob/e3263e233667046d198e3831cf0c10e3177f66be/docs/releases/1.0.0-compatibility.md",
+        "https://github.com/sarooo17/event-intelligence/blob/e3263e233667046d198e3831cf0c10e3177f66be/docs/releases/v1-gate-evidence-packet-2026-11-04.md"
+      ],
+      "note": "v1 types/API, clean-room independent consumer, release notes, and incompatibility matrix not finalized. SOURCE-PINNED REVIEW LEADS 2026-11-04 at main e3263e233667046d198e3831cf0c10e3177f66be: Unpublished version 1.0.0 metadata, compatibility matrix, notes and actual packed clean-room tests passed on PR #410. Final artifact/version/manual release signoff is pending; this is not npm publish approval. Criterion remains BLOCKED until independently documented manual release signoff; evidence links and Codex review alone do not authorize verification."
     },
     {
       "id": "downstream-pin-policy",
@@ -128,9 +150,13 @@
       "evidence": [
         "https://github.com/sarooo17/event-intelligence/pull/277",
         "https://github.com/sarooo17/event-intelligence/pull/280",
-        "https://github.com/sarooo17/event-intelligence/actions/runs/40554825385"
+        "https://github.com/sarooo17/event-intelligence/actions/runs/40554825385",
+        "https://github.com/sarooo17/event-intelligence/issues/41",
+        "https://github.com/sarooo17/event-intelligence/pull/410",
+        "https://github.com/sarooo17/event-intelligence/blob/e3263e233667046d198e3831cf0c10e3177f66be/docs/EI-RELEASE-COMPATIBILITY.md",
+        "https://github.com/sarooo17/event-intelligence/blob/e3263e233667046d198e3831cf0c10e3177f66be/docs/releases/v1-gate-evidence-packet-2026-11-04.md"
       ],
-      "note": "Manual npm next publication on main with exact expected_version successfully left exactly pinned consumers unchanged; Muffin fork PR #17 upgrades its own package/lockfile and remains DCO blocked. Still BLOCKED for future stable v1 release operator signoff; no automatic consumer deployment."
+      "note": "Manual npm next publication on main with exact expected_version successfully left exactly pinned consumers unchanged; Muffin fork PR #17 upgrades its own package/lockfile and remains DCO blocked. Still BLOCKED for future stable v1 release operator signoff; no automatic consumer deployment. SOURCE-PINNED REVIEW LEADS 2026-11-04 at main e3263e233667046d198e3831cf0c10e3177f66be: Owner-driven no-auto-upgrade policy documented; this repository's 1.0.0 candidate PRs changed no external consumer. Exact current external deployed Muffin/Artemis pins were not independently checked; final release-owner confirmation still required. Criterion remains BLOCKED until independently documented manual release signoff; evidence links and Codex review alone do not authorize verification."
     },
     {
       "id": "full-explainability",
@@ -142,9 +168,11 @@
         "https://github.com/sarooo17/event-intelligence/pull/375",
         "https://github.com/sarooo17/event-intelligence/pull/390",
         "https://github.com/sarooo17/event-intelligence/pull/391",
-        "https://github.com/sarooo17/event-intelligence/issues/376"
+        "https://github.com/sarooo17/event-intelligence/issues/376",
+        "https://github.com/sarooo17/event-intelligence/actions/runs/41737399386",
+        "https://github.com/sarooo17/event-intelligence/blob/e3263e233667046d198e3831cf0c10e3177f66be/docs/releases/v1-gate-evidence-packet-2026-11-04.md"
       ],
-      "note": "MANDATORY SDK #48 closed 5/5 for the versioned conditional fail-closed cause contract and resource-bounded strict PostgreSQL inspector. Optional #376 E48-A/B are now VERIFIED as of 2026-11-02 (2/10): separately deployed first-party MCP source/log oracle; independent second-process Railway raw evidence recheck #391 after 900 full Inspector inspections across 1k/10k/100k PG16 persisted candidates and real separately deployed host load (stage IO/CPU/RSS/p99 and failure matrix). Neither is proof of third-party business source finality, each statement's physical IO or production SLO. This REQUIRED stable-v1 row stays BLOCKED for release-specific reviewed source/reviewer/date/procedure evidence and exact stable candidate signoff, not because #48 implementation is unfinished."
+      "note": "MANDATORY SDK #48 closed 5/5 for the versioned conditional fail-closed cause contract and resource-bounded strict PostgreSQL inspector. Optional #376 E48-A/B are now VERIFIED as of 2026-11-02 (2/10): separately deployed first-party MCP source/log oracle; independent second-process Railway raw evidence recheck #391 after 900 full Inspector inspections across 1k/10k/100k PG16 persisted candidates and real separately deployed host load (stage IO/CPU/RSS/p99 and failure matrix). Neither is proof of third-party business source finality, each statement's physical IO or production SLO. This REQUIRED stable-v1 row stays BLOCKED for release-specific reviewed source/reviewer/date/procedure evidence and exact stable candidate signoff, not because #48 implementation is unfinished. SOURCE-PINNED REVIEW LEADS 2026-11-04 at main e3263e233667046d198e3831cf0c10e3177f66be: Real PG16 strict inspector and signed scoped frontier tests passed on reviewed 1.0.0 PR; separately deployed E48-A/B is first-party staging, not third-party provider finality. Final reviewer must approve bounded SDK guarantee. Criterion remains BLOCKED until independently documented manual release signoff; evidence links and Codex review alone do not authorize verification."
     },
     {
       "id": "semantic-triage",
@@ -153,9 +181,12 @@
       "status": "blocked",
       "evidence": [
         "https://github.com/sarooo17/event-intelligence/issues/49",
-        "https://github.com/sarooo17/event-intelligence/pull/374"
+        "https://github.com/sarooo17/event-intelligence/pull/374",
+        "https://github.com/sarooo17/event-intelligence/actions/runs/41737399386",
+        "https://github.com/sarooo17/event-intelligence/pull/330",
+        "https://github.com/sarooo17/event-intelligence/blob/e3263e233667046d198e3831cf0c10e3177f66be/docs/releases/v1-gate-evidence-packet-2026-11-04.md"
       ],
-      "note": "MANDATORY SDK #49 closed 5/5 for opt-in host-provided evaluator, deterministic prefilter, tenant-scoped cache, durable PG16 trigger/batch reservation and timeout/unknown-outcome no-refund/no-retry boundaries. Reviewed/merged #374 and redacted live provider token witness are bounded SDK evidence. This row remains BLOCKED for stable-v1 release-specific review/signoff, not missing core implementation. Actual provider invoice/cancellation/billing guarantees are OPTIONAL and unchecked #376 E49-A/B."
+      "note": "MANDATORY SDK #49 closed 5/5 for opt-in host-provided evaluator, deterministic prefilter, tenant-scoped cache, durable PG16 trigger/batch reservation and timeout/unknown-outcome no-refund/no-retry boundaries. Reviewed/merged #374 and redacted live provider token witness are bounded SDK evidence. This row remains BLOCKED for stable-v1 release-specific review/signoff, not missing core implementation. Actual provider invoice/cancellation/billing guarantees are OPTIONAL and unchecked #376 E49-A/B. SOURCE-PINNED REVIEW LEADS 2026-11-04 at main e3263e233667046d198e3831cf0c10e3177f66be: Real PG16 2-pool admission, unknown remote outcome/no-refund, opt-in evaluator and labeled corpus tests passed; budget is host estimate, not provider-settled invoice. Manual source-specific review required. Criterion remains BLOCKED until independently documented manual release signoff; evidence links and Codex review alone do not authorize verification."
     },
     {
       "id": "external-source-finality",
