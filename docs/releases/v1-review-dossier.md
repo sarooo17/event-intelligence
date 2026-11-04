@@ -3,9 +3,7 @@
 **Status: review worklist, NOT a signoff or permission to publish.**
 This branch prepares the **unpublished** package source identity `1.0.0`; the previously published `0.12.0-next.1` is a separate npm `next` artifact.
 The stable version in source **does not** imply npm `latest` publication or authorization.
-Nine of nine **required** release ledger entries and six of six **optional**
-deployment/enterprise category entries in
-[`v1-readiness.json`](v1-readiness.json) remain `blocked`.
+The **live** required/optional statuses are defined by [`v1-readiness.json`](v1-readiness.json), not a historical snapshot. All nine required and six optional criteria were initially blocked; after source-freeze, a separate ledger-only PR may attest individual rows without changing this dossier. A partially attested ledger still does not authorize npm stable publication.
 The implementation issues #42–#50 being closed does not change those
 release-specific attestations. #317/#376 are independently tracked,
 **optional for the generic SDK**, not silently certified.
