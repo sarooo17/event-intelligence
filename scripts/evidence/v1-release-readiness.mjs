@@ -152,7 +152,8 @@ export function evaluateV1Readiness(ledger, packageVersion, { expectedSourceSha 
  * tag creation or package publication occurs.
  */
 export function verifyV1ReviewedSource(ledger, headSha, runGit = args =>
-  execFileSync('git',args,{encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim()) {
+  execFileSync('git',args,{encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim(),
+  trustedMainSha = headSha) {
   const errors=[];
   if (!/^[0-9a-f]{40}$/.test(headSha??'')) {
     return ['Invalid checked-out release source SHA'];
@@ -165,6 +166,21 @@ export function verifyV1ReviewedSource(ledger, headSha, runGit = args =>
   } catch {
     return ['Cannot verify checked-out release Git HEAD'];
   }
+  if(!/^[0-9a-f]{40}$/.test(trustedMainSha??'')){
+    return ['Invalid trusted main source SHA'];
+  }
+  // A PR can create an unmerged source commit C and then add a ledger
+  // attestation at D. C is an ancestor of D but was NEVER approved on main.
+  // The protected-main baseline comes from GitHub's trusted PR event, not
+  // from this PR's branch or a user-authored ledger field.
+  if(trustedMainSha!==headSha){
+    try {
+      runGit(['merge-base','--is-ancestor',trustedMainSha,headSha]);
+    } catch {
+      errors.push('Trusted main source is not an ancestor of checked-out HEAD');
+      return errors;
+    }
+  }
   const verifiedRequired=(ledger?.criteria??[]).filter(row=>
     row?.required===true && row?.status==='verified');
   for(const reviewedSha of new Set(verifiedRequired.map(row=>
@@ -174,9 +190,9 @@ export function verifyV1ReviewedSource(ledger, headSha, runGit = args =>
       continue;
     }
     try {
-      runGit(['merge-base','--is-ancestor',reviewedSha,headSha]);
+      runGit(['merge-base','--is-ancestor',reviewedSha,trustedMainSha]);
     } catch {
-      errors.push('Reviewed release source is not an ancestor of HEAD: '+reviewedSha);
+      errors.push('Reviewed release source is not on trusted main baseline: '+reviewedSha);
       continue;
     }
     try {
@@ -218,7 +234,14 @@ if(process.argv[1] && resolve(process.argv[1])===fileURLToPath(import.meta.url))
         report.status==='eligible-for-manual-review')){
       const ledger=JSON.parse(readFileSync(new URL(
         '../../docs/releases/v1-readiness.json',import.meta.url)));
-      const provenanceErrors=verifyV1ReviewedSource(ledger,expectedSha);
+      // On PRs GitHub supplies a trusted BASE SHA; this value is not
+      // derived from the untrusted PR or ledger contents.
+      // --strict runs on source-frozen main; its trusted baseline is HEAD.
+      const trustedMain=mode==='--review-attestations'
+        ? process.env.EI_RELEASE_REVIEWED_MAIN_SHA
+        : expectedSha;
+      const provenanceErrors=verifyV1ReviewedSource(
+        ledger,expectedSha,undefined,trustedMain);
       if(provenanceErrors.length){
         released={...report,status:'blocked',autoPublish:false,
           blocked:[...report.blocked,'reviewed-source-code-drift'],
