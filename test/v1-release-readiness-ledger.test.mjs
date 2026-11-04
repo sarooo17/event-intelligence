@@ -72,6 +72,12 @@ test('no required flag can be flipped or marked verified without evidence and re
 
 test('documented verification structure alone never bypasses other blockers',()=>{
   const isolated=clone(ledger);
+  // This negative fixture must remain valid AFTER 9/9 required gates have
+  // been signed: construct a genuine missing mandatory gate explicitly
+  // instead of assuming the live ledger is perpetually incomplete.
+  const required=isolated.criteria.find(x=>x.id==='stored-state-upgrade');
+  required.status='blocked';
+  delete required.verification;
   const row=isolated.criteria.find(x=>x.id==='embedded-host-independent');
   row.status='verified';
   row.evidence=['https://github.com/sarooo17/event-intelligence/pull/999'];
