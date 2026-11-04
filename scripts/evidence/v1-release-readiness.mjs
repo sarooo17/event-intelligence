@@ -200,19 +200,26 @@ export function readV1Readiness(cwd = new URL('../../',import.meta.url), options
 
 if(process.argv[1] && resolve(process.argv[1])===fileURLToPath(import.meta.url)) {
   const mode=process.argv[2]??'--report';
-  if(!['--report','--strict'].includes(mode) || process.argv.length>3) {
-    console.error('Usage: node scripts/evidence/v1-release-readiness.mjs [--report|--strict]');
+  if(!['--report','--strict','--review-attestations'].includes(mode) ||
+      process.argv.length>3) {
+    console.error('Usage: node scripts/evidence/v1-release-readiness.mjs [--report|--strict|--review-attestations]');
     process.exitCode=2;
   } else {
+    // --review-attestations is a source-provenance-only preflight for an
+    // incremental ledger (e.g. 5/9 gates). It NEVER converts a blocked
+    // release into an eligible one. --strict additionally requires 9/9.
+    const reviewSource=mode!=='--report';
+    const expectedSha=process.env.EI_RELEASE_SOURCE_SHA??'';
     const report=readV1Readiness(new URL('../../',import.meta.url),
-      mode==='--strict' ? {expectedSourceSha:process.env.EI_RELEASE_SOURCE_SHA??''} : {});
+      reviewSource ? {expectedSourceSha:expectedSha} : {});
     let released=report;
-    if(mode==='--strict' && report.status==='eligible-for-manual-review'){
+    if(reviewSource && !report.errors.length &&
+       (mode==='--review-attestations' ||
+        report.status==='eligible-for-manual-review')){
       const ledger=JSON.parse(readFileSync(new URL(
         '../../docs/releases/v1-readiness.json',import.meta.url)));
-      const provenanceErrors=verifyV1ReviewedSource(
-        ledger,process.env.EI_RELEASE_SOURCE_SHA??'');
-      if(provenanceErrors.length) {
+      const provenanceErrors=verifyV1ReviewedSource(ledger,expectedSha);
+      if(provenanceErrors.length){
         released={...report,status:'blocked',autoPublish:false,
           blocked:[...report.blocked,'reviewed-source-code-drift'],
           errors:[...report.errors,...provenanceErrors]};
