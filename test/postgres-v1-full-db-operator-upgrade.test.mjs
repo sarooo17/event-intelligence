@@ -81,7 +81,7 @@ async function assertCatalog(pool) {
     ['"' + prefix + '_history_history_id_seq"']);
   assert.ok(sequence.rows[0]?.relation, 'missing restored history sequence');
 }
-async function assertRestored(pool, expectedGap, expectedCheckpoint) {
+async function assertRestored(pool, expectedGap, expectedCheckpoint, expectedAudits) {
   await assertCatalog(pool);
   const a = scoped(pool, 'tenant-a');
   const b = scoped(pool, 'tenant-b');
@@ -114,11 +114,30 @@ async function assertRestored(pool, expectedGap, expectedCheckpoint) {
     expectedCheckpoint.headHash);
   assert.equal(await a.verifyAudit(), true);
   assert.equal(await b.verifyAudit(), true);
+  // An empty audit chain also verifies successfully. Preserve every actual
+  // source audit row, including its original predecessor/terminal hashes.
+  assert.deepEqual(await a.listAudit(), expectedAudits.a,
+    'clone must not silently drop or rewrite tenant A audit witnesses');
+  assert.deepEqual(await b.listAudit(), expectedAudits.b,
+    'clone must not silently drop or rewrite tenant B audit witnesses');
   await assert.rejects(a.beginMcpConnectionAuthority({ connectionId, epoch }),
     error => error?.code === 'MCP_SESSION_REVOKED',
     'a revoked authority epoch must remain tombstoned across full restore');
   await assert.rejects(a.appendMcpOccurrence('provider', occurrence('stale'), 'sub',
     { connectionId, epoch }), error => error?.code === 'MCP_SESSION_REVOKED');
+  // Independent fresh authorized worker must still see the pre-backup
+  // source-event dedup key; session revocation cannot masquerade as dedup.
+  const freshEpoch = epoch + '-after-restored-clone';
+  await a.beginMcpConnectionAuthority({ connectionId, epoch: freshEpoch });
+  const duplicate = await a.appendMcpOccurrence('provider',
+    occurrence('durable-source-event'), 'sub',
+    { connectionId, epoch: freshEpoch });
+  assert.equal(duplicate.accepted, false,
+    'same event under new valid epoch must remain deduplicated');
+  assert.equal(duplicate.sequence, 1);
+  const afterReplay = await a.getMcpOccurrenceArchiveCheckpoint();
+  assert.equal(afterReplay.endSequence, expectedCheckpoint.endSequence);
+  assert.equal(afterReplay.headHash, expectedCheckpoint.headHash);
   return { a, b };
 }
 
@@ -187,6 +206,10 @@ integration('v1 isolated FULL-database snapshot, cold clone, incompatible marker
     const expectedCheckpoint = await source.getMcpOccurrenceArchiveCheckpoint();
     assert.equal(expectedCheckpoint.endSequence, 1);
     assert.equal(await source.verifyAudit(), true);
+    assert.equal(await other.verifyAudit(), true);
+    const expectedAudits = { a: await source.listAudit(), b: await other.listAudit() };
+    assert.ok(expectedAudits.a.length > 0 && expectedAudits.b.length > 0,
+      'audit preservation must not pass vacuously');
 
     // Full-database clone is meaningful only after stopping ALL EI writers.
     await sourcePool.end();
@@ -213,7 +236,7 @@ integration('v1 isolated FULL-database snapshot, cold clone, incompatible marker
     ], db);
     await restore(candidateDb);
     const candidatePool = open(candidateDb);
-    await assertRestored(candidatePool, expectedGap, expectedCheckpoint);
+    await assertRestored(candidatePool, expectedGap, expectedCheckpoint, expectedAudits);
 
     // An incompatible signature MUST refuse a *cold* startup without
     // adopting, resetting or losing the preserved receipt/tenant evidence.
@@ -234,11 +257,11 @@ integration('v1 isolated FULL-database snapshot, cold clone, incompatible marker
       .digest('hex'), archiveHash, 'rollback must use the original archive');
     await restore(rollbackDb);
     const rollbackPool = open(rollbackDb);
-    await assertRestored(rollbackPool, expectedGap, expectedCheckpoint);
+    await assertRestored(rollbackPool, expectedGap, expectedCheckpoint, expectedAudits);
 
     // Original quiesced database remains intact and independently bootable.
     const sourceReopened = open(sourceDb);
-    await assertRestored(sourceReopened, expectedGap, expectedCheckpoint);
+    await assertRestored(sourceReopened, expectedGap, expectedCheckpoint, expectedAudits);
   } finally {
     // Database drop is limited to the three unique databases created here.
     // No FORCE disconnect, no production/schema name provided by the user.
