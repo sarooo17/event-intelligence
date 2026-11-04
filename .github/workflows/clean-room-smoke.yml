@@ -11,6 +11,8 @@ on:
       - "docs/examples/packed-multi-target-host.mjs"
       - "docs/examples/packed-typed-simple-trigger.mts"
       - "docs/SIMPLE-TRIGGER-AUTHORING.md"
+      - "docs/QUICKSTART.md"
+      - "docs/releases/**"
       - "package.json"
       - "package-lock.json"
       - "server.json"
