@@ -194,6 +194,7 @@ jobs:
             test/postgres-inspector-strict-window.test.mjs \
             test/postgres-semantic-admission.test.mjs \
             test/postgres-logical-dump-restore.test.mjs \
+            test/postgres-v1-full-db-operator-upgrade.test.mjs \
             test/postgres-owner-revocation-snapshot.test.mjs \
             test/postgres-host-receipt-boundary.test.mjs \
             test/postgres-mcp-session-authority-fence.test.mjs \
