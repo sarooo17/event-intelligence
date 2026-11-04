@@ -19,7 +19,7 @@
       "id": "host-contract-and-package",
       "issue": 42,
       "required": true,
-      "status": "verified",
+      "status": "blocked",
       "evidence": [
         "https://github.com/sarooo17/event-intelligence/pull/188",
         "https://github.com/sarooo17/event-intelligence/pull/189",
@@ -36,13 +36,7 @@
         "https://github.com/sarooo17/event-intelligence/blob/cff9dbbef77e9e0b32b167a470e1b952964beead/package.json",
         "https://github.com/sarooo17/event-intelligence/blob/cff9dbbef77e9e0b32b167a470e1b952964beead/docs/releases/1.0.0-compatibility.md"
       ],
-      "note": "VERIFIED bounded SDK 1.0.0 packed host contract and exports on reviewed main source cff9dbb; exact 12 exports, package/lock/MCP metadata, externally isolated packed consumers and receipt/authority denial passed. Reviewer is an explicitly labeled AI technical audit, not a third-party host operator. External-host integration and final host authorization remain unverified optional claims.",
-      "verification": {
-        "reviewer": "ChatGPT GPT-6 — owner-delegated AI technical/evidence reviewer (NOT an independent human/enterprise security auditor)",
-        "date": "2026-11-04",
-        "procedure": "On frozen main 1.0.0 source, inspected exact 12 declared public paths/types, host contract/receipt/denial boundaries, package/lock/server identity and CI artifacts; independently run clean-room npm 1.0.0 tarball installed in outside-worktree consumer for TS, headless, managed and multi-target host + live stdio smoke; cross-checked #410 and #412 6/6 source/provenance CI. Scope: bundled EI test consumers only, not a maintained third-party host.",
-        "sourceCommitSha": "cff9dbbef77e9e0b32b167a470e1b952964beead"
-      }
+      "note": "SOURCE FREEZE INVALIDATED by proposed release #41 full-database upgrade/rollback test+runbook/CI update. Previous candidate's 2026-11-04 attestation was valid only for reviewed cff9dbb; must be reviewed and re-attested against final merged main. Previous bounded evidence: VERIFIED bounded SDK 1.0.0 packed host contract and exports on reviewed main source cff9dbb; exact 12 exports, package/lock/MCP metadata, externally isolated packed consumers and receipt/authority denial passed. Reviewer is an explicitly labeled AI technical audit, not a third-party host operator. External-host integration and final host authorization remain unverified optional claims."
     },
     {
       "id": "security-independent-review",
@@ -56,7 +50,7 @@
       "id": "security-revocation-and-tenant",
       "issue": 45,
       "required": true,
-      "status": "verified",
+      "status": "blocked",
       "evidence": [
         "https://github.com/sarooo17/event-intelligence/issues/45",
         "https://github.com/sarooo17/event-intelligence/pull/309",
@@ -75,19 +69,13 @@
         "https://github.com/sarooo17/event-intelligence/blob/cff9dbbef77e9e0b32b167a470e1b952964beead/test/postgres-owner-revocation-snapshot.test.mjs",
         "https://github.com/sarooo17/event-intelligence/blob/cff9dbbef77e9e0b32b167a470e1b952964beead/test/mcp-owner-tenant-negative-mutation.test.mjs"
       ],
-      "note": "VERIFIED bounded EI SDK v1 security contract on frozen reviewed source cff9dbb: tenant/owner nondisclosing reads, owner/version-pinned wake hydration, strict host-enabled PostgreSQL session epoch tombstones, cross-worker revoke-versus-append lock ordering, negative provider error/prompt injection evidence and host-owned effect/receipt boundary. This is an AI-only source and existing-CI evidence review, NOT independent human penetration testing or host deployment certification. Host MUST enable strict session fencing where required and owns OAuth, transport admission, permissions at side-effect execution, idempotency and already-authorized reads in flight; optional #317/#376 remain blocked. Source code and threat model are unchanged.",
-      "verification": {
-        "reviewer": "ChatGPT GPT-6 — owner-delegated AI technical/security code and evidence reviewer (NOT an independent human auditor)",
-        "date": "2026-11-04",
-        "procedure": "Targeted review of immutable cff9dbb candidate: inspect MCP owner guard (own-slot/proxy denial, tenant+principal equality, triggerVersion-pinned wake, final authorized read snapshot), PG session authority begin/revoke/append (SHA256 epoch, per-connection advisory locks, permanent tombstones, stale workers and scope isolation), MCP detach/terminal Forbidden retry behavior and host receipt/idempotency boundary; cross-check source threat matrix with #309/#311/#314/#315, exact candidate #410 156 non-PG and 25 PG16 security tests and #412 source-attestation guard. Existing GitHub CI evidence was inspected, not independently rerun in this conversation. Explicitly exclude external OAuth/transport, post-snapshot retroactive cancellation, host effects after wake, non-strict host deployments and independent human/enterprise signoff.",
-        "sourceCommitSha": "cff9dbbef77e9e0b32b167a470e1b952964beead"
-      }
+      "note": "SOURCE FREEZE INVALIDATED by proposed release #41 full-database upgrade/rollback test+runbook/CI update. Previous candidate's 2026-11-04 attestation was valid only for reviewed cff9dbb; must be reviewed and re-attested against final merged main. Previous bounded evidence: VERIFIED bounded EI SDK v1 security contract on frozen reviewed source cff9dbb: tenant/owner nondisclosing reads, owner/version-pinned wake hydration, strict host-enabled PostgreSQL session epoch tombstones, cross-worker revoke-versus-append lock ordering, negative provider error/prompt injection evidence and host-owned effect/receipt boundary. This is an AI-only source and existing-CI evidence review, NOT independent human penetration testing or host deployment certification. Host MUST enable strict session fencing where required and owns OAuth, transport admission, permissions at side-effect execution, idempotency and already-authorized reads in flight; optional #317/#376 remain blocked. Source code and threat model are unchanged."
     },
     {
       "id": "pg-retention-audit",
       "issue": 47,
       "required": true,
-      "status": "verified",
+      "status": "blocked",
       "evidence": [
         "https://github.com/sarooo17/event-intelligence/pull/218",
         "https://github.com/sarooo17/event-intelligence/pull/219",
@@ -108,19 +96,13 @@
         "https://github.com/sarooo17/event-intelligence/blob/cff9dbbef77e9e0b32b167a470e1b952964beead/docs/POSTGRES-V1-NO-PRUNE-RETENTION-CONTRACT.md",
         "https://github.com/sarooo17/event-intelligence/blob/cff9dbbef77e9e0b32b167a470e1b952964beead/docs/releases/v1.0.0.md"
       ],
-      "note": "VERIFIED core SDK v1 PostgreSQL16 lossless NO-PRUNE source/dedup/audit/wake-retention, bounded operator integrity checks and hash tamper negatives; deliberate unbounded growth requires operator capacity/backup planning. Does NOT certify WORM/off-host immutability, production storage capacity, physical source TTL, PG primary HA or RPO/RTO (#376).",
-      "verification": {
-        "reviewer": "ChatGPT GPT-6 — owner-delegated AI technical/evidence reviewer (NOT an independent human/enterprise security auditor)",
-        "date": "2026-11-04",
-        "procedure": "Reviewed source-frozen lossless no-prune receipt/source/dedup/audit contract, real PG16 tests 117-122 including two-pool terminal-duplicate-only compaction, cross-tenant restart, corrupt/truncated source+dedup+audit fail-closed, bounded operator preflight and retained wake history; audited #407 canonical indexed head-hash tamper/sequence rollback and 25 PG security proof tests; explicitly accepted indefinite storage growth, capacity and full-backup responsibility for SDK operator, without physical pruning or off-host archive claims.",
-        "sourceCommitSha": "cff9dbbef77e9e0b32b167a470e1b952964beead"
-      }
+      "note": "SOURCE FREEZE INVALIDATED by proposed release #41 full-database upgrade/rollback test+runbook/CI update. Previous candidate's 2026-11-04 attestation was valid only for reviewed cff9dbb; must be reviewed and re-attested against final merged main. Previous bounded evidence: VERIFIED core SDK v1 PostgreSQL16 lossless NO-PRUNE source/dedup/audit/wake-retention, bounded operator integrity checks and hash tamper negatives; deliberate unbounded growth requires operator capacity/backup planning. Does NOT certify WORM/off-host immutability, production storage capacity, physical source TTL, PG primary HA or RPO/RTO (#376)."
     },
     {
       "id": "pg-chaos-recovery",
       "issue": 47,
       "required": true,
-      "status": "verified",
+      "status": "blocked",
       "evidence": [
         "https://github.com/sarooo17/event-intelligence/pull/253",
         "https://github.com/sarooo17/event-intelligence/actions/runs/39568691478",
@@ -136,13 +118,7 @@
         "https://github.com/sarooo17/event-intelligence/actions/runs/41737399361",
         "https://github.com/sarooo17/event-intelligence/blob/cff9dbbef77e9e0b32b167a470e1b952964beead/docs/releases/v1.0.0.md"
       ],
-      "note": "VERIFIED bounded SDK PG16 worker crash/replay/idempotent host receipt correctness on real isolated OS SIGKILL and 3 round crash-soak with green exact-candidate CI. Production 600s sustained host/provider fault, independent worker deployments and PG primary failover with RPO/RTO are UNVERIFIED optional #376.",
-      "verification": {
-        "reviewer": "ChatGPT GPT-6 — owner-delegated AI technical/evidence reviewer (NOT an independent human/enterprise security auditor)",
-        "date": "2026-11-04",
-        "procedure": "On frozen 1.0.0 reviewed source, inspected actual PG16 OS SIGKILL post-host-effect/pre-EI receipt evidence run 41737399361 with exactly one durable host effect per wake; separate crash soak 41737399551 with 3 real OS kill/recovery rounds and source run 41737399386 PG16 restart/provider pre-ingest, committed delivery before wake, poison/lease claim retries; verified unknown host effect is not silently relabeled no effect. Only SDK worker crash/replay correctness, NOT PostgreSQL primary failover.",
-        "sourceCommitSha": "cff9dbbef77e9e0b32b167a470e1b952964beead"
-      }
+      "note": "SOURCE FREEZE INVALIDATED by proposed release #41 full-database upgrade/rollback test+runbook/CI update. Previous candidate's 2026-11-04 attestation was valid only for reviewed cff9dbb; must be reviewed and re-attested against final merged main. Previous bounded evidence: VERIFIED bounded SDK PG16 worker crash/replay/idempotent host receipt correctness on real isolated OS SIGKILL and 3 round crash-soak with green exact-candidate CI. Production 600s sustained host/provider fault, independent worker deployments and PG primary failover with RPO/RTO are UNVERIFIED optional #376."
     },
     {
       "id": "pg-scale-measured",
@@ -167,15 +143,17 @@
       "evidence": [
         "https://github.com/sarooo17/event-intelligence/issues/47",
         "https://github.com/sarooo17/event-intelligence/pull/258",
-        "https://github.com/sarooo17/event-intelligence/pull/378"
+        "https://github.com/sarooo17/event-intelligence/pull/378",
+        "https://github.com/sarooo17/event-intelligence/blob/main/docs/POSTGRES-LOGICAL-RESTORE.md",
+        "https://github.com/sarooo17/event-intelligence/blob/main/docs/POSTGRES-SIGNATURE-OPERATOR-DRILL.md"
       ],
-      "note": "BLOCKED pending reviewed v1 SDK fail-closed version/backup/reset/recovery contract and docs (#47/#50). Production PostgreSQL primary failover and off-host operator RPO/RTO certification optional #376."
+      "note": "BLOCKED pending successful exact-head full-database 3-DB operator upgrade/rollback drill, independent code review and subsequent ledger-only source SHA signoff. New test and runbook proposed under #41; the existing table-filtered pg_dump tests alone did not satisfy this full-database cold-clone validation."
     },
     {
       "id": "packed-v1-and-breaking-notes",
       "issue": 50,
       "required": true,
-      "status": "verified",
+      "status": "blocked",
       "evidence": [
         "https://github.com/sarooo17/event-intelligence/pull/410",
         "https://github.com/sarooo17/event-intelligence/pull/412",
@@ -189,19 +167,13 @@
         "https://github.com/sarooo17/event-intelligence/blob/cff9dbbef77e9e0b32b167a470e1b952964beead/CHANGELOG.md",
         "https://github.com/sarooo17/event-intelligence/blob/cff9dbbef77e9e0b32b167a470e1b952964beead/server.json"
       ],
-      "note": "VERIFIED source-only 1.0.0 version identity, API break/migration notes and clean-room npm tarball from CI. This attests the candidate artifacts and documentation, NOT a published npm package, immutable npm integrity hash, release tag or operator approval. Stable publication remains 9/9 gated.",
-      "verification": {
-        "reviewer": "ChatGPT GPT-6 — owner-delegated AI technical/evidence reviewer (NOT an independent human/enterprise security auditor)",
-        "date": "2026-11-04",
-        "procedure": "Reviewed frozen source and checked package 1.0.0, package-lock root/packages empty, server.json/npm Registry metadata; check-release-manifest + versioned compatibility CLI passed on exact PR source; 12 public packed export paths and clean-room TS/npm tarball verified; compared release notes, breaking authorize/approval/receipt removals, Pattern wire, PG schema and signature markers, no silent mixed worker/store migration. Did NOT inspect a published registry artifact because v1 is intentionally not published.",
-        "sourceCommitSha": "cff9dbbef77e9e0b32b167a470e1b952964beead"
-      }
+      "note": "SOURCE FREEZE INVALIDATED by proposed release #41 full-database upgrade/rollback test+runbook/CI update. Previous candidate's 2026-11-04 attestation was valid only for reviewed cff9dbb; must be reviewed and re-attested against final merged main. Previous bounded evidence: VERIFIED source-only 1.0.0 version identity, API break/migration notes and clean-room npm tarball from CI. This attests the candidate artifacts and documentation, NOT a published npm package, immutable npm integrity hash, release tag or operator approval. Stable publication remains 9/9 gated."
     },
     {
       "id": "downstream-pin-policy",
       "issue": 50,
       "required": true,
-      "status": "verified",
+      "status": "blocked",
       "evidence": [
         "https://github.com/sarooo17/event-intelligence/pull/277",
         "https://github.com/sarooo17/event-intelligence/pull/280",
@@ -214,19 +186,13 @@
         "https://github.com/sarooo17/event-intelligence/blob/cff9dbbef77e9e0b32b167a470e1b952964beead/docs/EI-RELEASE-COMPATIBILITY.md",
         "https://github.com/sarooo17/event-intelligence/blob/cff9dbbef77e9e0b32b167a470e1b952964beead/.github/workflows/publish-npm.yml"
       ],
-      "note": "VERIFIED owner-approved v1 downstream pin policy: EXACT installed consumer dependencies are unchanged by EI source/publish; any Muffin/Artemis migration is consumer-owner controlled with separate PR/tests/rollout. No assertion of externally deployed package versions, no automatic host compatibility adapters, no consumer deployment.",
-      "verification": {
-        "reviewer": "ChatGPT GPT-6 — owner-delegated AI technical/evidence reviewer (NOT an independent human/enterprise security auditor)",
-        "date": "2026-11-04",
-        "procedure": "Reviewed source-frozen #41 owner-approved policy that stable npm package publication does not mutate any Muffin/Artemis downstream pin, lockfile or deployment; inspected CI/release workflow for explicit manual main branch confirm=publish expected_version=1.0.0 and no downstream automation; #410/#412 touched EI source/ledger safety only; future consumer maintainer must explicitly review/test an independent dependency upgrade. This is a POLICY attestation, not an audit of every currently deployed consumer.",
-        "sourceCommitSha": "cff9dbbef77e9e0b32b167a470e1b952964beead"
-      }
+      "note": "SOURCE FREEZE INVALIDATED by proposed release #41 full-database upgrade/rollback test+runbook/CI update. Previous candidate's 2026-11-04 attestation was valid only for reviewed cff9dbb; must be reviewed and re-attested against final merged main. Previous bounded evidence: VERIFIED owner-approved v1 downstream pin policy: EXACT installed consumer dependencies are unchanged by EI source/publish; any Muffin/Artemis migration is consumer-owner controlled with separate PR/tests/rollout. No assertion of externally deployed package versions, no automatic host compatibility adapters, no consumer deployment."
     },
     {
       "id": "full-explainability",
       "issue": 48,
       "required": true,
-      "status": "verified",
+      "status": "blocked",
       "evidence": [
         "https://github.com/sarooo17/event-intelligence/issues/48",
         "https://github.com/sarooo17/event-intelligence/pull/375",
@@ -240,19 +206,13 @@
         "https://github.com/sarooo17/event-intelligence/actions/runs/41737399176",
         "https://github.com/sarooo17/event-intelligence/blob/cff9dbbef77e9e0b32b167a470e1b952964beead/docs/releases/v1.0.0.md"
       ],
-      "note": "VERIFIED bounded SDK v1 explainability + strict fail-closed source fidelity/unknown handling on reviewed source and real PG16 isolated tests. E48-A/B first-party staging evidence is not provider-independent finality or production latency/SLO; no claim of sustained 100k event delivery or independent enterprise host.",
-      "verification": {
-        "reviewer": "ChatGPT GPT-6 — owner-delegated AI technical/evidence reviewer (NOT an independent human/enterprise security auditor)",
-        "date": "2026-11-04",
-        "procedure": "Reviewed #48 scoped 5/5 strict conditional and unknown/gap/fidelity contracts, source-scoped certified-frontier and mismatch negative tests, exact 1.0.0 PG16 inspector keyed/persisted-gap/strict-window test outputs (139 PG tests; 25 security PG tests), plus #391 independent raw recheck of 900 full TriggerInspector inspections over 1k/10k/100k persisted PG candidate tiers with external first-party host load and fault cases. Limited signoff to SDK strict explainability contract; missing upstream provider truth is explicitly UNKNOWN.",
-        "sourceCommitSha": "cff9dbbef77e9e0b32b167a470e1b952964beead"
-      }
+      "note": "SOURCE FREEZE INVALIDATED by proposed release #41 full-database upgrade/rollback test+runbook/CI update. Previous candidate's 2026-11-04 attestation was valid only for reviewed cff9dbb; must be reviewed and re-attested against final merged main. Previous bounded evidence: VERIFIED bounded SDK v1 explainability + strict fail-closed source fidelity/unknown handling on reviewed source and real PG16 isolated tests. E48-A/B first-party staging evidence is not provider-independent finality or production latency/SLO; no claim of sustained 100k event delivery or independent enterprise host."
     },
     {
       "id": "semantic-triage",
       "issue": 49,
       "required": true,
-      "status": "verified",
+      "status": "blocked",
       "evidence": [
         "https://github.com/sarooo17/event-intelligence/issues/49",
         "https://github.com/sarooo17/event-intelligence/pull/374",
@@ -264,13 +224,7 @@
         "https://github.com/sarooo17/event-intelligence/actions/runs/41737399176",
         "https://github.com/sarooo17/event-intelligence/blob/cff9dbbef77e9e0b32b167a470e1b952964beead/docs/releases/v1.0.0.md"
       ],
-      "note": "VERIFIED opt-in semantic triage SDK boundary: deterministic prefilter, scoped/revisioned caches, real PG16 two-pool reservation/epoch/timeout fail-closed checks; 40-title proxy corpus is not model-relevance certification. Actual provider invoice, remote cancellation and extra provider retries remain UNVERIFIED optional E49-A/B.",
-      "verification": {
-        "reviewer": "ChatGPT GPT-6 — owner-delegated AI technical/evidence reviewer (NOT an independent human/enterprise security auditor)",
-        "date": "2026-11-04",
-        "procedure": "Reviewed actual Pattern v2 optional host-provided semantic evaluator and deterministic no-model fallback, #330 40-case independently priority-labeled redacted public-title corpus limits, #374 two-PG16-pool durable per-trigger/batch worst-case reserved calls/tokens/host estimated cost, source candidate PG16 tests 84-95 including corrupt ledger, duplicate IDs, tenant isolation, restart and new epoch, and negative host approval/timeout behavior. Explicitly distinguished conservative admission from provider-settled bill or remote abort stopping billing.",
-        "sourceCommitSha": "cff9dbbef77e9e0b32b167a470e1b952964beead"
-      }
+      "note": "SOURCE FREEZE INVALIDATED by proposed release #41 full-database upgrade/rollback test+runbook/CI update. Previous candidate's 2026-11-04 attestation was valid only for reviewed cff9dbb; must be reviewed and re-attested against final merged main. Previous bounded evidence: VERIFIED opt-in semantic triage SDK boundary: deterministic prefilter, scoped/revisioned caches, real PG16 two-pool reservation/epoch/timeout fail-closed checks; 40-title proxy corpus is not model-relevance certification. Actual provider invoice, remote cancellation and extra provider retries remain UNVERIFIED optional E49-A/B."
     },
     {
       "id": "external-source-finality",
