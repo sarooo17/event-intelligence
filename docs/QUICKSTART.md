@@ -4,6 +4,14 @@ The primary integration is to embed Event Intelligence once at the **harness lev
 
 ## 1. Embed the package and point it at the host registry
 
+> **Source `1.0.0` is an UNPUBLISHED stable candidate.** The npm install
+> commands below target versions previously observed on the public registry,
+> not this repository's `1.0.0` source. Trial the candidate by packing the
+> reviewed source and installing that tarball in an isolated test host,
+> never by assuming `npm install mcp-event-intelligence@1.0.0` has shipped.
+> See the [source candidate compatibility matrix](releases/1.0.0-compatibility.md)
+> and the [release evidence packet](releases/v1-gate-evidence-packet-2026-11-04.md).
+
 Install the chosen channel deliberately. Unqualified npm installation follows
 `latest` (not `next`); npm versions UI showed `latest` = `0.11.0`
 and `next` = `0.12.0-next.1` in the screenshot checked on 2026-11-02:
