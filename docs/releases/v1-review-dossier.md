@@ -1,7 +1,8 @@
 # Stable v1.0.0 readiness review dossier (issue #41)
 
 **Status: review worklist, NOT a signoff or permission to publish.**
-This branch prepares the **unpublished** package source identity `1.0.0`; the previously published `0.12.0-next.1` is a separate npm `next` artifact.
+`main` contains the **unpublished** package source identity `1.0.0`, prepared by [#410](https://github.com/sarooo17/event-intelligence/pull/410); the previously published `0.12.0-next.1` is a separate npm `next` artifact.
+The [source-pinned 2026-11-04 gate evidence packet](v1-gate-evidence-packet-2026-11-04.md) consolidates exact PR-head CI/PG16/clean-room runs and the four fastest reviewer checks; **all ledger statuses remain blocked pending actual manual approvals**.
 The stable version in source **does not** imply npm `latest` publication or authorization.
 Nine of nine **required** release ledger entries and six of six **optional**
 deployment/enterprise category entries in
