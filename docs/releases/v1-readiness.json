@@ -56,15 +56,32 @@
       "id": "security-revocation-and-tenant",
       "issue": 45,
       "required": true,
-      "status": "blocked",
+      "status": "verified",
       "evidence": [
         "https://github.com/sarooo17/event-intelligence/issues/45",
         "https://github.com/sarooo17/event-intelligence/pull/309",
         "https://github.com/sarooo17/event-intelligence/pull/311",
         "https://github.com/sarooo17/event-intelligence/pull/314",
-        "https://github.com/sarooo17/event-intelligence/pull/315"
+        "https://github.com/sarooo17/event-intelligence/pull/315",
+        "https://github.com/sarooo17/event-intelligence/pull/410",
+        "https://github.com/sarooo17/event-intelligence/pull/412",
+        "https://github.com/sarooo17/event-intelligence/actions/runs/41737399386",
+        "https://github.com/sarooo17/event-intelligence/actions/runs/41737399176",
+        "https://github.com/sarooo17/event-intelligence/blob/cff9dbbef77e9e0b32b167a470e1b952964beead/scripts/lib/mcp-owner-read-guard.mjs",
+        "https://github.com/sarooo17/event-intelligence/blob/cff9dbbef77e9e0b32b167a470e1b952964beead/scripts/lib/postgres-event-store.mjs",
+        "https://github.com/sarooo17/event-intelligence/blob/cff9dbbef77e9e0b32b167a470e1b952964beead/scripts/lib/mcp-events-client.mjs",
+        "https://github.com/sarooo17/event-intelligence/blob/cff9dbbef77e9e0b32b167a470e1b952964beead/docs/SECURITY-THREAT-MODEL-V1.md",
+        "https://github.com/sarooo17/event-intelligence/blob/cff9dbbef77e9e0b32b167a470e1b952964beead/test/postgres-mcp-session-authority-fence.test.mjs",
+        "https://github.com/sarooo17/event-intelligence/blob/cff9dbbef77e9e0b32b167a470e1b952964beead/test/postgres-owner-revocation-snapshot.test.mjs",
+        "https://github.com/sarooo17/event-intelligence/blob/cff9dbbef77e9e0b32b167a470e1b952964beead/test/mcp-owner-tenant-negative-mutation.test.mjs"
       ],
-      "note": "MANDATORY SDK #45 closed 5/5 with adversarial tenant/owner, strict session authority epoch revocation, PG16 shared-worker fencing and host-owned effects/receipts reference evidence; reviewed PRs #309/#311/#314/#315. Still BLOCKED for release-specific review/attestation at the exact stable-v1 commit. EI does not certify external host OAuth, deployed-host final authorization or a third-party security assessment; optional #317/#376 remain unverified."
+      "note": "VERIFIED bounded EI SDK v1 security contract on frozen reviewed source cff9dbb: tenant/owner nondisclosing reads, owner/version-pinned wake hydration, strict host-enabled PostgreSQL session epoch tombstones, cross-worker revoke-versus-append lock ordering, negative provider error/prompt injection evidence and host-owned effect/receipt boundary. This is an AI-only source and existing-CI evidence review, NOT independent human penetration testing or host deployment certification. Host MUST enable strict session fencing where required and owns OAuth, transport admission, permissions at side-effect execution, idempotency and already-authorized reads in flight; optional #317/#376 remain blocked. Source code and threat model are unchanged.",
+      "verification": {
+        "reviewer": "ChatGPT GPT-6 — owner-delegated AI technical/security code and evidence reviewer (NOT an independent human auditor)",
+        "date": "2026-11-04",
+        "procedure": "Targeted review of immutable cff9dbb candidate: inspect MCP owner guard (own-slot/proxy denial, tenant+principal equality, triggerVersion-pinned wake, final authorized read snapshot), PG session authority begin/revoke/append (SHA256 epoch, per-connection advisory locks, permanent tombstones, stale workers and scope isolation), MCP detach/terminal Forbidden retry behavior and host receipt/idempotency boundary; cross-check source threat matrix with #309/#311/#314/#315, exact candidate #410 156 non-PG and 25 PG16 security tests and #412 source-attestation guard. Existing GitHub CI evidence was inspected, not independently rerun in this conversation. Explicitly exclude external OAuth/transport, post-snapshot retroactive cancellation, host effects after wake, non-strict host deployments and independent human/enterprise signoff.",
+        "sourceCommitSha": "cff9dbbef77e9e0b32b167a470e1b952964beead"
+      }
     },
     {
       "id": "pg-retention-audit",
