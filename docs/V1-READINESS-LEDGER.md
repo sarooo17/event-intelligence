@@ -12,41 +12,57 @@ are tracked under the **optional operational validation #376** instead.
 #317 human-operated external-host security certification is separate and
 optional for the generic SDK. Real PostgreSQL16 correctness and defensible
 retention/recovery remain mandatory. Every row maps to its numbered issue.
-Every row remains `blocked` until release-specific manually reviewed evidence
-is attached; an issue marked completed does not auto-verify its ledger row.
+Every row must remain `blocked` **until** release-specific evidence is reviewed
+and a named, source-pinned attestation is merged; an implementation issue
+marked completed never auto-verifies a ledger row.
 
-**Status as of 2026-11-02:** SDK implementation workstreams #42–#50 are
-closed; the scoped Host Adapter Kit #269 is closed with an explicit
-no-new-generic-API/ROI conclusion. All **9 required stable-v1 ledger
-attestations are still blocked**, despite substantial completed SDK evidence.
-The **6 optional deployment/enterprise ledger categories remain blocked**,
-even though [#376](https://github.com/sarooo17/event-intelligence/issues/376)
-now records **E48-A and E48-B verified (2/10)** for isolated first-party
-source and Railway staging measurement/independent raw recheck ([#391](https://github.com/sarooo17/event-intelligence/pull/391)).
-These partial observations do not certify all requirements of a broader
-optional category. [#317](https://github.com/sarooo17/event-intelligence/issues/317)
-remains 0/5. The npm versions UI screenshot checked on 2026-11-02
-confirms `0.12.0-next.1` under `next` and `0.11.0` under `latest`;
-the underlying npm API response and publishing workflow run were not
-separately examined. **This does not authorize stable v1**.
-The [live roadmap](https://github.com/sarooo17/event-intelligence/issues/41)
-supersedes historic implementation checklists. The [v1.0.0 review dossier](releases/v1-review-dossier.md)
-tracks all nine current SDK evidence leads, missing candidate-specific signoffs,
-and the exact-commit approval sequence without upgrading a blocked entry prematurely.
+**Status as of 2026-11-06 (last signed SDK baseline):** The nine **required
+SDK v1.0 readiness gates were all marked `verified`** in the ledger-only,
+reviewed/green [PR #419](https://github.com/sarooo17/event-intelligence/pull/419).
+The frozen reviewed source ancestor was
+`f6923e87ba1744091b13bae30008c8a0b38c03cb`; the ledger-only merge on
+`main` was `0332ef7cb3943b74468f12f25cb49c9c6a4b6407`.
+The reviewer is explicitly **ChatGPT GPT-6 under owner delegation, not an
+independent human auditor or deployed-host security certification**.
+The SDK implementation workstreams #42–#50 and scoped #269 are closed.
+The **6 optional production/enterprise categories remain blocked**;
+[#376](https://github.com/sarooo17/event-intelligence/issues/376) has 2/10
+acceptances (E48-A/B) and [#317](https://github.com/sarooo17/event-intelligence/issues/317)
+has 0/5. Neither is a missing generic SDK feature or an implicit
+production certification.
+
+**This repository documentation update itself changes the source-frozen tree.**
+The historical 9/9 attestation cannot simply be carried into the final
+published HEAD: review the complete updated documentation on a freshly
+merged `main` source commit, invalidate/re-attest all nine signatures in a
+subsequent **ledger-only PR**, and let the strict checker verify ancestry
+and zero non-ledger drift. Do not weaken that protection to simplify docs.
+
+The npm UI observed on 2026-11-02 showed `0.12.0-next.1` on `next`
+and `0.11.0` on `latest`. This historical distribution observation
+is distinct from the **unpublished** source candidate
+`mcp-event-intelligence@1.0.0`; neither a 9/9 ledger nor green CI
+authorizes its publication. Follow the [roadmap #41](https://github.com/sarooo17/event-intelligence/issues/41)
+and [review dossier](releases/v1-review-dossier.md) for reproducible evidence
+and the separate explicit owner authorization.
 
 ```sh
-# Report only: validates manifest and emits a machine-readable blocked state.
+# Read-only report: expected 9/9 -> eligible-for-manual-review only
+# after the source-pinned attestations have been revalidated on main.
 node scripts/evidence/v1-release-readiness.mjs --report
 
-# Strict operator preflight: returns a nonzero exit until all required evidence
-# is recorded and the package manifest itself says 1.0.0.
-node scripts/evidence/v1-release-readiness.mjs --strict
+# Source-pinned strict preflight (NOT a publish command). Requires all
+# nine signed gates, reviewed main ancestor, zero post-review source drift,
+# exact checked-out HEAD and canonical 1.0.0 version.
+EI_RELEASE_SOURCE_SHA="$(git rev-parse HEAD)" \
+  node scripts/evidence/v1-release-readiness.mjs --strict
 ```
 
-The Public Release Check workflow captures the `--report` JSON as an
-artifact while the package is still pre-v1. It intentionally does **not**
-auto-publish, tag, merge, update consumer pins or turn the strict gate on
-prematurely. The checker validates the exact criteria set, no duplicates,
+The Public Release Check captures the `--report` JSON as an
+artifact for the unpublished candidate; after correct 9/9 signoff the
+status may read `eligible-for-manual-review`. It does **not** automatically
+publish, tag, merge or update consumer pins; only the separately authorized
+operator workflow runs `--strict` before writing to npm. The checker validates the exact criteria set, no duplicates,
 current product-owner required/optional classification, status, and manually authored signoff/evidence
 metadata for any `verified` row. It does not fetch GitHub live state or
 assert an external security review from its own contents: claims are
@@ -76,7 +92,7 @@ tests are SDK engineering evidence, not production claims. Independently
 operated host adoption, full real-source finality, provider-billed spend,
 production PostgreSQL primary failover RPO/RTO, p99 latency and human security
 attestation remain open under #376/#317. **Do not advertise any of these as
-certified**, even when a generic SDK release gate is later eligible.
+certified**, even though the nine generic SDK gates have been verified.
 
 **Scope regression guard:** `test/v1-release-readiness-ledger.test.mjs`
 refuses downgrading the nine core SDK requirements (including #48 and #49),
