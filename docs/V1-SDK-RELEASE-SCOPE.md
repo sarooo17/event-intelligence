@@ -17,8 +17,10 @@ agent runtime. No external service's unverified assurances become EI claims.
 - Actual PostgreSQL16 recovery/idempotency/worker concurrency and
   rollback-safe state version/reset; **safe durable retention** preserving
   event and audit provenance, replay/dedup floor and active wake receipts.
-  Partial terminal-duplicate compaction alone cannot close a missing
-  retention-lifecycle criterion. #47 remains open pending its SDK slice.
+  Partial terminal-duplicate compaction alone would not close a missing
+  retention-lifecycle criterion. **#47 is now closed 6/6 for the deliberately
+  lossless no-prune SDK policy** ([PR #378](https://github.com/sarooo17/event-intelligence/pull/378));
+  off-host/WORM retention and physical failover are separate optional #376.
 - #48: versioned bounded causal inspection; correctly distinguish known
   lifecycle/wake/gap/budget states; return **unknown** when source finality
   is not proven; accept terminal selected-candidate impossibility only
@@ -40,10 +42,15 @@ agent runtime. No external service's unverified assurances become EI claims.
 - Clear documentation of limits, v1 public API/incompatibilities,
   manual package release and pinned downstream consumers.
 
-All **nine required** readiness rows remain blocked until release-specific
-manual verification references, date and procedure are recorded.
-A completed implementation issue does not automatically make the ledger
-`verified`. No automatic merge/publish/tag/consumer update is authorized.
+The nine **required SDK readiness rows were verified 9/9** by a
+source-pinned technical/evidence signoff in
+[PR #419](https://github.com/sarooo17/event-intelligence/pull/419)
+(reviewer: owner-delegated AI, **not an independent human security auditor**).
+That is eligible for *manual release review*, not npm authorization.
+Document/code changes after the signed source require **fresh source review
+and ledger-only reattestation**: an implementation issue's closure cannot
+automatically mark a row verified. No automatic merge, npm publication,
+tag, MCP Registry update or consumer pin change is authorized.
 
 ## B. Integration conformance (recommended reference evidence)
 
@@ -72,7 +79,8 @@ assertion, not that its underlying history was complete.
   production representative sustained fault/steady/burst load, real
   external host/provider p95/p99 and end-to-end DB CPU/IO attribution.
 
-These remain **open and unverified**, not silently waived, in #376 and #317.
+These are **not fully certified** and remain tracked in #376 (2/10 partial
+evidence) and #317 (0/5), without silently waiving external certification.
 They are requirements only when claiming a particular deployment,
 enterprise certification or production SLA—not when shipping the generic
 SDK, unless a future owner decision explicitly changes its release policy.
@@ -82,9 +90,10 @@ SDK, unless a future owner decision explicitly changes its release policy.
 The owner can approve a narrower SDK acceptance scope explicitly in the
 issue. Link reviewed/merged PRs, exact commit SHA, CI, evidence limits,
 and the transferred #376 target. Never mark an unrun provider/host test
-as passed, or close #47 while SDK retention/recovery correctness remains
-unchecked. Never downgrade a required security/retention feature by
-simply relabeling its missing implementation as "production".
+as passed, or present #47's closed lossless SDK correctness scope as
+a certification of physical production retention, archive or failover.
+Never downgrade a required security/retention feature by simply relabeling
+its missing implementation as "production".
 
 The 2026-10-31 scope decision affects requirements, **not** the strength
 or outcomes of real observed tests. This is a release/acceptance-policy
