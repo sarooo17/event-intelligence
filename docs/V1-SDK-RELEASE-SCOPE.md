@@ -46,11 +46,7 @@ The nine **required SDK readiness rows were verified 9/9** by a
 source-pinned technical/evidence signoff in
 [PR #419](https://github.com/sarooo17/event-intelligence/pull/419)
 (reviewer: owner-delegated AI, **not an independent human security auditor**).
-That is eligible for *manual release review*, not npm authorization.
-Document/code changes after the signed source require **fresh source review
-and ledger-only reattestation**: an implementation issue's closure cannot
-automatically mark a row verified. No automatic merge, npm publication,
-tag, MCP Registry update or consumer pin change is authorized.
+The final post-documentation source review was [PR #421](https://github.com/sarooo17/event-intelligence/pull/421); the separate **manual npm and MCP Registry releases completed on 2026-11-11** ([npm](https://github.com/sarooo17/event-intelligence/actions/runs/43035988681), [Registry/tag](https://github.com/sarooo17/event-intelligence/actions/runs/43036379159)). That authorizes no further publication, automatic consumer upgrade, production certification or deployment. Document/code changes after the immutable `v1.0.0` tag require **fresh source review and ledger-only reattestation** for any future release-gate use; past 9/9 evidence remains preserved in the tag.
 
 ## B. Integration conformance (recommended reference evidence)
 

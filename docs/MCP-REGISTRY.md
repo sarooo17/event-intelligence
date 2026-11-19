@@ -55,7 +55,7 @@ It intentionally does **not** declare provider MCP connection configuration.
 
 ## Validation
 
-CI validates `server.json` with the official MCP publisher tooling. **Prereleases are npm-only under the `next` dist-tag**, and are not registered as a new MCP Registry version or stable GitHub Release. Stable releases use the separately gated MCP Registry and GitHub Release automation. The metadata version here describes the checked-out package candidate. The checked-out `1.0.0` identity is a **source-only, unpublished stable candidate**. The previously published `0.12.0-next.1` remains under npm `next` as observed on 2026-11-02; `latest` remains `0.11.0` until a separately approved, manually executed v1 publish. Metadata in this document is NOT evidence of publication or Registry listing.
+CI validates `server.json` with the official MCP publisher tooling. **Current published Registry version is `io.github.sarooo17/event-intelligence@1.0.0`**, successfully published on **2026-11-11** by the [Release workflow](https://github.com/sarooo17/event-intelligence/actions/runs/43036379159) after the [successful npm `latest` publication](https://github.com/sarooo17/event-intelligence/actions/runs/43035988681). Its source is the immutable `v1.0.0` tag. The `0.12.0-next.1` prerelease remains a historical npm `next` artifact and was not promoted to the stable Registry entry. Source metadata by itself does not prove publication; the linked successful workflow output does.
 
 The Registry is a discovery/distribution channel for the optional control plane, not an integration hub for the host's other MCP servers.
 

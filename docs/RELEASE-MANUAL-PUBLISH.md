@@ -12,8 +12,8 @@ is pushed. The `Publish npm` workflow supports one entrypoint:
    installing dependencies, packing, or publishing.
 4. Existing checks remain mandatory: manifest consistency, `npm run check`,
    `npm run pack:check`, and registry existence check.
-5. If the version already exists in npm, publish step remains skipped,
-   preserving npm version immutability.
+5. An already-published **stable** version is rejected before publication;
+   the workflow must not succeed as a no-op and accidentally trigger `Release`.
 
 **Why fail instead of skip?** The existing `Release` workflow listens for a
 successful completion of `Publish npm`. A skipped job can appear successful
@@ -25,6 +25,8 @@ source-to-tag compatibility or production readiness; owners must review
 those separately. Never publish a version merely to make a fork's CI green.
 
 ## Stable v1.0.0 manual evidence fence (#41)
+
+**Historical result:** `1.0.0` was successfully published on **2026-11-11** under npm `latest` ([publish run](https://github.com/sarooo17/event-intelligence/actions/runs/43035988681)), and the [subsequent release run](https://github.com/sarooo17/event-intelligence/actions/runs/43036379159) published MCP Registry `1.0.0` and the immutable `v1.0.0` tag. The following rules document the validated *release gate*, not a pending authorization. Do **not** republish `1.0.0`; future stable versions require their own reviewed policy and source signoffs.
 
 For any stable major version >=1, the manually dispatched `Publish npm`
 workflow fails closed **before any npm publication** unless the nine required
@@ -49,10 +51,10 @@ It repeats the strict source gate before creating any stable MCP Registry
 entry, tag or GitHub Release. A manual stable publish that finds an existing
 version fails rather than reporting a successful no-op that could trigger a
 secondary release workflow. Prereleases remain on `next` and do not meet
-this stable requirement. Current `0.12.0-next.1` remains unchanged.
+this stable requirement. The earlier `0.12.0-next.1` preview remains a historical npm artifact; stable `1.0.0` has already shipped.
 
 The [nine-gate review dossier](releases/v1-review-dossier.md) lists reusable
-implementation evidence and missing exact-v1 approvals. Neither the dossier,
+implementation evidence and the completed source-pinned v1.0.0 release history. Neither the dossier,
 a green unit test, nor the presence of evidence URLs authorizes publication.
 
 ## Safe npm tags
