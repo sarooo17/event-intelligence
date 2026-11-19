@@ -1,6 +1,6 @@
 # Event Intelligence — documentation for coding agents and LLMs
 
-> Host-neutral pre-v1 SDK for durable future conditions, event-time
+> Host-neutral published v1.0.0 SDK for durable future conditions, event-time
 > correlation, source provenance and targeted wakeups; not an LLM runner.
 
 - [Coding agent repository instructions](AGENTS.md)
@@ -11,13 +11,11 @@
 - [Host conformance v3](conformance/README.md)
 - [Persistence and shared-worker storage](docs/STORAGE.md)
 - [Security policy](SECURITY.md)
-- [Pre-v1 compatibility/migrations](docs/releases/0.12.0-next.1-compatibility.md)
+- [Published v1.0.0 compatibility/migrations](docs/releases/1.0.0-compatibility.md)
 - [Package exports (authoritative)](package.json)
 
 Package: `mcp-event-intelligence` (Node.js >=22).
-Preview version at this repository's source date: `0.12.0-next.1`
-(`next`, not npm `latest`). Verify current version and exported APIs;
-the stable `1.0.0` release has not been approved.
+Current published stable release: `mcp-event-intelligence@1.0.0` (Node.js >=22), published to npm `latest` and MCP Registry on **2026-11-11**. Pin exact consumer versions and review stored-state migration before upgrading from an older channel. The `0.12.0-next.1` prerelease is historical.
 
 This file is a convenience index only. It is not an MCP endpoint, an
 agent-executable configuration or a guarantee that arbitrary LLM clients

@@ -1,4 +1,4 @@
-# Security authority and threat model v1 — partial issue #45
+# Security authority and threat model v1 — bounded SDK security; independent host assurance pending
 
 The source-of-truth matrix is `docs/security-threat-model-v1.json`.
 It covers twelve explicit boundaries from MCP transport ingress to release
@@ -48,9 +48,9 @@ Important distinctions:
   queued wake jobs. Real independent-pool PostgreSQL 16 ordering tests now
   cover the FINAL authorization query snapshot under #235; they do NOT
   establish a stronger no-response-after-revocation-commit guarantee.
-  Parent #45 and independent security signoff remain open.
+  SDK issue #45 is closed for its bounded implementation acceptance; independent deployed-host security signoff remains open under #317.
 
-Use this matrix with the v1 readiness ledger before publishing. Never
+Use this matrix with the v1 readiness ledger and the immutable v1.0.0 release evidence. Never
 place exploit reproductions, secrets or private vulnerability details in
 public issues; follow `SECURITY.md` private reporting process.
 
@@ -141,7 +141,7 @@ not an OAuth or downstream effects authorization system.
 Pending: cross-worker revocation/queued work semantics; externally enforced
 transport body/time quotas and tenant rate/backpressure; all-unlabelled
 telemetry canary protection; private independent reviewer signoff. Do not
-check #45's security certification acceptance on this ledger alone.
+claim completion of #317's independent security certification from this ledger alone.
 
 ## Revocation / accepted append admission and shutdown
 

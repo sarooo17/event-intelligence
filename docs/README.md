@@ -1,6 +1,6 @@
 # Documentation
 
-Documentation for the current source and pre-v1 SDK preview (`mcp-event-intelligence@0.12.0-next.1`, publication and dist-tags confirmed from npm versions UI screenshot on 2026-11-02). The unqualified npm `latest` tag and the MCP Registry listing are separate release channels:
+Documentation for **published Event Intelligence SDK `1.0.0`** (npm stable `latest` and official MCP Registry `io.github.sarooo17/event-intelligence@1.0.0`, released 2026-11-11). Use [v1 compatibility and operator migration guidance](releases/1.0.0-compatibility.md) before upgrading an existing host. npm `next` and older releases are historical channels, not the current stable install recommendation.
 
 - [AI coding agent integration (consumer-focused)](AI-AGENT-INTEGRATION.md)
 - [Repo AGENTS.md (for contributing agents)](../AGENTS.md)
@@ -16,20 +16,21 @@ Documentation for the current source and pre-v1 SDK preview (`mcp-event-intellig
 - [Internal protocol](PROTOCOL.md)
 - [MCP Registry](MCP-REGISTRY.md)
 - [Release-gate example](examples/release-gate.md)
-- [Current `0.12.0-next.1` preview release notes](releases/v0.12.0-next.1.md)
-- [Preview compatibility / host migration](releases/0.12.0-next.1-compatibility.md)
-- [Earlier `0.11.0` stable release notes](releases/v0.11.0.md)
+- [Published v1.0.0 release notes](releases/v1.0.0.md)
+- [Current stable v1.0.0 compatibility / operator migration](releases/1.0.0-compatibility.md)
+- [Historical `0.12.0-next.1` preview](releases/v0.12.0-next.1.md)
+- [Earlier `0.11.0` release](releases/v0.11.0.md)
 - [Release history](releases/)
 
-## Stable v1 release readiness (implementation largely complete, approval pending)
+## Published v1.0.0 release and outstanding production certifications
 
-- [Current authoritative v1 status and required/optional gate boundary](https://github.com/sarooo17/event-intelligence/issues/41)
+- [Completed v1.0 milestone and verified release evidence](https://github.com/sarooo17/event-intelligence/issues/41)
 - [Machine-readable stable v1 readiness and review procedure](V1-READINESS-LEDGER.md)
 - [SDK vs. independent production/enterprise certification](V1-SDK-RELEASE-SCOPE.md)
 - [Original v1 engineering plan (historical snapshot)](EI-V1-ROADMAP.md)
 - [Original embedded integration design (historical proposal)](EI-INTEGRATION-V1-DESIGN.md)
 - [Release and consumer compatibility policy](EI-RELEASE-COMPATIBILITY.md)
-- [GitHub tracking epic](https://github.com/sarooo17/event-intelligence/issues/41)
+- [Published GitHub Release](https://github.com/sarooo17/event-intelligence/releases/tag/v1.0.0)
 
 **Versioning:** the package version, Pattern wire schema (`version: "2"`), internal EI protocol and experimental MCP Events compatibility profiles evolve separately. A v1 roadmap document does not certify v1.0 behavior.
 

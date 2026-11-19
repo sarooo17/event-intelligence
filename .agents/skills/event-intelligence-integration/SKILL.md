@@ -1,6 +1,6 @@
 ---
 name: event-intelligence-integration
-description: Integrate the pre-v1 Event Intelligence SDK into any existing AI agent, workflow host, or MCP-enabled runtime. Use when implementing durable event-triggered wakeups without polling the LLM, connecting existing host MCP clients, designing tenant/receipt boundaries, or testing EI conformance.
+description: Integrate the published Event Intelligence v1.0 SDK into any existing AI agent, workflow host, or MCP-enabled runtime. Use when implementing durable event-triggered wakeups without polling the LLM, connecting existing host MCP clients, designing tenant/receipt boundaries, or testing EI conformance.
 ---
 
 # Integrate Event Intelligence into an existing agent host
@@ -19,10 +19,10 @@ first, then use its actual runtime/identity/storage APIs. Full reference:
    continuation/resume entry point, durable receipt store, shutdown lifecycle
    and durable storage topology.
 3. Check the **installed package version** and `package.json.exports`.
-   `0.12.0-next.1` is the documented pre-v1 `next` preview; plain
-   `npm install mcp-event-intelligence` follows npm `latest`, which may
-   be different. Do not silently update an existing pin.
-4. Read the version-specific [migration matrix](../../../docs/releases/0.12.0-next.1-compatibility.md)
+   The published stable release is `1.0.0` (2026-11-11); prefer an exact
+   pin. `0.12.0-next.1` is a superseded preview. Do not silently
+   update existing consumers or change their durable state.
+4. Read the [v1.0.0 migration matrix](../../../docs/releases/1.0.0-compatibility.md)
    before modifying state or existing trigger contracts.
 
 ## Preferred path: host-neutral embedded EI

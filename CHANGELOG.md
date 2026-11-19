@@ -1,13 +1,12 @@
 # Changelog
 
-## [1.0.0] — UNPUBLISHED source candidate; approval and npm publish blocked (#41)
+## [1.0.0] — 2026-11-11 (published stable SDK)
 
-- Prepare aligned package/lockfile/MCP Registry source identity `1.0.0`, version-specific compatibility matrix and release notes; **do not publish** until all nine independently reviewed exact-source mandatory release attestations in `docs/releases/v1-readiness.json` are verified.
-- Expose the current runtime-neutral SDK with deliberate pre-v1 API breaks: `control(request)` approval, real durable host receipts, Pattern AST v2, explicit source completeness/unknown and opt-in semantically evaluated events.
-- Conserve tenant-isolated durable PostgreSQL16 audit/wake/source history with operator-owned capacity/backups and safe fail-closed restore. [PR #407](https://github.com/sarooo17/event-intelligence/pull/407) improves audit-head append performance without relaxing hash/lock guarantees.
-- No automatic Muffin/Artemis upgrades or source/host enterprise certification. See [v1 stable candidate notes](docs/releases/v1.0.0.md) and [compatibility matrix](docs/releases/1.0.0-compatibility.md).
-- **Stable npm `latest`/tag/Registry Release not authorized by this source candidate.**
-
+- **Published** `mcp-event-intelligence@1.0.0` to npm `latest` with signed provenance ([successful `Publish npm` run](https://github.com/sarooo17/event-intelligence/actions/runs/43035988681)); registered `io.github.sarooo17/event-intelligence@1.0.0` in the official MCP Registry and created immutable GitHub tag/release `v1.0.0` ([successful `Release` run](https://github.com/sarooo17/event-intelligence/actions/runs/43036379159)).
+- Public runtime-neutral SDK with required `control(request)`, durable host-issued receipts and replay, Pattern AST v2, bounded source-aware explainability and opt-in semantic evaluation. Migration from `0.11.0`/`0.12.0-next.1` is **explicit**: stop shared writers, inspect/store signature markers, take a full verified backup, rehearse in a clone and select safe restore/reset; no silent in-place upgrade.
+- PostgreSQL16 lossless **no-prune** event/match/audit/receipt retention, bounded reference crash/restart/recovery tests and operator rollback procedures; operator-managed storage growth remains necessary.
+- **9/9 required bounded SDK gates** were technically source-attested for the immutable release by owner-delegated AI reviewers; this does **not** constitute independent human host security, provider finality, production HA/SLO or enterprise certification. [#317](https://github.com/sarooo17/event-intelligence/issues/317) and [#376](https://github.com/sarooo17/event-intelligence/issues/376) remain separate.
+- No automatic Muffin/Artemis pin or deployment changes. See [v1 release notes](docs/releases/v1.0.0.md) and [compatibility/migration matrix](docs/releases/1.0.0-compatibility.md). Post-release documentation changes on `main` do not alter the published `v1.0.0` artifact.
 
 ## [0.12.0-next.1] — published to npm `next` (npm UI screenshot verified 2026-11-02)
 

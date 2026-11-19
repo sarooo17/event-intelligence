@@ -9,7 +9,7 @@ permissions to access or alter external applications.
 
 ## Project contract
 
-EI is a host-neutral, pre-v1 SDK for durable future event conditions, temporal
+EI is a host-neutral, published v1.0.0 SDK for durable future event conditions, temporal
 correlation and agent wakeups. It is **not** an LLM harness, an MCP gateway,
 a user authorization system, or a runtime-specific SDK.
 
@@ -36,11 +36,11 @@ a user authorization system, or a runtime-specific SDK.
 | Integrate EI into any host | [AI/agent integration guide](docs/AI-AGENT-INTEGRATION.md) |
 | Host-independent setup/API | [Quickstart](docs/QUICKSTART.md), [embedded integration](docs/embedded-runtime-integration.md) |
 | Agent tool authoring | `trigger_plan`, `trigger_language_describe` and [Quickstart](docs/QUICKSTART.md) |
-| Protocol and data contract | [Protocol](docs/PROTOCOL.md), [compatibility](docs/releases/0.12.0-next.1-compatibility.md) |
+| Protocol and data contract | [Protocol](docs/PROTOCOL.md), [compatibility](docs/releases/1.0.0-compatibility.md) |
 | Storage/PG durability | [Storage](docs/STORAGE.md), [security](SECURITY.md) |
 | Test integration | [Host conformance](conformance/README.md) |
 | Contribute to EI | [Contributing](CONTRIBUTING.md), [repository rules](.github/REPOSITORY_RULES.md) |
-| Release/current status | [#41 roadmap](https://github.com/sarooo17/event-intelligence/issues/41), [readiness ledger](docs/V1-READINESS-LEDGER.md) |
+| Release/current status | [v1.0 release milestone #41](https://github.com/sarooo17/event-intelligence/issues/41), [readiness ledger](docs/V1-READINESS-LEDGER.md) |
 
 ## Work on this repository
 

@@ -1,39 +1,12 @@
-# Stable v1.0.0 readiness review dossier (issue #41)
+# Published v1.0.0 — source-pinned SDK readiness review dossier (issue #41)
 
-**Status as of 2026-11-06: 9/9 bounded SDK gates technically attested;
-stable `1.0.0` remains UNPUBLISHED and NOT operator-authorized.**
-The [live source-pinned ledger](v1-readiness.json) is the authority for
-current signoffs; [PR #419](https://github.com/sarooo17/event-intelligence/pull/419)
-signed all nine on reviewed `main` source
-`f6923e87ba1744091b13bae30008c8a0b38c03cb`, then merged a
-**ledger-only** change as `0332ef7cb3943b74468f12f25cb49c9c6a4b6407`.
-The source/evidence reviewer is owner-delegated **ChatGPT GPT-6,
-not an independent human auditor or production operator**.
-This dossier is an evidence index, **not** permission to publish.
+**The 1.0.0 release was published on 2026-11-11.** The [npm publish](https://github.com/sarooo17/event-intelligence/actions/runs/43035988681) promoted `mcp-event-intelligence@1.0.0` to `latest`; the [Release workflow](https://github.com/sarooo17/event-intelligence/actions/runs/43036379159) published MCP Registry version `1.0.0` and GitHub [tag `v1.0.0`](https://github.com/sarooo17/event-intelligence/releases/tag/v1.0.0). Exact released source: `f15c8c5e6ffab55d5a3fddefee2c64d3738be68d`.
 
-The [source-pinned 2026-11-04 evidence packet](v1-gate-evidence-packet-2026-11-04.md)
-contains historical leads and PR-head CI/PG16/clean-room artifacts; the
-[last full-database operator drill, #416](https://github.com/sarooo17/event-intelligence/pull/416)
-and [negative-fixture/CI hardening, #418](https://github.com/sarooo17/event-intelligence/pull/418)
-completed the final two prerequisites before #419. The published
-`0.12.0-next.1` is a distinct npm `next` artifact, not this 1.0.0 source.
+The immutable [tagged readiness ledger](https://github.com/sarooo17/event-intelligence/blob/v1.0.0/docs/releases/v1-readiness.json) records **9/9 verified bounded SDK gates**. [PR #419](https://github.com/sarooo17/event-intelligence/pull/419), [documentation update #420](https://github.com/sarooo17/event-intelligence/pull/420) and [final source-pinned ledger-only #421](https://github.com/sarooo17/event-intelligence/pull/421) document the reviewed history. This signoff used **owner-delegated AI technical/evidence review**, *not* an independent human operator or third-party security auditor. This dossier indexes evidence; it cannot grant authority to execute side effects, migrate running production data, or certify enterprise SLO.
 
-**Source freeze:** this documentation maintenance requires a new reviewed
-`main` source ancestor and separate ledger-only reattestation of every
-required row. The source-pinned strict gate **must** fail before that
-reapproval, even though #419's prior bounded signoffs were 9/9.
-The six optional external/enterprise criteria remain `blocked`; #317/#376
-remain separately tracked, not silently certified.
+The [source-pinned evidence packet](v1-gate-evidence-packet-2026-11-04.md), [full-database operator drill #416](https://github.com/sarooo17/event-intelligence/pull/416), [negative fixture #418](https://github.com/sarooo17/event-intelligence/pull/418) and [source-frozen #421](https://github.com/sarooo17/event-intelligence/pull/421) support the historical release. Documentation updated **after** the immutable tag must be re-reviewed on a new source ancestor before a **future** strict publish check; it never rewrites the published artifact. The six optional external/enterprise criteria remain `blocked`. [#317](https://github.com/sarooo17/event-intelligence/issues/317) and [#376](https://github.com/sarooo17/event-intelligence/issues/376) are separate from the generic SDK v1 completion.
 
-This dossier separates the **reviewed bounded SDK evidence** from external
-production claims that a stable-`1.0.0` package does **not** imply. In particular, the
-last merged audit performance optimization, [PR #407](https://github.com/sarooo17/event-intelligence/pull/407),
-has 12/12 exact-head workflows green, code review complete, PG16 audit
-concurrency/tamper tests and a first-party Railway **1,000/1,000
-5/s** source/worker/host test rechecked by another OS process.
-Neither proves independent provider/host production certification or
-a complete 10k/100k E47-C campaign; [#376](https://github.com/sarooo17/event-intelligence/issues/376)
-remains 2/10.
+The reviewed SDK reference paths include actual PG16 crash/rollback and bounded source inspection. These do **not** prove third-party source completeness, external-host penetration testing, off-host WORM archives, enterprise RPO/RTO or 10k/100k production SLO.
 
 ## Nine reviewed SDK release gates — evidence index
 
@@ -44,12 +17,12 @@ remains 2/10.
 | `pg-retention-audit` | [#378](https://github.com/sarooo17/event-intelligence/pull/378), [#407](https://github.com/sarooo17/event-intelligence/pull/407); `docs/POSTGRES-V1-NO-PRUNE-RETENTION-CONTRACT.md`, `test/postgres-v1-no-prune-retention.test.mjs`, `test/postgres-audit-head-append.test.mjs` | Actual PG16 lossless no-prune source/audit/dedup/receipt invariants and safe terminal-duplicate compaction; unbounded growth and off-host archival remain operator responsibilities. |
 | `pg-chaos-recovery` | [#253](https://github.com/sarooo17/event-intelligence/pull/253), [#263](https://github.com/sarooo17/event-intelligence/pull/263), [#407](https://github.com/sarooo17/event-intelligence/pull/407); PG16 OS SIGKILL/post-host-effect and restart workflows | Isolated PG16 SIGKILL/restart, multiworker durable receipt and recovery evidence; no enterprise PG failover/RPO/RTO certificate. |
 | `stored-state-upgrade` | [#258](https://github.com/sarooo17/event-intelligence/pull/258), [#378](https://github.com/sarooo17/event-intelligence/pull/378), `docs/EI-RELEASE-COMPATIBILITY.md`, `test/postgres-logical-dump-restore.test.mjs` | Actual PG16 **whole-database** cold clone and rollback into separate databases with signature refusal, tenant, nonempty audit, cursor/gap, receipt and fresh-epoch dedup; [#416](https://github.com/sarooo17/event-intelligence/pull/416) and [operator runbook](v1-postgres-operator-upgrade-rollback.md); no production off-host DR claim. |
-| `packed-v1-and-breaking-notes` | `docs/releases/0.12.0-next.1-compatibility.md`, `docs/releases/v0.12.0-next.1.md`, version parity/packed checks | Candidate 1.0.0 lockfile/server parity, versioned compatibility notes, breaking API list and clean-room tarball; not a published npm artifact. |
+| `packed-v1-and-breaking-notes` | [1.0.0 compatibility](1.0.0-compatibility.md), [1.0.0 notes](v1.0.0.md), version parity/packed checks | Published 1.0.0 lockfile/server parity, breaking API/migration list, clean-room tarball and successful npm + Registry publish workflows. |
 | `downstream-pin-policy` | [#277](https://github.com/sarooo17/event-intelligence/pull/277), [#280](https://github.com/sarooo17/event-intelligence/pull/280); `docs/EI-RELEASE-COMPATIBILITY.md` | Explicit owner-controlled exact consumer version pins; Muffin/Artemis upgrades require separate consumer PRs, never implicit release side effects. |
 | `full-explainability` | [#48](https://github.com/sarooo17/event-intelligence/issues/48), [#375](https://github.com/sarooo17/event-intelligence/pull/375), [#390](https://github.com/sarooo17/event-intelligence/pull/390), [#391](https://github.com/sarooo17/event-intelligence/pull/391), E48-A/B in [#376](https://github.com/sarooo17/event-intelligence/issues/376) | Bounded strict causal inspector with unknown/partial fidelity and PG16 negative source-gap checks; no third-party provider truth certification. |
 | `semantic-triage` | [#49](https://github.com/sarooo17/event-intelligence/issues/49), [#330](https://github.com/sarooo17/event-intelligence/pull/330), [#374](https://github.com/sarooo17/event-intelligence/pull/374) | Opt-in evaluator, tenant/revision-scoped cache and durable reserved token/call/host-estimated-cost budgets; not actual provider billing or cancellation guarantee. |
 
-**Candidate and evidence:** `package.json`, lockfile, `server.json`, Registry metadata, compatibility matrix and release notes share the **unpublished** 1.0.0 source identity. The candidate's reviewed packaged and PG16 evidence is recorded in #419. A green PR alone never authorizes npm: signoffs must continue to reference the exact newly reviewed `main` source after any non-ledger edit.
+**Released identity and evidence:** `package.json`, lockfile, `server.json`, Registry metadata, compatibility matrix and notes were source-matched for the immutable **published** 1.0.0 tag. Evidence is source-bound in #419/#421, and actual publication is proven by the 2026-11-11 npm and Registry workflow logs. A green PR alone never authorizes a **future** publish; any new source requires new source-pinned review.
 
 **Review order (historical):** The source-specific #419 attestations cover all
 nine required gates. A future documentation-only source update must confirm
