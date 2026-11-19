@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/sarooo17/event-intelligence/actions/workflows/ci.yml/badge.svg)](https://github.com/sarooo17/event-intelligence/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/mcp-event-intelligence.svg)](https://www.npmjs.com/package/mcp-event-intelligence)
-[![MCP Registry](https://img.shields.io/badge/MCP%20Registry-v0.11.0-5b5bd6)](https://registry.modelcontextprotocol.io/?q=io.github.sarooo17%2Fevent-intelligence)
+[![MCP Registry](https://img.shields.io/badge/MCP%20Registry-v1.0.0-5b5bd6)](https://registry.modelcontextprotocol.io/?q=io.github.sarooo17%2Fevent-intelligence)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 MCP Event Intelligence is an experimental event runtime for agents that need to react to **future conditions over multiple event sources** without keeping an LLM or agent loop alive.
@@ -39,17 +39,15 @@ available to their own agent environment according to that client's support.
 
 ## Embed it in an existing agent host
 
-Install from npm:
+Install the published stable SDK from npm (Node.js >=22):
 
 ```bash
-npm install mcp-event-intelligence
-# Opt in explicitly to the pre-v1 SDK preview (not npm latest):
-npm install --save-exact mcp-event-intelligence@0.12.0-next.1
+npm install --save-exact mcp-event-intelligence@1.0.0
 ```
 
-Published package: [npm](https://www.npmjs.com/package/mcp-event-intelligence) · [Official MCP Registry](https://registry.modelcontextprotocol.io/?q=io.github.sarooo17%2Fevent-intelligence)
+Published channels: [npm](https://www.npmjs.com/package/mcp-event-intelligence) · [Official MCP Registry](https://registry.modelcontextprotocol.io/?q=io.github.sarooo17%2Fevent-intelligence) · [GitHub v1.0.0 release](https://github.com/sarooo17/event-intelligence/releases/tag/v1.0.0). The release was published on **2026-11-11** by the [successful npm publish](https://github.com/sarooo17/event-intelligence/actions/runs/43035988681) and [Registry/tag release](https://github.com/sarooo17/event-intelligence/actions/runs/43036379159) workflows. npm `latest` was set to `1.0.0` in the publish workflow; use the exact version above for reproducible installs.
 
-**Pre-v1 upgrades:** the current SDK preview is `0.12.0-next.1` (published under npm `next`; the [npm versions page](https://www.npmjs.com/package/mcp-event-intelligence?activeTab=versions) and both dist-tags were confirmed in a 2026-11-02 screenshot). See the [versioned breaking-change and storage migration matrix](docs/releases/0.12.0-next.1-compatibility.md) and [release notes](docs/releases/v0.12.0-next.1.md). Plain `npm install mcp-event-intelligence` follows npm `latest`, **not** `next`; neither install command changes an already pinned host or migrates persisted data. Stable `1.0.0` has not been released.
+**Existing installations:** upgrading from `0.11.0` or the historical `0.12.0-next.1` preview is **not an in-place, automatic stored-state migration**. Review the [v1 breaking changes and operator migration matrix](docs/releases/1.0.0-compatibility.md), stop all workers sharing a store, back up the full state and verify a separate clone before switching binaries. Publishing EI does not change a consumer's dependency pin or authorize external effects.
 
 For most runtimes, start with the runtime-neutral integration surface:
 
@@ -670,9 +668,11 @@ io.github.sarooo17/event-intelligence
 
 ## Project status
 
-**SDK v1.0.0 source candidate complete: 9/9 required SDK readiness gates verified on the protected `main` source, but stable `1.0.0` is NOT published or authorized.** The last verified npm distribution observation (2026-11-02) was `0.11.0` on `latest` and `0.12.0-next.1` on `next`; consumers must still install an actual published version. The [source-pinned release ledger](docs/releases/v1-readiness.json) and [roadmap #41](https://github.com/sarooo17/event-intelligence/issues/41) govern subsequent release authorization.
+**Event Intelligence SDK 1.0.0 is published** (npm `latest`, MCP Registry `io.github.sarooo17/event-intelligence@1.0.0`, GitHub tag/release `v1.0.0`) as of **2026-11-11**. The immutable [released commit](https://github.com/sarooo17/event-intelligence/commit/f15c8c5e6ffab55d5a3fddefee2c64d3738be68d) passed the manual publish and Registry workflows; [#41](https://github.com/sarooo17/event-intelligence/issues/41) tracks that completed release milestone. The nine required **bounded SDK** gates were source-attested for that release by an **owner-delegated AI technical reviewer**, *not* an independent human security auditor.
 
-The canonical host-neutral facade, bounded explainability, opt-in semantic evaluation and shared PostgreSQL16 correctness/reference recovery paths have been implemented and tested. The bundled JSONL store remains **single-process only**. PostgreSQL retention deliberately uses a **lossless no-prune** policy; storage growth needs operator management. The [v1 release-readiness ledger](docs/releases/v1-readiness.json) records **9/9 required gates `verified`** from the source-pinned [PR #419](https://github.com/sarooo17/event-intelligence/pull/419); verification was an **AI technical/evidence review, not an independent human/production security audit**. Repository documentation changes require a fresh source review and ledger-only reattestation before the strict release check can pass again. [Production/enterprise validation #376](https://github.com/sarooo17/event-intelligence/issues/376) is **2/10** (E48-A/B verified in separate staging) and [deployed-host security #317](https://github.com/sarooo17/event-intelligence/issues/317) is **0/5**: neither constitutes generic-SDK stable release blocking or a certification EI can claim. See the [current roadmap #41](https://github.com/sarooo17/event-intelligence/issues/41), [SDK release scope](docs/V1-SDK-RELEASE-SCOPE.md) and [pre-v1 security boundaries](SECURITY.md).
+EI provides host-neutral event conditions, bounded explainability, opt-in semantic evaluation and reference/shared PostgreSQL16 recovery tests. The bundled JSONL store is **single-process**. PostgreSQL v1 retention is **lossless no-prune**, requiring operator-managed capacity and backups. **Not certified:** production primary failover/RPO/RTO, off-host immutable archives, independently operated provider finality or billing, external-host security and production latency/scale SLAs. Those remain separate in [#317](https://github.com/sarooo17/event-intelligence/issues/317) and [#376](https://github.com/sarooo17/event-intelligence/issues/376). See [SECURITY.md](SECURITY.md), the [v1 compatibility/upgrade matrix](docs/releases/1.0.0-compatibility.md), and the [source-pinned readiness ledger](docs/V1-READINESS-LEDGER.md).
+
+Post-release documentation on `main` can be updated without changing the immutable v1.0.0 npm tarball or tag; any future publication using the original nine-gate source-freeze workflow still needs a fresh source-bound review and must not reuse older signatures without reattestation.
 
 ## Example
 

@@ -42,19 +42,13 @@ calls which an agent must replace using APIs it actually found.
 
 ## 1. Install an explicitly chosen release
 
-Node.js **>=22**. For the current pre-v1 preview described by this repo:
+Node.js **>=22**. The current published stable SDK is **1.0.0** (npm `latest` at the **2026-11-11** manual publish):
 
 ```sh
-npm install --save-exact mcp-event-intelligence@0.12.0-next.1
+npm install --save-exact mcp-event-intelligence@1.0.0
 ```
 
-This is an **opt-in prerelease** (`next`). Unqualified
-`npm install mcp-event-intelligence` follows npm `latest`, which may
-still be older. Do not automatically update an existing consumer or
-migrate stored triggers. Consult
-[the versioned compatibility and migration notes](releases/0.12.0-next.1-compatibility.md).
-The npm dist-tags may change; verify the registry before pinning a version
-in an external project.
+Do **not** silently rewrite an existing consumer's pin, change its store in place or automatically promote prereleases. Check the actual installed version, use [v1 compatibility and persisted-state migration notes](releases/1.0.0-compatibility.md), and require a host-owned backup/restore and idempotent receipt/replay proof. The previous `0.12.0-next.1` preview is not the current recommendation. npm dist-tags can change, so always pin a verified version.
 
 ## 2. Connect the host-neutral facade
 
@@ -186,7 +180,7 @@ Finish an integration PR with the following facts, not inferred outcomes:
 
 **Do not claim** the SDK runs LLMs, manages OAuth, authenticates the host,
 guarantees exactly-once external side effects, certifies production HA/SLO
-or has already passed stable `1.0.0` release gates.
+or has independently certified the security of a deployed host, even though the nine bounded SDK v1.0 release gates were verified.
 
 ### Further references
 
@@ -195,5 +189,5 @@ or has already passed stable `1.0.0` release gates.
 - [Host conformance](../conformance/README.md)
 - [Storage](STORAGE.md)
 - [Security](../SECURITY.md)
-- [Version-specific compatibility](releases/0.12.0-next.1-compatibility.md)
+- [Published v1.0.0 compatibility](releases/1.0.0-compatibility.md)
 - [SDK readiness vs. production certification](V1-SDK-RELEASE-SCOPE.md)

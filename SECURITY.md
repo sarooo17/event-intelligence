@@ -2,22 +2,17 @@
 
 ## Supported versions
 
-The public package remains **pre-1.0**. The npm versions UI screenshot checked on 2026-11-02 confirms
-`0.12.0-next.1` on `next` and `0.11.0` on `latest`; pinned consumers
-must explicitly opt into the prerelease. This prerelease is **not** a third-party security audit or stable `1.0.0`
-certification. Existing hosts keep their explicitly pinned versions.
+**Current published stable release:** `mcp-event-intelligence@1.0.0`. The [manual npm publication](https://github.com/sarooo17/event-intelligence/actions/runs/43035988681) on **2026-11-11** used npm `latest`; the [release workflow](https://github.com/sarooo17/event-intelligence/actions/runs/43036379159) published MCP Registry `io.github.sarooo17/event-intelligence@1.0.0` and tag `v1.0.0`. Security maintenance is **best-effort**; no guaranteed vulnerability response, backport SLA or independently certified host-security posture is promised.
 
 | Version / channel | Security maintenance |
 | --- | --- |
-| `0.12.0-next.1` (npm `next`, visually verified 2026-11-02) | Current preview candidate; fixes only via a **new** reviewed/published version, not mutation of the existing artifact |
-| `0.11.x` (prior stable release line; npm `latest` was `0.11.0` on 2026-11-02) | Maintenance where practical; no guaranteed backport SLA |
-| `0.1.x`–`0.10.x` | Unsupported; upgrade deliberately |
-| Current repository `main` | Under CI/review; a source commit is **not** itself a published security release |
+| `1.0.0` (published stable; npm `latest` at release) | Current supported version; fixes require a newly reviewed version, never a mutation of an existing npm artifact |
+| `0.12.0-next.1` (historical npm `next` prerelease) | Superseded preview; upgrade deliberately using v1 migration guidance |
+| `0.11.x` (older release line) | Legacy; no guaranteed backport SLA or ongoing maintenance |
+| `0.1.x`–`0.10.x` | Unsupported |
+| Repository `main` after `v1.0.0` | Development/documentation; not a replacement for the immutable published package or a security release |
 
-Publishing a new package version does not change downstream applications
-pinned to an exact version; consuming hosts must opt into any upgrade.
-This table describes the repository's support policy, not a certification
-or evidence that any particular release is free of vulnerabilities.
+Updating an npm package does not change downstream hosts pinned to an exact version and does **not** migrate persisted triggers, event records or host receipts. Consult the [1.0.0 compatibility and operator upgrade matrix](docs/releases/1.0.0-compatibility.md) before deploying a new version. A published stable SDK is **not** a third-party penetration test, production HA certification or evidence that a particular version is vulnerability-free.
 
 ## Reporting a vulnerability
 
@@ -36,7 +31,7 @@ Useful reports include:
 
 ## Security boundaries
 
-Event Intelligence is a pre-v1 runtime-neutral SDK with scoped multi-tenant host support. The reviewed library/reference tests do **not** certify security of any independently operated host, OAuth system, transport, or deployed production environment ([#317](https://github.com/sarooo17/event-intelligence/issues/317)).
+Event Intelligence 1.0.0 is a published runtime-neutral SDK with scoped multi-tenant host support. The reviewed library/reference tests do **not** certify security of any independently operated host, OAuth system, transport, or deployed production environment ([#317](https://github.com/sarooo17/event-intelligence/issues/317)).
 
 Important defaults and constraints:
 
@@ -51,7 +46,7 @@ Important defaults and constraints:
 - audit records are hash-linked and tamper-evident, not tamper-proof;
 - the bundled JSONL store is single-process reference infrastructure and is not safe as a shared multi-replica backend;
 - horizontally scaled custom stores must preserve scope isolation and implement wake claim/lease operations atomically;
-- explicit shared-worker mode (`EVENT_INTELLIGENCE_REQUIRE_SHARED_STORE=true`) rejects enabled MCP connections without host-generated authority epochs and rejects stores without strict PostgreSQL session fencing; host-managed dynamic registry attachments follow the same rule. This is a pre-v1 compatibility hardening: legacy unfenced MCP connections must use single-process/reference mode, not be silently accepted in shared deployment;
+- explicit shared-worker mode (`EVENT_INTELLIGENCE_REQUIRE_SHARED_STORE=true`) rejects enabled MCP connections without host-generated authority epochs and rejects stores without strict PostgreSQL session fencing; host-managed dynamic registry attachments follow the same rule. This is a v1 safety boundary: legacy unfenced MCP connections must use single-process/reference mode, not be silently accepted in a shared deployment;
 - secrets belong in environment variables / secret managers, never committed files.
 
 See `docs/SECURITY-MODEL.md` for the architectural model.

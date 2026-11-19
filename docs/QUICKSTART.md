@@ -4,28 +4,15 @@ The primary integration is to embed Event Intelligence once at the **harness lev
 
 ## 1. Embed the package and point it at the host registry
 
-> **Source `1.0.0` is an UNPUBLISHED stable candidate.** The npm install
-> commands below target versions previously observed on the public registry,
-> not this repository's `1.0.0` source. Trial the candidate by packing the
-> reviewed source and installing that tarball in an isolated test host,
-> never by assuming `npm install mcp-event-intelligence@1.0.0` has shipped.
-> See the [source candidate compatibility matrix](releases/1.0.0-compatibility.md)
-> and the [release evidence packet](releases/v1-gate-evidence-packet-2026-11-04.md).
-
-Install the chosen channel deliberately. Unqualified npm installation follows
-`latest` (not `next`); npm versions UI showed `latest` = `0.11.0`
-and `next` = `0.12.0-next.1` in the screenshot checked on 2026-11-02:
+> **Stable v1.0.0 is published**, with successful npm and MCP Registry release workflows on **2026-11-11**. Install an exact version (Node.js >=22), and review the [1.0.0 compatibility / operator migration matrix](releases/1.0.0-compatibility.md) before changing any existing host or durable store.
+>
+> The `0.12.0-next.1` preview and `0.11.0` releases are historical; upgrading a running multiworker deployment requires explicit host approval, a quiesced store, backup and tested restart/replay. Installing the package alone never migrates storage.
 
 ```bash
-# Current stable npm channel (version depends on registry):
-npm install mcp-event-intelligence
-# Pre-v1 SDK preview: explicit exact pin, never an implicit upgrade:
-npm install --save-exact mcp-event-intelligence@0.12.0-next.1
+npm install --save-exact mcp-event-intelligence@1.0.0
 ```
 
-The example below is a host-owned reference; check the [preview compatibility
-and migration matrix](releases/0.12.0-next.1-compatibility.md) for supported
-exports, breaking behavior and persisted-state reset requirements.
+This example uses host-owned MCP credentials and continuation authority. The bundled `dataDir` persistence is single-process reference infrastructure; shared hosts need the validated PostgreSQL store.
 
 ```js
 import {
