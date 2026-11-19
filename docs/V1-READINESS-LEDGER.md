@@ -16,35 +16,13 @@ Every row must remain `blocked` **until** release-specific evidence is reviewed
 and a named, source-pinned attestation is merged; an implementation issue
 marked completed never auto-verifies a ledger row.
 
-**Status as of 2026-11-06 (last signed SDK baseline):** The nine **required
-SDK v1.0 readiness gates were all marked `verified`** in the ledger-only,
-reviewed/green [PR #419](https://github.com/sarooo17/event-intelligence/pull/419).
-The frozen reviewed source ancestor was
-`f6923e87ba1744091b13bae30008c8a0b38c03cb`; the ledger-only merge on
-`main` was `0332ef7cb3943b74468f12f25cb49c9c6a4b6407`.
-The reviewer is explicitly **ChatGPT GPT-6 under owner delegation, not an
-independent human auditor or deployed-host security certification**.
-The SDK implementation workstreams #42–#50 and scoped #269 are closed.
-The **6 optional production/enterprise categories remain blocked**;
-[#376](https://github.com/sarooo17/event-intelligence/issues/376) has 2/10
-acceptances (E48-A/B) and [#317](https://github.com/sarooo17/event-intelligence/issues/317)
-has 0/5. Neither is a missing generic SDK feature or an implicit
-production certification.
+**Published release — 2026-11-11:** `mcp-event-intelligence@1.0.0` was published to npm `latest` by the [successful manual publish workflow](https://github.com/sarooo17/event-intelligence/actions/runs/43035988681). The [Release workflow](https://github.com/sarooo17/event-intelligence/actions/runs/43036379159) published the official MCP Registry `io.github.sarooo17/event-intelligence@1.0.0` and [GitHub tag/release `v1.0.0`](https://github.com/sarooo17/event-intelligence/releases/tag/v1.0.0) from exact commit `f15c8c5e6ffab55d5a3fddefee2c64d3738be68d`.
 
-**This repository documentation update itself changes the source-frozen tree.**
-The historical 9/9 attestation cannot simply be carried into the final
-published HEAD: review the complete updated documentation on a freshly
-merged `main` source commit, invalidate/re-attest all nine signatures in a
-subsequent **ledger-only PR**, and let the strict checker verify ancestry
-and zero non-ledger drift. Do not weaken that protection to simplify docs.
+The immutable tagged release preserved **9/9 source-pinned required bounded SDK attestations** from [PR #421](https://github.com/sarooo17/event-intelligence/pull/421), which followed the documentation refresh in [PR #420](https://github.com/sarooo17/event-intelligence/pull/420). Evidence reviewers were **owner-delegated GPT-6 technical/evidence reviewers, NOT independent human host-security auditors**. The six **optional production/enterprise** criteria remain `blocked`; [#317](https://github.com/sarooo17/event-intelligence/issues/317) and [#376](https://github.com/sarooo17/event-intelligence/issues/376) track those separate assurances.
 
-The npm UI observed on 2026-11-02 showed `0.12.0-next.1` on `next`
-and `0.11.0` on `latest`. This historical distribution observation
-is distinct from the **unpublished** source candidate
-`mcp-event-intelligence@1.0.0`; neither a 9/9 ledger nor green CI
-authorizes its publication. Follow the [roadmap #41](https://github.com/sarooo17/event-intelligence/issues/41)
-and [review dossier](releases/v1-review-dossier.md) for reproducible evidence
-and the separate explicit owner authorization.
+**Post-release `main` is a different source identity from the immutable v1.0.0 artifact.** If documentation or code changes after this release, temporarily block the nine source-bound attestations, merge and review the updated source, then reattest in a **separate ledger-only PR** before any future `--strict` release-gate use. This **does not revoke the historical 9/9 reviewed, already-published `v1.0.0` release**. Do not weaken `--review-attestations`, manufacture human certification or attempt to republish the same immutable npm version.
+
+The 2026-11-02 npm screenshot of `0.11.0` (`latest`) / `0.12.0-next.1` (`next`) is historical and superseded by the 2026-11-11 release. Use the [current published v1.0.0 compatibility matrix](releases/1.0.0-compatibility.md) for installation and operator migration.
 
 ```sh
 # Read-only report: expected 9/9 -> eligible-for-manual-review only
@@ -59,7 +37,7 @@ EI_RELEASE_SOURCE_SHA="$(git rev-parse HEAD)" \
 ```
 
 The Public Release Check captures the `--report` JSON as an
-artifact for the unpublished candidate; after correct 9/9 signoff the
+artifact for the inspected source; after correct 9/9 signoff the
 status may read `eligible-for-manual-review`. It does **not** automatically
 publish, tag, merge or update consumer pins; only the separately authorized
 operator workflow runs `--strict` before writing to npm. The checker validates the exact criteria set, no duplicates,
