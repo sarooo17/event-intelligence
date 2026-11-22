@@ -189,6 +189,15 @@ export function createMcpRegistryAdapter(options: {
   subscribe?: (listener: () => void) => void | (() => void);
 }): HostMcpRegistry;
 
+/**
+ * Convert an already-authenticated native MCP Events Beta event/active/subscribe
+ * wire payload into a host-owned callback input. Omitted cursor becomes null.
+ * This is NOT transport verification or an authorization check.
+ */
+export function normalizeBetaMcpEventsWireCursor(
+  raw: Record<string, unknown>,
+): Record<string, unknown> & { cursor: string | null };
+
 export function createHostMcpEventsConnection(
   options: HostMcpConnectionOptions,
 ): {
