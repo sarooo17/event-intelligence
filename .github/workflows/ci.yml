@@ -163,3 +163,36 @@ jobs:
             os-matched-contenders-host.txt
           if-no-files-found: warn
           retention-days: 90
+
+  legacy-v011-jsonl-refusal:
+    # Opt-in, real published old-package regression. No deployment or real Home.
+    # CI otherwise leaves this cost off; the PR title must include the tag.
+    if: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.title, '[legacy-upgrade]') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build current candidate against pinned repository lock
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm run build
+      - name: Install exact published 0.11.0 package in isolated temp prefix
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/ei-legacy-011"
+          npm install --prefix "$RUNNER_TEMP/ei-legacy-011" \
+            --ignore-scripts --no-audit --no-fund --save-exact \
+            mcp-event-intelligence@0.11.0
+          node -p "require('$RUNNER_TEMP/ei-legacy-011/node_modules/mcp-event-intelligence/package.json').version"
+      - name: Prove old watch and receipt, v1 refusal and old rollback
+        env:
+          EI_V011_PACKAGE_ROOT: ${{ runner.temp }}/ei-legacy-011/node_modules/mcp-event-intelligence
+        run: node --test test/v011-to-v1-jsonl-refusal.test.mjs
