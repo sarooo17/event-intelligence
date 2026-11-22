@@ -1,5 +1,8 @@
 # SEP-3415 wire-target snapshot (experimental, 2026-10-16)
 
+> Historical October 2026 draft evidence. For the official November Beta
+> contract and current source migration see [MCP Events Beta](MCP-EVENTS-BETA.md).
+
 Tracked under [#166](https://github.com/sarooo17/event-intelligence/issues/166), **part A**.
 
 Target: [draft SEP-3415 PR #3415](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/3415),
