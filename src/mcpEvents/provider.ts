@@ -93,7 +93,7 @@ function optionalNonNegativeInteger(
   name: string,
 ): number | undefined {
   if (value === undefined) return undefined;
-  if (!Number.isSafeInteger(value) || value < 0) {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
     invalidParams(`${name} must be a non-negative safe integer`);
   }
   return value;
