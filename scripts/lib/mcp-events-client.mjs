@@ -27,6 +27,9 @@ export { MCP_EVENTS_EXTENSION_ID } from './mcp-events-compatibility.mjs';
  * Hosts retain authentication, subscription, transport and size obligations.
  */
 export function normalizeBetaMcpEventsWireCursor(raw) {
+  if (!raw || Array.isArray(raw) || typeof raw !== 'object') {
+    throw new TypeError('MCP Events Beta wire payload must be an object');
+  }
   const payload = snapshotUntrustedEventData(raw);
   if (!payload || Array.isArray(payload) || typeof payload !== 'object') {
     throw new TypeError('MCP Events Beta wire payload must be an object');
