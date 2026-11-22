@@ -8,6 +8,7 @@ import {
 import {
   ExperimentalMcpEventsServer,
 } from '../dist/src/mcpEvents/server.js';
+import { normalizeBetaMcpEventsWireCursor } from '../scripts/host-integration.mjs';
 import {
   DEFAULT_MCP_EVENTS_COMPATIBILITY_PROFILE,
   getMcpEventsCompatibilityProfile,
@@ -150,4 +151,26 @@ test('Beta reference server enforces identical maxAgeMs rules in RPC and direct 
   }));
   assert.equal(unknown.error.code, -32023);
   assert.deepEqual(unknown.error.data, { kind: 'event' });
+});
+
+// A native Beta stream/webhook frame has wire-level absent == explicit null.
+// The host-owned callback interface may independently preserve omission as
+// "no patch", so the host must opt into this normalization before forwarding.
+test('host explicitly normalizes native Beta cursor omission without mutating input', () => {
+  const event = { eventId: 'evt:1', name, timestamp: '2026-11-22T00:00:00Z', data: {} };
+  const converted = normalizeBetaMcpEventsWireCursor(event);
+  assert.equal(converted.cursor, null);
+  assert.equal('cursor' in event, false);
+  assert.deepEqual(converted.data, {});
+  const heartbeat = normalizeBetaMcpEventsWireCursor({ truncated: true });
+  assert.deepEqual(heartbeat, { truncated: true, cursor: null });
+  assert.equal(normalizeBetaMcpEventsWireCursor({ cursor: 'valid:1' }).cursor, 'valid:1');
+  assert.equal(normalizeBetaMcpEventsWireCursor({ cursor: null }).cursor, null);
+  for (const invalid of [0, false, {}, [], -1]) {
+    assert.throws(() => normalizeBetaMcpEventsWireCursor({ cursor: invalid }),
+      /cursor must be string\|null/);
+  }
+  for (const invalid of [null, undefined, [], 5, 'payload']) {
+    assert.throws(() => normalizeBetaMcpEventsWireCursor(invalid), /wire payload must be an object/);
+  }
 });
