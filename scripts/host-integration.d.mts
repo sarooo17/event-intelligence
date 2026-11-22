@@ -63,8 +63,8 @@ export interface HostMcpConnectionOptions {
   maxPollBatches?: number;
   /** Prefer one advertised delivery mode when the host can provide it. */
   preferredDelivery?: 'poll' | 'push' | 'webhook';
-  /** Versioned MCP Events wire profile. Defaults to auto/current experimental snapshot. */
-  compatibilityProfile?: 'auto' | 'experimental-extension-2026-09-25' | string;
+  /** MCP Events wire profile; v1.0 default stays pinned, Beta requires explicit opt-in. */
+  compatibilityProfile?: 'auto' | 'experimental-extension-2026-09-25' | 'beta-extension-2026-11-22' | string;
   /** Host-owned adapter for events/stream delivery. */
   openEventStream?: HostMcpEventDeliveryOpener;
   /** Host-owned adapter for webhook subscription/receiver delivery. */
