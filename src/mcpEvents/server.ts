@@ -103,9 +103,8 @@ export class ExperimentalMcpEventsServer {
             return this.error(request.id, -32602, 'maxEvents must be an integer between 1 and 500');
           }
           if (params.maxAgeMs !== undefined &&
-            (typeof params.maxAgeMs !== 'number' ||
-              !Number.isFinite(params.maxAgeMs) || params.maxAgeMs < 0)) {
-            return this.error(request.id, -32602, 'maxAgeMs must be a non-negative number');
+            (!Number.isSafeInteger(params.maxAgeMs) || params.maxAgeMs < 0)) {
+            return this.error(request.id, -32602, 'maxAgeMs must be a non-negative safe integer');
           }
           if (!params.name || typeof params.name !== 'string') {
             return this.error(request.id, -32602, 'events/poll requires name');
@@ -154,9 +153,8 @@ export class ExperimentalMcpEventsServer {
       throw new Error('maxEvents must be an integer between 1 and 500');
     }
     if (params.maxAgeMs !== undefined &&
-        (typeof params.maxAgeMs !== 'number' ||
-          !Number.isFinite(params.maxAgeMs) || params.maxAgeMs < 0)) {
-      throw new Error('maxAgeMs must be a non-negative finite number');
+        (!Number.isSafeInteger(params.maxAgeMs) || params.maxAgeMs < 0)) {
+      throw new Error('maxAgeMs must be a non-negative safe integer');
     }
     if (params.arguments !== undefined &&
         (!params.arguments || typeof params.arguments !== 'object' ||

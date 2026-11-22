@@ -1,5 +1,8 @@
 # SEP-3415 client poll safety (part B, first slice)
 
+> Historical draft-specific evidence; see [the official Beta boundary review](MCP-EVENTS-BETA.md)
+> for post-release contract status and native-wire vs callback cursor semantics.
+
 Tracking [#166](https://github.com/sarooo17/event-intelligence/issues/166).
 Experimental draft [SEP-3415](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/3415)
 at upstream commit `c47fd24`, not a released protocol mandate.

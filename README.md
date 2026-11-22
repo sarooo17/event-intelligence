@@ -340,6 +340,15 @@ Run shared deployments with `EVENT_INTELLIGENCE_REQUIRE_SHARED_STORE=true` and a
 
 ## Add Events to an MCP provider
 
+> **MCP Events Beta (reviewed 2026-11-22):** SEP-3415 is Final and the
+> extension is now Beta. The published `1.0.0` package retains its historical
+> experimental compatibility snapshot; this source branch adds a separately
+> selectable `beta-extension-2026-11-22` profile without silently changing
+> the release default. See [Beta contract, host transport obligations and
+> conformance limitations](docs/MCP-EVENTS-BETA.md). This does **not** certify
+> native push/webhook transports or external upstream conformance.
+
+
 Providers can expose the experimental Events boundary without reimplementing the generic JSON-RPC glue:
 
 ```js

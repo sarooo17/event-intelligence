@@ -19,6 +19,29 @@ import {
 
 export { assertJsonSchemaValue } from './json-schema.mjs';
 export { MCP_EVENTS_EXTENSION_ID } from './mcp-events-compatibility.mjs';
+
+/**
+ * Convert a native Beta wire payload before sending it to EI's host-owned
+ * push/webhook callback. Beta says omitted cursor means explicit null.
+ * Existing host-owned callback omission continues to mean no state patch.
+ * Hosts retain authentication, subscription, transport and size obligations.
+ */
+export function normalizeBetaMcpEventsWireCursor(raw) {
+  if (!raw || Array.isArray(raw) || typeof raw !== 'object') {
+    throw new TypeError('MCP Events Beta wire payload must be an object');
+  }
+  const payload = snapshotUntrustedEventData(raw);
+  if (!payload || Array.isArray(payload) || typeof payload !== 'object') {
+    throw new TypeError('MCP Events Beta wire payload must be an object');
+  }
+  if (!Object.hasOwn(payload, 'cursor')) {
+    return { ...payload, cursor: null };
+  }
+  if (payload.cursor !== null && typeof payload.cursor !== 'string') {
+    throw new TypeError('MCP Events Beta wire cursor must be string|null');
+  }
+  return payload;
+}
 const UnknownResultSchema = z.unknown();
 
 // A producer is not an authority for operator/model-facing diagnostics.
