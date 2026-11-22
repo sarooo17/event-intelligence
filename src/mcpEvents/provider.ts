@@ -88,13 +88,13 @@ function assertRecord(
   return value as Record<string, unknown>;
 }
 
-function optionalFiniteNumber(
+function optionalNonNegativeInteger(
   value: unknown,
   name: string,
 ): number | undefined {
   if (value === undefined) return undefined;
-  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
-    invalidParams(`${name} must be a non-negative finite number`);
+  if (!Number.isSafeInteger(value) || value < 0) {
+    invalidParams(`${name} must be a non-negative safe integer`);
   }
   return value;
 }
@@ -320,7 +320,7 @@ function normalizePollParams(
           'events/poll arguments must be an object',
         );
 
-  const maxAgeMs = optionalFiniteNumber(params.maxAgeMs, 'maxAgeMs');
+  const maxAgeMs = optionalNonNegativeInteger(params.maxAgeMs, 'maxAgeMs');
   const maxEventsRaw = params.maxEvents ?? 50;
   if (
     typeof maxEventsRaw !== 'number' ||
