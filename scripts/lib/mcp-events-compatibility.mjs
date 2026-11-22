@@ -1,6 +1,18 @@
 export const MCP_EVENTS_EXTENSION_ID = 'io.modelcontextprotocol/events';
 
 export const MCP_EVENTS_COMPATIBILITY_PROFILES = Object.freeze({
+  // Official SEP-3415 Beta snapshot checked 2026-11-22. Opt-in until the
+  // next versioned release; never silently relabel the published v1.0 ABI.
+  'beta-extension-2026-11-22': Object.freeze({
+    id: 'beta-extension-2026-11-22',
+    capabilityStyle: 'extension',
+    extensionId: MCP_EVENTS_EXTENSION_ID,
+    listMethod: 'events/list',
+    pollMethod: 'events/poll',
+    deliveryModes: Object.freeze(['poll', 'push', 'webhook']),
+    experimental: false,
+    protocolRevisionMin: '2026-07-28',
+  }),
   'experimental-extension-2026-09-25': Object.freeze({
     id: 'experimental-extension-2026-09-25',
     capabilityStyle: 'extension',
