@@ -54,6 +54,25 @@ The host must supply server capabilities from the currently authorized **core** 
 
 ### Cursor adapter safety
 
+For **native Beta wire** deliveries forwarded by a host-owned Streamable HTTP/
+push/webhook adapter, use the explicit normalization helper to turn omission
+into the required `null` before invoking EI's host callback:
+
+```js
+import { normalizeBetaMcpEventsWireCursor } from 'mcp-event-intelligence/host';
+
+// after the host verifies transport/authentication/signature and limits
+await callbacks.onEvent(normalizeBetaMcpEventsWireCursor(nativeWireEvent));
+await callbacks.onActive(normalizeBetaMcpEventsWireCursor(nativeActiveFrame));
+```
+
+The helper snapshots untrusted JSON without invoking payload getters/proxies,
+rejects invalid cursor types and leaves the input unchanged. It does **not**
+replace signed-webhook verification, permissions, native header routing or
+subscription lifecycle checks. This is a **proposed source-branch API**;
+published npm `1.0.0` does not contain it.
+
+
 The normative Beta specification treats absent `cursor` as equivalent to `null` on request/response/wire payloads. EI's host callback interface historically reserves *absence of the field* to mean 'no state patch', whereas *explicit null* means 'reset cursor'. This difference is intentional **internal** API behavior for already-integrated hosts, but **not** compliant if a host forwards native wire bodies without normalizing them. Do not change existing persisted resume cursors silently. Track an independently reviewed adapter contract/test before claiming complete Beta push/webhook ingestion.
 
 ### Release and conformance gates
