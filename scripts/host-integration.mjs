@@ -6,6 +6,7 @@ import {
 } from './lib/local-event-intelligence-runtime.mjs';
 import {
   createHostMcpEventsConnection,
+  normalizeBetaMcpEventsWireCursor,
   isUnavailableCapability,
 } from './lib/mcp-events-client.mjs';
 import {
@@ -485,6 +486,7 @@ export async function createEventIntelligenceHost({
 export {
   assertSharedStoreCapabilities,
   createHostMcpEventsConnection,
+  normalizeBetaMcpEventsWireCursor,
   describeStoreCapabilities,
   PersistentEventStore,
   validateSharedStoreCapabilities,
