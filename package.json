@@ -15,10 +15,6 @@
       "types": "./scripts/host-integration.d.mts",
       "import": "./scripts/host-integration.mjs"
     },
-    "./host/recovery": {
-      "types": "./scripts/legacy-recovery-host.d.mts",
-      "import": "./scripts/legacy-recovery-host.mjs"
-    },
     "./provider": {
       "types": "./dist/src/mcpEvents/provider.d.ts",
       "import": "./dist/src/mcpEvents/provider.js"
@@ -79,8 +75,6 @@
     "scripts/mcp-stdio-server.mjs",
     "scripts/host-integration.mjs",
     "scripts/host-integration.d.mts",
-    "scripts/legacy-recovery-host.mjs",
-    "scripts/legacy-recovery-host.d.mts",
     "scripts/run-tests.mjs",
     "scripts/embedded-host-kit.mjs",
     "scripts/embedded-host-kit.d.mts",
