@@ -401,3 +401,35 @@ test('discovery is downgraded to poll only even when provider advertises other m
       err('MCP_UNSUPPORTED_EVENT_DELIVERY_METHOD'));
   });
 });
+
+test('refuses provider Proxy and accessor-backed poll outputs before any host receipt advancement', async () => {
+  await fixture(async ({ prepare }) => {
+    const gate = await prepare();
+    let trapCalls = 0;
+    const source = pollConnection();
+    const wire = gate.wrapConnection({
+      ...source,
+      request: async () => new Proxy({}, {
+        get() { trapCalls++; throw new Error('provider getter should never execute'); },
+      }),
+    });
+    await assert.rejects(wire.request('events/poll', {
+      name: 'fixture.changed', arguments: {}, cursor: null,
+    }), err('MCP_WIRE_SNAPSHOT_INVALID'));
+    assert.equal(trapCalls, 0);
+    assert.deepEqual(gate.replayStats(), { rejectedOld: 0, passedNew: 0 });
+  });
+});
+
+test('rejects paginated or incomplete source discovery before selecting poll mode', async () => {
+  await fixture(async ({ prepare }) => {
+    const gate = await prepare();
+    await assert.rejects(gate.wrapConnection({
+      ...pollConnection(),
+      request: async () => ({
+        events: [{ name: 'fixture.changed', delivery: ['poll'] }],
+        nextCursor: 'other-events-page',
+      }),
+    }).request('events/list'), err('MCP_SOURCE_DISCOVERY_OUTSIDE_REPLAY_PROFILE'));
+  });
+});
