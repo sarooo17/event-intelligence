@@ -195,6 +195,7 @@ export async function prepareLegacyReceiptReplayFence({
   tenantId,
   lookupHostReceipt,
   attestProviderSource,
+  hostGapJournal = null,
 } = {}) {
   if (typeof sourceDir !== 'string' || !sourceDir ||
       typeof expectedSourceSnapshotSha256 !== 'string' ||
@@ -299,6 +300,22 @@ export async function prepareLegacyReceiptReplayFence({
   }
   await snapshot(sourceDir, declaredVersion, expectedSourceSnapshotSha256);
 
+  // The host must have created/opened this ledger before it allows the
+  // recovery source to poll. Exact old source + tenant binding prevents a
+  // ready ledger from being accidentally reused for another archive.
+  if (hostGapJournal) {
+    if (hostGapJournal.sourceSnapshotSha256 !== expectedSourceSnapshotSha256 ||
+        hostGapJournal.sourceIdentitySha256 !== idDigest ||
+        hostGapJournal.tenantId !== tenantId ||
+        typeof hostGapJournal.assertReady !== 'function' ||
+        typeof hostGapJournal.beginPoll !== 'function' ||
+        typeof hostGapJournal.validated !== 'function' ||
+        typeof hostGapJournal.block !== 'function') {
+      refuse('HOST_GAP_JOURNAL_BINDING_MISMATCH');
+    }
+    await hostGapJournal.assertReady();
+  }
+
   let rejectedOld = 0;
   let passedNew = 0;
   // Memory-only safety latch: once an MCP provider reports a gap/no-replay
@@ -323,6 +340,10 @@ export async function prepareLegacyReceiptReplayFence({
         if (continuityLost && typeof method === 'string' &&
             method.startsWith('events/')) {
           refuse('MCP_SOURCE_CONTINUITY_LOST');
+        }
+        if (hostGapJournal && typeof method === 'string' &&
+            method.startsWith('events/')) {
+          await hostGapJournal.assertReady();
         }
         if (method === 'events/list') {
           const result = snapshotMcpWireResult(
@@ -362,6 +383,8 @@ export async function prepareLegacyReceiptReplayFence({
         // If v1 subsequently has a cursor, do not override its progress.
         const cursor = params.cursor === null ? source.cursor : params.cursor;
         if (!cursor) refuse('MCP_POLL_REQUEST_CURSOR_AMBIGUOUS');
+        if (hostGapJournal) await hostGapJournal.beginPoll({ cursor });
+        try {
         const rawResult = await connection.request(method,
           { ...params, cursor }, ...args.slice(1));
         // Preserve a gap BEFORE a fallible full-page snapshot. Oversized,
@@ -415,7 +438,20 @@ export async function prepareLegacyReceiptReplayFence({
             passedNew += 1;
           }
         }
+        if (hostGapJournal) {
+          await hostGapJournal.validated({ cursor: result.cursor });
+        }
         return { ...result, events: filtered };
+        } catch (error) {
+          continuityLost = true;
+          if (hostGapJournal) {
+            // Even a provider crash or malformed page is an unresolved gap
+            // until an independently authorized host recovery. A failure of
+            // the durable journal write is also a hard error, never success.
+            await hostGapJournal.block();
+          }
+          throw error;
+        }
       },
     });
   };
