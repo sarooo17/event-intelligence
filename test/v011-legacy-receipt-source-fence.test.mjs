@@ -375,3 +375,29 @@ test('all historical delivered receipts must preserve their immutable identity',
     await assert.rejects(prepare(), err('LEGACY_DELIVERY_IDENTITY_CHANGED'));
   });
 });
+
+test('discovery is downgraded to poll only even when provider advertises other modes', async () => {
+  await fixture(async ({ prepare }) => {
+    const gate = await prepare();
+    const original = pollConnection();
+    const wire = gate.wrapConnection({
+      ...original,
+      request: async (method, ...args) => {
+        if (method === 'events/list') {
+          return {
+            events: [{
+              name: 'fixture.changed', delivery: ['push', 'webhook', 'poll'],
+              inputSchema: { type: 'object' }, payloadSchema: { type: 'object' },
+            }],
+            nextCursor: null,
+          };
+        }
+        return original.request(method, ...args);
+      },
+    });
+    const described = await wire.request('events/list');
+    assert.deepEqual(described.events[0].delivery, ['poll']);
+    await assert.rejects(wire.request('events/stream', {}),
+      err('MCP_UNSUPPORTED_EVENT_DELIVERY_METHOD'));
+  });
+});
