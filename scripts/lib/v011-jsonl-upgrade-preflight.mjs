@@ -43,11 +43,12 @@ async function regularFileBytes(file) {
   return bytes;
 }
 
-async function inventoryScope(folder) {
+async function inventoryScope(folder, isRoot = false) {
   const files = new Map();
   const entries = await readdir(folder, { withFileTypes: true });
   if (entries.length > MAX_FILES) reject('TOO_MANY_FILES');
   for (const entry of entries) {
+    if (isRoot && entry.name === 'scopes' && entry.isDirectory()) continue;
     if (!entry.isFile() || !LEGACY_JSONL_FILES.has(entry.name)) {
       reject('UNRECOGNIZED_OR_NONREGULAR_STORE_ENTRY');
     }
@@ -183,7 +184,7 @@ async function inventoryRoot(dataDir) {
       scopes.push({ scope, dir: path.join(dataDir, 'scopes', entry.name) });
     }
   }
-  return scopes;
+  return scopes.sort((a, b) => a.scope.localeCompare(b.scope));
 }
 
 /**
@@ -196,7 +197,7 @@ export async function inspectLegacyJsonlStore(dataDir, { declaredVersion } = {})
   const list = await inventoryRoot(dataDir);
   const first = [];
   for (const item of list) {
-    first.push({ scope: item.scope, ...(await inventoryScope(item.dir)) });
+    first.push({ scope: item.scope, ...(await inventoryScope(item.dir, item.scope === 'default')) });
   }
   // A repeat inventory catches ordinary concurrent mutations. This is NOT
   // a POSIX lock or a proof that no external writer is running.
