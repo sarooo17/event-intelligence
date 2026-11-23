@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { lstat, readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
+import { parseCompositeTriggerDefinition } from '../../dist/src/intelligenceProtocol/index.js';
 
 // This is a read-only, operator-facing preflight for a QUIESCED JSONL Home
 // produced by the published 0.11.0 store. Files alone cannot authenticate
@@ -106,6 +107,15 @@ async function inventoryScope(folder, isRoot = false) {
   const statuses = [...deliveries.values()];
   const active = [...triggers].filter(([key]) =>
     ['active', 'paused'].includes(states.get(key)?.status ?? 'active'));
+  let v1SchemaCompatibleWatches = 0;
+  for (const [, definition] of active) {
+    try {
+      parseCompositeTriggerDefinition(definition);
+      v1SchemaCompatibleWatches += 1;
+    } catch {
+      // Do not leak individual trigger contents or zod's user-value errors.
+    }
+  }
   const missingOwner = active.filter(([key]) => {
     const owner = states.get(key)?.owner;
     return !owner || typeof owner !== 'object' ||
@@ -120,6 +130,9 @@ async function inventoryScope(folder, isRoot = false) {
   const reasons = new Set();
   if (active.length) reasons.add('OWNER_REAUTHORIZATION_REQUIRED');
   if (missingOwner.length) reasons.add('MISSING_WATCH_OWNER');
+  if (v1SchemaCompatibleWatches !== active.length) {
+    reasons.add('V1_TRIGGER_DEFINITION_REVIEW_REQUIRED');
+  }
   if (statuses.length) reasons.add('HOST_RECEIPT_RECONCILIATION_REQUIRED');
   if (invalidReceipts.length) reasons.add('UNPROVEN_DELIVERED_RECEIPT');
   if (inFlight.length) reasons.add('INFLIGHT_WAKE_RECONCILIATION_REQUIRED');
@@ -144,6 +157,7 @@ async function inventoryScope(folder, isRoot = false) {
     counts: {
       totalWatches: triggers.size, activeOrPausedWatches: active.length,
       missingWatchOwner: missingOwner.length,
+      v1SchemaCompatibleWatches,
       latestDeliveries: statuses.length,
       deliveredReceipts: statuses.filter(x => x.status === 'delivered').length,
       inFlightDeliveries: inFlight.length,
