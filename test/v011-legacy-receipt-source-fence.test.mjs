@@ -77,8 +77,14 @@ function pollConnection() {
       return {
         cursor: 'new-cursor', hasMore: false, nextPollMs: 60000,
         events: [
-          { eventId: 'event-already-delivered', name: 'fixture.changed' },
-          { eventId: 'genuinely-new-event', name: 'fixture.changed' },
+          {
+            eventId: 'event-already-delivered', name: 'fixture.changed',
+            timestamp: '2026-10-07T10:00:00.000Z', data: { value: 42 },
+          },
+          {
+            eventId: 'genuinely-new-event', name: 'fixture.changed',
+            timestamp: '2026-10-07T11:00:00.000Z', data: { value: 93 },
+          },
         ],
       };
     },
@@ -207,7 +213,8 @@ test('refuses partial archive, in-flight old wake and ambiguous source cursors',
     await assert.rejects(prepare(), err('SOURCE_ARCHIVE_INCOMPLETE_OR_OVERSIZED'));
     await writeFile(path.join(old, 'mcp-events.jsonl'), row({
       sequence: 1, serverId: 'fixture', subscriptionId: null,
-      event: { eventId: 'event-already-delivered', name: 'fixture.changed' },
+      event: { eventId: 'event-already-delivered', name: 'fixture.changed',
+        timestamp: '2026-10-07T10:00:00.000Z', data: { value: 42 } },
     }));
     await appendFile(path.join(old, 'wake-deliveries.jsonl'), row({
       wakeId: 'inflight-wake', matchId: 'match-pending',
@@ -229,7 +236,8 @@ test('rejects missing archived sequence and duplicate old event identities', asy
     await writeFile(file, [
       row({
         sequence: 1, serverId: 'fixture', subscriptionId: null,
-        event: { eventId: 'event-already-delivered', name: 'fixture.changed' },
+        event: { eventId: 'event-already-delivered', name: 'fixture.changed',
+          timestamp: '2026-10-07T10:00:00.000Z', data: { value: 42 } },
       }),
       row({
         sequence: 2, serverId: 'fixture', subscriptionId: null,
@@ -262,5 +270,108 @@ test('stable identifiers without immutable event payload mapping are insufficien
         // immutableEventIdMapping is intentionally absent.
       }),
     }), err('PROVIDER_SOURCE_CONTINUITY_NOT_ATTESTED'));
+  });
+});
+
+test('poll adapter forwards legacy opaque cursor, then respects a newer v1 cursor', async () => {
+  await fixture(async ({ prepare }) => {
+    const gate = await prepare();
+    const sent = [];
+    const source = pollConnection();
+    const wire = gate.wrapConnection({
+      ...source,
+      request: async (method, params) => {
+        if (method === 'events/poll') sent.push(params.cursor);
+        return source.request(method, params);
+      },
+    });
+    await wire.request('events/poll', {
+      name: 'fixture.changed', arguments: {}, cursor: null,
+    });
+    await wire.request('events/poll', {
+      name: 'fixture.changed', arguments: {}, cursor: 'new-v1-cursor',
+    });
+    assert.deepEqual(sent, ['cursor-previous', 'new-v1-cursor']);
+  });
+});
+
+test('refuses replayed event ID with a changed payload or timestamp', async () => {
+  await fixture(async ({ prepare }) => {
+    const gate = await prepare();
+    await assert.rejects(gate.wrapConnection({
+      ...pollConnection(),
+      request: async () => ({
+        cursor: 'new-cursor', hasMore: false,
+        events: [{
+          eventId: 'event-already-delivered',
+          name: 'fixture.changed',
+          timestamp: '2026-10-07T10:00:00.000Z',
+          data: { value: 999999 },
+        }],
+      }),
+    }).request('events/poll', {
+      name: 'fixture.changed', arguments: {}, cursor: null,
+    }), err('MCP_REPLAY_EVENT_CONTENT_COLLISION'));
+  });
+});
+
+test('rejects nondefault scopes and alternate push/webhook delivery bypasses', async () => {
+  await fixture(async ({ prepare }) => {
+    const gate = await prepare();
+    assert.throws(() => gate.wrapConnection({
+      ...pollConnection(), scopeId: 'another-tenant',
+    }), err('MCP_CONNECTION_IDENTITY_MISMATCH'));
+    assert.throws(() => gate.wrapConnection({
+      ...pollConnection(), openEventStream: async () => {},
+    }), err('MCP_CONNECTION_IDENTITY_MISMATCH'));
+    assert.throws(() => gate.wrapConnection({
+      ...pollConnection(), createWebhookSubscription: async () => {},
+    }), err('MCP_CONNECTION_IDENTITY_MISMATCH'));
+    await assert.rejects(gate.wrapConnection({
+      ...pollConnection(), request: async () => ({
+        events: [{ name: 'other-event', delivery: ['push'] }],
+      }),
+    }).request('events/list'), err('MCP_SOURCE_DISCOVERY_OUTSIDE_REPLAY_PROFILE'));
+    await assert.rejects(gate.wrapConnection(pollConnection()).request(
+      'events/subscribe', {}),
+    err('MCP_UNSUPPORTED_EVENT_DELIVERY_METHOD'));
+  });
+});
+
+test('rejects truncated polling results, null cursors and unapproved subscription arguments', async () => {
+  await fixture(async ({ prepare }) => {
+    const gate = await prepare();
+    const source = pollConnection();
+    const wrapped = gate.wrapConnection(source);
+    await assert.rejects(wrapped.request('events/poll', {
+      name: 'fixture.changed', arguments: { tenant: 'other' }, cursor: null,
+    }), err('MCP_POLL_REQUEST_IDENTITY_AMBIGUOUS'));
+    for (const cursor of [null, undefined]) {
+      await assert.rejects(gate.wrapConnection({
+        ...source,
+        request: async () => ({ events: [], cursor, hasMore: false }),
+      }).request('events/poll', {
+        name: 'fixture.changed', arguments: {}, cursor: null,
+      }), err('MCP_POLL_RESULT_AMBIGUOUS'));
+    }
+    await assert.rejects(gate.wrapConnection({
+      ...source,
+      request: async () => ({
+        events: [], cursor: 'new-cursor', hasMore: false, truncated: true,
+      }),
+    }).request('events/poll', {
+      name: 'fixture.changed', arguments: {}, cursor: null,
+    }), err('MCP_POLL_RESULT_AMBIGUOUS'));
+  });
+});
+
+test('all historical delivered receipts must preserve their immutable identity', async () => {
+  await fixture(async ({ old, prepare }) => {
+    await appendFile(path.join(old, 'wake-deliveries.jsonl'), row({
+      wakeId: 'old-wake', matchId: 'old-match', triggerId: 'old-watch',
+      triggerVersion: '1', runtime: 'muffin', status: 'delivered',
+      runtimeReceiptId: 'replacement-receipt',
+    }));
+    await assert.rejects(prepare(), err('LEGACY_DELIVERY_IDENTITY_CHANGED'));
   });
 });
