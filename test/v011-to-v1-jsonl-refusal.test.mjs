@@ -6,6 +6,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import test from 'node:test';
 import { PersistentEventStore as CurrentStore } from '../scripts/lib/persistent-event-store.mjs';
+import { inspectLegacyJsonlStore } from '../scripts/lib/v011-jsonl-upgrade-preflight.mjs';
 
 // A REAL published 0.11.0 package is installed into an isolated runner
 // directory by the [legacy-upgrade] CI job. This test never operates on an
@@ -105,6 +106,19 @@ test('published 0.11.0 populated JSONL watch+receipt cannot be silently opened a
     );
     assert.equal(oldReopened.getWakeDelivery('synthetic-old-wake')?.status, 'delivered');
     await oldReopened.close();
+
+    const preflight = await inspectLegacyJsonlStore(original, {
+      declaredVersion: '0.11.0',
+    });
+    assert.equal(preflight.status, 'blocked');
+    assert.equal(preflight.migrationPerformed, false);
+    assert.equal(preflight.sourceReadOnly, true);
+    assert.equal(preflight.scopes[0].counts.totalWatches, 1);
+    assert.equal(preflight.scopes[0].counts.activeOrPausedWatches, 1);
+    assert.equal(preflight.scopes[0].counts.deliveredReceipts, 1);
+    assert.equal(preflight.scopes[0].counts.inFlightDeliveries, 0);
+    assert.ok(preflight.scopes[0].reasons.includes(
+      'HOST_RECEIPT_RECONCILIATION_REQUIRED'));
 
     await cp(original, clone, { recursive: true });
     const before = await snapshot(clone);
