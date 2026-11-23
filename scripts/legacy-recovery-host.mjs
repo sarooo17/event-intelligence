@@ -155,7 +155,10 @@ export async function prepareLegacyHostRecovery({
     refuse('RECOVERY_HOST_JOURNAL_BINDING_MISMATCH');
   }
   const binding = { expectedSourceSnapshotSha256, sourceIdentitySha256 };
-  await host.assertExclusive(binding);
+  const epoch = await host.assertExclusive(binding);
+  if (!journal.authorityEpoch || journal.authorityEpoch !== epoch) {
+    refuse('RECOVERY_HOST_JOURNAL_EPOCH_MISMATCH');
+  }
   const fence = await prepareLegacyReceiptReplayFence({
     sourceDir, declaredVersion, expectedSourceSnapshotSha256,
     runtime: host.runtimeId, tenantId: host.tenantId,
