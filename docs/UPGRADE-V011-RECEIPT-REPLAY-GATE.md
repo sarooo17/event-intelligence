@@ -33,8 +33,10 @@ those exact assertions. It is NOT an independent verification of (3).
   SHA-256 inventory digest from the read-only old-store preflight, the
   expected host runtime and tenant, and two external callbacks.
 - **First supported profile only:** a quiesced, isolated, single
-  `default`-scope JSONL store with **one** polling MCP source, empty source
-  arguments and no subscription. Multi-tenant scoped stores, multi-source,
+  `default`-scope JSONL store with **one** polling MCP source and empty source arguments.
+  The old 0.11 client may persist an **internal polling subscription ID**;
+  that exact ID must agree across all historical source-state records and
+  archived occurrences. This does not authorize a push/webhook subscription. Multi-tenant scoped stores, multi-source,
   SSE, push and subscription handoffs currently **refuse**.
 - **Every historical row for a wake** must preserve the same runtime,
   trigger, version, match and committed receipt identity; changing any
