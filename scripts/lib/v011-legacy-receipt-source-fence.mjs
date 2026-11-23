@@ -156,7 +156,7 @@ function exactSourceState(records) {
         record.eventName !== state.eventName ||
         record.serverId !== state.serverId ||
         record.deliveryMode !== 'poll' ||
-        (record.subscriptionId !== null && record.subscriptionId !== undefined) ||
+        (record.subscriptionId ?? null) !== (state.subscriptionId ?? null) ||
         (record.arguments !== undefined &&
           (!record.arguments || Array.isArray(record.arguments) ||
             typeof record.arguments !== 'object' ||
@@ -169,7 +169,8 @@ function exactSourceState(records) {
       (state.arguments !== undefined &&
         (Array.isArray(state.arguments) || !state.arguments ||
           Object.keys(state.arguments).length !== 0)) ||
-      state.subscriptionId !== null && state.subscriptionId !== undefined ||
+      (state.subscriptionId !== null && state.subscriptionId !== undefined &&
+        (typeof state.subscriptionId !== 'string' || !state.subscriptionId)) ||
       state.deliveryMode !== 'poll' || state.truncated === true || state.lastError) {
     refuse('SOURCE_FRONTIER_AMBIGUOUS');
   }
@@ -259,7 +260,7 @@ export async function prepareLegacyReceiptReplayFence({
     if (!Number.isSafeInteger(record.sequence) ||
         record.sequence !== lastSequence + 1 ||
         record.serverId !== source.serverId ||
-        record.subscriptionId !== null && record.subscriptionId !== undefined ||
+        (record.subscriptionId ?? null) !== (source.subscriptionId ?? null) ||
         record.event?.name !== source.eventName ||
         typeof record.event?.eventId !== 'string' || !record.event.eventId ||
         oldIds.has(record.event.eventId)) {
@@ -277,6 +278,7 @@ export async function prepareLegacyReceiptReplayFence({
     serverId: source.serverId,
     eventName: source.eventName,
     legacyCursor: source.cursor,
+    subscriptionId: source.subscriptionId ?? null,
     archivedEventCount: oldIds.size,
     archivedEventIdsSha256: idDigest,
   }));
@@ -284,6 +286,7 @@ export async function prepareLegacyReceiptReplayFence({
       declared?.serverId !== source.serverId ||
       declared?.eventName !== source.eventName ||
       declared?.legacyCursor !== source.cursor ||
+      (declared?.subscriptionId ?? null) !== (source.subscriptionId ?? null) ||
       declared?.archivedEventIdsSha256 !== idDigest ||
       declared?.stableEventIds !== true ||
       declared?.cursorPortableToTargetVersion !== true ||
