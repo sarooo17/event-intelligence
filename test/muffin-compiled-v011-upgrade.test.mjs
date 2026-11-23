@@ -9,6 +9,7 @@ import { pathToFileURL } from 'node:url';
 import test from 'node:test';
 import { inspectLegacyJsonlStore } from '../scripts/lib/v011-jsonl-upgrade-preflight.mjs';
 import { stageLegacyWatchesPaused } from '../scripts/lib/v011-jsonl-paused-recovery.mjs';
+import { prepareLegacyReceiptReplayFence } from '../scripts/lib/v011-legacy-receipt-source-fence.mjs';
 
 const oldRoot = process.env.EI_COMPILED_MUFFIN_011;
 const modernRoot = process.env.EI_COMPILED_MUFFIN_100;
@@ -250,13 +251,36 @@ test('real compiled old Muffin+published EI 0.11 watch, host receipt and paused 
     await cp(candidateHome, authorizedHome, { recursive: true });
     await cp(path.join(original, 'host-delivered-receipts.jsonl'),
       path.join(authorizedHome, 'host-delivered-receipts.jsonl'));
-    const oldOccurrenceRows = readFileSync(
-      path.join(oldStoreDir, 'mcp-events.jsonl'), 'utf8')
-      .split('\n').filter(Boolean).map(JSON.parse);
-    const oldEventIds = new Set(oldOccurrenceRows.map(x => x.event?.eventId)
-      .filter(id => typeof id === 'string'));
-    assert.equal(oldEventIds.has(firstEvent.eventId), true,
-      'original source occurrence must be proven by OLD source archive');
+    // Required evidence: every old delivered wake maps to an independently
+    // persisted host receipt, and the synthetic provider explicitly declares
+    // stable/complete ID replay through this exact old cursor. No real MCP
+    // provider's guarantee is inferred from a fake response.
+    const sourceFence = await prepareLegacyReceiptReplayFence({
+      sourceDir: oldStoreDir,
+      declaredVersion: '0.11.0',
+      expectedSourceSnapshotSha256: report.sourceSnapshotSha256,
+      tenantId: 'host',
+      runtime: 'muffin',
+      lookupHostReceipt: async ({ receiptId }) => {
+        if (!durableHostPort(original).saved.has(receiptId)) return null;
+        return {
+          receiptId, tenantId: 'host', runtime: 'muffin',
+          state: 'durable', principalKind: 'system', principalSource: 'automation',
+        };
+      },
+      attestProviderSource: async evidence => ({
+        ...evidence,
+        stableEventIds: true,
+          cursorPortableToTargetVersion: true,
+          immutableEventIdMapping: true,
+        completeReplayThroughLegacyCursor: true,
+        noUnreportedGaps: true,
+        supportsPolling: true,
+      }),
+    });
+    assert.equal(sourceFence.historicalReceiptsReconciled, 1);
+    assert.equal(sourceFence.archivedEventIdsCount, 1);
+    assert.equal(sourceFence.safeToResumeOrDeploy, false);
     const recovered = new CurrentStore(path.join(authorizedHome, 'event-intelligence'));
     await recovered.init();
     await recovered.setTriggerState(
@@ -272,27 +296,13 @@ test('real compiled old Muffin+published EI 0.11 watch, host receipt and paused 
       timestamp: '2026-10-02T21:00:00.000Z', data: { value: 93 },
     };
     const fence = () => {
-      const connection = syntheticConnection([firstEvent, newEvent]);
-      let excluded = 0;
+      const previousRejected = sourceFence.replayStats().rejectedOld;
       return {
-        connection: {
-          ...connection,
-          request: async (...args) => {
-            const result = await connection.request(...args);
-            if (args[0] !== 'events/poll') return result;
-            return {
-              ...result,
-              events: result.events.filter(event => {
-                if (oldEventIds.has(event.eventId)) {
-                  excluded += 1;
-                  return false;
-                }
-                return true;
-              }),
-            };
-          },
+        connection: sourceFence.wrapConnection(
+          syntheticConnection([firstEvent, newEvent])),
+        get excluded() {
+          return sourceFence.replayStats().rejectedOld - previousRejected;
         },
-        get excluded() { return excluded; },
       };
     };
 
@@ -341,6 +351,8 @@ test('real compiled old Muffin+published EI 0.11 watch, host receipt and paused 
       controlledStableEventIdFenceOldEvents: 1,
       controlledStableEventIdFenceNewEffects: 1,
       controlledRestartAdditionalEffects: 0,
+      oldDurableHostReceiptsReconciledByGate: sourceFence.historicalReceiptsReconciled,
+      sourceContinuityExternallyDeclared: true,
       productionProviderFrontierCertified: false,
       muffinRealTurnStoreReconciled: false,
       losslessMigrationVerified: false,
