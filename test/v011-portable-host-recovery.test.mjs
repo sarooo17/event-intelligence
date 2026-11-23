@@ -76,18 +76,19 @@ async function fixture(kind, fn) {
     sourceIdentitySha256: bind.sourceIdentitySha256,
     authorityEpoch: 'exclusive-epoch-1',
   };
-  const makeBridge = () => createLegacyRecoveryHostBridge({
+  const makeBridge = ({ authorityOverride, sourceOverride } = {}) => createLegacyRecoveryHostBridge({
     runtimeId, tenantId,
     authority: {
       async assertExclusive(input) {
         const lease = JSON.parse(await readFile(epochFile, 'utf8'));
-        return {
+        const proof = {
           exclusive: lease.exclusive,
           runtimeId: input.runtimeId, tenantId: input.tenantId,
           scopeId: input.scopeId, epoch: lease.epoch,
           sourceSnapshotSha256: input.sourceSnapshotSha256,
           sourceIdentitySha256: input.sourceIdentitySha256,
         };
+        return authorityOverride ? authorityOverride(proof) : proof;
       },
     },
     receipts: {
@@ -113,13 +114,14 @@ async function fixture(kind, fn) {
     },
     source: {
       async attestContinuity(evidence) {
-        return {
+        const proof = {
           ...evidence, stableEventIds: true,
           immutableEventIdMapping: true,
           cursorPortableToTargetVersion: true,
           completeReplayThroughLegacyCursor: true,
           noUnreportedGaps: true, supportsPolling: true,
         };
+        return sourceOverride ? sourceOverride(proof) : proof;
       },
     },
     checkpoints: {
@@ -256,5 +258,38 @@ test('portable host contract rejects absent capabilities, mismatched receipts an
     await assert.rejects(prepareLegacyHostRecovery({
       host: first, journal, sourceDir: old, ...bind,
     }), failure('RECOVERY_HOST_DURABLE_RECEIPT_MISMATCH'));
+  });
+});
+
+test('portable bridge rejects stale source attestations and unbound lease snapshot proofs', async () => {
+  await fixture('workflow', async ({ old, journalParams, bind, makeBridge }) => {
+    const wrongLease = makeBridge({
+      authorityOverride: proof => ({
+        ...proof, sourceSnapshotSha256: 'f'.repeat(64),
+      }),
+    });
+    await assert.rejects(wrongLease.assertExclusive(bind),
+      failure('RECOVERY_HOST_EXCLUSIVE_EPOCH_REQUIRED'));
+
+    for (const bad of [
+      { tenantId: 'another-tenant' },
+      { runtimeId: 'another-runtime' },
+      { scopeId: 'another-scope' },
+      { epoch: 'stale-lease-epoch' },
+    ]) {
+      const forged = makeBridge({
+        sourceOverride: proof => ({ ...proof, ...bad }),
+      });
+      await forged.assertExclusive(bind);
+      const journal = await openLegacyHostGapJournal({
+        ...journalParams,
+        mode: 'open',
+      }).catch(async e => e?.code === 'HOST_GAP_JOURNAL_MISSING'
+        ? openLegacyHostGapJournal({ ...journalParams, mode: 'create' })
+        : Promise.reject(e));
+      await assert.rejects(prepareLegacyHostRecovery({
+        host: forged, journal, sourceDir: old, ...bind,
+      }), failure('RECOVERY_HOST_SOURCE_AUTHORITY_MISMATCH'));
+    }
   });
 });
