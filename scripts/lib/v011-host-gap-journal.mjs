@@ -31,6 +31,7 @@ function validateRecord(record, expected) {
       record.sourceSnapshotSha256 !== expected.sourceSnapshotSha256 ||
       record.sourceIdentitySha256 !== expected.sourceIdentitySha256 ||
       record.tenantId !== expected.tenantId ||
+      record.authorityEpoch !== expected.authorityEpoch ||
       !['ready', 'polling', 'checkpoint-required', 'blocked'].includes(record.state) ||
       !Number.isSafeInteger(record.revision) || record.revision < 0 ||
       (record.state === 'checkpoint-required' && !validCursor(record.cursor)) ||
@@ -86,17 +87,21 @@ async function durableReplace(dir, state, { exclusive = false } = {}) {
  */
 export async function openLegacyHostGapJournal({
   directory, mode, sourceSnapshotSha256, sourceIdentitySha256, tenantId,
+  authorityEpoch = null,
 } = {}) {
   if (typeof directory !== 'string' || !directory ||
       !['create', 'open'].includes(mode) ||
       !validHash(sourceSnapshotSha256) || !validHash(sourceIdentitySha256) ||
-      typeof tenantId !== 'string' || !tenantId || tenantId.length > 240) {
+      typeof tenantId !== 'string' || !tenantId || tenantId.length > 240 ||
+      (authorityEpoch !== null &&
+        (typeof authorityEpoch !== 'string' || !authorityEpoch ||
+          authorityEpoch.length > 240 || authorityEpoch !== authorityEpoch.trim()))) {
     refuse('HOST_GAP_JOURNAL_EXPLICIT_BINDING_REQUIRED');
   }
   const dir = await realpath(directory); // already-created isolated host path
   const stat = await lstat(dir);
   if (!stat.isDirectory()) refuse('HOST_GAP_JOURNAL_DIRECTORY_INVALID');
-  const expected = { sourceSnapshotSha256, sourceIdentitySha256, tenantId };
+  const expected = { sourceSnapshotSha256, sourceIdentitySha256, tenantId, authorityEpoch };
   if (mode === 'create') {
     await assertNoPartialFiles(dir);
     const existing = await readdir(dir);
@@ -132,6 +137,7 @@ export async function openLegacyHostGapJournal({
     sourceSnapshotSha256,
     sourceIdentitySha256,
     tenantId,
+    authorityEpoch,
     assertReady,
     async beginPoll({ cursor }) {
       if (!validCursor(cursor)) refuse('HOST_GAP_JOURNAL_INVALID_POLL_CURSOR');
