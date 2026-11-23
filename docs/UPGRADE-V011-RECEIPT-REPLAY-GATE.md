@@ -74,6 +74,18 @@ those exact assertions. It is NOT an independent verification of (3).
   forwarded unchanged. Archived old event IDs are filtered; new IDs pass.
   A null/omitted or `truncated: true` **provider response** refuses the cutover,
   as do unknown event names, invalid IDs or malformed poll requests.
+  Once a truncated/no-replay response or archived payload collision is
+  observed, an **in-memory latch** also refuses subsequent clean retries.
+  That latch is **NOT durable across a process crash**: a production host
+  must persist a non-bypassable gap/fence state and reauthorize a fresh
+  source frontier before ever resuming a watch on restart. This draft
+  intentionally does not implement that external crash-safe control.
+
+These fail-closed checks follow the upstream
+[Events Beta cursor lifecycle](https://github.com/modelcontextprotocol/ext-events/blob/main/specification/beta/events/events.mdx),
+which permits `cursor: null` for non-replayable sources and reports
+retention gaps with `truncated: true`. Those responses are valid protocol
+results, but **not valid evidence for lossless historical watch recovery**.
   Old state, old cursor and new v1 store are never modified by this gate.
 
 **Crucial trust distinction:** A host callback can *claim* provider
