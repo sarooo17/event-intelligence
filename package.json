@@ -79,6 +79,8 @@
     "scripts/mcp-stdio-server.mjs",
     "scripts/host-integration.mjs",
     "scripts/host-integration.d.mts",
+    "scripts/legacy-recovery-host.mjs",
+    "scripts/legacy-recovery-host.d.mts",
     "scripts/run-tests.mjs",
     "scripts/embedded-host-kit.mjs",
     "scripts/embedded-host-kit.d.mts",
