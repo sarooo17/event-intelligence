@@ -213,3 +213,49 @@ test('refuses partial archive, in-flight old wake and ambiguous source cursors',
     await assert.rejects(prepare(), err('LEGACY_STATE_NOT_RECONCILABLE'));
   });
 });
+
+test('rejects missing archived sequence and duplicate old event identities', async () => {
+  await fixture(async ({ old, prepare }) => {
+    const file = path.join(old, 'mcp-events.jsonl');
+    await writeFile(file, row({
+      sequence: 3, serverId: 'fixture', subscriptionId: null,
+      event: { eventId: 'event-already-delivered', name: 'fixture.changed' },
+    }));
+    await assert.rejects(prepare(), err('SOURCE_ARCHIVE_IDENTITY_AMBIGUOUS'));
+    await writeFile(file, [
+      row({
+        sequence: 1, serverId: 'fixture', subscriptionId: null,
+        event: { eventId: 'event-already-delivered', name: 'fixture.changed' },
+      }),
+      row({
+        sequence: 2, serverId: 'fixture', subscriptionId: null,
+        event: { eventId: 'event-already-delivered', name: 'fixture.changed' },
+      }),
+    ].join(''));
+    await assert.rejects(prepare(), err('SOURCE_ARCHIVE_IDENTITY_AMBIGUOUS'));
+  });
+});
+
+test('rejects historical source identity change even if its final cursor appears valid', async () => {
+  await fixture(async ({ old, prepare }) => {
+    await appendFile(path.join(old, 'mcp-client-states.jsonl'), row({
+      connectionId: 'fixture-connection', serverId: 'other-server',
+      eventName: 'fixture.changed', arguments: {}, subscriptionId: null,
+      deliveryMode: 'poll', cursor: 'later-cursor',
+    }));
+    await assert.rejects(prepare(), err('HISTORICAL_SOURCE_IDENTITY_DRIFT'));
+  });
+});
+
+test('stable identifiers without immutable event payload mapping are insufficient', async () => {
+  await fixture(async ({ prepare }) => {
+    await assert.rejects(prepare({
+      attestProviderSource: async evidence => ({
+        ...evidence, stableEventIds: true,
+        completeReplayThroughLegacyCursor: true,
+        noUnreportedGaps: true, supportsPolling: true,
+        // immutableEventIdMapping is intentionally absent.
+      }),
+    }), err('PROVIDER_SOURCE_CONTINUITY_NOT_ATTESTED'));
+  });
+});
