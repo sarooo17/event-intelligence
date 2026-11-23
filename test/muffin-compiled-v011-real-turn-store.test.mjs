@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { cp, readdir, readFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
@@ -84,6 +84,7 @@ test('compiled Muffin 0.11 actual TurnStore receipt survives cold restart and v1
   const oldClone = path.join(tmp, 'cold-upgrade-clone');
   let runtime;
   try {
+    mkdirSync(workspace);
     runInit({ home, apiKey: 'sk-test-never-executed' });
     runtime = buildRuntime(home, workspace);
     const counters = {
