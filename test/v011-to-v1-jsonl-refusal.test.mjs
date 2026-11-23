@@ -7,6 +7,7 @@ import { pathToFileURL } from 'node:url';
 import test from 'node:test';
 import { PersistentEventStore as CurrentStore } from '../scripts/lib/persistent-event-store.mjs';
 import { inspectLegacyJsonlStore } from '../scripts/lib/v011-jsonl-upgrade-preflight.mjs';
+import { stageLegacyWatchesPaused } from '../scripts/lib/v011-jsonl-paused-recovery.mjs';
 
 // A REAL published 0.11.0 package is installed into an isolated runner
 // directory by the [legacy-upgrade] CI job. This test never operates on an
@@ -141,6 +142,45 @@ test('published 0.11.0 populated JSONL watch+receipt cannot be silently opened a
     );
     await rollback.close();
     assert.deepEqual(await snapshot(clone), before);
+
+    // Stage a SEPARATE quarantine candidate, not a lossless upgrade or
+    // authorized cutover. Old receipt, source cursor and pattern candidate
+    // history deliberately remain only in the original old archive.
+    const candidateDir = path.join(temporary, 'v1-quarantine-candidate');
+    const archiveBefore = await snapshot(original);
+    let approvals = 0;
+    const candidate = await stageLegacyWatchesPaused({
+      sourceDir: original,
+      targetDir: candidateDir,
+      declaredVersion: '0.11.0',
+      expectedSourceSnapshotSha256: preflight.sourceSnapshotSha256,
+      authorizeWatch: async ({ scopeId, legacyOwner, definition }) => {
+        assert.equal(scopeId, 'default');
+        assert.equal(legacyOwner?.principal_id, 'synthetic-owner');
+        assert.equal(definition.triggerId, 'synthetic-legacy-watch');
+        approvals += 1;
+        return {
+          owner: { type: 'owner', principal_id: 'new-authorized-fixture-owner', tenant_id: 'fixture' },
+          actor: { type: 'agent', principal_id: 'fixture-host-recovery', tenant_id: 'fixture' },
+        };
+      },
+    });
+    assert.equal(approvals, 1);
+    assert.equal(candidate.status, 'quarantined-paused-not-cutover-ready');
+    assert.equal(candidate.safeToResumeOrDeploy, false);
+    assert.equal(candidate.oldReceiptsImported, false);
+    assert.equal(candidate.originalDeliveredReceipts, 1);
+    const v1candidate = new CurrentStore(candidateDir);
+    await v1candidate.init();
+    assert.equal(v1candidate.listTriggers().length, 1);
+    assert.equal(v1candidate.getTriggerState('synthetic-legacy-watch', '1').status, 'paused');
+    assert.equal(v1candidate.getTriggerState('synthetic-legacy-watch', '1').owner.principal_id,
+      'new-authorized-fixture-owner');
+    assert.deepEqual(v1candidate.getTriggerState('synthetic-legacy-watch', '1').connectionIds, []);
+    assert.equal(v1candidate.getWakeDelivery('synthetic-old-wake'), null);
+    await v1candidate.close();
+    assert.deepEqual(await snapshot(original), archiveBefore,
+      'staging must never alter original legacy files');
 
     console.log(JSON.stringify({
       schema: 'ei-v011-to-v1-populated-jsonl-refusal.v1',
