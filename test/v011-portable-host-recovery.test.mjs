@@ -85,6 +85,8 @@ async function fixture(kind, fn) {
           exclusive: lease.exclusive,
           runtimeId: input.runtimeId, tenantId: input.tenantId,
           scopeId: input.scopeId, epoch: lease.epoch,
+          sourceSnapshotSha256: input.sourceSnapshotSha256,
+          sourceIdentitySha256: input.sourceIdentitySha256,
         };
       },
     },
@@ -175,6 +177,14 @@ for (const kind of ['queue', 'workflow']) {
       assert.deepEqual(cursors, ['old-cursor']);
       assert.deepEqual(page.events.map(e => e.eventId), [freshEvent.eventId]);
       assert.equal((await journal.status()).state, 'checkpoint-required');
+      await assert.rejects(rehearsal.acknowledgePersistedCheckpoint({
+        connectionId: 'another-source', eventName: 'fixture.changed',
+        cursor: 'v1-new-checkpoint',
+      }), failure('RECOVERY_HOST_CHECKPOINT_SOURCE_MISMATCH'));
+      await assert.rejects(rehearsal.acknowledgePersistedCheckpoint({
+        connectionId: 'fixture-connection', eventName: 'another-event',
+        cursor: 'v1-new-checkpoint',
+      }), failure('RECOVERY_HOST_CHECKPOINT_SOURCE_MISMATCH'));
       await assert.rejects(rehearsal.acknowledgePersistedCheckpoint({
         connectionId: 'fixture-connection', eventName: 'fixture.changed',
         cursor: 'v1-new-checkpoint',
