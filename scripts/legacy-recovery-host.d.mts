@@ -13,6 +13,8 @@ export interface LegacyRecoveryExclusiveProof {
   runtimeId: string;
   tenantId: string;
   scopeId: 'default';
+  sourceSnapshotSha256: string;
+  sourceIdentitySha256: string;
 }
 
 export interface LegacyRecoveryHostPorts {
