@@ -56,13 +56,16 @@ export function createLegacyRecoveryHostBridge({
     let result;
     try {
       result = await authority.assertExclusive(Object.freeze({
-        runtimeId, tenantId, scopeId, expectedSourceSnapshotSha256,
+        runtimeId, tenantId, scopeId,
+        sourceSnapshotSha256: expectedSourceSnapshotSha256,
         sourceIdentitySha256,
       }));
     } catch (error) { throw safeHostError(error); }
     if (result?.exclusive !== true || result?.runtimeId !== runtimeId ||
         result?.tenantId !== tenantId || result?.scopeId !== scopeId ||
-        !validId(result?.epoch)) {
+        !validId(result?.epoch) ||
+        result?.sourceSnapshotSha256 !== expectedSourceSnapshotSha256 ||
+        result?.sourceIdentitySha256 !== sourceIdentitySha256) {
       refuse('RECOVERY_HOST_EXCLUSIVE_EPOCH_REQUIRED');
     }
     if (capturedEpoch && result.epoch !== capturedEpoch) {
@@ -101,11 +104,19 @@ export function createLegacyRecoveryHostBridge({
     if (evidence?.scopeId !== scopeId) {
       refuse('RECOVERY_HOST_SOURCE_ATTESTATION_MISMATCH');
     }
+    let result;
     try {
-      return await source.attestContinuity(Object.freeze({
+      result = await source.attestContinuity(Object.freeze({
         ...evidence, runtimeId, tenantId, epoch: capturedEpoch,
       }));
     } catch (error) { throw safeHostError(error); }
+    if (result?.runtimeId !== runtimeId ||
+        result?.tenantId !== tenantId ||
+        result?.scopeId !== scopeId ||
+        result?.epoch !== capturedEpoch) {
+      refuse('RECOVERY_HOST_SOURCE_AUTHORITY_MISMATCH');
+    }
+    return result;
   }
   async function readCheckpoint({ connectionId, eventName, cursor }) {
     if (!validId(connectionId) || !validId(eventName) || !validCursor(cursor)) {
@@ -203,6 +214,10 @@ export async function prepareLegacyHostRecovery({
       });
     },
     async acknowledgePersistedCheckpoint({ connectionId, eventName, cursor }) {
+      if (connectionId !== fence.sourceConnectionId ||
+          eventName !== fence.sourceEventName) {
+        refuse('RECOVERY_HOST_CHECKPOINT_SOURCE_MISMATCH');
+      }
       await host.assertExclusive(binding);
       return journal.confirmHostCheckpoint({
         cursor,
