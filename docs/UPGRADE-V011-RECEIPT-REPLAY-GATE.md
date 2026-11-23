@@ -51,15 +51,19 @@ those exact assertions. It is NOT an independent verification of (3).
   echo the exact source, old cursor, and SHA-256 digest of archived event IDs,
   and explicitly assert all four:
   `stableEventIds`, `immutableEventIdMapping`,
-  `completeReplayThroughLegacyCursor`, `noUnreportedGaps`, plus
-  `supportsPolling`. Missing/mismatched assertions refuse.
+  `cursorPortableToTargetVersion`, `completeReplayThroughLegacyCursor`,
+  `noUnreportedGaps`, plus `supportsPolling`. Missing/mismatched assertions refuse.
 - Recheck the complete source SHA-256 after asynchronous callbacks; if any
   old byte changed, refuse. A digest is **not** a filesystem lock: the
   operator must physically stop/fence old writers and work on a full
   isolated clone.
 - When the caller separately and explicitly runs a simulated polling
-  adapter, archived old event IDs are filtered and new IDs are passed.
-  Unknown event names, missing IDs or malformed cursor are refused.
+  adapter, the **first new-v1 null request cursor is replaced with the old
+  attested persisted cursor**: null would mean \"start from now\" and could
+  silently lose downtime events. A subsequent non-null new-v1 cursor is
+  forwarded unchanged. Archived old event IDs are filtered; new IDs pass.
+  A null/omitted or truncated **provider response** refuses the cutover,
+  as do unknown event names, invalid IDs or malformed poll requests.
   Old state, old cursor and new v1 store are never modified by this gate.
 
 **Crucial trust distinction:** A host callback can *claim* provider
