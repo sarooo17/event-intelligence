@@ -6,6 +6,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import test from 'node:test';
+import { inspectLegacyJsonlStore } from '../scripts/lib/v011-jsonl-upgrade-preflight.mjs';
+import { prepareLegacyReceiptReplayFence } from '../scripts/lib/v011-legacy-receipt-source-fence.mjs';
 
 const oldRoot = process.env.EI_COMPILED_MUFFIN_011;
 const modernRoot = process.env.EI_COMPILED_MUFFIN_100;
@@ -154,6 +156,51 @@ test('compiled Muffin 0.11 actual TurnStore receipt survives cold restart and v1
     assert.equal(coldOld.deps.turns.get(wake.id)?.id, wake.id,
       'Muffin SQLite TurnStore must keep durable old host receipt');
     assert.equal(coldOld.deps.turns.get(wake.id)?.principal?.source, 'automation');
+
+    // Host callback reads the actual reopened Muffin SQLite TurnStore,
+    // not a fabricated file-backed receipt. Source replay guarantees below
+    // are still synthetic and explicitly host-declared, not independently
+    // certified for real-world MCP providers.
+    const sourceDir = path.join(home, 'event-intelligence');
+    const preflight = await inspectLegacyJsonlStore(sourceDir, {
+      declaredVersion: '0.11.0',
+    });
+    let oldHostReceiptChecks = 0;
+    const reconciliation = await prepareLegacyReceiptReplayFence({
+      sourceDir,
+      expectedSourceSnapshotSha256: preflight.sourceSnapshotSha256,
+      declaredVersion: '0.11.0',
+      tenantId: 'host',
+      runtime: 'muffin',
+      lookupHostReceipt: async ({ receiptId }) => {
+        oldHostReceiptChecks++;
+        const row = coldOld.deps.turns.get(receiptId);
+        return row && {
+          receiptId: row.id,
+          tenantId: row.tenant,
+          runtime: 'muffin',
+          state: 'durable',
+          principalKind: row.principal.kind,
+          principalSource: row.principal.source,
+        };
+      },
+      attestProviderSource: async evidence => {
+        assert.equal(evidence.legacyCursor, 'old-muffin-source-2');
+        assert.equal(evidence.connectionId, 'demo');
+        assert.equal(evidence.serverId, 'demo');
+        return {
+          ...evidence,
+          stableEventIds: true,
+          completeReplayThroughLegacyCursor: true,
+          noUnreportedGaps: true,
+          supportsPolling: true,
+        };
+      },
+    });
+    assert.equal(oldHostReceiptChecks, 1);
+    assert.equal(reconciliation.historicalReceiptsReconciled, 1);
+    assert.equal(reconciliation.archivedEventIdsCount, 1);
+    assert.equal(reconciliation.safeToResumeOrDeploy, false);
     await coldOld.close();
 
     const before = await hashes(path.join(home, 'event-intelligence'));
@@ -175,6 +222,8 @@ test('compiled Muffin 0.11 actual TurnStore receipt survives cold restart and v1
       originalOldWakeReceiptPersistedAndReopened: true,
       originalEventReplayDuplicateHostEffects: 0,
       oldSourceCursorPersisted: true,
+      actualSqliteHostReceiptsReconciled: 1,
+      providerReplayProofFixtureOnly: true,
       newV1RefusalOnOldHomeClone: true,
       legacyEIRuntimeBytesUnchanged: true,
       losslessRecoveryOrCutoverProven: false,
