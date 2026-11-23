@@ -296,13 +296,36 @@ export async function prepareLegacyReceiptReplayFence({
     if (!connection || typeof connection !== 'object' ||
         connection.connectionId !== source.connectionId ||
         connection.serverId !== source.serverId ||
+        (connection.scopeId !== undefined && connection.scopeId !== 'default') ||
+        (connection.preferredDelivery !== undefined &&
+          connection.preferredDelivery !== 'poll') ||
+        connection.openEventStream !== undefined ||
+        connection.createWebhookSubscription !== undefined ||
         typeof connection.request !== 'function') {
       refuse('MCP_CONNECTION_IDENTITY_MISMATCH');
     }
     return Object.freeze({
       ...connection,
       async request(method, ...args) {
+        if (method === 'events/list') {
+          const result = await connection.request(method, ...args);
+          if (!result || !Array.isArray(result.events) ||
+              result.events.length !== 1 ||
+              result.events[0]?.name !== source.eventName ||
+              !Array.isArray(result.events[0].delivery) ||
+              !result.events[0].delivery.includes('poll')) {
+            refuse('MCP_SOURCE_DISCOVERY_OUTSIDE_REPLAY_PROFILE');
+          }
+          return {
+            ...result,
+            // Never advertise a delivery mode that bypasses our poll fence.
+            events: [{ ...result.events[0], delivery: ['poll'] }],
+          };
+        }
         if (method !== 'events/poll') {
+          if (typeof method === 'string' && method.startsWith('events/')) {
+            refuse('MCP_UNSUPPORTED_EVENT_DELIVERY_METHOD');
+          }
           return connection.request(method, ...args);
         }
         const params = args[0];
@@ -332,13 +355,20 @@ export async function prepareLegacyReceiptReplayFence({
           refuse('MCP_POLL_RESULT_AMBIGUOUS');
         }
         const filtered = [];
-        for (const event of result.events) {
+        for (const rawEvent of result.events) {
+          let event;
+          try { event = snapshotUntrustedEventData(rawEvent); }
+          catch { refuse('MCP_REPLAY_EVENT_IDENTITY_AMBIGUOUS'); }
           if (!event || typeof event !== 'object' ||
               typeof event.eventId !== 'string' || !event.eventId ||
               event.name !== source.eventName) {
             refuse('MCP_REPLAY_EVENT_IDENTITY_AMBIGUOUS');
           }
+          const fingerprint = archivedEventFingerprint(event);
           if (oldIds.has(event.eventId)) {
+            if (oldEventFingerprints.get(event.eventId) !== fingerprint) {
+              refuse('MCP_REPLAY_EVENT_CONTENT_COLLISION');
+            }
             rejectedOld += 1;
           } else {
             filtered.push(event);
