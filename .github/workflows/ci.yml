@@ -196,3 +196,55 @@ jobs:
         env:
           EI_V011_PACKAGE_ROOT: ${{ runner.temp }}/ei-legacy-011/node_modules/mcp-event-intelligence
         run: node --test test/v011-to-v1-jsonl-refusal.test.mjs
+
+
+  legacy-compiled-muffin-upgrade:
+    # Explicit opt-in: use two real compiled Muffin revisions and their
+    # npm-locked published EI versions. No owner Home or gateway credentials.
+    if: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.title, '[legacy-upgrade]') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout Event Intelligence proposed migration source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Checkout pinned old Muffin dev with published EI 0.11
+        uses: actions/checkout@v4
+        with:
+          repository: muffin-project/muffin-agent
+          ref: 1a3a187f347552000ea8f139c9c54cd8258fa371
+          path: .tmp-compiled-muffin-old
+          persist-credentials: false
+      - name: Checkout current Muffin upgrade PR exact reference
+        uses: actions/checkout@v4
+        with:
+          repository: sarooo17/muffin-agent
+          ref: df2160632955078502d50c218b65ecff1d979d68
+          path: .tmp-compiled-muffin-v1
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build pinned current EI source and both Muffin source trees
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm run build
+          for dir in .tmp-compiled-muffin-old .tmp-compiled-muffin-v1; do
+            (
+              cd "$dir"
+              npm ci --no-audit --no-fund
+              npm run compile
+              node -p "require('./node_modules/mcp-event-intelligence/package.json').version"
+            )
+          done
+          node -e "const fs=require('fs'); const a=JSON.parse(fs.readFileSync('.tmp-compiled-muffin-old/node_modules/mcp-event-intelligence/package.json')); const b=JSON.parse(fs.readFileSync('.tmp-compiled-muffin-v1/node_modules/mcp-event-intelligence/package.json')); if(a.version!=='0.11.0'||b.version!=='1.0.0') process.exit(1)"
+      - name: Exercise compiled Muffin old receipt, v1 cold refusal and paused quarantine
+        env:
+          EI_COMPILED_MUFFIN_011: ${{ github.workspace }}/.tmp-compiled-muffin-old
+          EI_COMPILED_MUFFIN_100: ${{ github.workspace }}/.tmp-compiled-muffin-v1
+        run: node --test test/muffin-compiled-v011-upgrade.test.mjs
