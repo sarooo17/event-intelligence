@@ -50,6 +50,7 @@ async function fixture(run) {
     attestProviderSource: async evidence => ({
       ...evidence,
       stableEventIds: true,
+          cursorPortableToTargetVersion: true,
           immutableEventIdMapping: true,
       completeReplayThroughLegacyCursor: true,
       noUnreportedGaps: true,
@@ -107,6 +108,7 @@ test('reconciles all old receipts, filters old replay and allows new ID only und
         assert.match(evidence.archivedEventIdsSha256, /^[0-9a-f]{64}$/);
         return {
           ...evidence, stableEventIds: true,
+          cursorPortableToTargetVersion: true,
           immutableEventIdMapping: true,
           completeReplayThroughLegacyCursor: true, noUnreportedGaps: true,
           supportsPolling: true,
@@ -121,7 +123,7 @@ test('reconciles all old receipts, filters old replay and allows new ID only und
     assert.equal(boundary.safeToResumeOrDeploy, false);
     assert.equal(boundary.productionProviderIndependentlyCertified, false);
     const connection = boundary.wrapConnection(pollConnection());
-    const result = await connection.request('events/poll');
+    const result = await connection.request('events/poll', { name: 'fixture.changed', arguments: {}, cursor: null });
     assert.deepEqual(result.events.map(e => e.eventId), ['genuinely-new-event']);
     assert.deepEqual(boundary.replayStats(), { rejectedOld: 1, passedNew: 1 });
     assert.deepEqual(await readFile(path.join(old, 'wake-deliveries.jsonl')), bytes);
@@ -150,6 +152,7 @@ test('rejects provider lacking stable replay proof or complete checkpoint/gap gu
     await assert.rejects(prepare({
       attestProviderSource: async evidence => ({
         ...evidence, stableEventIds: true,
+          cursorPortableToTargetVersion: true,
           immutableEventIdMapping: true,
         completeReplayThroughLegacyCursor: false, noUnreportedGaps: true,
         supportsPolling: true,
@@ -170,11 +173,11 @@ test('rejects unsafe polling result and cross-source identity', async () => {
         cursor: 'cursor', hasMore: false,
         events: [{ name: 'fixture.changed' }],
       }),
-    }).request('events/poll'), err('MCP_REPLAY_EVENT_IDENTITY_AMBIGUOUS'));
+    }).request('events/poll', { name: 'fixture.changed', arguments: {}, cursor: null }), err('MCP_REPLAY_EVENT_IDENTITY_AMBIGUOUS'));
     await assert.rejects(f.wrapConnection({
       ...pollConnection(),
       request: async () => ({ cursor: undefined, hasMore: false, events: [] }),
-    }).request('events/poll'), err('MCP_POLL_RESULT_AMBIGUOUS'));
+    }).request('events/poll', { name: 'fixture.changed', arguments: {}, cursor: null }), err('MCP_POLL_RESULT_AMBIGUOUS'));
   });
 });
 
@@ -188,6 +191,7 @@ test('source snapshot change during provider attestation fails closed', async ()
         }));
         return {
           ...evidence, stableEventIds: true,
+          cursorPortableToTargetVersion: true,
           immutableEventIdMapping: true,
           completeReplayThroughLegacyCursor: true, noUnreportedGaps: true,
           supportsPolling: true,
@@ -252,6 +256,7 @@ test('stable identifiers without immutable event payload mapping are insufficien
     await assert.rejects(prepare({
       attestProviderSource: async evidence => ({
         ...evidence, stableEventIds: true,
+          cursorPortableToTargetVersion: true,
         completeReplayThroughLegacyCursor: true,
         noUnreportedGaps: true, supportsPolling: true,
         // immutableEventIdMapping is intentionally absent.
