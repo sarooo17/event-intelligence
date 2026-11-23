@@ -380,7 +380,7 @@ export async function prepareLegacyReceiptReplayFence({
           continuityLost = true;
           throw error;
         }
-        if (result?.truncated === true ||
+        if (continuityLost || result?.truncated === true ||
             result?.cursor === null || result?.cursor === undefined) {
           continuityLost = true;
           refuse('MCP_SOURCE_CONTINUITY_LOST');
