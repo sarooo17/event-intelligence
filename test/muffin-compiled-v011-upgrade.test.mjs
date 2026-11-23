@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { appendFileSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { cp, readdir, readFile } from 'node:fs/promises';
+import { PersistentEventStore as CurrentStore } from '../scripts/lib/persistent-event-store.mjs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -241,6 +242,91 @@ test('real compiled old Muffin+published EI 0.11 watch, host receipt and paused 
       await restart.close();
     }
 
+    // POSITIVE *ISOLATED* replay scenario. The test fixture source attests
+    // stable event IDs and provides complete old occurrences. This assumption
+    // is not established for arbitrary real MCP sources, so the normal
+    // quarantine stays untouched and safeToResumeOrDeploy remains false.
+    const authorizedHome = path.join(temp, 'synthetic-authorized-copy');
+    await cp(candidateHome, authorizedHome, { recursive: true });
+    await cp(path.join(original, 'host-delivered-receipts.jsonl'),
+      path.join(authorizedHome, 'host-delivered-receipts.jsonl'));
+    const oldOccurrenceRows = readFileSync(
+      path.join(oldStoreDir, 'mcp-events.jsonl'), 'utf8')
+      .split('\n').filter(Boolean).map(JSON.parse);
+    const oldEventIds = new Set(oldOccurrenceRows.map(x => x.event?.eventId)
+      .filter(id => typeof id === 'string'));
+    assert.equal(oldEventIds.has(firstEvent.eventId), true,
+      'original source occurrence must be proven by OLD source archive');
+    const recovered = new CurrentStore(path.join(authorizedHome, 'event-intelligence'));
+    await recovered.init();
+    await recovered.setTriggerState(
+      'compiled-old-muffin-watch', '1', 'active',
+      { type: 'agent', principal_id: 'muffin:event-intelligence', tenant_id: 'host' },
+      { owner: { type: 'owner', principal_id: 'muffin:synthetic-reauthorized', tenant_id: 'host' },
+        connectionIds: ['fixture-connection'] },
+    );
+    await recovered.close();
+
+    const newEvent = {
+      eventId: 'authoritatively-new-occurrence', name: 'fixture.changed',
+      timestamp: '2026-10-02T21:00:00.000Z', data: { value: 93 },
+    };
+    const fence = () => {
+      const connection = syntheticConnection([firstEvent, newEvent]);
+      let excluded = 0;
+      return {
+        connection: {
+          ...connection,
+          request: async (...args) => {
+            const result = await connection.request(...args);
+            if (args[0] !== 'events/poll') return result;
+            return {
+              ...result,
+              events: result.events.filter(event => {
+                if (oldEventIds.has(event.eventId)) {
+                  excluded += 1;
+                  return false;
+                }
+                return true;
+              }),
+            };
+          },
+        },
+        get excluded() { return excluded; },
+      };
+    };
+
+    const firstFence = fence();
+    const authorizedPort = durableHostPort(authorizedHome);
+    assert.equal(authorizedPort.saved.has(oldHostReceipt), true);
+    const activated = await createV1([firstFence.connection], authorizedHome, authorizedPort);
+    try {
+      await activated.host.runtime.mcpEventsClient.pollAll();
+      assert.equal(firstFence.excluded, 1);
+      assert.equal(authorizedPort.attempts.length, 1,
+        'exactly one NEW host Turn for the new event after explicit source replay filter');
+      assert.equal(authorizedPort.saved.size, 2,
+        'old host receipt remains durable and one new effect was added');
+    } finally {
+      await activated.close();
+    }
+    const nextFence = fence();
+    const nextPort = durableHostPort(authorizedHome);
+    const activatedRestart = await createV1([nextFence.connection],
+      authorizedHome, nextPort);
+    try {
+      await activatedRestart.host.runtime.mcpEventsClient.pollAll();
+      assert.equal(nextFence.excluded, 1);
+      assert.equal(nextPort.attempts.length, 0,
+        'new occurrence must remain idempotent across v1 cold restart');
+      assert.equal(nextPort.saved.size, 2);
+      assert.equal(nextPort.saved.has(oldHostReceipt), true);
+    } finally {
+      await activatedRestart.close();
+    }
+    assert.deepEqual(await snapshot(oldStoreDir), oldReadOnlyBefore,
+      'simulated cutover must never mutate source archive');
+
     console.log(JSON.stringify({
       schema: 'ei-muffin-compiled-legacy-quarantine.v1',
       publishedOldSdk: oldPackage.version,
@@ -252,8 +338,13 @@ test('real compiled old Muffin+published EI 0.11 watch, host receipt and paused 
       independentV1CandidatePaused: true,
       historicalReplayWhilePausedExternalEffects: 0,
       secondRestartWhilePausedExternalEffects: 0,
+      controlledStableEventIdFenceOldEvents: 1,
+      controlledStableEventIdFenceNewEffects: 1,
+      controlledRestartAdditionalEffects: 0,
+      productionProviderFrontierCertified: false,
+      muffinRealTurnStoreReconciled: false,
       losslessMigrationVerified: false,
-      newWakeAfterAuthorizedCutoverVerified: false,
+      newWakeAfterAuthorizedCutoverVerified: 'fixture-only',
     }));
   } finally {
     rmSync(temp, { recursive: true, force: true });
