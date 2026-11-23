@@ -182,8 +182,8 @@ test('rejects unsafe polling result and cross-source identity', async () => {
     }).request('events/poll', { name: 'fixture.changed', arguments: {}, cursor: null }), err('MCP_REPLAY_EVENT_IDENTITY_AMBIGUOUS'));
     await assert.rejects(f.wrapConnection({
       ...pollConnection(),
-      request: async () => ({ cursor: undefined, hasMore: false, events: [] }),
-    }).request('events/poll', { name: 'fixture.changed', arguments: {}, cursor: null }), err('MCP_POLL_RESULT_AMBIGUOUS'));
+      request: async () => ({ hasMore: false, events: [] }),
+    }).request('events/poll', { name: 'fixture.changed', arguments: {}, cursor: null }), err('MCP_SOURCE_CONTINUITY_LOST'));
   });
 });
 
@@ -347,21 +347,37 @@ test('rejects truncated polling results, null cursors and unapproved subscriptio
       name: 'fixture.changed', arguments: { tenant: 'other' }, cursor: null,
     }), err('MCP_POLL_REQUEST_IDENTITY_AMBIGUOUS'));
     for (const cursor of [null, undefined]) {
-      await assert.rejects(gate.wrapConnection({
+      const attempt = await prepare();
+      const raw = cursor === undefined ? { events: [], hasMore: false }
+        : { events: [], cursor, hasMore: false };
+      await assert.rejects(attempt.wrapConnection({
         ...source,
-        request: async () => ({ events: [], cursor, hasMore: false }),
+        request: async () => raw,
       }).request('events/poll', {
         name: 'fixture.changed', arguments: {}, cursor: null,
-      }), err('MCP_POLL_RESULT_AMBIGUOUS'));
+      }), err('MCP_SOURCE_CONTINUITY_LOST'));
+      assert.equal(attempt.continuityLost(), true);
     }
-    await assert.rejects(gate.wrapConnection({
+    const truncatedGate = await prepare();
+    let providerCalls = 0;
+    const truncatedWire = truncatedGate.wrapConnection({
       ...source,
-      request: async () => ({
-        events: [], cursor: 'new-cursor', hasMore: false, truncated: true,
-      }),
-    }).request('events/poll', {
-      name: 'fixture.changed', arguments: {}, cursor: null,
-    }), err('MCP_POLL_RESULT_AMBIGUOUS'));
+      request: async () => {
+        providerCalls += 1;
+        return {
+          events: [], cursor: 'new-cursor', hasMore: false,
+          truncated: providerCalls === 1,
+        };
+      },
+    });
+    for (let attempt = 0; attempt < 2; attempt++) {
+      await assert.rejects(truncatedWire.request('events/poll', {
+        name: 'fixture.changed', arguments: {}, cursor: null,
+      }), err('MCP_SOURCE_CONTINUITY_LOST'));
+    }
+    assert.equal(providerCalls, 1,
+      'a clean retry must never undo an observed truncated historical gap');
+    assert.equal(truncatedGate.continuityLost(), true);
   });
 });
 
