@@ -221,6 +221,7 @@ export async function prepareLegacyReceiptReplayFence({
       declared?.legacyCursor !== source.cursor ||
       declared?.archivedEventIdsSha256 !== idDigest ||
       declared?.stableEventIds !== true ||
+      declared?.cursorPortableToTargetVersion !== true ||
       declared?.immutableEventIdMapping !== true ||
       declared?.completeReplayThroughLegacyCursor !== true ||
       declared?.noUnreportedGaps !== true ||
@@ -241,12 +242,33 @@ export async function prepareLegacyReceiptReplayFence({
     return Object.freeze({
       ...connection,
       async request(method, ...args) {
-        const result = await connection.request(method, ...args);
-        if (method !== 'events/poll') return result;
+        if (method !== 'events/poll') {
+          return connection.request(method, ...args);
+        }
+        const params = args[0];
+        if (!params || typeof params !== 'object' || Array.isArray(params) ||
+            params.name !== source.eventName ||
+            !params.arguments || typeof params.arguments !== 'object' ||
+            Array.isArray(params.arguments) ||
+            Object.keys(params.arguments).length !== 0 ||
+            (params.cursor !== null && typeof params.cursor !== 'string')) {
+          refuse('MCP_POLL_REQUEST_IDENTITY_AMBIGUOUS');
+        }
+        // MCP Events: null means START FROM NOW, not "resume old history".
+        // The NEW v1 store has no source cursor by design. Intercept only
+        // that first null and supply the host-attested old opaque cursor.
+        // If v1 subsequently has a cursor, do not override its progress.
+        const cursor = params.cursor === null ? source.cursor : params.cursor;
+        if (!cursor) refuse('MCP_POLL_REQUEST_CURSOR_AMBIGUOUS');
+        const result = await connection.request(method,
+          { ...params, cursor }, ...args.slice(1));
         if (!result || typeof result !== 'object' ||
             !Array.isArray(result.events) ||
             typeof result.hasMore !== 'boolean' ||
-            (result.cursor !== null && typeof result.cursor !== 'string')) {
+            typeof result.cursor !== 'string' || !result.cursor ||
+            result.truncated === true ||
+            (result.truncated !== undefined &&
+              typeof result.truncated !== 'boolean')) {
           refuse('MCP_POLL_RESULT_AMBIGUOUS');
         }
         const filtered = [];
