@@ -389,6 +389,7 @@ export async function prepareLegacyReceiptReplayFence({
           const fingerprint = archivedEventFingerprint(event);
           if (oldIds.has(event.eventId)) {
             if (oldEventFingerprints.get(event.eventId) !== fingerprint) {
+              continuityLost = true;
               refuse('MCP_REPLAY_EVENT_CONTENT_COLLISION');
             }
             rejectedOld += 1;
