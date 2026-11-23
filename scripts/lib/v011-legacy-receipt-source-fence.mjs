@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { lstat, readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { isProxy } from 'node:util/types';
 import { snapshotUntrustedEventData } from '../../dist/src/protocol/ownPath.js';
 import {
   inspectLegacyJsonlStore,
@@ -361,8 +362,24 @@ export async function prepareLegacyReceiptReplayFence({
         // If v1 subsequently has a cursor, do not override its progress.
         const cursor = params.cursor === null ? source.cursor : params.cursor;
         if (!cursor) refuse('MCP_POLL_REQUEST_CURSOR_AMBIGUOUS');
-        const result = snapshotMcpWireResult(await connection.request(method,
-          { ...params, cursor }, ...args.slice(1)));
+        const rawResult = await connection.request(method,
+          { ...params, cursor }, ...args.slice(1));
+        // Preserve a gap BEFORE a fallible full-page snapshot. Oversized,
+        // accessor-backed or otherwise invalid pages must not erase the
+        // provider's own-data truncated signal.
+        if (rawResult && typeof rawResult === 'object' && !isProxy(rawResult)) {
+          const descriptor = Object.getOwnPropertyDescriptor(rawResult, 'truncated');
+          if (descriptor && Object.hasOwn(descriptor, 'value') &&
+              descriptor.value === true) {
+            continuityLost = true;
+          }
+        }
+        let result;
+        try { result = snapshotMcpWireResult(rawResult); }
+        catch (error) {
+          continuityLost = true;
+          throw error;
+        }
         if (result?.truncated === true ||
             result?.cursor === null || result?.cursor === undefined) {
           continuityLost = true;
