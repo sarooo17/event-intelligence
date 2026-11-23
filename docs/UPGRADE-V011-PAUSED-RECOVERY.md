@@ -92,3 +92,59 @@ const quarantine = await stageLegacyWatchesPaused({
 
 **Do not merge #962, deploy this candidate or claim successful migration
 based on an offline paused reconstruction alone.**
+
+## Compiled Muffin evidence: real old adapter and source-fence limitation
+
+The opt-in `legacy-compiled-muffin-upgrade` CI job checks out **two
+pinned, compiled Muffin source revisions**: upstream old
+`dev@1a3a187f347552000ea8f139c9c54cd8258fa371` with the published
+EI **0.11.0**, and the draft upgrade branch at
+`df2160632955078502d50c218b65ecff1d979d68` with published EI
+**1.0.0**. It does NOT link the old adapter against current EI sources
+or fabricate a v0.11 persistent trigger record.
+
+`test/muffin-compiled-v011-upgrade.test.mjs` uses the actual compiled old
+`createMuffinEventIntelligence()`, its portable watch-create tool, and a
+synthetic MCP polling source. It writes an old host receipt through a
+file-backed fixture port and verifies the actual old EI delivered receipt
+across cold restart. The new compiled adapter refuses an unchanged full
+old Home clone; paused-only reconstruction works in a separate new Home
+and delivers **zero** old effects across two startup cycles.
+
+The test also includes an *explicitly controlled isolated* active-replay
+scenario. Its fixture knows that source event IDs are **stable and
+complete** for the old receipt archive, extracts the old `eventId` from
+the **real old v0.11 `mcp-events.jsonl`**, and filters that ID before the
+new v1 adapter can see source replay. It then verifies one new occurrence
+enqueues **exactly one** additional host work item, and replaying the
+same old+new occurrences after another restart adds **zero** items.
+**This is a controlled source-fence proof, not a provider guarantee.**
+The active copy is throwaway and is NOT the staged quarantine or a
+generic migration. There is no production source replay filter yet.
+
+`test/muffin-compiled-v011-real-turn-store.test.mjs` strengthens
+the historical host evidence by executing the compiled old adapter
+through Muffin's **real TurnStore**, with an owner-authored source Turn,
+a `system:automation` wake, and its durable SQLite-backed Turn receipt
+reopened cold. It independently proves the published v1 adapter rejects
+a clone of the old EI Home unmodified.
+
+### Safety boundary and why the final gate is still open
+
+- The simple file-backed host port of the first scenario is **not** the
+  real Muffin TurnStore. The second test validates old Muffin TurnStore
+  durability but does not yet demonstrate a live reconciler spanning the
+  old/new TurnStore and the source frontiers during a full cutover.
+- A genuine MCP source might replay a prior logical occurrence with a
+  **different event ID**, retain only partial history, or give a stale /
+  unbounded cursor. In those cases the fixture's source-ID filter is
+  insufficient: **stop and refuse the cutover**, rather than silently
+  duplicating or dropping work.
+- The staged v1 candidate remains **paused and
+  `safeToResumeOrDeploy:false`**. All active replay is a synthetic
+  isolated test, not an operator command or public API that could
+  accidentally enable old watches.
+
+**Muffin PR #962 stays Draft.** Upstream maintainer review and a concrete
+host-owned replay frontier / receipt-reconciliation implementation remain
+necessary before advising real owners to upgrade their populated Home.
