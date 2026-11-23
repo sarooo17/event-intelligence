@@ -219,7 +219,7 @@ export async function inspectLegacyJsonlStore(dataDir, { declaredVersion } = {})
   if (JSON.stringify(second) !== JSON.stringify(list)) reject('CONCURRENT_SOURCE_MUTATION');
   const verified = [];
   for (const item of second) {
-    verified.push({ scope: item.scope, ...(await inventoryScope(item.dir)) });
+    verified.push({ scope: item.scope, ...(await inventoryScope(item.dir, item.scope === 'default')) });
   }
   if (JSON.stringify(first) !== JSON.stringify(verified)) reject('CONCURRENT_SOURCE_MUTATION');
 
