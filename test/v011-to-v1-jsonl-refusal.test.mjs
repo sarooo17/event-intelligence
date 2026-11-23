@@ -115,6 +115,7 @@ test('published 0.11.0 populated JSONL watch+receipt cannot be silently opened a
     assert.equal(preflight.sourceReadOnly, true);
     assert.equal(preflight.scopes[0].counts.totalWatches, 1);
     assert.equal(preflight.scopes[0].counts.activeOrPausedWatches, 1);
+    assert.equal(preflight.scopes[0].counts.v1SchemaCompatibleWatches, 1);
     assert.equal(preflight.scopes[0].counts.deliveredReceipts, 1);
     assert.equal(preflight.scopes[0].counts.inFlightDeliveries, 0);
     assert.ok(preflight.scopes[0].reasons.includes(
