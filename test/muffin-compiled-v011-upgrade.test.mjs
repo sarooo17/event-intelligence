@@ -271,6 +271,7 @@ test('real compiled old Muffin+published EI 0.11 watch, host receipt and paused 
       attestProviderSource: async evidence => ({
         ...evidence,
         stableEventIds: true,
+          immutableEventIdMapping: true,
         completeReplayThroughLegacyCursor: true,
         noUnreportedGaps: true,
         supportsPolling: true,
