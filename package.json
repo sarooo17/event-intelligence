@@ -15,6 +15,10 @@
       "types": "./scripts/host-integration.d.mts",
       "import": "./scripts/host-integration.mjs"
     },
+    "./host/recovery": {
+      "types": "./scripts/legacy-recovery-host.d.mts",
+      "import": "./scripts/legacy-recovery-host.mjs"
+    },
     "./provider": {
       "types": "./dist/src/mcpEvents/provider.d.ts",
       "import": "./dist/src/mcpEvents/provider.js"
