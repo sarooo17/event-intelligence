@@ -258,7 +258,7 @@ test('real compiled old Muffin+published EI 0.11 watch, host receipt and paused 
     const sourceFence = await prepareLegacyReceiptReplayFence({
       sourceDir: oldStoreDir,
       declaredVersion: '0.11.0',
-      expectedSourceSnapshotSha256: preflight.sourceSnapshotSha256,
+      expectedSourceSnapshotSha256: report.sourceSnapshotSha256,
       tenantId: 'host',
       runtime: 'muffin',
       lookupHostReceipt: async ({ receiptId }) => {
