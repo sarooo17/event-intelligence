@@ -140,6 +140,13 @@ test('compiled Muffin 0.11 actual TurnStore receipt survives cold restart and v1
       .split('\n').filter(Boolean).map(JSON.parse);
     assert.equal(receipts.at(-1).status, 'delivered');
     assert.equal(receipts.at(-1).runtimeReceiptId, wake.id);
+    const oldClientRows = readFileSync(path.join(home, 'event-intelligence',
+      'mcp-client-states.jsonl'), 'utf8')
+      .split('\n').filter(Boolean).map(JSON.parse);
+    assert.ok(oldClientRows.some(x =>
+      x.connectionId === 'demo' && x.eventName === 'demo.ready' &&
+      typeof x.cursor === 'string' && x.cursor.startsWith('old-muffin-source-')),
+    'the real old Muffin adapter must leave a durable old source cursor');
     await runtime.close();
     runtime = null;
 
@@ -167,6 +174,7 @@ test('compiled Muffin 0.11 actual TurnStore receipt survives cold restart and v1
       oldRealMuffinSqliteTurnStoreWake: true,
       originalOldWakeReceiptPersistedAndReopened: true,
       originalEventReplayDuplicateHostEffects: 0,
+      oldSourceCursorPersisted: true,
       newV1RefusalOnOldHomeClone: true,
       legacyEIRuntimeBytesUnchanged: true,
       losslessRecoveryOrCutoverProven: false,
