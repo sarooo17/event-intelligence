@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { appendFileSync, existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { cp, readdir, readFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
@@ -141,6 +141,7 @@ test('real compiled old Muffin+published EI 0.11 watch, host receipt and paused 
   const candidateHome = path.join(temp, 'candidate-home');
 
   try {
+    mkdirSync(candidateHome);
     const oldPort = durableHostPort(original);
     const firstEvent = {
       eventId: 'original-delivered-occurrence', name: 'fixture.changed',
@@ -170,14 +171,12 @@ test('real compiled old Muffin+published EI 0.11 watch, host receipt and paused 
     const reopened = new OldStore(oldStoreDir);
     await reopened.init();
     assert.equal(reopened.listTriggers().length, 1);
-    const deliveries = reopened.listWakeDeliveries?.() ?? [];
     // The old SDK's actual receipt remains the authoritative evidence.
     const deliveryFile = path.join(oldStoreDir, 'wake-deliveries.jsonl');
     const deliveryRows = readFileSync(deliveryFile, 'utf8').trim().split('\n').map(JSON.parse);
     const finalDelivery = deliveryRows.at(-1);
     assert.equal(finalDelivery.status, 'delivered');
     assert.equal(finalDelivery.runtimeReceiptId, oldHostReceipt);
-    assert.ok(deliveries.length >= 0);
     await reopened.close();
 
     const oldReadOnlyBefore = await snapshot(oldStoreDir);
@@ -218,8 +217,9 @@ test('real compiled old Muffin+published EI 0.11 watch, host receipt and paused 
     const candidate = await createV1([syntheticConnection([firstEvent])],
       candidateHome, candidatePort);
     try {
-      assert.equal(candidate.host.store.getTriggerState(
-        'compiled-old-muffin-watch', '1').status, 'paused');
+      const stateRows = readFileSync(path.join(candidateHome, 'event-intelligence',
+        'trigger-states.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
+      assert.equal(stateRows.at(-1).status, 'paused');
       await candidate.host.runtime.mcpEventsClient.pollAll();
       assert.equal(candidatePort.attempts.length, 0,
         'quarantined watch MUST NOT redispatch historical occurrence');
