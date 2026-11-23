@@ -300,6 +300,10 @@ export async function prepareLegacyReceiptReplayFence({
 
   let rejectedOld = 0;
   let passedNew = 0;
+  // Memory-only safety latch: once an MCP provider reports a gap/no-replay
+  // page, do not let a clean retry silently pass. This is NOT a durable
+  // restart fence or a replacement for a host-owned persisted gap ledger.
+  let continuityLost = false;
   const wrapConnection = connection => {
     if (!connection || typeof connection !== 'object' ||
         connection.connectionId !== source.connectionId ||
@@ -315,6 +319,10 @@ export async function prepareLegacyReceiptReplayFence({
     return Object.freeze({
       ...connection,
       async request(method, ...args) {
+        if (continuityLost && typeof method === 'string' &&
+            method.startsWith('events/')) {
+          refuse('MCP_SOURCE_CONTINUITY_LOST');
+        }
         if (method === 'events/list') {
           const result = snapshotMcpWireResult(
             await connection.request(method, ...args));
@@ -355,11 +363,15 @@ export async function prepareLegacyReceiptReplayFence({
         if (!cursor) refuse('MCP_POLL_REQUEST_CURSOR_AMBIGUOUS');
         const result = snapshotMcpWireResult(await connection.request(method,
           { ...params, cursor }, ...args.slice(1)));
+        if (result?.truncated === true ||
+            result?.cursor === null || result?.cursor === undefined) {
+          continuityLost = true;
+          refuse('MCP_SOURCE_CONTINUITY_LOST');
+        }
         if (!result || typeof result !== 'object' ||
             !Array.isArray(result.events) ||
             typeof result.hasMore !== 'boolean' ||
             typeof result.cursor !== 'string' || !result.cursor ||
-            result.truncated === true ||
             (result.truncated !== undefined &&
               typeof result.truncated !== 'boolean')) {
           refuse('MCP_POLL_RESULT_AMBIGUOUS');
@@ -398,6 +410,7 @@ export async function prepareLegacyReceiptReplayFence({
     archivedEventIdsCount: oldIds.size,
     sourceSnapshotSha256: before.sourceSnapshotSha256,
     replayStats: () => Object.freeze({ rejectedOld, passedNew }),
+    continuityLost: () => continuityLost,
     wrapConnection,
   });
 }
