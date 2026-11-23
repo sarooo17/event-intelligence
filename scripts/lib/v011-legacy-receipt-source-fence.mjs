@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { lstat, readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { snapshotUntrustedEventData } from '../../dist/src/protocol/ownPath.js';
 import {
   inspectLegacyJsonlStore,
   LegacyJsonlPreflightError,
@@ -13,6 +14,61 @@ const refuse = code => { throw new LegacyJsonlPreflightError(code); };
 const sha = value => createHash('sha256').update(value).digest('hex');
 const MAX_ARCHIVED_EVENTS = 10000;
 const MAX_RECEIPTS = 1024;
+const MAX_EVENT_IDENTITY_BYTES = 32 * 1024;
+
+function stableJson(value) {
+  if (Array.isArray(value)) return value.map(stableJson);
+  if (value !== null && typeof value === 'object') {
+    return Object.fromEntries(Object.keys(value).sort()
+      .map(key => [key, stableJson(value[key])]));
+  }
+  return value;
+}
+
+function archivedEventFingerprint(raw) {
+  let event;
+  try { event = snapshotUntrustedEventData(raw); }
+  catch { refuse('SOURCE_EVENT_DATA_INVALID'); }
+  if (!event || typeof event !== 'object' || Array.isArray(event) ||
+      typeof event.name !== 'string' || !event.name ||
+      typeof event.timestamp !== 'string' || !event.timestamp ||
+      !event.data || typeof event.data !== 'object' ||
+      Array.isArray(event.data)) {
+    refuse('SOURCE_EVENT_DATA_INVALID');
+  }
+  const identity = JSON.stringify(stableJson({
+    name: event.name, timestamp: event.timestamp, data: event.data,
+  }));
+  if (Buffer.byteLength(identity) > MAX_EVENT_IDENTITY_BYTES) {
+    refuse('SOURCE_EVENT_DATA_TOO_LARGE');
+  }
+  return sha(identity);
+}
+
+function assertImmutableWakeHistory(rows) {
+  const history = new Map();
+  for (const row of rows) {
+    if (typeof row.wakeId !== 'string' || !row.wakeId) {
+      refuse('LEGACY_DELIVERY_IDENTITY_CHANGED');
+    }
+    const identity = JSON.stringify([
+      row.runtime, row.matchId, row.triggerId, row.triggerVersion,
+    ]);
+    const previous = history.get(row.wakeId);
+    if (previous && (previous.identity !== identity ||
+        (row.status === 'delivered' && previous.deliveredReceipt !== null &&
+          previous.deliveredReceipt !== row.runtimeReceiptId))) {
+      refuse('LEGACY_DELIVERY_IDENTITY_CHANGED');
+    }
+    history.set(row.wakeId, {
+      identity,
+      deliveredReceipt: row.status === 'delivered'
+        ? row.runtimeReceiptId
+        : previous?.deliveredReceipt ?? null,
+    });
+  }
+}
+
 
 async function jsonl(folder, name) {
   const file = path.join(folder, name);
@@ -163,6 +219,7 @@ export async function prepareLegacyReceiptReplayFence({
     }
   }
 
+  assertImmutableWakeHistory(deliveryRows);
   const receipts = newest(deliveryRows, ['wakeId']);
   if (receipts.length > MAX_RECEIPTS) refuse('TOO_MANY_RECEIPTS');
   const ids = new Set();
@@ -188,6 +245,7 @@ export async function prepareLegacyReceiptReplayFence({
 
   const source = exactSourceState(sourceRows);
   const oldIds = new Set();
+  const oldEventFingerprints = new Map();
   if (archiveRows.length === 0 || archiveRows.length > MAX_ARCHIVED_EVENTS) {
     refuse('SOURCE_ARCHIVE_INCOMPLETE_OR_OVERSIZED');
   }
@@ -203,6 +261,8 @@ export async function prepareLegacyReceiptReplayFence({
       refuse('SOURCE_ARCHIVE_IDENTITY_AMBIGUOUS');
     }
     oldIds.add(record.event.eventId);
+    oldEventFingerprints.set(record.event.eventId,
+      archivedEventFingerprint(record.event));
     lastSequence = record.sequence;
   }
   const idDigest = sha(JSON.stringify([...oldIds].sort()));
