@@ -36,7 +36,10 @@ those exact assertions. It is NOT an independent verification of (3).
   `default`-scope JSONL store with **one** polling MCP source, empty source
   arguments and no subscription. Multi-tenant scoped stores, multi-source,
   SSE, push and subscription handoffs currently **refuse**.
-- Every latest old wake delivery must be `delivered`, have nonempty
+- **Every historical row for a wake** must preserve the same runtime,
+  trigger, version, match and committed receipt identity; changing any
+  previous delivered receipt ID is a hard refusal, even if the latest row
+  looks valid. Every latest old wake delivery must be `delivered`, have nonempty
   trigger/match/version/receipt IDs, and map to one unique host receipt.
   Pending/claimed/dead-letter/unknown deliveries **refuse**.
 - The host lookup must confirm the exact `receiptId`, `tenantId`,
@@ -57,12 +60,17 @@ those exact assertions. It is NOT an independent verification of (3).
   old byte changed, refuse. A digest is **not** a filesystem lock: the
   operator must physically stop/fence old writers and work on a full
   isolated clone.
+- Before supplying the wrapped connection, reject any non-default scope,
+  push stream or webhook callback. Discovery is constrained to the exact
+  attested event type with `delivery: ['poll']`; unsupported event methods,
+  multi-event discovery and nonempty polling arguments refuse, so no
+  alternate transport can bypass the historical replay filter.
 - When the caller separately and explicitly runs a simulated polling
   adapter, the **first new-v1 null request cursor is replaced with the old
   attested persisted cursor**: null would mean \"start from now\" and could
   silently lose downtime events. A subsequent non-null new-v1 cursor is
   forwarded unchanged. Archived old event IDs are filtered; new IDs pass.
-  A null/omitted or truncated **provider response** refuses the cutover,
+  A null/omitted or `truncated: true` **provider response** refuses the cutover,
   as do unknown event names, invalid IDs or malformed poll requests.
   Old state, old cursor and new v1 store are never modified by this gate.
 
