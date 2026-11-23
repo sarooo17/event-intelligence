@@ -1,3 +1,4 @@
+export { openLegacyHostGapJournal } from './lib/v011-host-gap-journal.mjs';
 import { prepareLegacyReceiptReplayFence } from './lib/v011-legacy-receipt-source-fence.mjs';
 import { LegacyJsonlPreflightError } from './lib/v011-jsonl-upgrade-preflight.mjs';
 
