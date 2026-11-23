@@ -486,3 +486,32 @@ test('oversized truncated provider page permanently latches gap before snapshot 
       'a clean retry must not clear an observed gap on an invalid oversized page');
   });
 });
+
+test('non-enumerable own-data truncated signal blocks current page before cursor checkpoint', async () => {
+  await fixture(async ({ prepare }) => {
+    const gate = await prepare();
+    let polls = 0;
+    const wire = gate.wrapConnection({
+      ...pollConnection(),
+      request: async method => {
+        if (method !== 'events/poll') throw new Error('unexpected method');
+        polls += 1;
+        const result = {
+          cursor: 'unsafe-advanced-cursor', events: [], hasMore: false,
+        };
+        Object.defineProperty(result, 'truncated', {
+          value: true, enumerable: false, configurable: false,
+        });
+        return result;
+      },
+    });
+    await assert.rejects(wire.request('events/poll', {
+      name: 'fixture.changed', arguments: {}, cursor: null,
+    }), err('MCP_SOURCE_CONTINUITY_LOST'));
+    assert.equal(gate.continuityLost(), true);
+    await assert.rejects(wire.request('events/poll', {
+      name: 'fixture.changed', arguments: {}, cursor: 'unsafe-advanced-cursor',
+    }), err('MCP_SOURCE_CONTINUITY_LOST'));
+    assert.equal(polls, 1, 'neither first page nor retry may advance a cursor');
+  });
+});
