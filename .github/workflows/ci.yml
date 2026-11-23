@@ -247,4 +247,4 @@ jobs:
         env:
           EI_COMPILED_MUFFIN_011: ${{ github.workspace }}/.tmp-compiled-muffin-old
           EI_COMPILED_MUFFIN_100: ${{ github.workspace }}/.tmp-compiled-muffin-v1
-        run: node --test test/muffin-compiled-v011-upgrade.test.mjs
+        run: node --test test/muffin-compiled-v011-upgrade.test.mjs test/muffin-compiled-v011-real-turn-store.test.mjs
