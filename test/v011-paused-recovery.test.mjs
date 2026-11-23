@@ -108,3 +108,35 @@ test('existing target is never modified', async () => {
     assert.equal(await readFile(sentinel, 'utf8'), 'do not touch');
   });
 });
+
+test('interruption between paused-state append and trigger append cannot expose an active watch', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'ei-v1-paused-boundary-'));
+  try {
+    const one = new PersistentEventStore(dir);
+    await one.init();
+    await one.setTriggerState('interrupted-watch', '1', 'paused', actor, {
+      owner, connectionIds: [],
+    });
+    await one.close();
+
+    // SIGKILL in the gap after durable PAUSED, before trigger definition:
+    // a cold startup must see no executable watch.
+    const two = new PersistentEventStore(dir);
+    await two.init();
+    assert.equal(two.listTriggers().length, 0);
+    assert.equal(two.getTriggerState('interrupted-watch', '1').status, 'paused');
+
+    // Simulate a second interruption immediately after the definition
+    // becomes durable, then independently cold start again.
+    await two.putTrigger(watcher('interrupted-watch'));
+    await two.close();
+    const three = new PersistentEventStore(dir);
+    await three.init();
+    assert.equal(three.listTriggers().length, 1);
+    assert.equal(three.getTriggerState('interrupted-watch', '1').status, 'paused');
+    assert.deepEqual(three.getTriggerState('interrupted-watch', '1').connectionIds, []);
+    await three.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
