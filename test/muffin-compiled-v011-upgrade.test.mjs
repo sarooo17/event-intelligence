@@ -10,6 +10,7 @@ import test from 'node:test';
 import { inspectLegacyJsonlStore } from '../scripts/lib/v011-jsonl-upgrade-preflight.mjs';
 import { stageLegacyWatchesPaused } from '../scripts/lib/v011-jsonl-paused-recovery.mjs';
 import { prepareLegacyReceiptReplayFence } from '../scripts/lib/v011-legacy-receipt-source-fence.mjs';
+import { openLegacyHostGapJournal } from '../scripts/lib/v011-host-gap-journal.mjs';
 
 const oldRoot = process.env.EI_COMPILED_MUFFIN_011;
 const modernRoot = process.env.EI_COMPILED_MUFFIN_100;
@@ -251,6 +252,22 @@ test('real compiled old Muffin+published EI 0.11 watch, host receipt and paused 
     await cp(candidateHome, authorizedHome, { recursive: true });
     await cp(path.join(original, 'host-delivered-receipts.jsonl'),
       path.join(authorizedHome, 'host-delivered-receipts.jsonl'));
+    // New host-owned journal lives outside BOTH the original v0.11 JSONL
+    // directory and v1 candidate store. A crash before EI checkpoint
+    // acknowledgement will fail closed on cold restart.
+    const journalDir = path.join(authorizedHome, 'host-owned-recovery-journal');
+    mkdirSync(journalDir);
+    const journalBinding = {
+      directory: journalDir,
+      sourceSnapshotSha256: report.sourceSnapshotSha256,
+      sourceIdentitySha256: createHash('sha256')
+        .update(JSON.stringify([firstEvent.eventId])).digest('hex'),
+      tenantId: 'host',
+    };
+    const hostGapJournal = await openLegacyHostGapJournal({
+      ...journalBinding, mode: 'create',
+    });
+
     // Required evidence: every old delivered wake maps to an independently
     // persisted host receipt, and the synthetic provider explicitly declares
     // stable/complete ID replay through this exact old cursor. No real MCP
@@ -261,6 +278,7 @@ test('real compiled old Muffin+published EI 0.11 watch, host receipt and paused 
       expectedSourceSnapshotSha256: report.sourceSnapshotSha256,
       tenantId: 'host',
       runtime: 'muffin',
+      hostGapJournal,
       lookupHostReceipt: async ({ receiptId }) => {
         if (!durableHostPort(original).saved.has(receiptId)) return null;
         return {
@@ -320,6 +338,42 @@ test('real compiled old Muffin+published EI 0.11 watch, host receipt and paused 
     } finally {
       await activated.close();
     }
+
+    // Real published v1 cursor readback from the rebuilt candidate store,
+    // not a test callback returning true without checking durable bytes.
+    const pollRecord = new CurrentStore(path.join(authorizedHome, 'event-intelligence'));
+    await pollRecord.init();
+    const durableMcpState = pollRecord.getMcpClientState(
+      'fixture-connection', 'fixture.changed', {});
+    assert.ok(durableMcpState?.cursor,
+      'actual v1 client checkpoint must be persisted before journal approval');
+    await pollRecord.close();
+    const coldBeforeAck = await openLegacyHostGapJournal({
+      ...journalBinding, mode: 'open',
+    });
+    assert.equal((await coldBeforeAck.status()).state, 'checkpoint-required');
+    await assert.rejects(coldBeforeAck.assertReady(),
+      error => error?.code === 'HOST_GAP_JOURNAL_NOT_READY');
+    await coldBeforeAck.confirmHostCheckpoint({
+      cursor: durableMcpState.cursor,
+      checkPersistedCheckpoint: async candidateCursor => {
+        const reopenedStore = new CurrentStore(
+          path.join(authorizedHome, 'event-intelligence'));
+        await reopenedStore.init();
+        try {
+          const state = reopenedStore.getMcpClientState(
+            'fixture-connection', 'fixture.changed', {});
+          return state?.cursor === candidateCursor &&
+            !state?.truncated && !state?.gapUnresolved;
+        } finally {
+          await reopenedStore.close();
+        }
+      },
+    });
+    const readyAfterAck = await openLegacyHostGapJournal({
+      ...journalBinding, mode: 'open',
+    });
+    await readyAfterAck.assertReady();
     const nextFence = fence();
     const nextPort = durableHostPort(authorizedHome);
     const activatedRestart = await createV1([nextFence.connection],
@@ -351,6 +405,8 @@ test('real compiled old Muffin+published EI 0.11 watch, host receipt and paused 
       controlledStableEventIdFenceOldEvents: 1,
       controlledStableEventIdFenceNewEffects: 1,
       controlledRestartAdditionalEffects: 0,
+      checkpointVerifiedFromActualV1Store: true,
+      durableHostGapJournalReopenedBeforeAndAfterAck: true,
       oldDurableHostReceiptsReconciledByGate: sourceFence.historicalReceiptsReconciled,
       sourceContinuityExternallyDeclared: true,
       productionProviderFrontierCertified: false,
