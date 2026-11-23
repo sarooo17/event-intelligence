@@ -456,3 +456,33 @@ test('rejects paginated or incomplete source discovery before selecting poll mod
     }).request('events/list'), err('MCP_SOURCE_DISCOVERY_OUTSIDE_REPLAY_PROFILE'));
   });
 });
+
+test('oversized truncated provider page permanently latches gap before snapshot failure', async () => {
+  await fixture(async ({ prepare }) => {
+    const gate = await prepare();
+    let providerCalls = 0;
+    const wire = gate.wrapConnection({
+      ...pollConnection(),
+      request: async method => {
+        if (method !== 'events/poll') throw new Error('unexpected method');
+        providerCalls += 1;
+        return providerCalls === 1 ? {
+          truncated: true, hasMore: false, cursor: 'unsafe-advanced-cursor',
+          events: [], oversized: 'x'.repeat(5 * 1024 * 1024),
+        } : {
+          truncated: false, hasMore: false, cursor: 'clean-after-unsafe',
+          events: [],
+        };
+      },
+    });
+    await assert.rejects(wire.request('events/poll', {
+      name: 'fixture.changed', arguments: {}, cursor: null,
+    }), err('MCP_WIRE_SNAPSHOT_INVALID'));
+    assert.equal(gate.continuityLost(), true);
+    await assert.rejects(wire.request('events/poll', {
+      name: 'fixture.changed', arguments: {}, cursor: 'unsafe-advanced-cursor',
+    }), err('MCP_SOURCE_CONTINUITY_LOST'));
+    assert.equal(providerCalls, 1,
+      'a clean retry must not clear an observed gap on an invalid oversized page');
+  });
+});
