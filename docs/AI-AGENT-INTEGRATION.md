@@ -20,6 +20,27 @@ are separate.
 EI.** If the host cannot supply a durable continuation/receipt boundary, first
 implement that host-owned contract.
 
+## Legacy store upgrade is a separate, host-neutral workflow
+
+For an existing `0.11.0` installation with populated JSONL Pattern v2
+state, **do not let a new v1 binary adopt the old store automatically**.
+The safe refusal, read-only preflight and paused-only recovery prototypes are
+tracked in [#426](https://github.com/sarooo17/event-intelligence/issues/426).
+
+A **repository-local, draft** adapter contract is described in
+[host-neutral legacy recovery](HOST-NEUTRAL-LEGACY-RECOVERY.md). It defines
+four host capabilities (exclusive epoch, durable wake receipt lookup,
+provider replay-frontier evidence, and persisted source checkpoint
+readback). Runtime-specific database mappings belong to the **host**;
+EI must not import a particular agent's TurnStore, job queue, graph state
+or authorization protocol. Muffin is one consumer fixture, **not** the
+reference architecture.
+
+**Important:** the proposed `./host/recovery` npm entrypoint is **not
+published in v1.0.0**. CI experiments live in the linked Draft PRs.
+Do not change consumer pins, merge an upgrade, or resume old watches based
+only on passing synthetic host tests.
+
 ## 0. Inspect the target application
 
 Before writing code, locate:
