@@ -15,6 +15,11 @@ const sha = value => createHash('sha256').update(value).digest('hex');
 const MAX_ARCHIVED_EVENTS = 10000;
 const MAX_RECEIPTS = 1024;
 const MAX_EVENT_IDENTITY_BYTES = 32 * 1024;
+function snapshotMcpWireResult(raw) {
+  try { return snapshotUntrustedEventData(raw); }
+  catch { refuse('MCP_WIRE_SNAPSHOT_INVALID'); }
+}
+
 
 function stableJson(value) {
   if (Array.isArray(value)) return value.map(stableJson);
@@ -308,9 +313,11 @@ export async function prepareLegacyReceiptReplayFence({
       ...connection,
       async request(method, ...args) {
         if (method === 'events/list') {
-          const result = await connection.request(method, ...args);
+          const result = snapshotMcpWireResult(
+            await connection.request(method, ...args));
           if (!result || !Array.isArray(result.events) ||
               result.events.length !== 1 ||
+              (result.nextCursor !== undefined && result.nextCursor !== null) ||
               result.events[0]?.name !== source.eventName ||
               !Array.isArray(result.events[0].delivery) ||
               !result.events[0].delivery.includes('poll')) {
@@ -343,8 +350,8 @@ export async function prepareLegacyReceiptReplayFence({
         // If v1 subsequently has a cursor, do not override its progress.
         const cursor = params.cursor === null ? source.cursor : params.cursor;
         if (!cursor) refuse('MCP_POLL_REQUEST_CURSOR_AMBIGUOUS');
-        const result = await connection.request(method,
-          { ...params, cursor }, ...args.slice(1));
+        const result = snapshotMcpWireResult(await connection.request(method,
+          { ...params, cursor }, ...args.slice(1)));
         if (!result || typeof result !== 'object' ||
             !Array.isArray(result.events) ||
             typeof result.hasMore !== 'boolean' ||
