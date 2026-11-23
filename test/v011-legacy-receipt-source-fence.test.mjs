@@ -50,6 +50,7 @@ async function fixture(run) {
     attestProviderSource: async evidence => ({
       ...evidence,
       stableEventIds: true,
+          immutableEventIdMapping: true,
       completeReplayThroughLegacyCursor: true,
       noUnreportedGaps: true,
       supportsPolling: true,
@@ -106,6 +107,7 @@ test('reconciles all old receipts, filters old replay and allows new ID only und
         assert.match(evidence.archivedEventIdsSha256, /^[0-9a-f]{64}$/);
         return {
           ...evidence, stableEventIds: true,
+          immutableEventIdMapping: true,
           completeReplayThroughLegacyCursor: true, noUnreportedGaps: true,
           supportsPolling: true,
         };
@@ -148,6 +150,7 @@ test('rejects provider lacking stable replay proof or complete checkpoint/gap gu
     await assert.rejects(prepare({
       attestProviderSource: async evidence => ({
         ...evidence, stableEventIds: true,
+          immutableEventIdMapping: true,
         completeReplayThroughLegacyCursor: false, noUnreportedGaps: true,
         supportsPolling: true,
       }),
@@ -185,6 +188,7 @@ test('source snapshot change during provider attestation fails closed', async ()
         }));
         return {
           ...evidence, stableEventIds: true,
+          immutableEventIdMapping: true,
           completeReplayThroughLegacyCursor: true, noUnreportedGaps: true,
           supportsPolling: true,
         };
