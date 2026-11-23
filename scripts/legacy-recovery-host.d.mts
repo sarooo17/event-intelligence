@@ -87,6 +87,7 @@ export interface LegacyHostGapJournal {
   readonly tenantId: string;
   readonly sourceSnapshotSha256: string;
   readonly sourceIdentitySha256: string;
+  readonly authorityEpoch: string | null;
   assertReady(): Promise<unknown>;
   beginPoll(input: {cursor: string}): Promise<unknown>;
   validated(input: {cursor: string}): Promise<unknown>;
@@ -111,6 +112,8 @@ export function openLegacyHostGapJournal(options: {
   tenantId: string;
   sourceSnapshotSha256: string;
   sourceIdentitySha256: string;
+  /** Strong host-generated epoch, mandatory when composing the generic bridge. */
+  authorityEpoch?: string | null;
 }): Promise<LegacyHostGapJournal>;
 
 export interface LegacyRecoveryHostRehearsal {
