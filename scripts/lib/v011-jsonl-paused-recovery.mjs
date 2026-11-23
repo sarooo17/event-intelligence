@@ -129,7 +129,10 @@ export async function stageLegacyWatchesPaused({
         current = await store.forScope(plan.scopeId);
         scoped.set(plan.scopeId, current);
       }
-      await current.putTrigger(plan.definition);
+      // Crash boundary: a definition with no state defaults to active in
+      // PersistentEventStore. Persist PAUSED before exposing the definition.
+      // If killed here, a lone paused state has no executable trigger; if
+      // killed after putTrigger, the trigger is already paused on reopen.
       await current.setTriggerState(
         plan.definition.triggerId,
         plan.definition.version,
@@ -137,6 +140,7 @@ export async function stageLegacyWatchesPaused({
         plan.actor,
         { owner: plan.owner, connectionIds: [] },
       );
+      await current.putTrigger(plan.definition);
     }
     for (const entry of scoped.values()) {
       if (entry !== store) scopes.push(entry);
