@@ -191,7 +191,8 @@ async function inventoryRoot(dataDir) {
     for (const entry of names) {
       if (!entry.isDirectory()) reject('UNRECOGNIZED_OR_NONREGULAR_STORE_ENTRY');
       const scope = Buffer.from(entry.name, 'base64url').toString('utf8');
-      if (!scope || scope === 'default' ||
+      if (!scope || scope !== scope.trim() || scope.length > 240 ||
+          scope === 'default' ||
           Buffer.from(scope, 'utf8').toString('base64url') !== entry.name) {
         reject('INVALID_SCOPE_DIRECTORY');
       }
