@@ -105,3 +105,17 @@ test('rejects invalid JSON, version claims, unknown marker, unknown files and sy
       code('UNRECOGNIZED_OR_NONREGULAR_STORE_ENTRY'));
   });
 });
+
+test('legacy scope ids that v1 would trim or collapse are refused before authorization', async () => {
+  for (const unsafe of [' default ', ' team ', 'team ']) {
+    await inHome(async home => {
+      const directory = path.join(home, 'scopes',
+        Buffer.from(unsafe, 'utf8').toString('base64url'));
+      await mkdir(directory, { recursive: true });
+      await writeFile(path.join(directory, 'triggers.jsonl'),
+        row({ triggerId: 'watch', version: '1' }));
+      await assert.rejects(inspectLegacyJsonlStore(home, version),
+        code('INVALID_SCOPE_DIRECTORY'));
+    });
+  }
+});
