@@ -426,7 +426,14 @@ test('refuses provider Proxy and accessor-backed poll outputs before any host re
     const wire = gate.wrapConnection({
       ...source,
       request: async () => new Proxy({}, {
-        get() { trapCalls++; throw new Error('provider getter should never execute'); },
+        // Async return/await must consult .then for Promise assimilation
+        // before the wrapper ever receives the resolved provider value.
+        // Only non-then property traps are forbidden at the trust boundary.
+        get(_target, property) {
+          if (property === 'then') return undefined;
+          trapCalls++;
+          throw new Error('provider data getter should never execute');
+        },
       }),
     });
     await assert.rejects(wire.request('events/poll', {
