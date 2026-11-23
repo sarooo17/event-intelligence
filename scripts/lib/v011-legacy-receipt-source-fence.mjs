@@ -464,6 +464,8 @@ export async function prepareLegacyReceiptReplayFence({
     archivedEventIdsCount: oldIds.size,
     sourceSnapshotSha256: before.sourceSnapshotSha256,
     sourceIdentitySha256: idDigest,
+    sourceConnectionId: source.connectionId,
+    sourceEventName: source.eventName,
     replayStats: () => Object.freeze({ rejectedOld, passedNew }),
     continuityLost: () => continuityLost,
     wrapConnection,
