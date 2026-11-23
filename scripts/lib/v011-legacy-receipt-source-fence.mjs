@@ -90,6 +90,19 @@ function exactSourceState(records) {
   const states = newest(records, ['connectionId', 'eventName']);
   if (states.length !== 1) refuse('MULTISOURCE_RECONCILIATION_NOT_SUPPORTED');
   const state = states[0];
+  for (const record of records) {
+    if (record.connectionId !== state.connectionId ||
+        record.eventName !== state.eventName ||
+        record.serverId !== state.serverId ||
+        record.deliveryMode !== 'poll' ||
+        (record.subscriptionId !== null && record.subscriptionId !== undefined) ||
+        (record.arguments !== undefined &&
+          (!record.arguments || Array.isArray(record.arguments) ||
+            typeof record.arguments !== 'object' ||
+            Object.keys(record.arguments).length !== 0))) {
+      refuse('HISTORICAL_SOURCE_IDENTITY_DRIFT');
+    }
+  }
   if (typeof state.serverId !== 'string' || !state.serverId ||
       typeof state.cursor !== 'string' || !state.cursor ||
       (state.arguments !== undefined &&
@@ -181,7 +194,7 @@ export async function prepareLegacyReceiptReplayFence({
   let lastSequence = 0;
   for (const record of archiveRows) {
     if (!Number.isSafeInteger(record.sequence) ||
-        record.sequence <= lastSequence ||
+        record.sequence !== lastSequence + 1 ||
         record.serverId !== source.serverId ||
         record.subscriptionId !== null && record.subscriptionId !== undefined ||
         record.event?.name !== source.eventName ||
@@ -208,6 +221,7 @@ export async function prepareLegacyReceiptReplayFence({
       declared?.legacyCursor !== source.cursor ||
       declared?.archivedEventIdsSha256 !== idDigest ||
       declared?.stableEventIds !== true ||
+      declared?.immutableEventIdMapping !== true ||
       declared?.completeReplayThroughLegacyCursor !== true ||
       declared?.noUnreportedGaps !== true ||
       declared?.supportsPolling !== true) {
