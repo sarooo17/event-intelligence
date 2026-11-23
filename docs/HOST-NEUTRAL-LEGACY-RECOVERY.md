@@ -5,8 +5,10 @@ This is a **host-neutral SDK interface**, not an official MCP standard, lossless
 a runtime-specific adapter or a permission to resume old watches.
 
 The published v1 SDK already exposes runtime-neutral embedded-host and
-conformance APIs. This *draft* adds a separate, opt-in
-`mcp-event-intelligence/host/recovery` entrypoint. It does not change the
+conformance APIs. This *draft* implements a separate, opt-in **repository-local**
+`scripts/legacy-recovery-host.mjs` boundary with matching TypeScript declarations.
+A future versioned release may expose `mcp-event-intelligence/host/recovery`
+only after an explicit npm compatibility and release review. It does not change the
 normal `mcp-event-intelligence/embedded` core, require Muffin, or contain a
 special-case branch for any particular agent runtime.
 
@@ -27,14 +29,15 @@ the same **portable capabilities** through callbacks.
 
 ## Contract: four host-owned capabilities
 
-Import these on the proposed branch (not yet in the published v1.0.0):
+Import the **repository-local module for development/testing only**.
+This is **not** an available published npm subpath in v1.0.0:
 
 ```js
 import {
   createLegacyRecoveryHostBridge,
   openLegacyHostGapJournal,
   prepareLegacyHostRecovery,
-} from 'mcp-event-intelligence/host/recovery';
+} from '../scripts/legacy-recovery-host.mjs';
 
 const host = createLegacyRecoveryHostBridge({
   runtimeId: 'my-agent-runtime',
@@ -80,7 +83,10 @@ const rehearsal = await prepareLegacyHostRecovery({
 // rehearsal.safeToResumeOrDeploy === false: do NOT attach a live candidate.
 ```
 
-The placeholders above are **not** ready-to-use runtime methods. A host adapter
+The import path above is illustrative of local repository testing; adapt it
+relative to your test location. A package-level export would require a
+new release with an updated public npm export manifest. The placeholders
+above are **not** ready-to-use runtime methods. A host adapter
 must map them to its actual authorization and persistence APIs, verify
 receipt principal `system:automation`, and return the exact typed shapes in
 `scripts/legacy-recovery-host.d.mts`. EI does not make those methods up.
