@@ -191,6 +191,7 @@ test('compiled Muffin 0.11 actual TurnStore receipt survives cold restart and v1
         return {
           ...evidence,
           stableEventIds: true,
+          immutableEventIdMapping: true,
           completeReplayThroughLegacyCursor: true,
           noUnreportedGaps: true,
           supportsPolling: true,
