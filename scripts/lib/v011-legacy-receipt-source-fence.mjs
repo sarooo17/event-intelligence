@@ -383,7 +383,9 @@ export async function prepareLegacyReceiptReplayFence({
         // If v1 subsequently has a cursor, do not override its progress.
         const cursor = params.cursor === null ? source.cursor : params.cursor;
         if (!cursor) refuse('MCP_POLL_REQUEST_CURSOR_AMBIGUOUS');
-        if (hostGapJournal) await hostGapJournal.beginPoll({ cursor });
+        if (hostGapJournal) {
+          await hostGapJournal.beginPoll({ cursor, initialCursor: source.cursor });
+        }
         try {
         const rawResult = await connection.request(method,
           { ...params, cursor }, ...args.slice(1));
