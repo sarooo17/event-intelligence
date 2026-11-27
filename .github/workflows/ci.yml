@@ -84,6 +84,8 @@ jobs:
           "$RUNNER_TEMP/ei-pg16-cli/pg_dump" --version
           "$RUNNER_TEMP/ei-pg16-cli/pg_restore" --version
       - run: npm run test:postgres
+      - name: Legacy recovery host authority across independent PostgreSQL sessions
+        run: node --test --test-name-pattern='independent PostgreSQL host sessions' test/v011-portable-host-recovery.test.mjs
       - name: PostgreSQL scale harness smoke (isolated 16 triggers)
         env:
           EI_PG_BENCHMARK_CONFIRM: YES_ISOLATED
