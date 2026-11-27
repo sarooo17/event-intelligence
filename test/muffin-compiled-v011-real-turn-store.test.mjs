@@ -8,6 +8,9 @@ import { pathToFileURL } from 'node:url';
 import test from 'node:test';
 import { inspectLegacyJsonlStore } from '../scripts/lib/v011-jsonl-upgrade-preflight.mjs';
 import { prepareLegacyReceiptReplayFence } from '../scripts/lib/v011-legacy-receipt-source-fence.mjs';
+import { stageLegacyWatchesPaused } from '../scripts/lib/v011-jsonl-paused-recovery.mjs';
+import { openLegacyHostGapJournal } from '../scripts/lib/v011-host-gap-journal.mjs';
+import { PersistentEventStore } from '../scripts/lib/persistent-event-store.mjs';
 
 const oldRoot = process.env.EI_COMPILED_MUFFIN_011;
 const modernRoot = process.env.EI_COMPILED_MUFFIN_100;
@@ -71,7 +74,7 @@ async function hashes(root) {
 }
 
 test('compiled Muffin 0.11 actual TurnStore receipt survives cold restart and v1 refusal', {
-  skip, timeout: 120000,
+  skip, timeout: 180000,
 }, async () => {
   const { runInit } = await imported(oldRoot, 'dist/cli/init.js');
   const { buildRuntime } = await imported(oldRoot, 'dist/agent/runtime.js');
@@ -206,7 +209,14 @@ test('compiled Muffin 0.11 actual TurnStore receipt survives cold restart and v1
     await coldOld.close();
 
     const before = await hashes(path.join(home, 'event-intelligence'));
-    await cp(home, oldClone, { recursive: true });
+    // The entire host Home (including SQLite and config) is quiesced and
+    // independently copied. Keep the sealed backup distinct from any
+    // writable candidate or rollback rehearsal.
+    const fullBefore = await hashes(home);
+    const sealedBackup = path.join(tmp, 'sealed-v011-backup');
+    await cp(home, sealedBackup, {recursive: true, errorOnExist: true, force: false});
+    assert.deepEqual(await hashes(sealedBackup), fullBefore);
+    await cp(sealedBackup, oldClone, { recursive: true });
     const noDeliveryPort = {
       source: () => null, has: () => false,
       openSession: id => ({ id, file: path.join(oldClone, 'unused.jsonl') }),
@@ -216,6 +226,185 @@ test('compiled Muffin 0.11 actual TurnStore receipt survives cold restart and v1
       createV1([fixtureConnection()], oldClone, noDeliveryPort),
       e => e?.code === 'EVENT_INTELLIGENCE_PATTERN_V2_SIGNATURE_INCOMPATIBLE');
     assert.deepEqual(await hashes(path.join(oldClone, 'event-intelligence')), before);
+    // PRE-CUTOVER rollback: clone the verified backup, start the real old
+    // runtime with its original SDK, replay the already delivered occurrence,
+    // and verify the old receipt is still the only automation Turn.
+    // Never switch back blindly after a new external effect was accepted.
+    const rollbackHome = path.join(tmp, 'rollback-before-cutover');
+    await cp(sealedBackup, rollbackHome, {recursive: true, errorOnExist: true, force: false});
+    assert.deepEqual(await hashes(rollbackHome), fullBefore);
+    runtime = buildRuntime(rollbackHome, workspace);
+    assert.equal(runtime.deps.turns.get(wake.id)?.id, wake.id);
+    await attachEventIntelligence(runtime, [fixtureConnection()], rollbackHome);
+    const rollbackEmbedded = getAttachedEventIntelligence(runtime);
+    assert.ok(rollbackEmbedded);
+    await rollbackEmbedded.host.runtime.mcpEventsClient.pollAll();
+    const rollbackDue = runtime.deps.turns.due(new Date('2099-01-01T00:00:00.000Z'), 100)
+      .filter(x => x.id !== source.id);
+    assert.deepEqual(rollbackDue.map(x => x.id), [wake.id],
+      'rollback must not enqueue an old occurrence again');
+    await runtime.close();
+    runtime = null;
+
+    // Candidate is an isolated copy of host storage WITHOUT legacy EI.
+    // The recovery helper rebuilds only the reauthorized paused watch.
+    const candidateHome = path.join(tmp, 'v1-isolated-real-turn-store');
+    await cp(sealedBackup, candidateHome, {
+      recursive: true, errorOnExist: true, force: false,
+      filter: item => item !== path.join(sealedBackup, 'event-intelligence'),
+    });
+    const candidateStoreDir = path.join(candidateHome, 'event-intelligence');
+    const backupSourceDir = path.join(sealedBackup, 'event-intelligence');
+    const watchId = 'old-real-turn-store-watch';
+    let approvedOwner, approvedActor;
+    const staged = await stageLegacyWatchesPaused({
+      sourceDir: backupSourceDir, targetDir: candidateStoreDir,
+      expectedSourceSnapshotSha256: preflight.sourceSnapshotSha256,
+      declaredVersion: '0.11.0',
+      authorizeWatch: async ({scopeId, legacyOwner, definition}) => {
+        assert.equal(scopeId, 'default');
+        assert.equal(definition.triggerId, watchId);
+        assert.equal(legacyOwner?.tenant_id, 'host');
+        assert.equal(legacyOwner?.type, 'owner');
+        // Only this fixture's owner and original source Turn are approved.
+        assert.equal(definition.target.id, source.id);
+        approvedOwner = structuredClone(legacyOwner);
+        approvedActor = {type: 'agent', principal_id: 'muffin:event-intelligence', tenant_id: 'host'};
+        return {owner: approvedOwner, actor: approvedActor};
+      },
+    });
+    assert.equal(staged.stagedWatches, 1);
+    assert.equal(staged.originalDeliveredReceipts, 1);
+    assert.equal(staged.safeToResumeOrDeploy, false);
+    const { buildRuntime: buildV1 } = await imported(modernRoot, 'dist/agent/runtime.js');
+    const {
+      attachEventIntelligence: attachV1, getAttachedEventIntelligence: getV1,
+    } = await imported(modernRoot, 'dist/agent/event-intelligence.js');
+
+    // Read actual archived occurrence from the sealed EI source, not a
+    // fabricated duplicate. The reference replay remains synthetic.
+    const archived = readFileSync(path.join(backupSourceDir, 'mcp-events.jsonl'), 'utf8')
+      .trim().split('\n').map(JSON.parse);
+    assert.equal(archived.length, 1);
+    const oldEvent = archived[0].event;
+    const newEvent = {...oldEvent, eventId: 'new-real-v1-turn-store-event', data: {value: 93}};
+    const journalDir = path.join(candidateHome, 'host-recovery-journal');
+    mkdirSync(journalDir);
+    const journalBinding = {
+      directory: journalDir, tenantId: 'host',
+      sourceSnapshotSha256: preflight.sourceSnapshotSha256,
+      sourceIdentitySha256: createHash('sha256')
+        .update(JSON.stringify([oldEvent.eventId])).digest('hex'),
+    };
+    let journal = await openLegacyHostGapJournal({...journalBinding, mode: 'create'});
+    const prepare = async (hostRuntime, j) => prepareLegacyReceiptReplayFence({
+      sourceDir: backupSourceDir,
+      expectedSourceSnapshotSha256: preflight.sourceSnapshotSha256,
+      declaredVersion: '0.11.0', tenantId: 'host', runtime: 'muffin',
+      hostGapJournal: j,
+      lookupHostReceipt: async ({receiptId}) => {
+        const row = hostRuntime.deps.turns.get(receiptId);
+        return row && {receiptId: row.id, tenantId: row.tenant, runtime: 'muffin',
+          state: 'durable', principalKind: row.principal.kind,
+          principalSource: row.principal.source};
+      },
+      attestProviderSource: async evidence => {
+        assert.equal(evidence.legacyCursor, 'old-muffin-source-2');
+        assert.equal(evidence.archivedEventIdsSha256, journalBinding.sourceIdentitySha256);
+        return {...evidence, stableEventIds: true, immutableEventIdMapping: true,
+          cursorPortableToTargetVersion: true, completeReplayThroughLegacyCursor: true,
+          noUnreportedGaps: true, supportsPolling: true};
+      },
+    });
+    const replayConnection = (fence, expectedCursor, events) => fence.wrapConnection({
+      ...fixtureConnection(),
+      async request(method, args) {
+        if (method === 'events/list') return fixtureConnection().request(method);
+        assert.equal(method, 'events/poll');
+        assert.equal(args.cursor, expectedCursor);
+        return {events, cursor: 'new-muffin-source-3', hasMore: false,
+          truncated: false, nextPollMs: 60000};
+      },
+    });
+    // The staged store remains paused until explicit test-only approval.
+    // Direct activation is permitted ONLY in this isolated synthetic test;
+    // the repository-local recovery helper itself cannot activate anything.
+    const stagedStore = new PersistentEventStore(candidateStoreDir);
+    await stagedStore.init();
+    const stagedState = stagedStore.getTriggerState(watchId, '1');
+    assert.equal(stagedState.status, 'paused');
+    assert.deepEqual(stagedState.owner, approvedOwner);
+    assert.deepEqual(stagedState.connectionIds, []);
+    await stagedStore.setTriggerState(watchId, '1', 'active', approvedActor,
+      {owner: approvedOwner, connectionIds: ['demo']});
+    await stagedStore.close();
+
+    runtime = buildV1(candidateHome, workspace);
+    assert.equal(runtime.deps.turns.get(wake.id)?.id, wake.id);
+    let fence = await prepare(runtime, journal);
+    assert.equal(fence.historicalReceiptsReconciled, 1);
+    assert.equal(fence.safeToResumeOrDeploy, false);
+    await attachV1(runtime, [replayConnection(fence, 'old-muffin-source-2',
+      [oldEvent, newEvent])], candidateHome);
+    let v1 = getV1(runtime);
+    assert.ok(v1);
+    const ownerList = await v1.toolCatalog.get('event_watch_list').execute(
+      {limit: 20}, context(source.id));
+    assert.equal(ownerList.ok, true);
+    assert.ok(JSON.stringify(ownerList).includes(watchId));
+    const foreign = {...context(source.id), principal: {kind: 'owner', connector: 'cli', externalId: 'other-owner'}};
+    const foreignList = await v1.toolCatalog.get('event_watch_list').execute({limit: 20}, foreign);
+    assert.equal(JSON.stringify(foreignList).includes(watchId), false);
+    await v1.host.runtime.mcpEventsClient.pollAll();
+    const turns = runtime.deps.turns.due(new Date('2099-01-01T00:00:00.000Z'), 100)
+      .filter(x => x.id !== source.id);
+    assert.equal(turns.length, 2, 'one historical and exactly one new durable Turn');
+    const fresh = turns.find(x => x.id !== wake.id);
+    assert.ok(fresh);
+    assert.equal(fresh.principal.source, 'automation');
+    assert.equal(fresh.tenant, 'host');
+    assert.equal(fence.replayStats().rejectedOld, 1);
+    const newReceipts = readFileSync(path.join(candidateStoreDir, 'wake-deliveries.jsonl'), 'utf8')
+      .trim().split('\n').map(JSON.parse);
+    assert.equal(newReceipts.at(-1).status, 'delivered');
+    assert.equal(newReceipts.at(-1).runtimeReceiptId, fresh.id);
+    assert.notEqual(fresh.id, wake.id);
+    await runtime.close();
+    runtime = null;
+    // Read back the actual new EI checkpoint only after closing the host.
+    const readCheckpoint = async cursor => {
+      const disk = new PersistentEventStore(candidateStoreDir);
+      await disk.init();
+      try {
+        const state = disk.getMcpClientState('demo', 'demo.ready', {});
+        return state?.cursor === cursor && !state.truncated && !state.gapUnresolved;
+      } finally { await disk.close(); }
+    };
+    journal = await openLegacyHostGapJournal({...journalBinding, mode: 'open'});
+    await journal.confirmHostCheckpoint({cursor: 'new-muffin-source-3',
+      checkPersistedCheckpoint: readCheckpoint});
+    await journal.assertReady();
+
+    // Cold v1 restart: real old+new SQLite receipts and the new cursor
+    // survive. Provider deliberately returns no events beyond the cursor.
+    runtime = buildV1(candidateHome, workspace);
+    assert.equal(runtime.deps.turns.get(wake.id)?.id, wake.id);
+    assert.equal(runtime.deps.turns.get(fresh.id)?.id, fresh.id);
+    fence = await prepare(runtime, await openLegacyHostGapJournal({...journalBinding, mode: 'open'}));
+    await attachV1(runtime, [replayConnection(fence, 'new-muffin-source-3', [])], candidateHome);
+    v1 = getV1(runtime);
+    await v1.host.runtime.mcpEventsClient.pollAll();
+    assert.deepEqual(runtime.deps.turns.due(new Date('2099-01-01T00:00:00.000Z'), 100)
+      .filter(x => x.id !== source.id).map(x => x.id).sort(), [wake.id, fresh.id].sort());
+    await runtime.close();
+    runtime = null;
+    journal = await openLegacyHostGapJournal({...journalBinding, mode: 'open'});
+    await journal.confirmHostCheckpoint({cursor: 'new-muffin-source-3',
+      checkPersistedCheckpoint: readCheckpoint});
+    assert.deepEqual(await hashes(sealedBackup), fullBefore,
+      'complete sealed host backup must remain byte-identical');
+    assert.deepEqual(await hashes(home), fullBefore, 'original Home remains untouched');
+
     console.log(JSON.stringify({
       schema: 'ei-muffin-compiled-real-old-turn-store.v1',
       oldAdapterCompiled: true,
@@ -228,7 +417,15 @@ test('compiled Muffin 0.11 actual TurnStore receipt survives cold restart and v1
       providerReplayProofFixtureOnly: true,
       newV1RefusalOnOldHomeClone: true,
       legacyEIRuntimeBytesUnchanged: true,
+      completeHostBackupByteVerified: true,
+      preCutoverOldRuntimeRollbackVerified: true,
+      realNewV1TurnStoreReceipt: true,
+      oldAndNewHostReceiptAfterColdV1Restart: true,
+      oldOccurrenceAdditionalHostTurns: 0,
+      newOccurrenceHostTurns: 1,
+      ownerListIsolationVerified: true,
       losslessRecoveryOrCutoverProven: false,
+      rollbackAfterExternalEffectsAuthorized: false,
     }));
   } finally {
     if (runtime) await runtime.close();
