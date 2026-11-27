@@ -104,6 +104,24 @@ async function inventoryScope(folder, isRoot = false) {
     }
     deliveries.set(row.wakeId, row);
   }
+  // v0.11 stores append-only deadline transitions. Inspect the latest
+  // state per identity, not the historical number of pending rows.
+  const deadlines = new Map();
+  for (const row of rows('temporal-deadlines.jsonl')) {
+    if (['deadlineId', 'triggerId', 'triggerVersion', 'matchId', 'conditionId']
+        .some(key => typeof row[key] !== 'string' || !row[key].trim()) ||
+        typeof row.dueAt !== 'string' || !Number.isFinite(Date.parse(row.dueAt)) ||
+        !['pending', 'cancelled', 'fired'].includes(row.status)) {
+      reject('INVALID_LEGACY_DEADLINE');
+    }
+    const prior = deadlines.get(row.deadlineId);
+    if (prior && ['triggerId', 'triggerVersion', 'matchId', 'conditionId', 'dueAt']
+        .some(key => prior[key] !== row[key])) {
+      reject('AMBIGUOUS_LEGACY_DEADLINE_IDENTITY');
+    }
+    deadlines.set(row.deadlineId, row);
+  }
+  const pendingDeadlines = [...deadlines.values()].filter(row => row.status === 'pending').length;
   const statuses = [...deliveries.values()];
   const active = [...triggers].filter(([key]) =>
     ['active', 'paused'].includes(states.get(key)?.status ?? 'active'));
@@ -136,6 +154,7 @@ async function inventoryScope(folder, isRoot = false) {
   if (statuses.length) reasons.add('HOST_RECEIPT_RECONCILIATION_REQUIRED');
   if (invalidReceipts.length) reasons.add('UNPROVEN_DELIVERED_RECEIPT');
   if (inFlight.length) reasons.add('INFLIGHT_WAKE_RECONCILIATION_REQUIRED');
+  if (pendingDeadlines) reasons.add('PENDING_DEADLINE_RECONCILIATION_REQUIRED');
   if (rows('mcp-client-states.jsonl').length) reasons.add('SOURCE_CURSOR_REPLAY_PROOF_REQUIRED');
   if (rows('event-sources.jsonl').length) reasons.add('SOURCE_CAPABILITY_REDISCOVERY_REQUIRED');
   if (rows('derived-contracts.jsonl').length) reasons.add('DERIVED_CONTRACT_REVIEW_REQUIRED');
@@ -161,6 +180,7 @@ async function inventoryScope(folder, isRoot = false) {
       latestDeliveries: statuses.length,
       deliveredReceipts: statuses.filter(x => x.status === 'delivered').length,
       inFlightDeliveries: inFlight.length,
+      pendingDeadlines,
       invalidDeliveredReceipts: invalidReceipts.length,
       mcpCursorUpdates: rows('mcp-client-states.jsonl').length,
       oldPatternHistoryRows: UNSAFE_HISTORY_FILES
