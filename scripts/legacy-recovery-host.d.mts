@@ -91,7 +91,7 @@ export interface LegacyHostGapJournal {
   readonly sourceIdentitySha256: string;
   readonly authorityEpoch: string | null;
   assertReady(): Promise<unknown>;
-  beginPoll(input: {cursor: string}): Promise<unknown>;
+  beginPoll(input: {cursor: string; initialCursor?: string}): Promise<unknown>;
   validated(input: {cursor: string}): Promise<unknown>;
   confirmHostCheckpoint(input: {
     cursor: string;
