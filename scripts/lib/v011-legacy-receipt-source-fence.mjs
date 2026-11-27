@@ -110,6 +110,7 @@ async function snapshot(sourceDir, declaredVersion, digest) {
     refuse('MULTISCOPE_RECONCILIATION_NOT_SUPPORTED');
   }
   const counts = report.scopes[0].counts;
+  if (counts.pendingDeadlines !== 0) refuse('PENDING_DEADLINE_RECONCILIATION_REQUIRED');
   if (counts.activeOrPausedWatches < 1 ||
       counts.missingWatchOwner ||
       counts.invalidDeliveredReceipts ||
