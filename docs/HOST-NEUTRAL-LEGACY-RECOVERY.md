@@ -121,14 +121,37 @@ The existing compiled-Muffin 0.11→v1 test remains **one additional consumer
 fixture**, not the implementation template. **No runtime-specific naming,
 database schema, continuation model, or callback is imported into EI core.**
 
+## Local process contention and host authority
+
+The recovery journal serializes each read/validate/replace transition across
+independent processes on a local filesystem with atomic exclusive file
+creation. If a process dies while holding the transition lock, a cold open
+and further transitions refuse. There is no automatic timeout, takeover or
+lock removal. An unexpected storage error may also leave this lock in place;
+keep the original archive and require explicit operator disposition. Only
+one authorized recovery writer is supported: this is not a distributed lock,
+nor permission for an unrelated worker to adopt a running poll.
+
+The existing host authority callback is independently exercised against
+two actual PostgreSQL sessions in CI using a host-owned advisory lock.
+The non-owner must be denied, and revoking ownership during an in-flight
+poll must prevent the response from being returned to EI; a new epoch
+cannot adopt the old journal. The PostgreSQL implementation exists in
+the test only; hosts choose their own authority store and fencing policy.
+The real-process tests also race two Node workers on the same local
+journal and kill a worker holding its checkpoint transition lock.
+
 ## Important limitations
 
 - This does **not** expand legacy recovery beyond single default-scope,
   single polling MCP source with explicit old archive, **nor** imply that
   EI v1 itself lacks multi-tenant, multi-source or PostgreSQL capabilities.
-- The journal file uses file+directory `fsync`, but is a **single-writer**
-  proof. A real distributed deployment must supply true CAS/epoch
-  fencing, host-persisted revocation and crash-safe compensation.
+- The local journal uses file+directory `fsync` and exclusive transitions,
+  but remains a **single-authorized-writer** recovery profile. Do not use
+  it as distributed locking on arbitrary shared/network filesystems.
+  A distributed deployment must enforce end-to-end authority/fencing,
+  host-persisted revocation and crash-safe compensation independently,
+  including at the actual effect and checkpoint commit boundaries.
 - This does not bridge old Pattern candidate state or guarantee a fully
   lossless old Home migration. It is an explicit, narrow recovery option.
 - Provider declaration callbacks are trust boundaries, not independent
