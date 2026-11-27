@@ -34,6 +34,8 @@ function validateRecord(record, expected) {
       record.authorityEpoch !== expected.authorityEpoch ||
       !['ready', 'polling', 'checkpoint-required', 'blocked'].includes(record.state) ||
       !Number.isSafeInteger(record.revision) || record.revision < 0 ||
+      (record.state === 'ready' && (record.revision === 0
+        ? record.cursor !== null : !validCursor(record.cursor))) ||
       (record.state === 'checkpoint-required' && !validCursor(record.cursor)) ||
       (record.state === 'polling' && !validCursor(record.cursor))) {
     refuse('HOST_GAP_JOURNAL_INVALID_OR_MISMATCHED');
@@ -139,10 +141,20 @@ export async function openLegacyHostGapJournal({
     tenantId,
     authorityEpoch,
     assertReady,
-    async beginPoll({ cursor }) {
-      if (!validCursor(cursor)) refuse('HOST_GAP_JOURNAL_INVALID_POLL_CURSOR');
+    async beginPoll({ cursor, initialCursor }) {
+      if (!validCursor(cursor) ||
+          (initialCursor !== undefined && !validCursor(initialCursor))) {
+        refuse('HOST_GAP_JOURNAL_INVALID_POLL_CURSOR');
+      }
       return update(current => {
         if (current.state !== 'ready') refuse('HOST_GAP_JOURNAL_NOT_READY');
+        // Opaque cursors cannot be ordered. Require exact equality with the
+        // last confirmed checkpoint, or the independently attested old
+        // cursor on first use. No reset/skip on cold reopen.
+        const expected = current.cursor ?? initialCursor;
+        if (expected !== undefined && cursor !== expected) {
+          refuse('HOST_GAP_JOURNAL_POLL_CURSOR_MISMATCH');
+        }
         return { state: 'polling', cursor };
       });
     },
