@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { appendFile, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { appendFile, mkdtemp, mkdir, readFile, rm, writeFile, readdir } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -139,4 +139,106 @@ test('interruption between paused-state append and trigger append cannot expose 
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+const deadline = (overrides = {}) => ({
+  deadlineId: 'legacy-deadline', triggerId: 'test-watch', triggerVersion: '1',
+  matchId: 'legacy-match', conditionId: 'absence', dueAt: '2026-10-07T10:00:00.000Z',
+  status: 'pending', ...overrides,
+});
+
+test('pending legacy deadline refuses recreation; terminal history is explicitly not imported', async () => {
+  await fixture(async ({old, target, stage, preflight}) => {
+    const file = path.join(old, 'temporal-deadlines.jsonl');
+    await writeFile(file, row(deadline()));
+    const bytes = await readFile(file);
+    const report = await preflight();
+    assert.equal(report.scopes[0].counts.pendingDeadlines, 1);
+    assert.ok(report.scopes[0].reasons.includes('PENDING_DEADLINE_RECONCILIATION_REQUIRED'));
+    let approvals = 0;
+    await assert.rejects(stage({authorize: async () => {
+      approvals++;
+      return {owner, actor};
+    }}), e => e?.code === 'PENDING_DEADLINE_RECONCILIATION_REQUIRED');
+    assert.equal(approvals, 0);
+    assert.deepEqual(await readFile(file), bytes);
+    await assert.rejects(readdir(target), {code: 'ENOENT'});
+    // Explicit terminal disposition in the old host fixture, not migration
+    // rewriting old state. The archive is retained as-is after cancellation.
+    await appendFile(file, row(deadline({status: 'cancelled'})));
+    const cancelled = await readFile(file);
+    assert.equal((await preflight()).scopes[0].counts.pendingDeadlines, 0);
+    const manifest = await stage();
+    assert.equal(manifest.oldTemporalDeadlinesImported, false);
+    assert.equal(manifest.pendingLegacyDeadlines, 0);
+    const store = new PersistentEventStore(target);
+    await store.init();
+    try {
+      assert.deepEqual(store.listTemporalDeadlines(), []);
+      assert.equal(store.getTriggerState('test-watch','1').status, 'paused');
+    } finally { await store.close(); }
+    assert.deepEqual(await readFile(file), cancelled);
+  });
+});
+
+test('invalid markers, wrong version, malformed or partial rows and ambiguous deadline identity refuse without writes', async () => {
+  const cases = [
+    ['pattern-v2-signature-contract.json', '{"component":"wrong","version":999}', 'UNRECOGNIZED_OR_NONREGULAR_STORE_ENTRY'],
+    ['pattern-v2-signature-contract.json', '{"component":"pattern_v2_candidate_signature","version":2}', 'UNRECOGNIZED_OR_NONREGULAR_STORE_ENTRY'],
+    ['trigger-states.jsonl', '{"triggerId":', 'INVALID_JSONL_RECORD'],
+    ['temporal-deadlines.jsonl', row(deadline({status: 'unknown'})), 'INVALID_LEGACY_DEADLINE'],
+    ['temporal-deadlines.jsonl', row(deadline()) + row(deadline({status: 'cancelled', matchId: 'other-match'})), 'AMBIGUOUS_LEGACY_DEADLINE_IDENTITY'],
+  ];
+  for (const [name, contents, code] of cases) {
+    await fixture(async ({old, target, stage}) => {
+      const file = path.join(old, name);
+      await writeFile(file, contents);
+      await assert.rejects(stage(), e => e?.code === code);
+      await assert.rejects(readdir(target), {code: 'ENOENT'});
+      assert.equal(await readFile(file, 'utf8'), contents);
+      await assert.rejects(inspectLegacyJsonlStore(old, {declaredVersion:'1.0.0'}),
+        e => e?.code === 'UNSUPPORTED_SOURCE_VERSION');
+    });
+  }
+});
+
+test('same watch ID in distinct legacy scopes remains isolated and paused; wrong tenant approval refuses entire staging', async () => {
+  await fixture(async ({old, target, stage}) => {
+    const ids = ['tenant-a', 'tenant-b'];
+    for (const tenant of ids) {
+      const folder = path.join(old, 'scopes', Buffer.from(tenant).toString('base64url'));
+      await mkdir(folder, {recursive:true});
+      await writeFile(path.join(folder,'triggers.jsonl'),row(watcher('same-id')));
+      await writeFile(path.join(folder,'trigger-states.jsonl'),row({
+        triggerId:'same-id',version:'1',status:'active',
+        owner:{type:'owner',principal_id:'owner-'+tenant,tenant_id:tenant},
+      }));
+    }
+    const approve = async ({scopeId,legacyOwner}) => {
+      const tenant = scopeId === 'default' ? 'synthetic' : scopeId;
+      return {owner:{...legacyOwner,tenant_id:tenant},
+        actor:{type:'agent',principal_id:'recovery',tenant_id:tenant}};
+    };
+    await assert.rejects(stage({authorize: async input => input.scopeId === 'tenant-b'
+      ? {owner:{type:'owner',principal_id:'foreign-owner',tenant_id:'tenant-a'},
+        actor:{type:'agent',principal_id:'foreign-actor',tenant_id:'tenant-a'}}
+      : approve(input)}), e => e?.code === 'HOST_REAUTHORIZATION_TENANT_MISMATCH');
+    await assert.rejects(readdir(target), {code:'ENOENT'});
+    const manifest = await stage({authorize:approve});
+    assert.equal(manifest.stagedWatches,3);
+    assert.equal(manifest.safeToResumeOrDeploy,false);
+    const store = new PersistentEventStore(target);
+    await store.init();
+    try {
+      assert.deepEqual(store.listTriggers().map(t=>t.triggerId),['test-watch']);
+      for (const tenant of ids) {
+        const scope = await store.forScope(tenant);
+        assert.deepEqual(scope.listTriggers().map(t=>t.triggerId),['same-id']);
+        const state = scope.getTriggerState('same-id','1');
+        assert.equal(state.status,'paused');
+        assert.equal(state.owner.tenant_id,tenant);
+        assert.deepEqual(state.connectionIds,[]);
+      }
+    } finally {await store.close();}
+  });
 });

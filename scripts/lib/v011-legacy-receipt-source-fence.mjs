@@ -110,6 +110,7 @@ async function snapshot(sourceDir, declaredVersion, digest) {
     refuse('MULTISCOPE_RECONCILIATION_NOT_SUPPORTED');
   }
   const counts = report.scopes[0].counts;
+  if (counts.pendingDeadlines !== 0) refuse('PENDING_DEADLINE_RECONCILIATION_REQUIRED');
   if (counts.activeOrPausedWatches < 1 ||
       counts.missingWatchOwner ||
       counts.invalidDeliveredReceipts ||
@@ -191,7 +192,7 @@ export async function prepareLegacyReceiptReplayFence({
   sourceDir,
   declaredVersion = '0.11.0',
   expectedSourceSnapshotSha256,
-  runtime = 'muffin',
+  runtime,
   tenantId,
   lookupHostReceipt,
   attestProviderSource,
@@ -383,7 +384,9 @@ export async function prepareLegacyReceiptReplayFence({
         // If v1 subsequently has a cursor, do not override its progress.
         const cursor = params.cursor === null ? source.cursor : params.cursor;
         if (!cursor) refuse('MCP_POLL_REQUEST_CURSOR_AMBIGUOUS');
-        if (hostGapJournal) await hostGapJournal.beginPoll({ cursor });
+        if (hostGapJournal) {
+          await hostGapJournal.beginPoll({ cursor, initialCursor: source.cursor });
+        }
         try {
         const rawResult = await connection.request(method,
           { ...params, cursor }, ...args.slice(1));
@@ -463,6 +466,9 @@ export async function prepareLegacyReceiptReplayFence({
     historicalReceiptsReconciled: receipts.length,
     archivedEventIdsCount: oldIds.size,
     sourceSnapshotSha256: before.sourceSnapshotSha256,
+    sourceIdentitySha256: idDigest,
+    sourceConnectionId: source.connectionId,
+    sourceEventName: source.eventName,
     replayStats: () => Object.freeze({ rejectedOld, passedNew }),
     continuityLost: () => continuityLost,
     wrapConnection,

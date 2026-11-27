@@ -79,6 +79,7 @@ export async function stageLegacyWatchesPaused({
   }
   for (const item of preflight.scopes) {
     const c = item.counts;
+    if (c.pendingDeadlines !== 0) refuse('PENDING_DEADLINE_RECONCILIATION_REQUIRED');
     if (c.missingWatchOwner !== 0 || c.invalidDeliveredReceipts !== 0 ||
         c.inFlightDeliveries !== 0 ||
         c.latestDeliveries !== c.deliveredReceipts ||
@@ -97,7 +98,18 @@ export async function stageLegacyWatchesPaused({
         definition: structuredClone(watch.definition),
       });
       if (!approval || !validAuthority(approval.owner) ||
-          !validAuthority(approval.actor)) refuse('HOST_REAUTHORIZATION_DENIED');
+          !validAuthority(approval.actor) || approval.owner.type !== 'owner') {
+        refuse('HOST_REAUTHORIZATION_DENIED');
+      }
+      // Owner identity may be reauthorized by the host; do not allow a
+      // tenant reassignment as a side effect of watch recreation.
+      const oldTenant = watch.legacyOwner?.tenant_id;
+      const newTenant = approval.owner.tenant_id;
+      if ((oldTenant !== undefined && oldTenant !== newTenant) ||
+          approval.actor.tenant_id !== newTenant ||
+          (newTenant !== undefined && (typeof newTenant !== 'string' || !newTenant.trim()))) {
+        refuse('HOST_REAUTHORIZATION_TENANT_MISMATCH');
+      }
       plans.push({
         scopeId: item.scope, definition: watch.definition,
         owner: structuredClone(approval.owner),
@@ -162,6 +174,8 @@ export async function stageLegacyWatchesPaused({
       sourceCursorImported: false,
       oldReceiptsImported: false,
       oldPatternHistoryImported: false,
+      oldTemporalDeadlinesImported: false,
+      pendingLegacyDeadlines: 0,
       oldMcpEventsImported: false,
       allWatchesPaused: true,
       hostReauthorizationWasCallbackBased: true,

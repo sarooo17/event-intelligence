@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { lstat, open, readFile, readdir, realpath, rename } from 'node:fs/promises';
+import { lstat, open, readFile, readdir, realpath, rename, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { LegacyJsonlPreflightError } from './v011-jsonl-upgrade-preflight.mjs';
 
@@ -10,12 +10,51 @@ import { LegacyJsonlPreflightError } from './v011-jsonl-upgrade-preflight.mjs';
 const refuse = code => { throw new LegacyJsonlPreflightError(code); };
 const SCHEMA = 'ei-host-legacy-replay-gap-journal.v1';
 const FILE = 'host-legacy-replay-gap-journal.json';
+const LOCK = FILE + '.transition-lock';
 const validHash = v => typeof v === 'string' && /^[0-9a-f]{64}$/.test(v);
 const validCursor = v => typeof v === 'string' && v.length > 0 && v.length <= 4096;
 
 async function syncDirectory(dir) {
   const handle = await open(dir, 'r');
   try { await handle.sync(); } finally { await handle.close(); }
+}
+
+async function assertNoTransitionLock(dir) {
+  try { await lstat(path.join(dir, LOCK)); }
+  catch (error) {
+    if (error?.code === 'ENOENT') return;
+    throw error;
+  }
+  refuse('HOST_GAP_JOURNAL_TRANSITION_LOCKED');
+}
+
+// Local filesystem only: exclusive create is the cross-process transition
+// linearization point. Never steal or expire a lock, including after a crash.
+// An I/O failure leaves the lock in place for explicit offline disposition.
+// The host still owns full-session authority and downstream effect fencing.
+async function withTransitionLock(dir, fn) {
+  const filename = path.join(dir, LOCK);
+  let handle;
+  try { handle = await open(filename, 'wx', 0o600); }
+  catch (error) {
+    if (error?.code === 'EEXIST') refuse('HOST_GAP_JOURNAL_TRANSITION_LOCKED');
+    throw error;
+  }
+  try { await handle.sync(); } finally { await handle.close(); }
+  await syncDirectory(dir);
+  let result;
+  let refusal;
+  try { result = await fn(); }
+  catch (error) {
+    // Expected state/precondition refusals may release the lock. Unexpected
+    // errors (including failed durability writes) must retain it.
+    if (!(error instanceof LegacyJsonlPreflightError)) throw error;
+    refusal = error;
+  }
+  await unlink(filename);
+  await syncDirectory(dir);
+  if (refusal) throw refusal;
+  return result;
 }
 
 async function assertNoPartialFiles(dir) {
@@ -31,8 +70,11 @@ function validateRecord(record, expected) {
       record.sourceSnapshotSha256 !== expected.sourceSnapshotSha256 ||
       record.sourceIdentitySha256 !== expected.sourceIdentitySha256 ||
       record.tenantId !== expected.tenantId ||
+      record.authorityEpoch !== expected.authorityEpoch ||
       !['ready', 'polling', 'checkpoint-required', 'blocked'].includes(record.state) ||
       !Number.isSafeInteger(record.revision) || record.revision < 0 ||
+      (record.state === 'ready' && (record.revision === 0
+        ? record.cursor !== null : !validCursor(record.cursor))) ||
       (record.state === 'checkpoint-required' && !validCursor(record.cursor)) ||
       (record.state === 'polling' && !validCursor(record.cursor))) {
     refuse('HOST_GAP_JOURNAL_INVALID_OR_MISMATCHED');
@@ -81,37 +123,46 @@ async function durableReplace(dir, state, { exclusive = false } = {}) {
  * incomplete checkpoint confirmation, lost file, or stale pending temp file
  * MUST stay fail-closed, not reset to 'ready' on restart.
  *
- * Single-writer only. This does NOT provide a multiworker distributed lock,
+ * Local exclusive transitions, still one authorized recovery writer only.
+ * This does NOT provide a multiworker distributed lock,
  * source-epoch fencing or production deploy authorization.
  */
 export async function openLegacyHostGapJournal({
   directory, mode, sourceSnapshotSha256, sourceIdentitySha256, tenantId,
+  authorityEpoch = null,
 } = {}) {
   if (typeof directory !== 'string' || !directory ||
       !['create', 'open'].includes(mode) ||
       !validHash(sourceSnapshotSha256) || !validHash(sourceIdentitySha256) ||
-      typeof tenantId !== 'string' || !tenantId || tenantId.length > 240) {
+      typeof tenantId !== 'string' || !tenantId || tenantId.length > 240 ||
+      (authorityEpoch !== null &&
+        (typeof authorityEpoch !== 'string' || !authorityEpoch ||
+          authorityEpoch.length > 240 || authorityEpoch !== authorityEpoch.trim()))) {
     refuse('HOST_GAP_JOURNAL_EXPLICIT_BINDING_REQUIRED');
   }
   const dir = await realpath(directory); // already-created isolated host path
   const stat = await lstat(dir);
   if (!stat.isDirectory()) refuse('HOST_GAP_JOURNAL_DIRECTORY_INVALID');
-  const expected = { sourceSnapshotSha256, sourceIdentitySha256, tenantId };
+  const expected = { sourceSnapshotSha256, sourceIdentitySha256, tenantId, authorityEpoch };
   if (mode === 'create') {
-    await assertNoPartialFiles(dir);
-    const existing = await readdir(dir);
-    if (existing.includes(FILE)) refuse('HOST_GAP_JOURNAL_ALREADY_EXISTS');
-    await durableReplace(dir, {
-      schema: SCHEMA, ...expected, state: 'ready', cursor: null, revision: 0,
-    }, { exclusive: true });
+    await withTransitionLock(dir, async () => {
+      await assertNoPartialFiles(dir);
+      const existing = await readdir(dir);
+      if (existing.includes(FILE)) refuse('HOST_GAP_JOURNAL_ALREADY_EXISTS');
+      await durableReplace(dir, {
+        schema: SCHEMA, ...expected, state: 'ready', cursor: null, revision: 0,
+      }, { exclusive: true });
+    });
   } else {
+    await assertNoTransitionLock(dir);
     await readRecord(dir, expected);
   }
   let queue = Promise.resolve();
-  // Serialize transitions within this handle; separate processes MUST be
-  // fenced by the host and are not safely supported by this draft.
+  // Serialize within the handle and exclude other local processes across
+  // the entire read/validate/replace transaction. This is NOT a distributed
+  // lease, and cannot authorize another worker to adopt a running poll.
   const update = fn => {
-    const task = queue.then(async () => {
+    const task = queue.then(() => withTransitionLock(dir, async () => {
       const current = await readRecord(dir, expected);
       const next = await fn(current);
       if (!next) return current;
@@ -120,7 +171,7 @@ export async function openLegacyHostGapJournal({
       };
       await durableReplace(dir, replacement);
       return replacement;
-    });
+    }));
     queue = task.catch(() => {});
     return task;
   };
@@ -132,11 +183,22 @@ export async function openLegacyHostGapJournal({
     sourceSnapshotSha256,
     sourceIdentitySha256,
     tenantId,
+    authorityEpoch,
     assertReady,
-    async beginPoll({ cursor }) {
-      if (!validCursor(cursor)) refuse('HOST_GAP_JOURNAL_INVALID_POLL_CURSOR');
+    async beginPoll({ cursor, initialCursor }) {
+      if (!validCursor(cursor) ||
+          (initialCursor !== undefined && !validCursor(initialCursor))) {
+        refuse('HOST_GAP_JOURNAL_INVALID_POLL_CURSOR');
+      }
       return update(current => {
         if (current.state !== 'ready') refuse('HOST_GAP_JOURNAL_NOT_READY');
+        // Opaque cursors cannot be ordered. Require exact equality with the
+        // last confirmed checkpoint, or the independently attested old
+        // cursor on first use. No reset/skip on cold reopen.
+        const expected = current.cursor ?? initialCursor;
+        if (expected !== undefined && cursor !== expected) {
+          refuse('HOST_GAP_JOURNAL_POLL_CURSOR_MISMATCH');
+        }
         return { state: 'polling', cursor };
       });
     },
@@ -165,6 +227,9 @@ export async function openLegacyHostGapJournal({
       return update(current => current.state === 'blocked'
         ? null : { state: 'blocked', cursor: null });
     },
-    status: () => readRecord(dir, expected),
+    async status() {
+      await assertNoTransitionLock(dir);
+      return readRecord(dir, expected);
+    },
   });
 }

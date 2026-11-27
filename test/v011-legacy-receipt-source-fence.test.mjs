@@ -515,3 +515,24 @@ test('non-enumerable own-data truncated signal blocks current page before cursor
     assert.equal(polls, 1, 'neither first page nor retry may advance a cursor');
   });
 });
+
+test('unresolved deadline or a second scope refuses replay before any receipt or provider lookup', async () => {
+  for (const kind of ['deadline','scope']) {
+    await fixture(async ({old,prepare}) => {
+      if (kind === 'deadline') {
+        await writeFile(path.join(old,'temporal-deadlines.jsonl'),row({
+          deadlineId:'pending-deadline',triggerId:'old-watch',triggerVersion:'1',
+          matchId:'old-match',conditionId:'absence',dueAt:'2026-10-07T12:00:00.000Z',status:'pending',
+        }));
+      } else {
+        await mkdir(path.join(old,'scopes',Buffer.from('another-scope').toString('base64url')), {recursive:true});
+      }
+      let calls = 0;
+      await assert.rejects(prepare({
+        lookupHostReceipt:async()=>{calls++;return null;},
+        attestProviderSource:async()=>{calls++;return null;},
+      }),err(kind==='deadline'?'PENDING_DEADLINE_RECONCILIATION_REQUIRED':'MULTISCOPE_RECONCILIATION_NOT_SUPPORTED'));
+      assert.equal(calls,0);
+    });
+  }
+});
