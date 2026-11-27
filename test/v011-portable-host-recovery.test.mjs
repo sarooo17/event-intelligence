@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
+import { createHash, randomInt } from 'node:crypto';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { DatabaseSync } from 'node:sqlite';
@@ -457,5 +457,88 @@ test('durable recovery refuses initial cursor skip and cold-restart cursor subst
       assert.equal(calls.length, before);
       assert.equal((await recovery.journalStatus()).state, 'blocked');
     });
+  }
+});
+
+test('independent PostgreSQL host sessions fence recovery ownership and deny a stale in-flight poll', {
+  skip: !process.env.POSTGRES_URL ? 'requires isolated PostgreSQL CI service' : false,
+  timeout: 30000,
+}, async () => {
+  const pg = await import('pg');
+  const Client = pg.Client ?? pg.default.Client;
+  const a = new Client({connectionString: process.env.POSTGRES_URL,
+    connectionTimeoutMillis: 5000, statement_timeout: 5000});
+  const b = new Client({connectionString: process.env.POSTGRES_URL,
+    connectionTimeoutMillis: 5000, statement_timeout: 5000});
+  const key = [randomInt(1, 2147483647), randomInt(1, 2147483647)];
+  const acquire = async c => (await c.query(
+    'SELECT pg_try_advisory_lock($1::int, $2::int) AS held', key)).rows[0].held;
+  const release = async c => (await c.query(
+    'SELECT pg_advisory_unlock($1::int, $2::int) AS released', key)).rows[0].released;
+  const owns = async c => (await c.query(
+    "SELECT EXISTS (SELECT 1 FROM pg_locks WHERE locktype = 'advisory' " +
+    "AND pid = pg_backend_pid() AND granted AND classid = $1::oid " +
+    "AND objid = $2::oid AND objsubid = 2 AND mode = 'ExclusiveLock') AS held",
+    key)).rows[0].held;
+  try {
+    await Promise.all([a.connect(), b.connect()]);
+    await fixture('queue', async ({old, journalParams, bind, makeBridge}) => {
+      // Two independently connected host sessions, one actual PostgreSQL
+      // session lock. This is a reference HOST policy, not an EI DB dependency.
+      const claim = (c, epoch) => makeBridge({
+        authorityOverride: async proof => ({
+          ...proof, epoch, exclusive: await owns(c),
+        }),
+      });
+      assert.equal(await acquire(a), true);
+      assert.equal(await acquire(b), false);
+      const owner = claim(a, 'exclusive-epoch-1');
+      const contender = claim(b, 'exclusive-epoch-2');
+      const journal = await openLegacyHostGapJournal({...journalParams, mode: 'create'});
+      const prepare = host => prepareLegacyHostRecovery({
+        host, journal, sourceDir: old, ...bind,
+      });
+      const active = await prepare(owner);
+      await assert.rejects(prepare(contender), failure('RECOVERY_HOST_EXCLUSIVE_EPOCH_REQUIRED'));
+
+      let entered;
+      const inside = new Promise(resolve => { entered = resolve; });
+      let resume;
+      const gate = new Promise(resolve => { resume = resolve; });
+      let rpcCount = 0;
+      const transport = active.wrapConnection({
+        ...connection([]),
+        async request() {
+          rpcCount++;
+          entered();
+          await gate;
+          return {cursor: 'v1-new-checkpoint', hasMore: false,
+            events: [freshEvent], truncated: false};
+        },
+      });
+      const poll = transport.request('events/poll', pollArgs);
+      // Observe any early failure immediately; don't hang on the barrier.
+      const outcome = poll.then(value => ({value}), error => ({error}));
+      try {
+        const first = await Promise.race([inside.then(() => 'entered'), outcome]);
+        assert.equal(first, 'entered');
+        assert.equal(await release(a), true);
+        assert.equal(await acquire(b), true);
+        assert.equal(await owns(a), false);
+        assert.equal(await owns(b), true);
+        // New authority cannot adopt the old recovery journal.
+        await assert.rejects(prepare(contender), failure('RECOVERY_HOST_JOURNAL_EPOCH_MISMATCH'));
+      } finally {
+        resume();
+        await outcome;
+      }
+      const result = await outcome;
+      assert.equal(result.error?.code, 'RECOVERY_HOST_EXCLUSIVE_EPOCH_REQUIRED');
+      assert.equal(rpcCount, 1);
+      assert.equal((await journal.status()).state, 'blocked');
+      assert.equal(await release(b), true);
+    });
+  } finally {
+    await Promise.allSettled([a.end(), b.end()]);
   }
 });
