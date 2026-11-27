@@ -56,12 +56,15 @@ test('source checkpoints and potential negative deadlines are explicitly unsafe'
     await writeFile(path.join(home, 'mcp-client-states.jsonl'),
       row({ connectionId: 'c', eventName: 'x', cursor: 'opaque' }));
     await writeFile(path.join(home, 'temporal-deadlines.jsonl'),
-      row({ deadlineId: 'd', status: 'pending' }));
+      row({ deadlineId: 'd', triggerId: 't', triggerVersion: '1', matchId: 'm',
+        conditionId: 'absence', dueAt: '2026-10-07T10:00:00.000Z', status: 'pending' }));
     const result = await inspectLegacyJsonlStore(home, version);
     assert.ok(result.scopes[0].reasons.includes('SOURCE_CURSOR_REPLAY_PROOF_REQUIRED'));
     assert.ok(result.scopes[0].reasons.includes('PATTERN_HISTORY_NOT_TRANSFERABLE'));
     assert.equal(result.scopes[0].counts.mcpCursorUpdates, 1);
     assert.equal(result.scopes[0].counts.oldPatternHistoryRows, 1);
+    assert.equal(result.scopes[0].counts.pendingDeadlines, 1);
+    assert.ok(result.scopes[0].reasons.includes('PENDING_DEADLINE_RECONCILIATION_REQUIRED'));
   });
 });
 
