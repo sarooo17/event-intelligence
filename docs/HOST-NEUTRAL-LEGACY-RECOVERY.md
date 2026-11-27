@@ -188,10 +188,32 @@ a v1 restart, using a controlled source. A Turn receipt proves durable
 enqueue, not execution of external tools or delivery of a user-visible
 message. The general host contract remains unchanged.
 
+## Fault-matrix and explicit deadline disposition
+
+The preflight now inventories the latest legacy deadline state by
+`deadlineId`, checks the published 0.11 deadline row identity and due time,
+and reports `pendingDeadlines` plus
+`PENDING_DEADLINE_RECONCILIATION_REQUIRED`. Pending deadlines block both
+paused reconstruction and replay preparation **before** authorization or
+provider callbacks. An operator must settle them using the original host
+and exact old SDK; do not edit the sealed backup or synthesize a terminal
+status in the migration tool. Terminal deadline history stays archived
+and is not imported into the newly created v1 watch. This does not infer
+negative-event finality or prove preservation of historical candidates.
+
+Quarantine supports separate scope directories and owner reauthorization,
+but does not permit changing an existing watch's tenant binding, or using
+an actor from another tenant. The replay fence still refuses multiscope
+state: this is not a multiscope cutover. Wrong or already-v1 signature
+markers, unknown source versions, malformed JSONL and ambiguous deadline
+identity fail without creating a candidate. Existing destinations are
+never overwritten. A failed or interrupted rehearsal does not authorize
+any watch activation; retain the original backup.
+
 ## Important limitations
 
 - This does **not** expand legacy recovery beyond single default-scope,
-  single polling MCP source with explicit old archive, **nor** imply that
+  single polling MCP source with explicit old archive for replay, **nor** imply that
   EI v1 itself lacks multi-tenant, multi-source or PostgreSQL capabilities.
 - The local journal uses file+directory `fsync` and exclusive transitions,
   but remains a **single-authorized-writer** recovery profile. Do not use
