@@ -141,6 +141,53 @@ the test only; hosts choose their own authority store and fencing policy.
 The real-process tests also race two Node workers on the same local
 journal and kill a worker holding its checkpoint transition lock.
 
+## Operator recovery and rollback decision
+
+Use this as an offline rehearsal checklist, not a production cutover runbook.
+The host owns the backup mechanism, durable receipt store, source access,
+operator approval and the deployment switch. EI must not copy a live host
+database or decide when to resume an agent.
+
+1. Fence all old and new writers. Establish the source SDK version from
+   installed dependencies; preserve the exact old executable/dependency lock.
+2. Take a complete quiesced host backup (not just EI JSONL), including the
+   durable host receipt store. Verify an inventory and byte digests against
+   the stopped source. Seal it under restricted host access. Refuse on a
+   mismatch, partial copy, unknown version or any unexplained file.
+3. Rehearse rollback **before** granting a new runtime permission to perform
+   effects: restore to a different offline directory, reopen with the exact
+   old SDK, verify ownership, old receipt IDs and old source cursor. Only
+   allow original replay after checking the source can still serve it.
+   Keep the sealed backup unchanged.
+4. Create another isolated host copy with a **new** EI directory.
+   Invoke the read-only preflight and stage reauthorized watches paused.
+   The candidate intentionally loses Pattern history, pending deadlines,
+   old EI match/receipt records and cursor; never label it lossless.
+   Denied ownership, in-flight or unaccounted-for receipts, changed
+   snapshot, unknown source completeness, or a partial journal mean stop.
+5. Independently reconcile the old receipts in the actual host ledger, prove
+   provider replay completeness and exact source binding, then prepare
+   the recovery fence and journal. Inspect the candidate as the authorized
+   owner, verify scope isolation, and test original replay plus a new
+   occurrence on a disposable copy. Read back committed host receipts and
+   source checkpoint, cold restart, and verify no extra wake. This is a
+   rehearsal only; neither the manifest nor a successful test authorizes
+   a live activation.
+6. If rehearsal fails, retain the sealed backup and original runtime. A
+   pre-effect rollback may restore a verified **copy** of the old Home,
+   with old source continuity and explicit host approval. **After any
+   new effect may have been accepted, do not restore old cursors/receipts
+   blindly.** Stop/fence both versions; reconcile all effects, including
+   uncertain and pending ones, with the host and provider before any
+   operator-approved recovery. Restoring filesystem bytes cannot undo
+   external effects. Never auto-delete the candidate or original backup.
+
+The compiled consumer test is intended to exercise a verified whole-Home
+copy, pre-cutover rollback, and durable old/new SQLite Turn receipts after
+a v1 restart, using a controlled source. A Turn receipt proves durable
+enqueue, not execution of external tools or delivery of a user-visible
+message. The general host contract remains unchanged.
+
 ## Important limitations
 
 - This does **not** expand legacy recovery beyond single default-scope,
